@@ -4,8 +4,14 @@ import { nextApiKey, markKeyFailure } from "../types.js"
 import { createLogger } from "../../logger/index.js"
 
 const log = createLogger("llm:openai")
+const DEFAULT_MAX_OUTPUT_TOKENS = 2_048
+const TOKEN_ESTIMATE_DIVISOR = 4
+const TOKEN_SAFETY_HEADROOM = 1_024
 
 const CONTEXT_LIMITS: Record<string, number> = {
+  "gpt-5": 400_000,
+  "gpt-5.1": 400_000,
+  "gpt-4.1": 1_047_576,
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
   "gpt-4-turbo": 128_000,
@@ -13,6 +19,7 @@ const CONTEXT_LIMITS: Record<string, number> = {
   "gpt-3.5-turbo": 16_385,
   "o1": 200_000,
   "o1-mini": 128_000,
+  "o3": 200_000,
   "o3-mini": 200_000,
 }
 
@@ -85,6 +92,55 @@ function toOpenAITools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {
   }))
 }
 
+function estimateTokens(value: unknown): number {
+  if (value == null) return 0
+  const serialized = typeof value === "string" ? value : JSON.stringify(value)
+  return Math.ceil(serialized.length / TOKEN_ESTIMATE_DIVISOR)
+}
+
+export function resolveOpenAIChatMaxTokens(input: {
+  contextLimit: number
+  messages: OpenAI.ChatCompletionMessageParam[]
+  tools?: OpenAI.ChatCompletionTool[]
+  maxTokens?: number
+}): number {
+  const requested = input.maxTokens ?? Math.min(DEFAULT_MAX_OUTPUT_TOKENS, input.contextLimit)
+  const estimatedPromptTokens = estimateTokens(input.messages) + estimateTokens(input.tools ?? [])
+  const remaining = input.contextLimit - estimatedPromptTokens - TOKEN_SAFETY_HEADROOM
+  return Math.max(1, Math.min(requested, remaining))
+}
+
+function modelUsesMaxCompletionTokens(model: string): boolean {
+  return /^(?:o\d|gpt-5)/i.test(model.trim())
+}
+
+function buildTokenLimitParams(model: string, maxTokens: number, forceLegacyMaxTokens = false): {
+  max_tokens?: number
+  max_completion_tokens?: number
+} {
+  if (!forceLegacyMaxTokens && modelUsesMaxCompletionTokens(model)) {
+    return { max_completion_tokens: maxTokens }
+  }
+  return { max_tokens: maxTokens }
+}
+
+function shouldRetryWithSwappedTokenParam(error: unknown): error is Error {
+  if (!(error instanceof Error)) return false
+  const message = error.message.toLowerCase()
+  return message.includes("unsupported parameter")
+    && (message.includes("max_tokens") || message.includes("max_completion_tokens"))
+}
+
+function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
+  if (!baseUrl?.trim()) return false
+  try {
+    const normalized = new URL(baseUrl).hostname.toLowerCase()
+    return normalized === "api.openai.com" || normalized.endsWith(".openai.com")
+  } catch {
+    return false
+  }
+}
+
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export class OpenAIProvider implements LLMProvider {
@@ -119,15 +175,98 @@ export class OpenAIProvider implements LLMProvider {
     const tools = params.tools && params.tools.length > 0
       ? toOpenAITools(params.tools)
       : undefined
+    const compatibilityBaseUrl = Boolean(this.baseUrl) && !isOfficialOpenAIBaseUrl(this.baseUrl)
 
     try {
-      const stream = await client.chat.completions.create({
-        model: params.model,
+      const maxTokens = resolveOpenAIChatMaxTokens({
+        contextLimit: this.maxContextTokens(params.model),
         messages: oaiMessages,
-        stream: true,
-        max_tokens: params.maxTokens ?? 8192,
-        ...(tools ? { tools, tool_choice: "auto" } : {}),
-      }, { signal: params.signal })
+        ...(tools ? { tools } : {}),
+        ...(params.maxTokens !== undefined ? { maxTokens: params.maxTokens } : {}),
+      })
+
+      const createChatCompletionNonStream = async () => {
+        const execute = async (forceLegacyMaxTokens: boolean) => client.chat.completions.create({
+          model: params.model,
+          messages: oaiMessages,
+          stream: false,
+          ...buildTokenLimitParams(params.model, maxTokens, forceLegacyMaxTokens),
+          ...(tools ? { tools, tool_choice: "auto" } : {}),
+        }, { signal: params.signal })
+
+        try {
+          return await execute(compatibilityBaseUrl)
+        } catch (error) {
+          if (shouldRetryWithSwappedTokenParam(error)) {
+            log.info("retrying openai chat completion with swapped token limit parameter", {
+              model: params.model,
+              originalMessage: error.message,
+            })
+            return execute(!modelUsesMaxCompletionTokens(params.model))
+          }
+          throw error
+        }
+      }
+
+      const createChatCompletionStream = async () => {
+        const execute = async (forceLegacyMaxTokens: boolean) => client.chat.completions.create({
+          model: params.model,
+          messages: oaiMessages,
+          stream: true,
+          ...buildTokenLimitParams(params.model, maxTokens, forceLegacyMaxTokens),
+          ...(tools ? { tools, tool_choice: "auto" } : {}),
+        }, { signal: params.signal })
+
+        try {
+          return await execute(compatibilityBaseUrl)
+        } catch (error) {
+          if (shouldRetryWithSwappedTokenParam(error)) {
+            log.info("retrying openai chat completion stream with swapped token limit parameter", {
+              model: params.model,
+              originalMessage: error.message,
+            })
+            return execute(!modelUsesMaxCompletionTokens(params.model))
+          }
+          throw error
+        }
+      }
+
+      if (tools && compatibilityBaseUrl) {
+        const completion = await createChatCompletionNonStream()
+
+        const choice = completion.choices[0]
+        if (choice?.message?.content) {
+          yield { type: "text_delta", delta: choice.message.content }
+        }
+
+        for (const toolCall of choice?.message?.tool_calls ?? []) {
+          if (!("function" in toolCall) || !toolCall.function) continue
+
+          let parsedInput: unknown = {}
+          try {
+            parsedInput = JSON.parse(toolCall.function.arguments || "{}")
+          } catch {
+            parsedInput = {}
+          }
+          yield {
+            type: "tool_use",
+            id: toolCall.id,
+            name: toolCall.function.name,
+            input: parsedInput,
+          }
+        }
+
+        yield {
+          type: "message_stop",
+          usage: {
+            input_tokens: completion.usage?.prompt_tokens ?? 0,
+            output_tokens: completion.usage?.completion_tokens ?? 0,
+          },
+        }
+        return
+      }
+
+      const stream = await createChatCompletionStream()
 
       // Accumulate streamed tool call chunks
       const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>()

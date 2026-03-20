@@ -66,9 +66,12 @@ export class AnthropicProvider implements LLMProvider {
       // Second pass: reconstruct full tool_use blocks
       let toolInput = ""
       let currentTool: { id: string; name: string } | null = null
+      let inputTokens = 0
 
       for (const event of streamEvents) {
-        if (event.type === "content_block_start") {
+        if (event.type === "message_start") {
+          inputTokens = event.message.usage.input_tokens
+        } else if (event.type === "content_block_start") {
           if (event.content_block.type === "tool_use") {
             currentTool = { id: event.content_block.id, name: event.content_block.name }
             toolInput = ""
@@ -98,7 +101,7 @@ export class AnthropicProvider implements LLMProvider {
           yield {
             type: "message_stop",
             usage: {
-              input_tokens: usageEvent?.usage?.output_tokens ?? 0,
+              input_tokens: inputTokens,
               output_tokens: usageEvent?.usage?.output_tokens ?? 0,
             },
           }

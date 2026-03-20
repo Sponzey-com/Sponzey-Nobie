@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js"
 import { AnthropicProvider } from "./providers/anthropic.js"
+import { GeminiProvider } from "./providers/gemini.js"
 import { OpenAIProvider } from "./providers/openai.js"
 import type { AuthProfile, LLMProvider } from "./types.js"
 
@@ -42,6 +43,18 @@ export function getProvider(providerId?: string): LLMProvider {
     return p
   }
 
+  if (id === "gemini") {
+    const keys = (cfg.gemini?.apiKeys ?? []).filter(Boolean)
+    if (keys.length === 0 && process.env["GEMINI_API_KEY"]) {
+      keys.push(process.env["GEMINI_API_KEY"])
+    }
+    const profile = buildProfile(keys)
+    profiles.set(id, profile)
+    const p = new GeminiProvider(profile, cfg.gemini?.baseUrl)
+    providers.set(id, p)
+    return p
+  }
+
   throw new Error(`Unsupported LLM provider: "${id}"`)
 }
 
@@ -49,12 +62,17 @@ const MODEL_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
   [/^gpt-/i, "openai"],
   [/^o\d/i, "openai"],    // o1, o3-mini, etc.
   [/^claude-/i, "anthropic"],
+  [/^gemini-/i, "gemini"],
 ]
 
 const DEFAULT_MODELS: Record<string, string> = {
   anthropic: "claude-3-5-haiku-20241022",
   openai: "gpt-4o-mini",
+  gemini: "gemini-2.5-flash",
 }
+
+const LLAMA_MODEL_PATTERN = /\bllama(?:[.\-:\w]*)?\b/i
+const OLLAMA_BASEURL_PATTERN = /(^|\/\/)(?:[^/]*ollama|127\.0\.0\.1:11434|localhost:11434)/i
 
 /**
  * 사용 가능한 API 키를 기준으로 공급자를 자동 감지한다.
@@ -74,10 +92,15 @@ export function detectAvailableProvider(): string {
     const hasKey = (cfg.openai?.apiKeys ?? []).filter(Boolean).length > 0 || !!process.env["OPENAI_API_KEY"]
     if (hasKey) return "openai"
   }
+  if (configured === "gemini") {
+    const hasKey = (cfg.gemini?.apiKeys ?? []).filter(Boolean).length > 0 || !!process.env["GEMINI_API_KEY"]
+    if (hasKey) return "gemini"
+  }
 
   // config 공급자에 키가 없으면 환경변수 순서로 폴백
   if (process.env["ANTHROPIC_API_KEY"]) return "anthropic"
   if (process.env["OPENAI_API_KEY"]) return "openai"
+  if (process.env["GEMINI_API_KEY"]) return "gemini"
 
   // 키가 하나도 없어도 config 기본값 반환 (에러는 실제 호출 시 발생)
   return configured
@@ -104,6 +127,19 @@ export function inferProviderId(model: string): string {
     if (pattern.test(model)) return id
   }
   return detectAvailableProvider()
+}
+
+export function shouldForceReasoningMode(providerId: string, model: string): boolean {
+  const config = getConfig()
+  const openaiBaseUrl = config.llm.providers.openai?.baseUrl?.trim() ?? ""
+  const ollamaBaseUrl = config.llm.providers.ollama?.baseUrl?.trim() ?? ""
+
+  if (providerId === "ollama") return true
+  if (LLAMA_MODEL_PATTERN.test(model)) return true
+  if (OLLAMA_BASEURL_PATTERN.test(openaiBaseUrl)) return true
+  if (OLLAMA_BASEURL_PATTERN.test(ollamaBaseUrl)) return true
+
+  return false
 }
 
 export type { LLMProvider, LLMChunk, Message, ToolDefinition, ChatParams } from "./types.js"

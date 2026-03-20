@@ -1,5 +1,5 @@
-import { bootstrap, runAgent } from "@sidekick/core"
-import type { AgentChunk } from "@sidekick/core"
+import { bootstrapRuntime, startRootRun } from "@nobie/core"
+import type { AgentChunk } from "@nobie/core"
 
 const RESET = "\x1b[0m"
 const CYAN = "\x1b[36m"
@@ -10,7 +10,7 @@ const DIM = "\x1b[2m"
 const BOLD = "\x1b[1m"
 
 function useColor(): boolean {
-  return process.env["SIDEKICK_NO_COLOR"] == null && process.stdout.isTTY === true
+  return process.env["NOBIE_NO_COLOR"] == null && process.stdout.isTTY === true
 }
 
 function c(color: string, text: string): string {
@@ -23,7 +23,7 @@ export async function runCommand(message: string, options: {
   workDir?: string
   yes?: boolean
 }) {
-  bootstrap()
+  await bootstrapRuntime()
 
   const abortController = new AbortController()
   process.on("SIGINT", () => {
@@ -31,16 +31,14 @@ export async function runCommand(message: string, options: {
     abortController.abort()
   })
 
-  // If --yes is set, auto-approve all tool calls
   if (options.yes) {
-    const { eventBus } = await import("@sidekick/core")
+    const { eventBus } = await import("@nobie/core")
     eventBus.on("approval.request", ({ resolve }) => {
       process.stderr.write(c(YELLOW, "  [auto-approved with --yes]\n"))
-      resolve("allow")
+      resolve("allow_run")
     })
   } else {
-    // Interactive approval
-    const { eventBus } = await import("@sidekick/core")
+    const { eventBus } = await import("@nobie/core")
     eventBus.on("approval.request", async ({ toolName, params, resolve }) => {
       const paramsStr = JSON.stringify(params, null, 2)
         .split("\n")
@@ -51,39 +49,44 @@ export async function runCommand(message: string, options: {
         c(YELLOW, `⚠  Approval required`) + "\n" +
         c(DIM, `   Tool:   `) + c(BOLD, toolName) + "\n" +
         c(DIM, `   Params:\n`) + c(DIM, paramsStr) + "\n" +
-        c(CYAN, "   Allow? [y/N] "),
+        c(CYAN, "   Decision? [a=all / y=once / N=deny] "),
       )
       const answer = await readLine()
-      resolve(answer.trim().toLowerCase() === "y" ? "allow" : "deny")
+      const normalized = answer.trim().toLowerCase()
+      resolve(
+        normalized === "a"
+          ? "allow_run"
+          : normalized === "y"
+            ? "allow_once"
+            : "deny",
+      )
     })
   }
 
   process.stdout.write("\n")
 
-  let hasOutput = false
   const startMs = Date.now()
-
-  const generator = runAgent({
-    userMessage: message,
+  const started = startRootRun({
+    message,
     sessionId: options.session,
     model: options.model,
     workDir: options.workDir,
-    signal: abortController.signal,
+    source: "cli",
+    onChunk: async (chunk: AgentChunk) => {
+      handleChunk(chunk)
+    },
   })
 
-  for await (const chunk of generator) {
-    handleChunk(chunk, () => { hasOutput = true })
-  }
+  await started.finished
 
   const durationSec = ((Date.now() - startMs) / 1000).toFixed(1)
   process.stdout.write("\n" + c(DIM, `\n⏱  Done in ${durationSec}s\n`))
 }
 
-function handleChunk(chunk: AgentChunk, onText: () => void) {
+function handleChunk(chunk: AgentChunk) {
   switch (chunk.type) {
     case "text":
       process.stdout.write(chunk.delta)
-      onText()
       break
 
     case "tool_start":

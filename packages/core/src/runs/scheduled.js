@@ -1,0 +1,39 @@
+const TOOL_REQUIRING_TASK_PATTERN = /\b(file|files|code|repo|repository|command|commands|shell|terminal|browser|click|open|search|web|website|url|link|process|run|execute|edit|write|read|fetch|download)\b|파일|코드|저장소|명령|쉘|터미널|브라우저|클릭|열어|검색|웹|사이트|링크|주소|프로세스|실행|수정|작성|읽기|가져와|다운로드/u;
+export function shouldDisableToolsForScheduledTask(task, taskProfile) {
+    const normalizedTask = task.trim();
+    const normalizedProfile = taskProfile?.trim() ?? "general_chat";
+    if (!normalizedTask)
+        return false;
+    if (normalizedProfile !== "general_chat" && normalizedProfile !== "summarization") {
+        return false;
+    }
+    return !TOOL_REQUIRING_TASK_PATTERN.test(normalizedTask);
+}
+export function getScheduledRunExecutionOptions(task, taskProfile) {
+    return {
+        toolsEnabled: !shouldDisableToolsForScheduledTask(task, taskProfile),
+        contextMode: "isolated",
+    };
+}
+export function buildScheduledFollowupPrompt(params) {
+    const goal = params.goal?.trim() || params.task.trim();
+    const taskProfile = params.taskProfile?.trim() || "general_chat";
+    const preferredTarget = params.preferredTarget?.trim();
+    return [
+        "[Scheduled Task]",
+        "이 작업은 이전에 접수되어 예약된 후속 실행입니다.",
+        `목표: ${goal}`,
+        `작업: ${params.task.trim()}`,
+        `작업 프로필: ${taskProfile}`,
+        preferredTarget ? `선호 대상: ${preferredTarget}` : "",
+        "예약 시각이 되었습니다. 지금 이 예약 작업만 실행하세요.",
+        "다시 intake 접수 메시지를 만들지 마세요.",
+        params.toolsEnabled
+            ? "이 특정 작업에 실제로 필요한 경우에만 도구를 사용하세요."
+            : "요청된 결과만 바로 답하세요. 도구를 사용하지 말고, 필요하지 않다면 예약 이야기도 꺼내지 마세요.",
+        "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+    ]
+        .filter(Boolean)
+        .join("\n\n");
+}
+//# sourceMappingURL=scheduled.js.map

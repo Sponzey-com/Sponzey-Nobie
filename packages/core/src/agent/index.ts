@@ -1,16 +1,28 @@
 import { homedir } from "node:os"
 import { eventBus } from "../events/index.js"
-import { getProvider, getDefaultModel, inferProviderId } from "../llm/index.js"
+import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode, type LLMProvider } from "../llm/index.js"
 import type { Message, ToolDefinition, LLMChunk } from "../llm/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
-import { getDb, insertSession, getSession, insertMessage, getMessages } from "../db/index.js"
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, insertMemoryItem, markMessagesCompressed } from "../db/index.js"
+import { loadNobieMd } from "../memory/nobie-md.js"
+import { buildMemoryContext } from "../memory/store.js"
+import { needsCompression, compressContext } from "../memory/compressor.js"
+import { loadMergedInstructions } from "../instructions/merge.js"
+import { selectRequestGroupContextMessages } from "./request-group-context.js"
+import { buildUserProfilePromptContext } from "./profile-context.js"
 
 const log = createLogger("agent")
 
 const MAX_TOOL_ROUNDS = 20 // prevent infinite loops
 const MAX_CONTEXT_TOKENS = 150_000
+const WEB_POLICY_PATTERN = [
+  /https?:\/\//i,
+  /\b(web|internet|browse|browser|search|google|docs?|documentation|readme|website|site|url|link)\b/i,
+  /\b(latest|recent|current|today|news|official|release(?:s| notes?)?|update(?:d|s)?)\b/i,
+  /웹|인터넷|검색|브라우저|최신|최근|현재|오늘|뉴스|공식\s*문서|문서|사이트|웹사이트|링크|주소|릴리즈\s*노트|업데이트/u,
+]
 
 export type AgentChunk =
   | { type: "text"; delta: string }
@@ -19,38 +31,47 @@ export type AgentChunk =
   | { type: "done"; totalTokens: number }
   | { type: "error"; message: string }
 
+export type AgentContextMode = "full" | "isolated" | "request_group"
+
 export interface RunAgentParams {
   userMessage: string
   sessionId?: string | undefined
+  requestGroupId?: string | undefined
+  runId?: string | undefined
   model?: string | undefined
   providerId?: string | undefined
+  provider?: LLMProvider | undefined
   systemPrompt?: string | undefined
   workDir?: string | undefined
+  source?: "webui" | "cli" | "telegram" | undefined
   signal?: AbortSignal | undefined
+  toolsEnabled?: boolean | undefined
+  contextMode?: AgentContextMode | undefined
 }
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
-  const runId = crypto.randomUUID()
+  const runId = params.runId ?? crypto.randomUUID()
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const model = params.model ?? getDefaultModel()
   const workDir = params.workDir ?? homedir()
   const signal = params.signal ?? new AbortController().signal
+  const toolsEnabled = params.toolsEnabled ?? true
+  const contextMode = params.contextMode ?? "full"
 
   const now = Date.now()
 
-  // Upsert session — INSERT OR IGNORE to avoid cascade-deleting existing messages
+  // Upsert session
   const existing = getSession(sessionId)
   if (!existing) {
     insertSession({
       id: sessionId,
-      source: "cli",
+      source: params.source ?? "cli",
       source_id: null,
       created_at: now,
       updated_at: now,
       summary: null,
     })
   } else {
-    // Only touch updated_at so messages are preserved
     getDb().prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId)
   }
 
@@ -58,11 +79,44 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   log.info(`Agent run ${runId} started (session=${sessionId}, model=${model})`)
 
   // Load prior messages from DB
-  const priorMessages = getMessages(sessionId)
-  const messages: Message[] = priorMessages.map((m) => ({
+  const priorDbMessages = contextMode === "isolated"
+    ? []
+    : contextMode === "request_group"
+      ? (params.requestGroupId ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId)) : [])
+      : params.requestGroupId
+        ? getMessagesForRequestGroup(sessionId, params.requestGroupId)
+        : getMessages(sessionId)
+  const rawMessages: Message[] = priorDbMessages.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.tool_calls ? JSON.parse(m.tool_calls) : m.content,
   }))
+
+  // Sanitize: strip orphaned tool_call blocks
+  const messages: Message[] = []
+  for (let i = 0; i < rawMessages.length; i++) {
+    const msg = rawMessages[i]!
+    if (
+      msg.role === "assistant" &&
+      Array.isArray(msg.content) &&
+      (msg.content as Array<{ type: string }>).some((b) => b.type === "tool_use")
+    ) {
+      const next = rawMessages[i + 1]
+      const nextHasToolResults =
+        next != null &&
+        Array.isArray(next.content) &&
+        (next.content as Array<{ type: string }>).some((b) => b.type === "tool_result")
+      if (!nextHasToolResults) {
+        const textOnly = (msg.content as Array<{ type: string; text?: string }>)
+          .filter((b) => b.type === "text")
+          .map((b) => b.text ?? "")
+          .join("\n")
+        if (textOnly) messages.push({ role: "assistant", content: textOnly })
+        log.warn(`Stripped orphaned tool_calls from assistant message (session=${sessionId})`)
+        continue
+      }
+    }
+    messages.push(msg)
+  }
 
   // Append the new user message
   const userMsg: Message = { role: "user", content: params.userMessage }
@@ -70,6 +124,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   insertMessage({
     id: crypto.randomUUID(),
     session_id: sessionId,
+    root_run_id: runId,
     role: "user",
     content: params.userMessage,
     tool_calls: null,
@@ -77,8 +132,13 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     created_at: Date.now(),
   })
 
-  // Build tool definitions for LLM
-  const tools = toolDispatcher.getAll()
+  // Build tool definitions
+  const allowWebAccess = shouldAllowWebAccess(params.userMessage)
+  const tools = toolsEnabled
+    ? toolDispatcher.getAll().filter((tool) =>
+        allowWebAccess || (tool.name !== "web_search" && tool.name !== "web_fetch"),
+      )
+    : []
   const toolDefs: ToolDefinition[] = tools.map((t) => ({
     name: t.name,
     description: t.description,
@@ -86,24 +146,91 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   }))
 
   const resolvedProviderId = params.providerId ?? inferProviderId(model)
-  const provider = getProvider(resolvedProviderId)
+  const provider = params.provider ?? getProvider(resolvedProviderId)
+  const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model)
 
-  const systemPrompt =
+  // ── Build system prompt with NOBIE.md + memory context ────────────────
+  const baseSystemPrompt =
     params.systemPrompt ??
-    `You are SidekickSponzey, a helpful AI assistant running on the user's personal computer. ` +
-    `You can read and write files, execute shell commands, and help with various tasks. ` +
-    `Always be concise and accurate. Today is ${new Date().toLocaleDateString()}.`
+    [
+      "You are Nobie, the orchestration-first personal AI assistant for Sponzey Nobie running on the user's personal computer.",
+      `Today is ${new Date().toLocaleDateString()}.`,
+      "",
+      "[기본 역할]",
+      "들어온 요구 조건을 먼저 이해하고, 이 작업을 어떻게 진행해야 하는지 스스로 고민하세요.",
+      "필요하면 작업을 단계로 나누고, 어떤 도구나 어떤 AI가 이 문제를 가장 잘 해결할 수 있는지 판단하세요.",
+      "직접 해결하는 것보다 더 적합한 AI나 실행 경로가 있으면 그 대상에게 작업을 전달해 처리하게 하세요.",
+      "전달 후에는 결과를 검토하고, 아직 남은 작업이 있으면 설정된 한도 안에서 재귀적으로 후속 처리를 계속하세요.",
+      "모든 후속 처리가 끝났을 때만 완료로 판단하고, 사용자 입력이 꼭 필요할 때만 멈추세요.",
+      "",
+      "[행동 원칙]",
+      "항상 정확하고 실행 지향적으로 행동하세요.",
+      "불필요한 장황함을 피하고, 실제로 문제를 해결하는 데 집중하세요.",
+      "중간 추론을 장황하게 노출하지 말고, 최종적으로 필요한 정보와 결과를 간결하게 제시하세요.",
+      "로컬 환경, 파일, 도구, 메모리, 지침 체인을 우선적으로 활용하세요.",
+      "사용자 질문의 언어를 유지해서 답변하세요. 사용자가 한국어로 물으면 한국어로, 영어로 물으면 영어로 답하세요. 사용자가 명시적으로 번역을 요청하지 않으면 답변 언어를 임의로 바꾸지 마세요.",
+    ].join("\n")
 
+  const reasoningDirective = forceReasoningMode
+    ? `\n[추론 정책]\n현재 실행 대상은 llama/ollama 계열로 간주합니다. 항상 사유 모드를 켜고 더 신중하게 검토한 뒤 답하세요. 즉시 반응하지 말고, 작업 계획과 가능한 해결 경로를 먼저 내부적으로 점검한 뒤 진행하세요. 내부적으로 충분히 숙고하되, 중간 추론을 길게 노출하지 말고 최종 답변만 간결하게 제시하세요.`
+    : ""
+
+  const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요.`
+
+  const instructions = loadMergedInstructions(workDir)
+  const profileContext = buildUserProfilePromptContext()
+  const nobieMd = loadNobieMd(workDir)
+  const memoryContext = await buildMemoryContext(params.userMessage)
+
+  const systemPrompt = [
+    baseSystemPrompt,
+    reasoningDirective,
+    webPolicyDirective,
+    instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
+    profileContext ? `\n${profileContext}` : "",
+    nobieMd ? `\n[프로젝트 메모리]\n${nobieMd}` : "",
+    memoryContext ? `\n${memoryContext}` : "",
+  ].join("")
+
+  // ── Context compression if needed ────────────────────────────────────
   let totalTokens = 0
+
+  if (needsCompression(messages, 0)) {
+    log.info(`컨텍스트 압축 중... (messages: ${messages.length})`)
+    try {
+      const compressed = await compressContext(messages, priorDbMessages, provider, model)
+      // Replace in-memory messages with compressed version
+      messages.length = 0
+      for (const m of compressed.messages) messages.push(m)
+
+      // Persist summary to memory_items
+      const summaryId = crypto.randomUUID()
+      insertMemoryItem({
+        content: compressed.summary,
+        sessionId,
+        type: "session_summary",
+        importance: "medium",
+      })
+
+      // Mark old DB messages as compressed
+      markMessagesCompressed(compressed.compressedIds, summaryId)
+
+      log.info(`압축 완료 — ${compressed.compressedIds.length}개 메시지 → 요약 1개 + tail ${messages.length - 1}개`)
+    } catch (err) {
+      log.warn(`컨텍스트 압축 실패 (무시): ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   let textBuffer = ""
 
   const ctx: ToolContext = {
     sessionId,
     runId,
     workDir,
+    userMessage: params.userMessage,
+    allowWebAccess,
     signal,
     onProgress: (msg) => {
-      // Forward progress updates as partial text output
       if (msg.trim()) log.debug(`[tool progress] ${msg.trim()}`)
     },
   }
@@ -148,13 +275,13 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       return
     }
 
-    // If no tool calls → final response
+    // No tool calls → final response
     if (pendingToolUses.length === 0) {
-      // Save assistant message to DB
       if (textBuffer) {
         insertMessage({
           id: crypto.randomUUID(),
           session_id: sessionId,
+          root_run_id: runId,
           role: "assistant",
           content: textBuffer,
           tool_calls: null,
@@ -179,6 +306,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     insertMessage({
       id: crypto.randomUUID(),
       session_id: sessionId,
+      root_run_id: runId,
       role: "assistant",
       content: textBuffer,
       tool_calls: JSON.stringify(assistantContent),
@@ -187,7 +315,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     })
     textBuffer = ""
 
-    // Execute each tool and collect results
+    // Execute tools
     const toolResultContents: Array<{
       type: "tool_result"
       tool_use_id: string
@@ -215,10 +343,19 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       })
     }
 
-    // Append tool_result message and continue loop
     messages.push({ role: "user", content: toolResultContents })
+    insertMessage({
+      id: crypto.randomUUID(),
+      session_id: sessionId,
+      root_run_id: runId,
+      role: "user",
+      content: "",
+      tool_calls: JSON.stringify(toolResultContents),
+      tool_call_id: null,
+      created_at: Date.now(),
+    })
 
-    // Guard against context size
+    // Guard against runaway context
     if (totalTokens > MAX_CONTEXT_TOKENS) {
       log.warn("Context token limit approached — stopping tool loop")
       break
@@ -230,4 +367,10 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   log.info(`Agent run ${runId} done in ${durationMs}ms (tokens≈${totalTokens})`)
 
   yield { type: "done", totalTokens }
+}
+
+function shouldAllowWebAccess(userMessage: string): boolean {
+  const normalized = userMessage.trim()
+  if (!normalized) return false
+  return WEB_POLICY_PATTERN.some((pattern) => pattern.test(normalized))
 }

@@ -147,7 +147,7 @@ export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
         lines = result
       }
 
-      const tmpPath = absPath + ".sidekick.tmp"
+      const tmpPath = absPath + ".nobie.tmp"
       try {
         writeFileSync(tmpPath, lines.join("\n"), "utf-8")
         renameSync(tmpPath, absPath)
