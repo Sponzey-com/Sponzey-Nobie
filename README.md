@@ -1,5 +1,11 @@
 # 스폰지 노비 · Sponzey Nobie
 
+[한국어](./README.md) | [English](./README.en.md)
+
+<p align="center">
+  <img src="./resource/nobie-1-512.png" alt="Nobie" width="220" />
+</p>
+
 `Sponzey Nobie`는 설치 후 빠르게 설정하고 바로 사용할 수 있도록 설계된 오케스트레이션 중심 개인 AI입니다. 제품 안에서 실제로 사용자와 대화하고 작업을 수행하는 이름은 `Nobie`입니다.
 
 `Sponzey Nobie` is an orchestration-first personal AI designed to be configured quickly after installation and used right away. The actual assistant name used inside the product is `Nobie`.
