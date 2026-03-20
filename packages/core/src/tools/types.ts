@@ -4,6 +4,8 @@ export interface ToolContext {
   sessionId: string
   runId: string
   workDir: string
+  userMessage: string
+  allowWebAccess: boolean
   onProgress: (message: string) => void
   signal: AbortSignal
 }

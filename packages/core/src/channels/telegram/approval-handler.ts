@@ -1,15 +1,19 @@
 import type { Bot } from "grammy"
 import { eventBus } from "../../events/index.js"
+import type { ApprovalDecision, ApprovalKind } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
+import { getRootRun } from "../../runs/store.js"
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js"
 
 const log = createLogger("channel:telegram:approval")
 
 interface PendingApproval {
-  resolve: (decision: "allow" | "deny") => void
+  resolve: (decision: ApprovalDecision) => void
   chatId: number
   messageId: number
   requesterId: number
+  toolName: string
+  kind: ApprovalKind
 }
 
 interface ActiveChat {
@@ -43,8 +47,12 @@ export function clearActiveChatForSession(sessionId: string): void {
 }
 
 export function registerApprovalHandler(bot: Bot): void {
-  eventBus.on("approval.request", async ({ runId, toolName, params, resolve }) => {
-    const target = latestActiveChat
+  eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
+    const run = getRootRun(runId)
+    if (run?.source !== "telegram") {
+      return
+    }
+    const target = (run ? activeChats.get(run.sessionId) : undefined) ?? latestActiveChat
 
     if (target === undefined) {
       log.warn(`approval.request for runId=${runId} but no active chat — auto-denying`)
@@ -54,10 +62,11 @@ export function registerApprovalHandler(bot: Bot): void {
 
     const paramsStr = JSON.stringify(params, null, 2).slice(0, 300)
     const text =
-      `🔐 *도구 실행 승인 요청*\n\n` +
+      `${kind === "screen_confirmation" ? "🖥️ *화면 조작 준비 확인*" : "🔐 *도구 실행 승인 요청*"}\n\n` +
       `도구: \`${toolName}\`\n` +
       `파라미터:\n\`\`\`\n${paramsStr}\n\`\`\`\n\n` +
-      `허용하시겠습니까?`
+      `${guidance ? `${guidance}\n\n` : ""}` +
+      `${kind === "screen_confirmation" ? "준비가 끝났으면 계속 진행할 수 있습니다." : "허용하시겠습니까?"}`
 
     let sentMsgId: number
 
@@ -82,37 +91,44 @@ export function registerApprovalHandler(bot: Bot): void {
       chatId: target.chatId,
       messageId: sentMsgId,
       requesterId: target.userId,
+      toolName,
+      kind,
     })
 
-    // 60-second timeout
-    const timeout = setTimeout(async () => {
-      const entry = pending.get(runId)
-      if (entry === undefined) return
-      pending.delete(runId)
+    const timeout =
+      kind === "screen_confirmation"
+        ? null
+        : setTimeout(async () => {
+            const entry = pending.get(runId)
+            if (entry === undefined) return
+            pending.delete(runId)
 
-      log.warn(`Approval timeout for runId=${runId} — auto-denying`)
+            log.warn(`Approval timeout for runId=${runId} — auto-denying`)
 
-      try {
-        await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
-          reply_markup: buildResultKeyboard(false, "시스템 (타임아웃)"),
-        })
-      } catch {
-        // best-effort
-      }
+            try {
+              await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
+                reply_markup: buildResultKeyboard("❌ 시스템이 타임아웃으로 거부함"),
+              })
+            } catch {
+              // best-effort
+            }
 
-      entry.resolve("deny")
-    }, 60_000)
+            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind })
+            entry.resolve("deny")
+          }, 60_000)
 
     // Store timeout reference so we can clear it
     const origResolve = resolve
     pending.set(runId, {
       resolve: (decision) => {
-        clearTimeout(timeout)
+        if (timeout) clearTimeout(timeout)
         origResolve(decision)
       },
       chatId: target.chatId,
       messageId: sentMsgId,
       requesterId: target.userId,
+      toolName,
+      kind,
     })
   })
 
@@ -125,10 +141,11 @@ export function registerApprovalHandler(bot: Bot): void {
       return
     }
 
-    const approveMatch = /^approve:([^:]+):once$/.exec(data)
+    const approveOnceMatch = /^approve:([^:]+):once$/.exec(data)
+    const approveAllMatch = /^approve:([^:]+):all$/.exec(data)
     const denyMatch = /^deny:([^:]+)$/.exec(data)
 
-    const runId = approveMatch?.[1] ?? denyMatch?.[1]
+    const runId = approveOnceMatch?.[1] ?? approveAllMatch?.[1] ?? denyMatch?.[1]
     if (runId === undefined) {
       await ctx.answerCallbackQuery()
       return
@@ -147,18 +164,48 @@ export function registerApprovalHandler(bot: Bot): void {
 
     pending.delete(runId)
 
-    const approved = approveMatch !== null
+    const decision: ApprovalDecision =
+      approveAllMatch !== null
+        ? "allow_run"
+        : approveOnceMatch !== null
+          ? "allow_once"
+          : "deny"
     const username = from.first_name ?? from.username ?? String(from.id)
+    const resultLabel =
+      entry.kind === "screen_confirmation"
+        ? decision === "allow_run"
+          ? `✅ ${username}이 준비 완료 후 전체 진행`
+          : decision === "allow_once"
+            ? `🔹 ${username}이 이번 단계 진행 확인`
+            : `❌ ${username}이 준비 미완료로 요청 취소`
+        : decision === "allow_run"
+          ? `✅ ${username}이 이 요청 전체를 승인함`
+          : decision === "allow_once"
+            ? `🔹 ${username}이 이번 단계만 승인함`
+            : `❌ ${username}이 거부하고 요청을 취소함`
 
     try {
       await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
-        reply_markup: buildResultKeyboard(approved, username),
+        reply_markup: buildResultKeyboard(resultLabel),
       })
     } catch {
       // best-effort
     }
 
-    await ctx.answerCallbackQuery(approved ? "✅ 허용됨" : "❌ 거부됨")
-    entry.resolve(approved ? "allow" : "deny")
+    await ctx.answerCallbackQuery(
+      entry.kind === "screen_confirmation"
+        ? decision === "allow_run"
+          ? "✅ 준비 완료 후 전체 진행"
+          : decision === "allow_once"
+            ? "🔹 이번 단계 진행"
+            : "❌ 준비 미완료, 취소"
+        : decision === "allow_run"
+          ? "✅ 이 요청 전체 승인"
+          : decision === "allow_once"
+            ? "🔹 이번 단계 승인"
+            : "❌ 거부 후 취소",
+    )
+    eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind })
+    entry.resolve(decision)
   })
 }

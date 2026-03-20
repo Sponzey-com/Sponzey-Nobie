@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { pipeline } from "node:stream/promises"
 import type { Bot } from "grammy"
 import { createLogger } from "../../logger/index.js"
+import { PATHS } from "../../config/index.js"
 
 const log = createLogger("channel:telegram:file-handler")
 
@@ -25,7 +26,7 @@ export class FileHandler {
     const token = (this.bot as unknown as { token: string }).token
     const url = `https://api.telegram.org/file/bot${token}/${filePath}`
 
-    const tmpDir = join(homedir(), ".sidekick", "tmp", sessionId)
+    const tmpDir = join(PATHS.stateDir, "tmp", sessionId)
     mkdirSync(tmpDir, { recursive: true })
 
     const localPath = join(tmpDir, filename)

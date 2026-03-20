@@ -1,11 +1,11 @@
 {
-  "name": "sidekick-sponzey",
+  "name": "nobie-workspace",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter cli dev",
+    "dev": "pnpm --filter @nobie/cli dev",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",

@@ -1,9 +1,11 @@
 {
-  "name": "@sidekick/cli",
+  "name": "@nobie/cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "sidekick": "./dist/index.js"
+    "nobie": "./dist/index.js",
+    "wizby": "./dist/index.js",
+    "howie": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "scripts": {
@@ -12,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@sidekick/core": "workspace:*",
+    "@nobie/core": "workspace:*",
     "commander": "^12.1.0"
   }
 }

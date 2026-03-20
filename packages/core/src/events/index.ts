@@ -1,9 +1,24 @@
-export interface SidekickEvents {
+import type { RootRun, RunStep } from "../runs/types.js"
+
+export type ApprovalDecision = "allow_once" | "allow_run" | "deny"
+export type ApprovalKind = "approval" | "screen_confirmation"
+
+export interface NobieEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
   "agent.start": { sessionId: string; runId: string }
   "agent.stream": { sessionId: string; runId: string; delta: string }
   "agent.end": { sessionId: string; runId: string; durationMs: number }
   "agent.error": { sessionId: string; runId: string; error: string }
+  "run.created": { run: RootRun }
+  "run.status": { run: RootRun }
+  "run.step.started": { runId: string; step: RunStep; run: RootRun }
+  "run.step.completed": { runId: string; step: RunStep; run: RootRun }
+  "run.progress": { run: RootRun }
+  "run.summary": { runId: string; summary: string; run: RootRun }
+  "run.completed": { run: RootRun }
+  "run.failed": { run: RootRun }
+  "run.cancel.requested": { runId: string }
+  "run.cancelled": { run: RootRun }
   "tool.before": { sessionId: string; runId: string; toolName: string; params: unknown }
   "tool.after": {
     sessionId: string
@@ -16,8 +31,11 @@ export interface SidekickEvents {
     runId: string
     toolName: string
     params: unknown
-    resolve: (decision: "allow" | "deny") => void
+    kind?: ApprovalKind
+    guidance?: string
+    resolve: (decision: ApprovalDecision) => void
   }
+  "approval.resolved": { runId: string; decision: ApprovalDecision; toolName: string; kind?: ApprovalKind }
   "scheduler.trigger": { scheduleId: string; scheduleTime: Date }
   "config.changed": Record<string, never>
   "plugin.loaded": { pluginId: string }
@@ -28,9 +46,9 @@ type Listener<T> = (payload: T) => void | Promise<void>
 class TypedEventBus {
   private listeners = new Map<string, Set<Listener<unknown>>>()
 
-  on<K extends keyof SidekickEvents>(
+  on<K extends keyof NobieEvents>(
     event: K,
-    listener: Listener<SidekickEvents[K]>,
+    listener: Listener<NobieEvents[K]>,
   ): () => void {
     const key = event as string
     if (!this.listeners.has(key)) {
@@ -41,7 +59,7 @@ class TypedEventBus {
     return () => set.delete(listener as Listener<unknown>)
   }
 
-  emit<K extends keyof SidekickEvents>(event: K, payload: SidekickEvents[K]): void {
+  emit<K extends keyof NobieEvents>(event: K, payload: NobieEvents[K]): void {
     const key = event as string
     const set = this.listeners.get(key)
     if (!set) return
@@ -52,9 +70,9 @@ class TypedEventBus {
     }
   }
 
-  once<K extends keyof SidekickEvents>(
+  once<K extends keyof NobieEvents>(
     event: K,
-    listener: Listener<SidekickEvents[K]>,
+    listener: Listener<NobieEvents[K]>,
   ): () => void {
     const unsub = this.on(event, (payload) => {
       unsub()
@@ -63,5 +81,8 @@ class TypedEventBus {
     return unsub
   }
 }
+
+export type WizbyEvents = NobieEvents
+export type HowieEvents = NobieEvents
 
 export const eventBus = new TypedEventBus()

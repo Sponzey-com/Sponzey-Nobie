@@ -1,0 +1,51 @@
+import { getConfig, PATHS } from "../../config/index.js";
+import { createCapabilities, createCapabilityCounts, getPrimaryAiTarget, readSetupState, } from "../../control-plane/index.js";
+import { getDefaultModel, detectAvailableProvider } from "../../llm/index.js";
+import { mcpRegistry } from "../../mcp/registry.js";
+import { toolDispatcher } from "../../tools/index.js";
+import { authMiddleware } from "../middleware/auth.js";
+import { getCurrentAppVersion, getUpdateSnapshot } from "../../update/service.js";
+const startTime = Date.now();
+export function registerStatusRoute(app) {
+    app.get("/api/status", { preHandler: authMiddleware }, async () => {
+        const cfg = getConfig();
+        const setupState = readSetupState();
+        const capabilities = createCapabilities();
+        const orchestrator = capabilities.find((item) => item.key === "gateway.orchestrator");
+        return {
+            version: getCurrentAppVersion(),
+            provider: detectAvailableProvider(),
+            model: getDefaultModel(),
+            uptime: Math.floor((Date.now() - startTime) / 1000),
+            toolCount: toolDispatcher.getAll().length,
+            setupCompleted: setupState.completed,
+            capabilityCounts: createCapabilityCounts(),
+            primaryAiTarget: getPrimaryAiTarget(),
+            orchestratorStatus: orchestrator
+                ? { status: orchestrator.status, reason: orchestrator.reason ?? null }
+                : { status: "planned", reason: "Gateway orchestrator capability가 없습니다." },
+            mcp: mcpRegistry.getSummary(),
+            paths: {
+                stateDir: PATHS.stateDir,
+                configFile: PATHS.configFile,
+                dbFile: PATHS.dbFile,
+                setupStateFile: PATHS.setupStateFile,
+            },
+            webui: {
+                port: cfg.webui.port,
+                host: cfg.webui.host,
+                authEnabled: cfg.webui.auth.enabled,
+            },
+            update: (() => {
+                const update = getUpdateSnapshot();
+                return {
+                    status: update.status,
+                    latestVersion: update.latestVersion,
+                    checkedAt: update.checkedAt,
+                    updateAvailable: update.updateAvailable,
+                };
+            })(),
+        };
+    });
+}
+//# sourceMappingURL=status.js.map

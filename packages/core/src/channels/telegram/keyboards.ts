@@ -2,13 +2,13 @@ import { InlineKeyboard } from "grammy"
 
 export function buildApprovalKeyboard(runId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✅ 허용 (1회)", `approve:${runId}:once`)
-    .text("❌ 거부", `deny:${runId}`)
+    .text("✅ 전체 승인", `approve:${runId}:all`)
+    .row()
+    .text("🔹 이번 단계만", `approve:${runId}:once`)
+    .row()
+    .text("❌ 거부 후 취소", `deny:${runId}`)
 }
 
-export function buildResultKeyboard(approved: boolean, username: string): InlineKeyboard {
-  const label = approved
-    ? `✅ ${username}이 허용함`
-    : `❌ ${username}이 거부함`
+export function buildResultKeyboard(label: string): InlineKeyboard {
   return new InlineKeyboard().text(label, "noop")
 }

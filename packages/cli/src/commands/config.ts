@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import { PATHS, getConfig } from "@sidekick/core"
+import { PATHS, getConfig } from "@nobie/core"
 
-const SAMPLE_CONFIG = `// SidekickSponzey configuration
+const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
 // Docs: see design/plan.md
 {
   llm: {
@@ -26,6 +26,9 @@ const SAMPLE_CONFIG = `// SidekickSponzey configuration
     approvalTimeout: 60,
     approvalTimeoutFallback: "deny",
     allowedCommands: [],
+  },
+  orchestration: {
+    maxDelegationTurns: 5,
   },
   webui: {
     enabled: true,
@@ -53,10 +56,21 @@ export function initConfig() {
   mkdirSync(dirname(configPath), { recursive: true })
   writeFileSync(configPath, SAMPLE_CONFIG, "utf-8")
   console.log(`Config created: ${configPath}`)
-  console.log("Edit the file to add your API keys, then run: sidekick run \"hello\"")
+  console.log("Edit the file to add your API keys, then run: nobie run \"hello\"")
 }
 
 export function showConfig(): void {
   const cfg = getConfig()
   console.log(JSON.stringify(cfg, null, 2))
+}
+
+export async function generateAuthToken(): Promise<void> {
+  const { generateAuthToken: gen } = await import("@nobie/core")
+  const { token } = gen()
+
+  console.log("WebUI auth token generated and saved to config.")
+  console.log(`Token: ${token}`)
+  console.log("")
+  console.log("Use this token as a Bearer token when accessing the API from outside localhost.")
+  console.log("Localhost connections bypass auth automatically.")
 }

@@ -12,19 +12,37 @@ const RESET = "\x1b[0m"
 const DIM = "\x1b[2m"
 
 function getMinLevel(): LogLevel {
-  const env = process.env["SIDEKICK_LOG_LEVEL"]
+  const env = process.env["NOBIE_LOG_LEVEL"]
   if (env && env in LEVELS) return env as LogLevel
   return "info"
 }
 
 function shouldColor(): boolean {
-  return process.env["SIDEKICK_NO_COLOR"] == null && process.stdout.isTTY === true
+  return process.env["NOBIE_NO_COLOR"] == null && process.stdout.isTTY === true
+}
+
+function serializeArg(value: unknown): string {
+  if (value instanceof Error) {
+    return JSON.stringify({
+      name: value.name,
+      message: value.message,
+      ...(value.stack ? { stack: value.stack } : {}),
+    })
+  }
+
+  if (typeof value === "string") return value
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
 }
 
 function format(level: LogLevel, namespace: string, message: string, ...args: unknown[]): string {
   const ts = new Date().toISOString().slice(11, 23)
   const color = shouldColor()
-  const extra = args.length > 0 ? " " + args.map(a => JSON.stringify(a)).join(" ") : ""
+  const extra = args.length > 0 ? " " + args.map((arg) => serializeArg(arg)).join(" ") : ""
 
   if (color) {
     return `${DIM}${ts}${RESET} ${COLORS[level]}${level.padEnd(5)}${RESET} ${DIM}[${namespace}]${RESET} ${message}${extra}`
@@ -62,4 +80,4 @@ export function createLogger(namespace: string): Logger {
   }
 }
 
-export const logger = createLogger("sidekick")
+export const logger = createLogger("nobie")

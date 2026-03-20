@@ -2,8 +2,9 @@ import { Bot } from "grammy"
 import { InputFile } from "grammy"
 import type { TelegramConfig } from "../../config/types.js"
 import { eventBus } from "../../events/index.js"
-import { runAgent } from "../../agent/index.js"
 import { createLogger } from "../../logger/index.js"
+import { cancelRootRun } from "../../runs/store.js"
+import { startRootRun } from "../../runs/start.js"
 import { isAllowedUser } from "./auth.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession } from "./session.js"
 import { TypingIndicator } from "./typing.js"
@@ -16,12 +17,13 @@ const log = createLogger("channel:telegram")
 
 export interface SessionStatus {
   sessionId: string | undefined
+  runId: string | undefined
   running: boolean
 }
 
 export class TelegramChannel {
   private bot: Bot
-  private runningAborts = new Map<string, AbortController>()
+  private runningRuns = new Map<string, string>()
   private sessionIds = new Map<string, string>()
   private fileHandler: FileHandler
 
@@ -36,26 +38,32 @@ export class TelegramChannel {
   }
 
   newSession(sessionKey: string): void {
-    this.runningAborts.delete(sessionKey)
+    const runId = this.runningRuns.get(sessionKey)
+    if (runId) {
+      cancelRootRun(runId)
+      this.runningRuns.delete(sessionKey)
+    }
     const sessionId = newSession(sessionKey)
     this.sessionIds.set(sessionKey, sessionId)
   }
 
   abortSession(sessionKey: string): boolean {
-    const controller = this.runningAborts.get(sessionKey)
-    if (controller === undefined) return false
-    controller.abort()
-    return true
+    const runId = this.runningRuns.get(sessionKey)
+    if (runId === undefined) return false
+    const cancelled = cancelRootRun(runId)
+    this.runningRuns.delete(sessionKey)
+    return cancelled !== undefined
   }
 
   getRunningCount(): number {
-    return this.runningAborts.size
+    return this.runningRuns.size
   }
 
   getSessionStatus(sessionKey: string): SessionStatus {
     return {
       sessionId: this.sessionIds.get(sessionKey),
-      running: this.runningAborts.has(sessionKey),
+      runId: this.runningRuns.get(sessionKey),
+      running: this.runningRuns.has(sessionKey),
     }
   }
 
@@ -79,7 +87,7 @@ export class TelegramChannel {
 
       const sessionKey = resolveSessionKey(chatId, threadId)
 
-      if (this.runningAborts.has(sessionKey)) {
+      if (this.runningRuns.has(sessionKey)) {
         log.warn(`Session ${sessionKey} already running, ignoring message`)
         return
       }
@@ -147,9 +155,6 @@ export class TelegramChannel {
       // Set active chat for approval handler
       setActiveChatForSession(sessionId, chatId, userId, threadId)
 
-      const controller = new AbortController()
-      this.runningAborts.set(sessionKey, controller)
-
       const responder = new TelegramResponder(this.bot, chatId, threadId)
 
       const typing = new TypingIndicator(async () => {
@@ -161,59 +166,69 @@ export class TelegramChannel {
       const toolMessageIds = new Map<string, number>()
 
       try {
-        for await (const chunk of runAgent({ userMessage: text, sessionId, signal: controller.signal })) {
-          if (chunk.type === "text") {
-            bufferedText += chunk.delta
-          } else if (chunk.type === "tool_start") {
-            const msgId = await responder.sendToolStatus(chunk.toolName)
-            toolMessageIds.set(chunk.toolName, msgId)
-          } else if (chunk.type === "tool_end") {
-            const msgId = toolMessageIds.get(chunk.toolName)
-            if (msgId !== undefined) {
-              await responder.updateToolStatus(msgId, chunk.toolName, chunk.success)
-              toolMessageIds.delete(chunk.toolName)
-            }
+        const started = startRootRun({
+          message: text,
+          sessionId,
+          model: undefined,
+          source: "telegram",
+          onChunk: async (chunk) => {
+            if (chunk.type === "text") {
+              bufferedText += chunk.delta
+            } else if (chunk.type === "tool_start") {
+              const msgId = await responder.sendToolStatus(chunk.toolName)
+              toolMessageIds.set(chunk.toolName, msgId)
+            } else if (chunk.type === "tool_end") {
+              const msgId = toolMessageIds.get(chunk.toolName)
+              if (msgId !== undefined) {
+                await responder.updateToolStatus(msgId, chunk.toolName, chunk.success)
+                toolMessageIds.delete(chunk.toolName)
+              }
 
-            // Detect FILE_SEND marker
-            if (chunk.output.startsWith("FILE_SEND:")) {
-              const rest = chunk.output.slice("FILE_SEND:".length)
-              const colonIdx = rest.indexOf(":")
-              if (colonIdx !== -1) {
-                const filePath = rest.slice(0, colonIdx)
-                const caption = rest.slice(colonIdx + 1) || undefined
-                try {
-                  await this.bot.api.sendDocument(
-                    chatId,
-                    new InputFile(filePath),
-                    caption !== undefined
-                      ? (threadId !== undefined
-                          ? { caption, message_thread_id: threadId }
-                          : { caption })
-                      : (threadId !== undefined
-                          ? { message_thread_id: threadId }
-                          : {}),
-                  )
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err)
-                  log.error(`Failed to send file: ${msg}`)
+              if (chunk.output.startsWith("FILE_SEND:")) {
+                const rest = chunk.output.slice("FILE_SEND:".length)
+                const colonIdx = rest.indexOf(":")
+                if (colonIdx !== -1) {
+                  const filePath = rest.slice(0, colonIdx)
+                  const caption = rest.slice(colonIdx + 1) || undefined
+                  try {
+                    await this.bot.api.sendDocument(
+                      chatId,
+                      new InputFile(filePath),
+                      caption !== undefined
+                        ? (threadId !== undefined
+                            ? { caption, message_thread_id: threadId }
+                            : { caption })
+                        : (threadId !== undefined
+                            ? { message_thread_id: threadId }
+                            : {}),
+                    )
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    log.error(`Failed to send file: ${msg}`)
+                  }
                 }
               }
+            } else if (chunk.type === "done") {
+              if (bufferedText) {
+                await responder.sendFinalResponse(bufferedText)
+                bufferedText = ""
+              }
+            } else if (chunk.type === "error") {
+              await responder.sendError(chunk.message)
+              bufferedText = ""
             }
-          } else if (chunk.type === "done") {
-            if (bufferedText) {
-              await responder.sendFinalResponse(bufferedText)
-            }
-          } else if (chunk.type === "error") {
-            await responder.sendError(chunk.message)
-          }
-        }
+          },
+        })
+
+        this.runningRuns.set(sessionKey, started.runId)
+        await started.finished
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         log.error(`Error handling message: ${message}`)
         await responder.sendError(message).catch(() => undefined)
       } finally {
         typing.stop()
-        this.runningAborts.delete(sessionKey)
+        this.runningRuns.delete(sessionKey)
         clearActiveChatForSession(sessionId)
       }
     })
