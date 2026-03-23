@@ -28,6 +28,25 @@ function toCapabilityStatus(status: RootRun["status"]) {
   }
 }
 
+function toStatusPillClass(status: RootRun["status"]) {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-50 text-emerald-700 ring-emerald-200"
+    case "failed":
+      return "bg-rose-50 text-rose-700 ring-rose-200"
+    case "cancelled":
+    case "interrupted":
+      return "bg-stone-100 text-stone-700 ring-stone-200"
+    case "awaiting_approval":
+    case "awaiting_user":
+      return "bg-amber-50 text-amber-700 ring-amber-200"
+    case "running":
+      return "bg-sky-50 text-sky-700 ring-sky-200"
+    default:
+      return "bg-stone-100 text-stone-700 ring-stone-200"
+  }
+}
+
 export function RunStatusCard({
   run,
   selected,
@@ -52,8 +71,11 @@ export function RunStatusCard({
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-stone-900">{run.title}</div>
-          <div className="mt-1 text-xs text-stone-500">
-            {toTaskProfileText(run.taskProfile, language)} · {text(`단계 ${run.currentStepIndex}/${run.totalSteps}`, `Step ${run.currentStepIndex}/${run.totalSteps}`)}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+            <span>{toTaskProfileText(run.taskProfile, language)} · {text(`단계 ${run.currentStepIndex}/${run.totalSteps}`, `Step ${run.currentStepIndex}/${run.totalSteps}`)}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${toStatusPillClass(run.status)}`}>
+              {toRunStatusText(run.status, language)}
+            </span>
           </div>
           <div className="mt-2 break-words text-xs leading-5 text-stone-600 [overflow-wrap:anywhere]">
             {text("현재 상태:", "Current status:")} {displayText(run.summary)}
@@ -114,7 +136,7 @@ export function RunStatusCard({
         >
           {text("상세 보기", "View details")}
         </button>
-        {onCancel ? <CancelRunButton canCancel={run.canCancel} onCancel={onCancel} /> : null}
+        {onCancel && run.canCancel ? <CancelRunButton canCancel={run.canCancel} onCancel={onCancel} /> : null}
       </div>
     </div>
   )

@@ -28,6 +28,8 @@ import {
   createRootRun,
   cancelRootRun,
   getRootRun,
+  getRequestGroupDelegationTurnCount,
+  listActiveSessionRequestGroups,
   findLatestWorkerSessionRun,
   findReconnectRequestGroupSelection,
   incrementDelegationTurnCount,
@@ -133,6 +135,118 @@ function markAbortedRunCancelledIfActive(runId: string): void {
   updateRunStatus(runId, "cancelled", "사용자가 실행을 취소했습니다.", false)
 }
 
+function isEnglishCancellationRequest(message: string): boolean {
+  return !/[가-힣]/.test(message) && /[a-z]/i.test(message)
+}
+
+function detectActiveQueueCancellationMode(message: string): "latest" | "all" | null {
+  const trimmed = message.trim()
+  if (!trimmed) return null
+  if (/(일정|schedule)/iu.test(trimmed)) return null
+  if (!/(취소|중단|멈춰|그만|cancel|abort|stop)/iu.test(trimmed)) return null
+
+  const directPatterns = [
+    /^(지금|현재|방금)?\s*(진행\s*중인|하고\s*있는|돌고\s*있는)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
+    /^(이|그)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
+    /^(cancel|stop|abort)(\s+the)?(\s+(current|active|running|latest|queued))?(\s+(task|run|request|job|queue))?[.!?]*$/i,
+  ]
+
+  const looksDirect = directPatterns.some((pattern) => pattern.test(trimmed))
+  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
+  if (!looksDirect && tokenCount > 8) return null
+
+  if (/(모두|전부|다\s*(취소|중단)?|all|everything|every\s*(task|run|request|job)?)/iu.test(trimmed)) {
+    return "all"
+  }
+  return "latest"
+}
+
+function buildActiveQueueCancellationMessage(params: {
+  originalMessage: string
+  mode: "latest" | "all"
+  cancelledTitles: string[]
+  remainingCount: number
+  hadTargets: boolean
+}): string {
+  const english = isEnglishCancellationRequest(params.originalMessage)
+  if (!params.hadTargets) {
+    return english
+      ? "There is no active task in this conversation to cancel."
+      : "현재 이 대화에서 취소할 실행 중 작업이 없습니다."
+  }
+
+  const titleLines = params.cancelledTitles.map((title) => `- ${title}`).join("\n")
+  if (english) {
+    const heading = params.mode === "all"
+      ? `Cancelled ${params.cancelledTitles.length} active task(s) in this conversation.`
+      : "Cancelled the most recent active task in this conversation."
+    const tail = params.remainingCount > 0
+      ? `\n\n${params.remainingCount} other active task(s) are still running.`
+      : ""
+    return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
+  }
+
+  const heading = params.mode === "all"
+    ? `현재 대화의 활성 작업 ${params.cancelledTitles.length}건을 취소했습니다.`
+    : "현재 대화에서 가장 최근 활성 작업 1건을 취소했습니다."
+  const tail = params.remainingCount > 0
+    ? `\n\n아직 ${params.remainingCount}건의 다른 활성 작업은 계속 진행 중입니다.`
+    : ""
+  return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
+}
+
+async function tryHandleActiveQueueCancellation(params: {
+  runId: string
+  sessionId: string
+  source: StartRootRunParams["source"]
+  onChunk: StartRootRunParams["onChunk"]
+  message: string
+}): Promise<boolean> {
+  const mode = detectActiveQueueCancellationMode(params.message)
+  if (!mode) return false
+
+  const activeGroups = listActiveSessionRequestGroups(params.sessionId, params.runId)
+  if (activeGroups.length === 0) {
+    await completeRunWithAssistantMessage(
+      params.runId,
+      params.sessionId,
+      buildActiveQueueCancellationMessage({
+        originalMessage: params.message,
+        mode,
+        cancelledTitles: [],
+        remainingCount: 0,
+        hadTargets: false,
+      }),
+      params.source,
+      params.onChunk,
+    )
+    return true
+  }
+
+  const targets = mode === "all" ? activeGroups : activeGroups.length > 0 ? [activeGroups[0]!] : []
+  const cancelledTitles: string[] = []
+  for (const target of targets) {
+    const cancelled = cancelRootRun(target.id)
+    if (cancelled) cancelledTitles.push(target.title)
+  }
+
+  const remainingCount = Math.max(0, activeGroups.length - cancelledTitles.length)
+  await completeRunWithAssistantMessage(
+    params.runId,
+    params.sessionId,
+    buildActiveQueueCancellationMessage({
+      originalMessage: params.message,
+      mode,
+      cancelledTitles,
+      remainingCount,
+      hadTargets: cancelledTitles.length > 0,
+    }),
+    params.source,
+    params.onChunk,
+  )
+  return true
+}
+
 function inferDelegatedTaskProfile(params: {
   originalMessage: string
   intake: TaskIntakeResult
@@ -213,6 +327,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const controller = new AbortController()
   const targetId = params.targetId ?? (params.model ? inferProviderId(params.model) : undefined)
   const effectiveTaskProfile = normalizeTaskProfile(params.taskProfile)
+  const initialDelegationTurnCount = isRootRequest ? 0 : getRequestGroupDelegationTurnCount(requestGroupId)
   const now = Date.now()
   const workDir = params.workDir ?? process.cwd()
   const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
@@ -242,6 +357,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     ...(targetId ? { targetId } : {}),
     ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
     taskProfile: effectiveTaskProfile,
+    delegationTurnCount: initialDelegationTurnCount,
     ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
     ...(workerSessionId ? { workerSessionId } : {}),
     contextMode: effectiveContextMode,
@@ -298,6 +414,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     let currentMessage = params.message
     const priorAssistantMessages: string[] = []
     const seenFollowupPrompts = new Set<string>()
+    const seenCommandFailureRecoveryKeys = new Set<string>()
     let activeWorkerRuntime = params.workerRuntime
     const requiresFilesystemMutation = requestRequiresFilesystemMutation(params.message)
     const pendingToolParams = new Map<string, unknown>()
@@ -326,6 +443,17 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     try {
       await new Promise<void>((resolve) => setImmediate(resolve))
       if (!params.skipIntake) {
+        const cancelled = await tryHandleActiveQueueCancellation({
+          runId,
+          sessionId,
+          source: params.source,
+          onChunk: params.onChunk,
+          message: params.message,
+        })
+        if (cancelled) {
+          return getRootRun(runId)
+        }
+
         const handled = await tryHandleIntakeBridge({
           message: params.message,
           sessionId,
@@ -364,6 +492,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       while (!controller.signal.aborted) {
         let preview = ""
         failed = false
+        const failedCommandTools: FailedCommandTool[] = []
+        let commandFailureSeen = false
+        let commandRecoveredWithinSamePass = false
 
         if (activeWorkerRuntime && workerSessionId) {
           appendRunEvent(runId, `${workerSessionId} 실행 시작`)
@@ -411,6 +542,18 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                 filesystemMutationPaths.add(mutationPath)
               }
             }
+            if (!chunk.success && isCommandFailureRecoveryTool(chunk.toolName)) {
+              commandFailureSeen = true
+              commandRecoveredWithinSamePass = false
+              failedCommandTools.push({
+                toolName: chunk.toolName,
+                output: chunk.output,
+                ...(toolParams !== undefined ? { params: toolParams } : {}),
+              })
+            } else if (chunk.success && isCommandFailureRecoveryTool(chunk.toolName) && commandFailureSeen) {
+              commandRecoveredWithinSamePass = true
+              failedCommandTools.length = 0
+            }
             const summary = chunk.success ? `${chunk.toolName} 실행 완료` : `${chunk.toolName} 실행 실패`
             appendRunEvent(runId, summary)
             updateRunSummary(runId, summary)
@@ -433,6 +576,43 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
 
         if (controller.signal.aborted || failed) {
           break
+        }
+
+        const postPassRun = getRootRun(runId)
+        const usedTurnsAfterPass = postPassRun?.delegationTurnCount ?? 0
+        const maxTurnsAfterPass = postPassRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+        const commandFailureRecovery = selectCommandFailureRecovery({
+          failedTools: failedCommandTools,
+          commandFailureSeen,
+          commandRecoveredWithinSamePass,
+          seenKeys: seenCommandFailureRecoveryKeys,
+        })
+
+        if (commandFailureRecovery) {
+          if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
+            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+              preview,
+              summary: `자동 후속 처리 한도(${maxTurnsAfterPass}회)에 도달했습니다.`,
+              reason: commandFailureRecovery.reason,
+              remainingItems: ["실패한 명령에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
+            })
+            break
+          }
+
+          seenCommandFailureRecoveryKeys.add(commandFailureRecovery.key)
+          incrementDelegationTurnCount(runId, commandFailureRecovery.summary)
+          appendRunEvent(runId, `명령 실패 대안 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+          setRunStepStatus(runId, "executing", "running", commandFailureRecovery.summary)
+          updateRunStatus(runId, "running", commandFailureRecovery.summary, true)
+          activeWorkerRuntime = undefined
+          currentMessage = buildCommandFailureRecoveryPrompt({
+            originalRequest: params.message,
+            previousResult: preview,
+            summary: commandFailureRecovery.summary,
+            reason: commandFailureRecovery.reason,
+            failedTools: failedCommandTools,
+          })
+          continue
         }
 
         if (requiresFilesystemMutation && !sawRealFilesystemMutation) {
@@ -1876,6 +2056,89 @@ function isRealFilesystemMutation(toolName: string, params: unknown): boolean {
     if ((segment.includes("cat") || segment.includes("printf") || segment.includes("echo")) && segment.includes(">")) return true
     return false
   })
+}
+
+interface FailedCommandTool {
+  toolName: string
+  output: string
+  params?: unknown
+}
+
+function isCommandFailureRecoveryTool(toolName: string): boolean {
+  return toolName === "shell_exec" || toolName === "app_launch" || toolName === "process_kill"
+}
+
+function normalizeCommandFailureKey(toolName: string, output: string): string {
+  return `${toolName}:${output.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240)}`
+}
+
+function describeCommandFailureReason(output: string): string {
+  if (/(not found|command not found|enoent|is not recognized)/i.test(output)) {
+    return "실행 명령을 찾지 못해 다른 명령이나 다른 도구 경로를 찾아야 합니다."
+  }
+  if (/(permission denied|operation not permitted|eacces|권한)/i.test(output)) {
+    return "권한 또는 접근 제한 때문에 같은 방법으로는 실행할 수 없습니다."
+  }
+  if (/(no such file|cannot find|not a directory|경로|파일을 찾을 수 없음)/i.test(output)) {
+    return "대상 경로나 파일 이름이 맞지 않아 다른 경로나 다른 생성 방법을 찾아야 합니다."
+  }
+  if (/(timeout|timed out|시간 초과)/i.test(output)) {
+    return "시간 초과가 발생해 더 짧거나 다른 실행 방법을 찾아야 합니다."
+  }
+  return "이전 명령이 실패해서 다른 방법을 찾아 다시 시도해야 합니다."
+}
+
+function selectCommandFailureRecovery(params: {
+  failedTools: FailedCommandTool[]
+  commandFailureSeen: boolean
+  commandRecoveredWithinSamePass: boolean
+  seenKeys: Set<string>
+}): { key: string; summary: string; reason: string } | null {
+  if (!params.commandFailureSeen || params.commandRecoveredWithinSamePass || params.failedTools.length === 0) {
+    return null
+  }
+
+  for (let index = params.failedTools.length - 1; index >= 0; index -= 1) {
+    const failedTool = params.failedTools[index]
+    if (!failedTool) continue
+    const key = normalizeCommandFailureKey(failedTool.toolName, failedTool.output)
+    if (params.seenKeys.has(key)) continue
+
+    return {
+      key,
+      summary: `${failedTool.toolName} 실패 후 다른 방법을 자동으로 찾는 중입니다.`,
+      reason: describeCommandFailureReason(failedTool.output),
+    }
+  }
+
+  return null
+}
+
+function buildCommandFailureRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  summary: string
+  reason: string
+  failedTools: FailedCommandTool[]
+}): string {
+  const failedLines = params.failedTools.slice(-3).map((tool, index) => {
+    const preview = tool.output.trim().replace(/\s+/g, " ").slice(0, 280)
+    return `${index + 1}. ${tool.toolName} 실패: ${preview}`
+  })
+
+  return [
+    "[Command Failure Recovery]",
+    "이전 시도에서 로컬 명령 실행이 실패했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    `복구 요약: ${params.summary}`,
+    `실패 분석: ${params.reason}`,
+    failedLines.length > 0 ? ["실패한 명령 기록:", ...failedLines].join("\n") : "",
+    params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
+    "실패 원인을 먼저 확인하고, 같은 실패 명령을 그대로 반복하지 마세요.",
+    "경로, 권한, 명령 형식, 대상 프로그램 상태를 점검한 뒤 다른 실행 방법이나 다른 로컬 도구를 선택하세요.",
+    "필요하면 shell_exec 대신 파일 도구, 앱 실행 도구, 다른 안전한 로컬 도구를 사용하세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
 }
 
 function buildFilesystemMutationFollowupPrompt(params: {

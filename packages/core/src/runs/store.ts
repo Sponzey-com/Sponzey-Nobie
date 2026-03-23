@@ -190,6 +190,35 @@ export function listActiveRootRuns(limit = 100): RootRun[] {
     .map(hydrateRun)
 }
 
+export function listActiveSessionRequestGroups(sessionId: string, excludingRunId?: string): RootRun[] {
+  const rows = excludingRunId
+    ? getDb()
+        .prepare<[string, string], RootRunRow>(
+          `SELECT *
+           FROM root_runs
+           WHERE session_id = ?
+             AND id <> ?
+             AND status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
+           ORDER BY updated_at DESC`,
+        )
+        .all(sessionId, excludingRunId)
+    : getDb()
+        .prepare<[string], RootRunRow>(
+          `SELECT *
+           FROM root_runs
+           WHERE session_id = ?
+             AND status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
+           ORDER BY updated_at DESC`,
+        )
+        .all(sessionId)
+
+  const grouped = new Map<string, RootRun>()
+  for (const run of rows.map(hydrateRun)) {
+    if (!grouped.has(run.requestGroupId)) grouped.set(run.requestGroupId, run)
+  }
+  return [...grouped.values()]
+}
+
 export function listRunsForActiveRequestGroups(limitGroups = 100, limitRuns = 300): RootRun[] {
   const activeGroups = [...new Set(listActiveRootRuns(limitGroups).map((run) => run.requestGroupId))]
   if (activeGroups.length === 0) return []
@@ -254,6 +283,18 @@ export function listRequestGroupRuns(requestGroupId: string): RootRun[] {
 
 export function hasActiveRequestGroupRuns(requestGroupId: string): boolean {
   return listRequestGroupRuns(requestGroupId).some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status))
+}
+
+export function getRequestGroupDelegationTurnCount(requestGroupId: string): number {
+  const row = getDb()
+    .prepare<[string], { max_count: number | null }>(
+      `SELECT MAX(delegation_turn_count) as max_count
+       FROM root_runs
+       WHERE request_group_id = ?`,
+    )
+    .get(requestGroupId)
+
+  return row?.max_count ?? 0
 }
 
 
@@ -389,6 +430,7 @@ export function createRootRun(params: {
   workerSessionId?: string
   contextMode?: RunContextMode
   maxDelegationTurns?: number
+  delegationTurnCount?: number
 }): RootRun {
   const now = Date.now()
   const totalSteps = DEFAULT_RUN_STEPS.length
@@ -419,7 +461,7 @@ export function createRootRun(params: {
       params.workerSessionId ?? null,
       params.contextMode ?? "full",
       params.requestGroupId ?? params.id,
-      0,
+      params.delegationTurnCount ?? 0,
       params.maxDelegationTurns ?? 5,
       "received",
       1,
@@ -511,21 +553,35 @@ export function incrementDelegationTurnCount(runId: string, summary?: string): R
   const current = getRootRun(runId)
   if (!current) return undefined
 
+  const nextCount = current.delegationTurnCount + 1
+
   getDb()
     .prepare(
       `UPDATE root_runs
-       SET delegation_turn_count = delegation_turn_count + 1,
-           summary = ?,
-           updated_at = ?
-       WHERE id = ?`,
+       SET delegation_turn_count = CASE
+             WHEN delegation_turn_count < ? THEN ?
+             ELSE delegation_turn_count
+           END,
+           summary = CASE WHEN id = ? THEN ? ELSE summary END,
+           updated_at = CASE WHEN id = ? THEN ? ELSE updated_at END
+       WHERE request_group_id = ?`,
     )
-    .run(summary ?? current.summary, now, runId)
+    .run(
+      nextCount,
+      nextCount,
+      runId,
+      summary ?? current.summary,
+      runId,
+      now,
+      current.requestGroupId,
+    )
 
-  const run = getRootRun(runId)
-  if (run) {
+  const runs = listRequestGroupRuns(current.requestGroupId)
+  for (const run of runs) {
     eventBus.emit("run.progress", { run })
   }
-  return run
+
+  return runs.find((run) => run.id === runId)
 }
 
 export function updateActiveRunsMaxDelegationTurns(maxDelegationTurns: number): RootRun[] {
