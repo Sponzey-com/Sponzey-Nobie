@@ -2,12 +2,14 @@ import type { CapabilityStatus } from "./capabilities"
 
 export type AIBackendKind = "provider" | "worker"
 export type AIProviderType = "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom"
-export type AIBackendCredentialKey = "apiKey" | "username" | "password"
+export type AIAuthMode = "api_key" | "chatgpt_oauth"
+export type AIBackendCredentialKey = "apiKey" | "username" | "password" | "oauthAuthFilePath"
 
 export interface AIBackendCredentials {
   apiKey?: string
   username?: string
   password?: string
+  oauthAuthFilePath?: string
 }
 
 export interface AIProviderCredentialField {
@@ -23,6 +25,7 @@ export interface AIBackendCard {
   label: string
   kind: AIBackendKind
   providerType: AIProviderType
+  authMode: AIAuthMode
   credentials: AIBackendCredentials
   local: boolean
   enabled: boolean
@@ -39,6 +42,7 @@ export interface NewAIBackendInput {
   label: string
   kind: AIBackendKind
   providerType: AIProviderType
+  authMode: AIAuthMode
   credentials: AIBackendCredentials
   local: boolean
   availableModels: string[]
@@ -127,9 +131,12 @@ export function getAIProviderDefaultEndpoint(providerType: AIProviderType): stri
   }
 }
 
-export function getAIProviderCredentialFields(providerType: AIProviderType): AIProviderCredentialField[] {
+export function getAIProviderCredentialFields(providerType: AIProviderType, authMode: AIAuthMode = "api_key"): AIProviderCredentialField[] {
   switch (providerType) {
     case "openai":
+      if (authMode === "chatgpt_oauth") {
+        return [{ key: "oauthAuthFilePath", label: "Auth File Path", inputType: "text", placeholder: "~/.codex/auth.json", required: false }]
+      }
       return [{ key: "apiKey", label: "API Key", inputType: "password", placeholder: "sk-...", required: true }]
     case "claude":
       return [{ key: "apiKey", label: "API Key", inputType: "password", placeholder: "sk-ant-...", required: true }]
@@ -150,8 +157,12 @@ export function getAIProviderCredentialFields(providerType: AIProviderType): AIP
 export function hasRequiredProviderCredentials(
   providerType: AIProviderType,
   credentials: AIBackendCredentials,
+  authMode: AIAuthMode = "api_key",
 ): boolean {
-  return getAIProviderCredentialFields(providerType)
+  if (providerType === "openai" && authMode === "chatgpt_oauth") {
+    return true
+  }
+  return getAIProviderCredentialFields(providerType, authMode)
     .filter((field) => field.required)
     .every((field) => (credentials[field.key] ?? "").trim().length > 0)
 }

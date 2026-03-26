@@ -1,5 +1,5 @@
 import type { FeatureCapability } from "../../contracts/capabilities"
-import type { AIBackendCredentials, AIProviderType } from "../../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../../contracts/ai"
 import type { McpServersResponse } from "../../contracts/mcp"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../../contracts/setup"
 import type {
@@ -63,10 +63,10 @@ export const localAdapter: ControlPlaneAdapter = {
     }),
   resetSetup: () => request<ResetSetupResponse>("/api/setup/reset", { method: "POST" }),
   completeSetup: () => request<SetupState>("/api/setup/complete", { method: "POST" }),
-  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials) =>
+  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) =>
     request<TestBackendResponse>("/api/setup/test-backend", {
       method: "POST",
-      body: JSON.stringify({ endpoint, providerType, credentials }),
+      body: JSON.stringify({ endpoint, providerType, credentials, authMode }),
     }),
   testTelegram: (botToken) =>
     request<TestTelegramResponse>("/api/setup/test-telegram", {

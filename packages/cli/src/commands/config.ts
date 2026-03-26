@@ -34,7 +34,9 @@ const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
     enabled: true,
     port: 18888,
     host: "127.0.0.1",
-    auth: { enabled: false },
+    auth: {
+      enabled: false,
+    },
   },
   scheduler: {
     enabled: true,

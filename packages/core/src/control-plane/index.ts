@@ -15,6 +15,13 @@ import {
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js"
+import {
+  OPENAI_CODEX_KNOWN_MODELS,
+  OPENAI_CODEX_RESPONSES_PATH,
+  OPENAI_CODEX_USER_AGENT,
+  readOpenAICodexAccessToken,
+  resolveOpenAICodexBaseUrl,
+} from "../auth/openai-codex-oauth.js"
 
 export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
 
@@ -41,10 +48,12 @@ export interface AIBackendCard {
   label: string
   kind: "provider" | "worker"
   providerType: "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom"
+  authMode: "api_key" | "chatgpt_oauth"
   credentials: {
     apiKey?: string
     username?: string
     password?: string
+    oauthAuthFilePath?: string
   }
   local: boolean
   enabled: boolean
@@ -196,6 +205,7 @@ function toCredentials(value: unknown): AIBackendCard["credentials"] {
   if (typeof raw.apiKey === "string") credentials.apiKey = raw.apiKey
   if (typeof raw.username === "string") credentials.username = raw.username
   if (typeof raw.password === "string") credentials.password = raw.password
+  if (typeof raw.oauthAuthFilePath === "string") credentials.oauthAuthFilePath = raw.oauthAuthFilePath
   return credentials
 }
 
@@ -301,12 +311,18 @@ function createDefaultRoutingProfiles(): RoutingProfile[] {
 
 function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
   const openaiApiKey = config.llm.providers.openai?.apiKeys?.[0] ?? ""
+  const openaiAuthMode = config.llm.providers.openai?.auth?.mode ?? "api_key"
+  const openaiOauthAuthFilePath = config.llm.providers.openai?.auth?.codexAuthFilePath ?? ""
   const geminiApiKey = config.llm.providers.gemini?.apiKeys?.[0] ?? ""
   const anthropicApiKey = config.llm.providers.anthropic?.apiKeys?.[0] ?? ""
-  const openaiEndpoint = config.llm.providers.openai?.baseUrl?.trim() || undefined
+  const openaiEndpoint = openaiAuthMode === "chatgpt_oauth"
+    ? resolveOpenAICodexBaseUrl(config.llm.providers.openai?.baseUrl?.trim())
+    : (config.llm.providers.openai?.baseUrl?.trim() || undefined)
   const geminiEndpoint = config.llm.providers.gemini?.baseUrl?.trim() || undefined
   const ollamaEndpoint = config.llm.providers.ollama?.baseUrl?.trim() || undefined
-  const openaiModel = config.llm.defaultProvider === "openai" ? config.llm.defaultModel : ""
+  const openaiModel = config.llm.defaultProvider === "openai"
+    ? (config.llm.defaultModel || (openaiAuthMode === "chatgpt_oauth" ? OPENAI_CODEX_KNOWN_MODELS[0] : ""))
+    : ""
   const geminiModel = config.llm.defaultProvider === "gemini" ? config.llm.defaultModel : ""
   const anthropicModel = config.llm.defaultProvider === "anthropic" ? config.llm.defaultModel : ""
 
@@ -316,11 +332,13 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "범용 원격 추론",
       kind: "provider",
       providerType: "openai",
+      authMode: openaiAuthMode,
       credentials: {
         apiKey: openaiApiKey,
+        oauthAuthFilePath: openaiOauthAuthFilePath,
       },
       local: false,
-      enabled: Boolean(openaiApiKey || openaiEndpoint || openaiModel),
+      enabled: Boolean(openaiApiKey || openaiEndpoint || openaiModel || openaiAuthMode === "chatgpt_oauth"),
       availableModels: [],
       defaultModel: openaiModel,
       status: "ready",
@@ -333,6 +351,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "계획·리서치 특화",
       kind: "provider",
       providerType: "gemini",
+      authMode: "api_key",
       credentials: {
         apiKey: geminiApiKey,
       },
@@ -350,6 +369,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "로컬 모델 우선",
       kind: "provider",
       providerType: "ollama",
+      authMode: "api_key",
       credentials: {},
       local: true,
       enabled: Boolean(ollamaEndpoint),
@@ -365,6 +385,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "로컬 경량 추론",
       kind: "provider",
       providerType: "llama",
+      authMode: "api_key",
       credentials: {},
       local: true,
       enabled: false,
@@ -379,6 +400,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "코드 작업 세션",
       kind: "worker",
       providerType: "claude",
+      authMode: "api_key",
       credentials: {
         apiKey: anthropicApiKey,
       },
@@ -395,6 +417,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       label: "코드 작업 보조 세션",
       kind: "worker",
       providerType: "openai",
+      authMode: "api_key",
       credentials: {},
       local: false,
       enabled: false,
@@ -424,6 +447,9 @@ function mergeBackend(base: AIBackendCard, value: unknown): AIBackendCard {
     providerType: ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(raw.providerType))
       ? (raw.providerType as AIBackendCard["providerType"])
       : base.providerType,
+    authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
+      ? (raw.authMode as AIBackendCard["authMode"])
+      : base.authMode,
     credentials: toCredentials(raw.credentials),
     defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : base.defaultModel,
     summary: typeof raw.summary === "string" ? sanitizeBackendSummary(raw.summary) : base.summary,
@@ -470,6 +496,9 @@ function sanitizeCustomBackends(value: unknown): AIBackendCard[] {
         providerType: ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(raw.providerType))
           ? (raw.providerType as AIBackendCard["providerType"])
           : "custom",
+        authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
+          ? (raw.authMode as AIBackendCard["authMode"])
+          : "api_key",
         credentials: toCredentials(raw.credentials),
         local: typeof raw.local === "boolean" ? raw.local : false,
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : false,
@@ -547,6 +576,7 @@ function persistBackends(raw: JsonObject, draft: SetupDraft): void {
       local: backend.local,
       defaultModel: backend.defaultModel,
       providerType: backend.providerType,
+      authMode: backend.authMode ?? "api_key",
       credentials: backend.credentials,
       tags: backend.tags,
       status: backend.status,
@@ -575,6 +605,10 @@ function persistBackends(raw: JsonObject, draft: SetupDraft): void {
 
 export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: SetupDraft; state: SetupState } {
   const raw = readRawConfig()
+  const rawWebuiAuth = {
+    ...toObject(toObject(raw.webui).auth),
+  }
+  delete rawWebuiAuth.oauth
 
   raw.profile = {
     ...toObject(raw.profile),
@@ -615,7 +649,7 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
     host: draft.remoteAccess.host,
     port: draft.remoteAccess.port,
     auth: {
-      ...toObject(toObject(raw.webui).auth),
+      ...rawWebuiAuth,
       enabled: draft.remoteAccess.authEnabled,
       token: draft.remoteAccess.authToken,
     },
@@ -626,14 +660,26 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
 
   const openai = draft.aiBackends.find((backend) => backend.id === "provider:openai")
   if (openai) {
+    const normalizedOpenAIEndpoint = openai.authMode === "chatgpt_oauth"
+      ? resolveOpenAICodexBaseUrl(openai.endpoint)
+      : openai.endpoint
+    const normalizedOpenAIDefaultModel = openai.defaultModel || (openai.authMode === "chatgpt_oauth" ? OPENAI_CODEX_KNOWN_MODELS[0] : "")
     rawProviders.openai = {
       ...toObject(rawProviders.openai),
-      baseUrl: openai.endpoint,
+      baseUrl: normalizedOpenAIEndpoint,
       apiKeys: openai.credentials.apiKey?.trim() ? [openai.credentials.apiKey.trim()] : [],
+      auth: {
+        ...toObject(toObject(rawProviders.openai).auth),
+        mode: openai.authMode ?? "api_key",
+        codexAuthFilePath: openai.credentials.oauthAuthFilePath?.trim() || undefined,
+        clientId: typeof toObject(toObject(rawProviders.openai).auth).clientId === "string"
+          ? toObject(toObject(rawProviders.openai).auth).clientId
+          : undefined,
+      },
     }
     if (!rawLlm.defaultProvider || rawLlm.defaultProvider === "openai") {
       rawLlm.defaultProvider = "openai"
-      rawLlm.defaultModel = openai.defaultModel
+      rawLlm.defaultModel = normalizedOpenAIDefaultModel
     }
   }
 
@@ -957,7 +1003,8 @@ function candidateUrls(endpoint: string, providerType: AIBackendCard["providerTy
 function createDiscoveryHeaders(
   providerType: AIBackendCard["providerType"],
   credentials: AIBackendCard["credentials"],
-): Record<string, string> {
+  authMode: AIBackendCard["authMode"] = "api_key",
+): Promise<Record<string, string>> | Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json",
   }
@@ -969,6 +1016,15 @@ function createDiscoveryHeaders(
   if (username || password) {
     headers.Authorization = `Basic ${Buffer.from(`${username ?? ""}:${password ?? ""}`).toString("base64")}`
     return headers
+  }
+
+  if (providerType === "openai" && authMode === "chatgpt_oauth") {
+    return readOpenAICodexAccessToken({
+      authFilePath: credentials.oauthAuthFilePath,
+    }).then(({ accessToken }) => ({
+      ...headers,
+      Authorization: `Bearer ${accessToken}`,
+    }))
   }
 
   if (!apiKey) return headers
@@ -996,18 +1052,57 @@ export async function discoverModelsFromEndpoint(
   endpoint: string,
   providerType: AIBackendCard["providerType"] = "custom",
   credentials: AIBackendCard["credentials"] = {},
+  authMode: AIBackendCard["authMode"] = "api_key",
 ): Promise<{ models: string[]; sourceUrl: string }> {
   const normalized = normalizeEndpoint(endpoint)
   if (!normalized) {
     throw new Error("엔드포인트를 먼저 입력하세요.")
   }
 
+  if (providerType === "openai" && authMode === "chatgpt_oauth") {
+    const { accessToken } = await readOpenAICodexAccessToken({
+      authFilePath: credentials.oauthAuthFilePath,
+    })
+    const baseUrl = resolveOpenAICodexBaseUrl(normalized)
+    const sourceUrl = `${baseUrl}${OPENAI_CODEX_RESPONSES_PATH}`
+    const response = await fetch(sourceUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "User-Agent": OPENAI_CODEX_USER_AGENT,
+      },
+      body: JSON.stringify({
+        model: OPENAI_CODEX_KNOWN_MODELS[0],
+        input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+        instructions: "You are Codex.",
+        store: false,
+        stream: true,
+      }),
+    })
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).trim()
+      throw new Error(detail || `${response.status} ${response.statusText}`)
+    }
+    try {
+      await response.body?.cancel?.()
+    } catch {
+      // ignore cancellation failure for probe requests
+    }
+    return {
+      models: [...OPENAI_CODEX_KNOWN_MODELS],
+      sourceUrl,
+    }
+  }
+
+  const headers = await createDiscoveryHeaders(providerType, credentials, authMode)
   const errors: string[] = []
   for (const candidate of candidateUrls(normalized, providerType)) {
     try {
       const response = await fetch(candidate, {
         method: "GET",
-        headers: createDiscoveryHeaders(providerType, credentials),
+        headers,
       })
       if (!response.ok) {
         errors.push(`${candidate}: ${response.status} ${response.statusText}`)

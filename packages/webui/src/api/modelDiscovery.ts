@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { AIBackendCredentials, AIProviderType } from "../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 
 export interface ModelDiscoveryResult {
   models: string[]
@@ -8,6 +8,15 @@ export interface ModelDiscoveryResult {
 
 function formatBackendDiscoveryError(message: string, providerType: AIProviderType): string {
   const normalized = message.toLowerCase()
+
+  if (
+    normalized.includes("codex login") ||
+    normalized.includes("auth.json") ||
+    normalized.includes("refresh token") ||
+    normalized.includes("oauth")
+  ) {
+    return "ChatGPT OAuth 인증 정보를 읽지 못했습니다. `codex login` 상태와 auth.json 경로를 다시 확인해 주세요."
+  }
 
   if (
     normalized.includes("unauthorized") ||
@@ -41,9 +50,10 @@ export async function discoverModelsFromEndpoint(
   endpoint: string,
   providerType: AIProviderType,
   credentials: AIBackendCredentials,
+  authMode: AIAuthMode = "api_key",
 ): Promise<ModelDiscoveryResult> {
   try {
-    const result = await api.testBackend(endpoint, providerType, credentials)
+    const result = await api.testBackend(endpoint, providerType, credentials, authMode)
     if (!result.ok || !result.models || !result.sourceUrl) {
       throw new Error(formatBackendDiscoveryError(result.error ?? "모델 목록을 가져오지 못했습니다.", providerType))
     }
