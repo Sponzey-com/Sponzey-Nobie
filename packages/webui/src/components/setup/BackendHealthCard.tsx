@@ -10,6 +10,7 @@ import {
   isLocalProviderType,
   type AIBackendCard,
   type AIBackendCredentialKey,
+  type AIAuthMode,
   type RoutingProfile,
   type AIProviderType,
 } from "../../contracts/ai"
@@ -22,6 +23,12 @@ function getKindLabel(kind: AIBackendCard["kind"], text: (ko: string, en: string
   return kind === "worker"
     ? text("작업 워커 (Worker)", "Task Worker")
     : text("직접 연결 (Provider)", "Direct Provider")
+}
+
+function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string) => string): string {
+  return mode === "chatgpt_oauth"
+    ? text("ChatGPT OAuth (Codex)", "ChatGPT OAuth (Codex)")
+    : text("API Key", "API Key")
 }
 
 export function BackendHealthCard({
@@ -66,7 +73,7 @@ export function BackendHealthCard({
     clearDiscoveryState()
 
     try {
-      const result = await discoverModelsFromEndpoint(backend.endpoint ?? "", backend.providerType, backend.credentials)
+      const result = await discoverModelsFromEndpoint(backend.endpoint ?? "", backend.providerType, backend.credentials, backend.authMode ?? "api_key")
       onChange(backend.id, {
         availableModels: result.models,
         defaultModel: result.models.includes(backend.defaultModel) ? backend.defaultModel : result.models[0] ?? "",
@@ -105,12 +112,29 @@ export function BackendHealthCard({
   function handleProviderTypeChange(providerType: AIProviderType) {
     onChange(backend.id, {
       providerType,
+      authMode: providerType === "openai" ? (backend.authMode ?? "api_key") : "api_key",
       credentials: {},
       local: isLocalProviderType(providerType),
       endpoint: getAIProviderDefaultEndpoint(providerType),
       availableModels: [],
       defaultModel: "",
       enabled: false,
+      status: "disabled",
+      reason: undefined,
+    })
+    clearDiscoveryState()
+  }
+
+  function handleAuthModeChange(authMode: AIAuthMode) {
+    onChange(backend.id, {
+      authMode,
+      credentials: {
+        ...backend.credentials,
+        ...(authMode === "chatgpt_oauth" ? { apiKey: "" } : {}),
+      },
+      endpoint: authMode === "chatgpt_oauth" ? "https://chatgpt.com/backend-api/codex" : "https://api.openai.com/v1",
+      availableModels: [],
+      defaultModel: "",
       status: "disabled",
       reason: undefined,
     })
@@ -126,9 +150,10 @@ export function BackendHealthCard({
     })
   }
 
-  const credentialFields = getAIProviderCredentialFields(backend.providerType)
+  const credentialFields = getAIProviderCredentialFields(backend.providerType, backend.authMode ?? "api_key")
+  const isOpenAIOAuthMode = backend.providerType === "openai" && (backend.authMode ?? "api_key") === "chatgpt_oauth"
   const canLoadModels =
-    Boolean(backend.endpoint?.trim()) && hasRequiredProviderCredentials(backend.providerType, backend.credentials)
+    Boolean(backend.endpoint?.trim()) && hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key")
   const isPrimaryBuiltin = backend.id === "provider:openai"
   const isBuiltinBackend = isBuiltinBackendId(backend.id)
 
@@ -160,6 +185,20 @@ export function BackendHealthCard({
           </select>
         </div>
 
+        {backend.providerType === "openai" ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-stone-700">{text("인증 방식", "Authentication Method")}</label>
+            <select
+              className="input"
+              value={backend.authMode ?? "api_key"}
+              onChange={(event) => handleAuthModeChange(event.target.value as AIAuthMode)}
+            >
+              <option value="api_key">{getOpenAIAuthModeLabel("api_key", text)}</option>
+              <option value="chatgpt_oauth">{getOpenAIAuthModeLabel("chatgpt_oauth", text)}</option>
+            </select>
+          </div>
+        ) : null}
+
         {credentialFields.length > 0 ? (
           <div>
             <div className="mb-2 text-sm font-medium text-stone-700">{text("인증 정보 (Credentials)", "Credentials")}</div>
@@ -185,6 +224,18 @@ export function BackendHealthCard({
           </div>
         ) : null}
 
+        {isOpenAIOAuthMode ? (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-xs leading-6 text-sky-900">
+            <div className="font-semibold">{text("ChatGPT OAuth (Codex) 사용 안내", "How ChatGPT OAuth (Codex) works")}</div>
+            <div className="mt-2">
+              {text(
+                "이 방식은 `codex login`으로 생성된 `~/.codex/auth.json` 토큰을 읽어 `https://chatgpt.com/backend-api/codex`에 연결합니다. OpenAI API Key가 아니라 ChatGPT Codex backend를 사용하므로, 연결 확인과 모델 조회는 Codex backend probe로 처리됩니다.",
+                "This mode reads the token saved by `codex login` in `~/.codex/auth.json` and connects to `https://chatgpt.com/backend-api/codex`. It uses the ChatGPT Codex backend instead of the OpenAI API key path, so connection checks and model loading are handled through a Codex backend probe.",
+              )}
+            </div>
+          </div>
+        ) : null}
+
         <div>
           <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 주소 (Endpoint) *", "Endpoint *")}</label>
           <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
@@ -199,7 +250,11 @@ export function BackendHealthCard({
                   status: "disabled",
                   reason: undefined,
                 })}
-              placeholder={getAIProviderEndpointPlaceholder(backend.providerType)}
+              placeholder={
+                isOpenAIOAuthMode
+                  ? "https://chatgpt.com/backend-api/codex"
+                  : getAIProviderEndpointPlaceholder(backend.providerType)
+              }
             />
             <button
               onClick={() => void runDiscovery("test")}
@@ -220,7 +275,7 @@ export function BackendHealthCard({
           {successMessage ? <p className="mt-2 text-xs leading-5 text-emerald-700">{successMessage}</p> : null}
           {sourceUrl ? <p className="mt-1 text-xs text-emerald-700">{text("조회 경로", "Source URL")}: {sourceUrl}</p> : null}
           {discoveryError ? <p className="mt-2 text-xs leading-5 text-red-600">{displayText(discoveryError)}</p> : null}
-          {!hasRequiredProviderCredentials(backend.providerType, backend.credentials) ? (
+          {!hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key") ? (
             <p className="mt-2 text-xs text-amber-700">{text("필수 인증 정보를 입력해야 연결 확인과 모델 조회를 진행할 수 있습니다.", "Enter the required credentials before checking the connection and loading models.")}</p>
           ) : null}
         </div>

@@ -34,7 +34,7 @@ export function registerSetupRoute(app: FastifyInstance): void {
     },
   )
 
-  app.post<{ Body: { endpoint?: string; providerType?: string; credentials?: { apiKey?: string; username?: string; password?: string } } }>(
+  app.post<{ Body: { endpoint?: string; providerType?: string; authMode?: string; credentials?: { apiKey?: string; username?: string; password?: string; oauthAuthFilePath?: string } } }>(
     "/api/setup/test-backend",
     { preHandler: authMiddleware },
     async (req, reply) => {
@@ -43,16 +43,22 @@ export function registerSetupRoute(app: FastifyInstance): void {
         ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(req.body?.providerType))
           ? (req.body?.providerType as "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom")
           : "custom"
-      const credentials: { apiKey?: string; username?: string; password?: string } = {}
+      const authMode = ["api_key", "chatgpt_oauth"].includes(String(req.body?.authMode))
+        ? (req.body?.authMode as "api_key" | "chatgpt_oauth")
+        : "api_key"
+      const credentials: { apiKey?: string; username?: string; password?: string; oauthAuthFilePath?: string } = {}
       if (req.body?.credentials?.apiKey?.trim()) credentials.apiKey = req.body.credentials.apiKey.trim()
       if (req.body?.credentials?.username?.trim()) credentials.username = req.body.credentials.username.trim()
       if (req.body?.credentials?.password?.trim()) credentials.password = req.body.credentials.password.trim()
+      if (req.body?.credentials?.oauthAuthFilePath?.trim()) {
+        credentials.oauthAuthFilePath = req.body.credentials.oauthAuthFilePath.trim()
+      }
       if (!endpoint) {
         return reply.status(400).send({ ok: false, error: "endpoint is required" })
       }
 
       try {
-        const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials)
+        const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials, authMode)
         return { ok: true, ...result }
       } catch (error) {
         return reply.status(400).send({

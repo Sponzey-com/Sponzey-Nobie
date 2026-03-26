@@ -16,26 +16,29 @@ export function RemoteAccessForm({
 
   return (
     <fieldset disabled={disabled} className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 disabled:opacity-60">
-      <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
-        <input
-          type="checkbox"
-          checked={value.authEnabled}
-          onChange={(event) => onChange({ authEnabled: event.target.checked })}
-        />
-        {text("WebUI 인증 사용", "Use WebUI authentication")}
-      </label>
-      <div>
-        <label className="mb-1 block text-sm font-medium text-stone-700">
-          {text("인증 토큰", "Auth Token")}{value.authEnabled ? " *" : ""}
+      <div className="space-y-5">
+        <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
+          <input
+            type="checkbox"
+            checked={value.authEnabled}
+            onChange={(event) => onChange({ authEnabled: event.target.checked })}
+          />
+          {text("WebUI 인증 사용", "Use WebUI authentication")}
         </label>
-        <input
-          className="input font-mono"
-          value={value.authToken}
-          onChange={(event) => onChange({ authToken: event.target.value })}
-          placeholder="nobie-local-token"
-        />
-        {errors?.authToken ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.authToken}</p> : null}
+        <div>
+          <label className="mb-1 block text-sm font-medium text-stone-700">
+            {text("인증 토큰", "Auth Token")}{value.authEnabled ? " *" : ""}
+          </label>
+          <input
+            className="input font-mono"
+            value={value.authToken}
+            onChange={(event) => onChange({ authToken: event.target.value })}
+            placeholder="nobie-local-token"
+          />
+          {errors?.authToken ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.authToken}</p> : null}
+        </div>
       </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm font-medium text-stone-700">{text("호스트 (Host) *", "Host *")}</label>

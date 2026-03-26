@@ -1,5 +1,5 @@
 import type { FeatureCapability } from "../../contracts/capabilities"
-import type { AIBackendCredentials, AIProviderType } from "../../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../../contracts/ai"
 import type { McpServersResponse } from "../../contracts/mcp"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../../contracts/setup"
 
@@ -97,7 +97,7 @@ export interface ControlPlaneAdapter {
   saveSetupDraft: (payload: { draft: SetupDraft; state?: SetupState }) => Promise<{ draft: SetupDraft; state: SetupState }>
   resetSetup: () => Promise<ResetSetupResponse>
   completeSetup: () => Promise<SetupState>
-  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials) => Promise<TestBackendResponse>
+  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) => Promise<TestBackendResponse>
   testTelegram: (botToken: string) => Promise<TestTelegramResponse>
   testMcpServer: (server: SetupMcpServerDraft) => Promise<TestMcpServerResponse>
   testSkillPath: (path: string) => Promise<TestSkillPathResponse>

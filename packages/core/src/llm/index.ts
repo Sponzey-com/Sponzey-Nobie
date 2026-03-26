@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs"
 import { getConfig } from "../config/index.js"
+import { resolveOpenAICodexAuthFilePath } from "../auth/openai-codex-oauth.js"
 import { AnthropicProvider } from "./providers/anthropic.js"
 import { GeminiProvider } from "./providers/gemini.js"
 import { OpenAIProvider } from "./providers/openai.js"
@@ -9,6 +11,15 @@ const providers = new Map<string, LLMProvider>()
 
 function buildProfile(apiKeys: string[]): AuthProfile {
   return { apiKeys, currentKeyIndex: 0, cooldowns: new Map() }
+}
+
+function isOpenAIOAuthConfigured(config = getConfig()): boolean {
+  const openai = config.llm.providers.openai
+  if (openai?.auth?.mode !== "chatgpt_oauth") return false
+  return existsSync(resolveOpenAICodexAuthFilePath({
+    authFilePath: openai.auth.codexAuthFilePath,
+    clientId: openai.auth.clientId,
+  }))
 }
 
 export function getProvider(providerId?: string): LLMProvider {
@@ -32,13 +43,23 @@ export function getProvider(providerId?: string): LLMProvider {
   }
 
   if (id === "openai") {
+    const authMode = cfg.openai?.auth?.mode ?? "api_key"
     const keys = (cfg.openai?.apiKeys ?? []).filter(Boolean)
-    if (keys.length === 0 && process.env["OPENAI_API_KEY"]) {
+    if (authMode !== "chatgpt_oauth" && keys.length === 0 && process.env["OPENAI_API_KEY"]) {
       keys.push(process.env["OPENAI_API_KEY"])
     }
     const profile = buildProfile(keys)
     profiles.set(id, profile)
-    const p = new OpenAIProvider(profile, cfg.openai?.baseUrl)
+    const p = new OpenAIProvider(
+      profile,
+      cfg.openai?.baseUrl,
+      authMode === "chatgpt_oauth"
+        ? {
+            authFilePath: cfg.openai?.auth?.codexAuthFilePath,
+            clientId: cfg.openai?.auth?.clientId,
+          }
+        : undefined,
+    )
     providers.set(id, p)
     return p
   }
@@ -89,7 +110,7 @@ export function detectAvailableProvider(): string {
     if (hasKey) return "anthropic"
   }
   if (configured === "openai") {
-    const hasKey = (cfg.openai?.apiKeys ?? []).filter(Boolean).length > 0 || !!process.env["OPENAI_API_KEY"]
+    const hasKey = (cfg.openai?.apiKeys ?? []).filter(Boolean).length > 0 || !!process.env["OPENAI_API_KEY"] || isOpenAIOAuthConfigured(config)
     if (hasKey) return "openai"
   }
   if (configured === "gemini") {
@@ -99,7 +120,7 @@ export function detectAvailableProvider(): string {
 
   // config 공급자에 키가 없으면 환경변수 순서로 폴백
   if (process.env["ANTHROPIC_API_KEY"]) return "anthropic"
-  if (process.env["OPENAI_API_KEY"]) return "openai"
+  if (process.env["OPENAI_API_KEY"] || isOpenAIOAuthConfigured(config)) return "openai"
   if (process.env["GEMINI_API_KEY"]) return "gemini"
 
   // 키가 하나도 없어도 config 기본값 반환 (에러는 실제 호출 시 발생)

@@ -199,7 +199,7 @@ function validateAiBackends(draft: SetupDraft): StepValidation {
       errors.endpoint = "연결 주소를 입력해야 합니다."
     }
 
-    if (!hasRequiredProviderCredentials(backend.providerType, backend.credentials)) {
+    if (!hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key")) {
       errors.credentials = "필수 인증 정보를 입력해야 합니다."
     }
 

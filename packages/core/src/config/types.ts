@@ -7,6 +7,11 @@ export interface LLMProviderConfig {
   openai?: {
     apiKeys: string[]
     baseUrl?: string
+    auth?: {
+      mode?: "api_key" | "chatgpt_oauth"
+      codexAuthFilePath?: string
+      clientId?: string
+    }
   }
   gemini?: {
     apiKeys: string[]
@@ -165,7 +170,9 @@ export const DEFAULT_CONFIG: NobieConfig = {
     enabled: true,
     port: 18888,
     host: "127.0.0.1",
-    auth: { enabled: false },
+    auth: {
+      enabled: false,
+    },
   },
   scheduler: {
     enabled: true,

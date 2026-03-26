@@ -135,6 +135,7 @@ export function SettingsPage() {
         label: input.label.trim(),
         kind: input.kind,
         providerType: input.providerType,
+        authMode: input.authMode ?? "api_key",
         credentials: { ...input.credentials },
         local: input.local,
         enabled: false,
@@ -235,6 +236,7 @@ export function SettingsPage() {
           return {
             ...backend,
             providerType: source.providerType,
+            authMode: source.authMode,
             credentials: { ...source.credentials },
             local: source.local,
             endpoint: source.endpoint,

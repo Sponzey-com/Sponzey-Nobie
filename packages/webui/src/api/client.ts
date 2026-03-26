@@ -1,6 +1,6 @@
 import { localAdapter } from "./adapters/local"
 import type { ControlPlaneAdapter, ResetSetupResponse, SetupChecksResponse, StatusResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse } from "./adapters/types"
-import type { AIBackendCredentials, AIProviderType } from "../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
@@ -64,8 +64,8 @@ export const api = {
   saveSetupDraft: (payload: { draft: SetupDraft; state?: SetupState }) => getControlPlaneAdapter().saveSetupDraft(payload),
   resetSetup: () => getControlPlaneAdapter().resetSetup(),
   completeSetup: () => getControlPlaneAdapter().completeSetup(),
-  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials) =>
-    getControlPlaneAdapter().testBackend(endpoint, providerType, credentials),
+  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) =>
+    getControlPlaneAdapter().testBackend(endpoint, providerType, credentials, authMode),
   testTelegram: (botToken: string) => getControlPlaneAdapter().testTelegram(botToken),
   testMcpServer: (server: SetupMcpServerDraft) => getControlPlaneAdapter().testMcpServer(server),
   testSkillPath: (path: string) => getControlPlaneAdapter().testSkillPath(path),

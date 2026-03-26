@@ -66,6 +66,9 @@ export function ReviewSummaryPanel({
           {enabledBackends.length > 0 ? enabledBackends.map((backend) => (
             <span key={backend.id} className="rounded-full bg-white px-3 py-1 text-xs text-stone-700">
               {getBackendDisplayLabel(backend.id, backend.label, language)} · {backend.defaultModel}
+              {backend.providerType === "openai"
+                ? ` · ${backend.authMode === "chatgpt_oauth" ? text("ChatGPT OAuth", "ChatGPT OAuth") : text("API Key", "API Key")}`
+                : ""}
             </span>
           )) : <EmptyChip text={text("사용 중인 AI가 없습니다.", "No AI backends are enabled.")} />}
         </div>

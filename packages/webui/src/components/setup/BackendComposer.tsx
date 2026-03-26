@@ -9,6 +9,7 @@ import {
   isLocalProviderType,
   type AIBackendKind,
   type AIBackendCredentialKey,
+  type AIAuthMode,
   type AIProviderType,
   type NewAIBackendInput,
 } from "../../contracts/ai"
@@ -20,6 +21,7 @@ const INITIAL_FORM: NewAIBackendInput = {
   label: "",
   kind: "provider",
   providerType: "openai",
+  authMode: "api_key",
   credentials: {},
   local: false,
   availableModels: [],
@@ -31,6 +33,12 @@ const INITIAL_FORM: NewAIBackendInput = {
 
 function getKindLabel(kind: AIBackendKind, text: (ko: string, en: string) => string): string {
   return kind === "worker" ? text("작업 워커 (Worker)", "Task Worker") : text("직접 연결 (Provider)", "Direct Provider")
+}
+
+function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string) => string): string {
+  return mode === "chatgpt_oauth"
+    ? text("ChatGPT OAuth (Codex)", "ChatGPT OAuth (Codex)")
+    : text("API Key", "API Key")
 }
 
 export function BackendComposer({
@@ -67,7 +75,7 @@ export function BackendComposer({
     clearDiscoveryState()
 
     try {
-      const result = await discoverModelsFromEndpoint(form.endpoint ?? "", form.providerType, form.credentials)
+      const result = await discoverModelsFromEndpoint(form.endpoint ?? "", form.providerType, form.credentials, form.authMode ?? "api_key")
       setForm((current) => ({
         ...current,
         availableModels: result.models,
@@ -95,6 +103,7 @@ export function BackendComposer({
     setForm((current) => ({
       ...current,
       providerType,
+      authMode: providerType === "openai" ? (current.authMode ?? "api_key") : "api_key",
       credentials: {},
       local: isLocalProviderType(providerType),
       endpoint: getAIProviderDefaultEndpoint(providerType),
@@ -114,8 +123,23 @@ export function BackendComposer({
     }))
   }
 
-  const credentialFields = getAIProviderCredentialFields(form.providerType)
-  const canLoadModels = Boolean(form.endpoint?.trim()) && hasRequiredProviderCredentials(form.providerType, form.credentials)
+  function handleAuthModeChange(authMode: AIAuthMode) {
+    setForm((current) => ({
+      ...current,
+      authMode,
+      credentials: {
+        ...current.credentials,
+        ...(authMode === "chatgpt_oauth" ? { apiKey: "" } : {}),
+      },
+      endpoint: authMode === "chatgpt_oauth" ? "https://chatgpt.com/backend-api/codex" : "https://api.openai.com/v1",
+      availableModels: [],
+      defaultModel: "",
+    }))
+    clearDiscoveryState()
+  }
+
+  const credentialFields = getAIProviderCredentialFields(form.providerType, form.authMode ?? "api_key")
+  const canLoadModels = Boolean(form.endpoint?.trim()) && hasRequiredProviderCredentials(form.providerType, form.credentials, form.authMode ?? "api_key")
 
   function submit() {
     const label = form.label.trim()
@@ -182,6 +206,20 @@ export function BackendComposer({
         </select>
       </div>
 
+      {form.providerType === "openai" ? (
+        <div className="mt-4">
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("인증 방식", "Authentication Method")}</label>
+          <select
+            className="input"
+            value={form.authMode ?? "api_key"}
+            onChange={(event) => handleAuthModeChange(event.target.value as AIAuthMode)}
+          >
+            <option value="api_key">{getOpenAIAuthModeLabel("api_key", text)}</option>
+            <option value="chatgpt_oauth">{getOpenAIAuthModeLabel("chatgpt_oauth", text)}</option>
+          </select>
+        </div>
+      ) : null}
+
       {credentialFields.length > 0 ? (
         <div className="mt-4">
           <div className="mb-2 text-sm font-medium text-stone-700">{text("인증 정보 (Credentials)", "Credentials")}</div>
@@ -206,6 +244,18 @@ export function BackendComposer({
         </div>
       ) : null}
 
+      {form.providerType === "openai" && (form.authMode ?? "api_key") === "chatgpt_oauth" ? (
+        <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-xs leading-6 text-sky-900">
+          <div className="font-semibold">{text("ChatGPT OAuth (Codex) 사용 안내", "How ChatGPT OAuth (Codex) works")}</div>
+          <div className="mt-2">
+            {text(
+              "이 방식은 `codex login`으로 만든 `~/.codex/auth.json`을 사용하고, 기본 연결 주소는 `https://chatgpt.com/backend-api/codex`입니다. 연결 확인과 모델 조회는 Codex backend probe 방식으로 진행됩니다.",
+              "This mode uses `~/.codex/auth.json` created by `codex login`, and the default endpoint is `https://chatgpt.com/backend-api/codex`. Connection checks and model loading are handled through a Codex backend probe.",
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-4">
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 주소 (Endpoint) *", "Endpoint *")}</label>
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
@@ -218,7 +268,11 @@ export function BackendComposer({
               patch("defaultModel", "")
               clearDiscoveryState()
             }}
-            placeholder={getAIProviderEndpointPlaceholder(form.providerType)}
+            placeholder={
+              form.providerType === "openai" && (form.authMode ?? "api_key") === "chatgpt_oauth"
+                ? "https://chatgpt.com/backend-api/codex"
+                : getAIProviderEndpointPlaceholder(form.providerType)
+            }
           />
           <button
             onClick={() => void runDiscovery("test")}
@@ -238,7 +292,7 @@ export function BackendComposer({
         {successMessage ? <p className="mt-2 text-xs leading-5 text-emerald-700">{successMessage}</p> : null}
         {sourceUrl ? <p className="mt-1 text-xs text-emerald-700">{text("조회 경로", "Source URL")}: {sourceUrl}</p> : null}
         {discoveryError ? <p className="mt-2 text-xs leading-5 text-red-600">{displayText(discoveryError)}</p> : null}
-        {!hasRequiredProviderCredentials(form.providerType, form.credentials) ? (
+        {!hasRequiredProviderCredentials(form.providerType, form.credentials, form.authMode ?? "api_key") ? (
           <p className="mt-2 text-xs leading-5 text-amber-700">{text("필수 인증 정보를 입력해야 연결 확인과 모델 조회를 진행할 수 있습니다.", "Enter the required credentials before checking the connection and loading models.")}</p>
         ) : null}
       </div>
