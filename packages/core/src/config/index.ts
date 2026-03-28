@@ -4,6 +4,48 @@ import JSON5 from "json5"
 import { DEFAULT_CONFIG, type NobieConfig } from "./types.js"
 import { PATHS } from "./paths.js"
 
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (value == null) return undefined
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false
+    default:
+      return undefined
+  }
+}
+
+function parseIntegerEnv(value: string | undefined): number | undefined {
+  if (value == null) return undefined
+  const parsed = Number(value.trim())
+  return Number.isInteger(parsed) ? parsed : undefined
+}
+
+function readEnvOverrides(): Partial<NobieConfig> {
+  const mqttEnabled = parseBooleanEnv(process.env["NOBIE_MQTT_ENABLED"])
+  const mqttHost = process.env["NOBIE_MQTT_HOST"]?.trim()
+  const mqttPort = parseIntegerEnv(process.env["NOBIE_MQTT_PORT"])
+
+  if (mqttEnabled == null && !mqttHost && mqttPort == null) {
+    return {}
+  }
+
+  return {
+    mqtt: {
+      enabled: mqttEnabled ?? DEFAULT_CONFIG.mqtt.enabled,
+      host: mqttHost || DEFAULT_CONFIG.mqtt.host,
+      port: mqttPort ?? DEFAULT_CONFIG.mqtt.port,
+    },
+  }
+}
+
 /**
  * Parse a .env file and apply values to process.env.
  * - 값이 있는 키: 쉘 환경변수에 없을 때만 설정 (쉘 우선)
@@ -85,16 +127,17 @@ let _config: NobieConfig | null = null
 export function loadConfig(): NobieConfig {
   loadEnv()
   const configPath = PATHS.configFile
+  const envOverrides = readEnvOverrides()
 
   if (!existsSync(configPath)) {
-    _config = DEFAULT_CONFIG
+    _config = deepMerge(DEFAULT_CONFIG, envOverrides)
     return _config
   }
 
   const raw = readFileSync(configPath, "utf-8")
   const parsed = JSON5.parse(raw) as Partial<NobieConfig>
   const substituted = substituteDeep(parsed) as Partial<NobieConfig>
-  _config = deepMerge(DEFAULT_CONFIG, substituted)
+  _config = deepMerge(deepMerge(DEFAULT_CONFIG, substituted), envOverrides)
   return _config
 }
 
@@ -109,4 +152,4 @@ export function reloadConfig(): NobieConfig {
 }
 
 export { PATHS } from "./paths.js"
-export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
+export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"

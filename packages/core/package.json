@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "aedes": "^0.51.3",
     "@anthropic-ai/sdk": "^0.36.3",
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",

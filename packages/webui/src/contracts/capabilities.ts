@@ -12,6 +12,7 @@ export type CapabilityArea =
   | "plugins"
   | "memory"
   | "mcp"
+  | "mqtt"
 
 export interface FeatureCapability {
   key: string

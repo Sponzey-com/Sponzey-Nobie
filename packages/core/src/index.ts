@@ -7,6 +7,7 @@ export type {
   HowieConfig,
   SecurityConfig,
   TelegramConfig,
+  MqttConfig,
   OrchestrationConfig,
   McpConfig,
   McpServerConfig,
@@ -73,6 +74,10 @@ export { mcpRegistry } from "./mcp/registry.js"
 export { McpStdioClient } from "./mcp/client.js"
 export type { McpServerStatus, McpSummary, McpToolStatus } from "./mcp/registry.js"
 
+// MQTT
+export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/broker.js"
+export type { MqttBrokerSnapshot } from "./mqtt/broker.js"
+
 // Channels
 export { startChannels, TelegramChannel } from "./channels/index.js"
 
@@ -90,6 +95,7 @@ import { recoverActiveRunsOnStartup as _recoverActiveRunsOnStartup } from "./run
 import { registerBuiltinTools as _registerBuiltinTools } from "./tools/index.js"
 import { startServer as _startServer } from "./api/server.js"
 import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js"
+import { startMqttBroker as _startMqttBroker, stopMqttBroker as _stopMqttBroker } from "./mqtt/broker.js"
 
 export function bootstrap(): void {
   _loadConfig()
@@ -105,5 +111,11 @@ export async function bootstrapRuntime(): Promise<void> {
 
 export async function bootstrapAsync(): Promise<void> {
   await bootstrapRuntime()
-  await _startServer()
+  await _startMqttBroker()
+  try {
+    await _startServer()
+  } catch (error) {
+    await _stopMqttBroker()
+    throw error
+  }
 }

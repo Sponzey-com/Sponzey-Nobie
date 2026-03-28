@@ -27,6 +27,15 @@ export interface StatusResponse {
     toolCount: number
     requiredFailures: number
   }
+  mqtt: {
+    enabled: boolean
+    running: boolean
+    host: string
+    port: number
+    url: string
+    clientCount: number
+    reason: string | null
+  }
   paths: {
     stateDir: string
     configFile: string

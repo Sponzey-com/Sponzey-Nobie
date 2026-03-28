@@ -8,6 +8,7 @@ import {
 } from "../../control-plane/index.js"
 import { getDefaultModel, detectAvailableProvider } from "../../llm/index.js"
 import { mcpRegistry } from "../../mcp/registry.js"
+import { getMqttBrokerSnapshot } from "../../mqtt/broker.js"
 import { toolDispatcher } from "../../tools/index.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getCurrentAppVersion, getUpdateSnapshot } from "../../update/service.js"
@@ -33,6 +34,7 @@ export function registerStatusRoute(app: FastifyInstance): void {
         ? { status: orchestrator.status, reason: orchestrator.reason ?? null }
         : { status: "planned", reason: "Gateway orchestrator capability가 없습니다." },
       mcp: mcpRegistry.getSummary(),
+      mqtt: getMqttBrokerSnapshot(),
       paths: {
         stateDir: PATHS.stateDir,
         configFile: PATHS.configFile,
