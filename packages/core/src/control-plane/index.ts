@@ -14,6 +14,7 @@ import {
 } from "./setup-extensions.js"
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
 import { mcpRegistry } from "../mcp/registry.js"
+import { getMqttBrokerSnapshot } from "../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js"
 import {
   OPENAI_CODEX_KNOWN_MODELS,
@@ -28,7 +29,7 @@ export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
 export interface FeatureCapability {
   key: string
   label: string
-  area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "scheduler" | "plugins" | "memory" | "mcp"
+  area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt"
   status: CapabilityStatus
   implemented: boolean
   enabled: boolean
@@ -773,6 +774,7 @@ export function createCapabilities(): FeatureCapability[] {
   const telegramRuntimeError = getTelegramRuntimeError()
   const mcpSummary = mcpRegistry.getSummary()
   const mcpStatuses = mcpRegistry.getStatuses()
+  const mqtt = getMqttBrokerSnapshot()
 
   const mcpCapability: FeatureCapability = {
     key: "mcp.client",
@@ -821,6 +823,22 @@ export function createCapabilities(): FeatureCapability[] {
     telegramCapability.reason = telegramRuntimeError
   } else if (!telegramRunning) {
     telegramCapability.reason = "Telegram 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다."
+  }
+
+  const mqttCapability: FeatureCapability = {
+    key: "mqtt.broker",
+    label: "MQTT Broker",
+    area: "mqtt",
+    status: !config.mqtt.enabled ? "disabled" : mqtt.running ? "ready" : mqtt.reason ? "error" : "disabled",
+    implemented: true,
+    enabled: Boolean(config.mqtt.enabled && mqtt.running),
+  }
+  if (!config.mqtt.enabled) {
+    mqttCapability.reason = "MQTT 브로커가 설정에서 비활성화되어 있습니다."
+  } else if (mqtt.running) {
+    mqttCapability.reason = `mqtt://${mqtt.host}:${mqtt.port} 에서 브로커가 실행 중입니다.`
+  } else if (mqtt.reason) {
+    mqttCapability.reason = mqtt.reason
   }
 
   return [
@@ -878,6 +896,7 @@ export function createCapabilities(): FeatureCapability[] {
       reason: "세션별/요청별 override는 후속 Phase에서 연결합니다.",
     },
     telegramCapability,
+    mqttCapability,
     (() => {
       const capability: FeatureCapability = {
         key: "scheduler.core",

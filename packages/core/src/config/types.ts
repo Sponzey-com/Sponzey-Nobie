@@ -63,6 +63,12 @@ export interface SchedulerConfig {
   timezone: string
 }
 
+export interface MqttConfig {
+  enabled: boolean
+  host: string
+  port: number
+}
+
 export interface SearchConfig {
   web?: {
     provider: "brave" | "tavily" | "duckduckgo"
@@ -136,6 +142,7 @@ export interface NobieConfig {
   telegram?: TelegramConfig
   webui: WebuiConfig
   scheduler: SchedulerConfig
+  mqtt: MqttConfig
   search: SearchConfig
   memory: MemoryConfig
   orchestration: OrchestrationConfig
@@ -177,6 +184,11 @@ export const DEFAULT_CONFIG: NobieConfig = {
   scheduler: {
     enabled: true,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  },
+  mqtt: {
+    enabled: true,
+    host: "127.0.0.1",
+    port: 1883,
   },
   search: {
     web: {

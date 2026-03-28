@@ -25,6 +25,7 @@ import { registerWsRoute } from "./ws/stream.js"
 import { startScheduler, stopScheduler } from "../scheduler/index.js"
 import { pluginLoader } from "../plugins/loader.js"
 import { mcpRegistry } from "../mcp/registry.js"
+import { stopMqttBroker } from "../mqtt/broker.js"
 
 const log = createLogger("api:server")
 
@@ -82,6 +83,7 @@ export async function startServer(): Promise<void> {
 
 export async function closeServer(): Promise<void> {
   stopScheduler()
+  await stopMqttBroker()
   await mcpRegistry.closeAll()
   if (server) {
     await server.close()
