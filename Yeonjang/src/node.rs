@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::thread::{self, JoinHandle};
 
-use crate::automation::{AutomationBackend, AutomationCapabilities};
+use crate::automation::{
+    AutomationBackend, AutomationCapabilities, KeyboardActionRequest, MouseActionRequest,
+};
 use crate::features::{camera, keyboard, mouse, screen, system};
 use crate::platform::current_backend;
 use crate::protocol::{Request, Response};
@@ -95,6 +97,16 @@ fn dispatch(request: &Request) -> Result<Value> {
                 .context("invalid params for mouse.click")?;
             mouse::click(params)
         }
+        "mouse.action" => {
+            ensure_permission(
+                permissions.allow_mouse_control,
+                "mouse.action",
+                "allow_mouse_control",
+            )?;
+            let params = serde_json::from_value::<MouseActionRequest>(request.params.clone())
+                .context("invalid params for mouse.action")?;
+            mouse::action(params)
+        }
         "keyboard.type" => {
             ensure_permission(
                 permissions.allow_keyboard_control,
@@ -104,6 +116,16 @@ fn dispatch(request: &Request) -> Result<Value> {
             let params = serde_json::from_value::<keyboard::TypeParams>(request.params.clone())
                 .context("invalid params for keyboard.type")?;
             keyboard::type_text(params)
+        }
+        "keyboard.action" => {
+            ensure_permission(
+                permissions.allow_keyboard_control,
+                "keyboard.action",
+                "allow_keyboard_control",
+            )?;
+            let params = serde_json::from_value::<KeyboardActionRequest>(request.params.clone())
+                .context("invalid params for keyboard.action")?;
+            keyboard::action(params)
         }
         other => anyhow::bail!("unknown method: {other}"),
     }
@@ -181,6 +203,12 @@ fn capabilities() -> Value {
                 "summary": "Abstract screen capture entry point.",
             },
             {
+                "name": "mouse.action",
+                "implemented": capability_flags.mouse_control,
+                "category": "mouse",
+                "summary": "Accepts action-based mouse requests such as move and click.",
+            },
+            {
                 "name": "mouse.move",
                 "implemented": capability_flags.mouse_control,
                 "category": "mouse",
@@ -191,6 +219,12 @@ fn capabilities() -> Value {
                 "implemented": capability_flags.mouse_control,
                 "category": "mouse",
                 "summary": "Abstract mouse click entry point.",
+            },
+            {
+                "name": "keyboard.action",
+                "implemented": capability_flags.keyboard_control,
+                "category": "keyboard",
+                "summary": "Accepts action-based keyboard requests such as text input.",
             },
             {
                 "name": "keyboard.type",

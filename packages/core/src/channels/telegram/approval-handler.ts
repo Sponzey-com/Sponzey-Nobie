@@ -1,6 +1,6 @@
 import type { Bot } from "grammy"
 import { eventBus } from "../../events/index.js"
-import type { ApprovalDecision, ApprovalKind } from "../../events/index.js"
+import type { ApprovalDecision, ApprovalKind, ApprovalResolutionReason } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { getRootRun } from "../../runs/store.js"
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js"
@@ -8,7 +8,7 @@ import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js"
 const log = createLogger("channel:telegram:approval")
 
 interface PendingApproval {
-  resolve: (decision: ApprovalDecision) => void
+  resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
   chatId: number
   messageId: number
   requesterId: number
@@ -65,15 +65,16 @@ export function registerApprovalHandler(bot: Bot): void {
 
     if (target === undefined) {
       log.warn(`approval.request for runId=${runId} but no active chat — auto-denying`)
-      resolve("deny")
+      eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" })
+      resolve("deny", "system")
       return
     }
 
     const paramsStr = JSON.stringify(params, null, 2).slice(0, 300)
     const text =
-      `${kind === "screen_confirmation" ? "🖥️ *화면 조작 준비 확인*" : "🔐 *도구 실행 승인 요청*"}\n\n` +
-      `도구: \`${toolName}\`\n` +
-      `파라미터:\n\`\`\`\n${paramsStr}\n\`\`\`\n\n` +
+      `${kind === "screen_confirmation" ? "🖥️ 화면 조작 준비 확인" : "🔐 도구 실행 승인 요청"}\n\n` +
+      `도구: ${toolName}\n` +
+      `파라미터:\n${paramsStr}\n\n` +
       `${guidance ? `${guidance}\n\n` : ""}` +
       `${kind === "screen_confirmation" ? "준비가 끝났으면 계속 진행할 수 있습니다." : "허용하시겠습니까?"}`
 
@@ -83,15 +84,16 @@ export function registerApprovalHandler(bot: Bot): void {
       const keyboard = buildApprovalKeyboard(runId)
       const sendOpts =
         target.threadId !== undefined
-          ? { parse_mode: "Markdown" as const, reply_markup: keyboard, message_thread_id: target.threadId }
-          : { parse_mode: "Markdown" as const, reply_markup: keyboard }
+          ? { reply_markup: keyboard, message_thread_id: target.threadId }
+          : { reply_markup: keyboard }
 
       const msg = await bot.api.sendMessage(target.chatId, text, sendOpts)
       sentMsgId = msg.message_id
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       log.error(`Failed to send approval message: ${errMsg}`)
-      resolve("deny")
+      eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" })
+      resolve("deny", "system")
       return
     }
 
@@ -122,8 +124,8 @@ export function registerApprovalHandler(bot: Bot): void {
               // best-effort
             }
 
-            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind })
-            entry.resolve("deny")
+            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind, reason: "timeout" })
+            entry.resolve("deny", "timeout")
           }, 60_000)
 
     // Store timeout reference so we can clear it
@@ -214,7 +216,7 @@ export function registerApprovalHandler(bot: Bot): void {
             ? "🔹 이번 단계 승인"
             : "❌ 거부 후 취소",
     )
-    eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind })
-    entry.resolve(decision)
+    eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" })
+    entry.resolve(decision, "user")
   })
 }

@@ -172,6 +172,7 @@ struct YeonjangGuiApp {
     status_color: Color32,
     active_tab: ActiveTab,
     connection_state: ConnectionState,
+    connection_attempted: bool,
     last_error: String,
     mqtt_runtime: Option<MqttRuntimeHandle>,
     mqtt_runtime_events: Option<Receiver<RuntimeEvent>>,
@@ -215,6 +216,7 @@ impl YeonjangGuiApp {
             status_color,
             active_tab: ActiveTab::Connection,
             connection_state: ConnectionState::Disconnected,
+            connection_attempted: false,
             last_error: t(
                 ui_language,
                 "아직 연결하지 않았습니다.",
@@ -421,6 +423,7 @@ impl YeonjangGuiApp {
     }
 
     fn connect_now(&mut self) {
+        self.connection_attempted = true;
         match parse_port_input(&self.port_input, self.lang()) {
             Ok(port) => self.settings.connection.port = port,
             Err(message) => {
@@ -512,6 +515,7 @@ impl YeonjangGuiApp {
         for event in pending {
             match event {
                 RuntimeEvent::Connected => {
+                    self.connection_attempted = true;
                     self.connection_state = ConnectionState::Connected;
                     self.last_error = t(self.lang(), "없음", "None").to_string();
                     self.set_status(
@@ -732,6 +736,14 @@ impl YeonjangGuiApp {
         }
 
         self.last_error.clone()
+    }
+
+    fn reconnect_button_label(&self) -> &'static str {
+        if self.connection_attempted && self.connection_state != ConnectionState::Connected {
+            t(self.lang(), "다시 연결", "Reconnect")
+        } else {
+            t(self.lang(), "지금 연결", "Connect")
+        }
     }
 
     fn permission_counts(&self) -> (usize, usize, usize) {
@@ -965,12 +977,14 @@ impl YeonjangGuiApp {
             if secondary_button(ui, t(lang, "연결 확인", "Check")).clicked() {
                 self.check_connection();
             }
-            if primary_button(ui, t(lang, "지금 연결", "Connect")).clicked() {
+            if primary_button(ui, self.reconnect_button_label()).clicked() {
                 self.connect_now();
             }
-            if danger_button(ui, t(lang, "연결 끊기", "Disconnect")).clicked() {
-                self.disconnect();
-            }
+            ui.add_enabled_ui(self.connection_state == ConnectionState::Connected, |ui| {
+                if danger_button(ui, t(lang, "연결 끊기", "Disconnect")).clicked() {
+                    self.disconnect();
+                }
+            });
         });
 
         ui.add_space(8.0);
@@ -999,6 +1013,14 @@ impl YeonjangGuiApp {
                         ui,
                         t(lang, "저장 전 변경", "Unsaved Changes"),
                         t(lang, "설정을 저장하거나 연결 확인으로 입력값을 검사하세요.", "Save or run a connection check to validate the inputs."),
+                        color_warn_bg(),
+                        color_warn_text(),
+                    );
+                } else if self.connection_attempted {
+                    alert_box(
+                        ui,
+                        t(lang, "연결이 끊어졌습니다", "Connection Lost"),
+                        t(lang, "다시 연결 버튼으로 브로커 재접속을 시도할 수 있습니다.", "You can try reconnecting to the broker with the reconnect button."),
                         color_warn_bg(),
                         color_warn_text(),
                     );

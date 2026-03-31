@@ -2,7 +2,9 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::automation::{AutomationBackend, MouseClickRequest, MouseMoveRequest};
+use crate::automation::{
+    AutomationBackend, MouseActionRequest, MouseClickRequest, MouseMoveRequest,
+};
 use crate::platform::current_backend;
 
 #[derive(Debug, Deserialize)]
@@ -41,4 +43,10 @@ pub fn click(params: ClickParams) -> Result<Value> {
         double: params.double,
     };
     Ok(serde_json::to_value(current_backend().click_mouse(request)?)?)
+}
+
+pub fn action(params: MouseActionRequest) -> Result<Value> {
+    Ok(serde_json::to_value(
+        current_backend().perform_mouse_action(params)?,
+    )?)
 }

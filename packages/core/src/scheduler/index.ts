@@ -3,6 +3,8 @@ import { runAgent } from "../agent/index.js"
 import { eventBus } from "../events/index.js"
 import { createLogger } from "../logger/index.js"
 import { getNextRun, isValidCron } from "./cron.js"
+import { getActiveTelegramChannel } from "../channels/telegram/runtime.js"
+import { extractDirectChannelDeliveryText } from "../runs/scheduled.js"
 
 const log = createLogger("scheduler")
 
@@ -66,6 +68,7 @@ class Scheduler {
 
     for (const s of schedules) {
       if (!s.enabled) continue
+      if (s.execution_driver === "system_crontab") continue
       if (!isValidCron(s.cron_expression)) continue
 
       if (this.running.has(s.id)) {
@@ -88,6 +91,17 @@ class Scheduler {
   }
 
   async runNow(scheduleId: string, trigger = "manual"): Promise<string> {
+    const { runId } = await this.runNowInternal(scheduleId, trigger)
+    return runId
+  }
+
+  async runNowAndWait(scheduleId: string, trigger = "manual"): Promise<string> {
+    const { runId, finished } = await this.runNowInternal(scheduleId, trigger)
+    await finished
+    return runId
+  }
+
+  private async runNowInternal(scheduleId: string, trigger = "manual"): Promise<{ runId: string; finished: Promise<void> }> {
     const schedule = getSchedule(scheduleId)
     if (!schedule) throw new Error(`Schedule ${scheduleId} not found`)
 
@@ -109,7 +123,7 @@ class Scheduler {
 
     this.running.add(scheduleId)
 
-    void (async () => {
+    const finished = (async () => {
       const maxRetries = schedule.max_retries ?? 3
       let attempt = 0
       let lastError: string | null = null
@@ -163,10 +177,48 @@ class Scheduler {
       }
     })()
 
-    return runId
+    return { runId, finished }
   }
 
   private async _execute(schedule: DbSchedule): Promise<{ success: boolean; summary: string | null; error: string | null }> {
+    const directTelegramMessage = schedule.target_channel === "telegram"
+      ? extractDirectChannelDeliveryText(schedule.prompt)
+      : null
+
+    if (directTelegramMessage) {
+      if (!schedule.target_session_id) {
+        return {
+          success: false,
+          summary: directTelegramMessage,
+          error: "telegram target session is not configured for this schedule",
+        }
+      }
+
+      const telegram = getActiveTelegramChannel()
+      if (!telegram) {
+        return {
+          success: false,
+          summary: directTelegramMessage,
+          error: "telegram channel is not running",
+        }
+      }
+
+      try {
+        await telegram.sendTextToSession(schedule.target_session_id, directTelegramMessage)
+        return {
+          success: true,
+          summary: directTelegramMessage.slice(0, 2000) || null,
+          error: null,
+        }
+      } catch (err) {
+        return {
+          success: false,
+          summary: directTelegramMessage,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    }
+
     const chunks: string[] = []
     let success = false
     let errorMsg: string | null = null
@@ -185,9 +237,48 @@ class Scheduler {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
 
+    const summary = chunks.join("").trim()
+
+    if (success && schedule.target_channel === "telegram") {
+      if (!schedule.target_session_id) {
+        return {
+          success: false,
+          summary: summary || null,
+          error: "telegram target session is not configured for this schedule",
+        }
+      }
+
+      if (!summary) {
+        return {
+          success: false,
+          summary: null,
+          error: "schedule produced no deliverable text for telegram",
+        }
+      }
+
+      const telegram = getActiveTelegramChannel()
+      if (!telegram) {
+        return {
+          success: false,
+          summary,
+          error: "telegram channel is not running",
+        }
+      }
+
+      try {
+        await telegram.sendTextToSession(schedule.target_session_id, summary)
+      } catch (err) {
+        return {
+          success: false,
+          summary,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    }
+
     return {
       success,
-      summary: chunks.join("").slice(0, 2000) || null,
+      summary: summary.slice(0, 2000) || null,
       error: errorMsg,
     }
   }
@@ -199,4 +290,8 @@ export function startScheduler(): void { scheduler.start() }
 export function stopScheduler(): void { scheduler.stop() }
 export function runSchedule(scheduleId: string, trigger = "manual"): Promise<string> {
   return scheduler.runNow(scheduleId, trigger)
+}
+
+export function runScheduleAndWait(scheduleId: string, trigger = "manual"): Promise<string> {
+  return scheduler.runNowAndWait(scheduleId, trigger)
 }

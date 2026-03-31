@@ -6,6 +6,7 @@ import {
 } from "../../db/index.js"
 import { runSchedule } from "../../scheduler/index.js"
 import { isValidCron, getNextRun } from "../../scheduler/cron.js"
+import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js"
 import { authMiddleware } from "../middleware/auth.js"
 
 export function registerSchedulesRoute(app: FastifyInstance): void {
@@ -38,12 +39,15 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       id, name, cron_expression: cron, prompt,
       enabled: enabled ? 1 : 0,
       target_channel: "agent",
+      target_session_id: null,
+      execution_driver: "internal",
       model: model ?? null,
       max_retries: 3,
       timeout_sec: 300,
       created_at: now,
       updated_at: now,
     })
+    reconcileScheduleExecution(id)
     return reply.status(201).send({ id })
   })
 
@@ -71,6 +75,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       ...(model !== undefined && { model }),
       ...(enabled !== undefined && { enabled: enabled ? 1 : 0 }),
     })
+    reconcileScheduleExecution(id)
     return { ok: true }
   })
 
@@ -78,6 +83,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
   app.delete<{ Params: { id: string } }>("/api/schedules/:id", { preHandler: authMiddleware }, async (req, reply) => {
     const s = getSchedule(req.params.id)
     if (!s) return reply.status(404).send({ error: "Not found" })
+    removeManagedScheduleExecution(req.params.id)
     deleteSchedule(req.params.id)
     return { ok: true }
   })
@@ -113,6 +119,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
     const s = getSchedule(req.params.id)
     if (!s) return reply.status(404).send({ error: "Not found" })
     updateSchedule(req.params.id, { enabled: s.enabled ? 0 : 1 })
+    reconcileScheduleExecution(req.params.id)
     return { ok: true, enabled: !s.enabled }
   })
 

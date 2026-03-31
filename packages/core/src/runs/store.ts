@@ -321,6 +321,12 @@ export function hasActiveRequestGroupRuns(requestGroupId: string): boolean {
   return listRequestGroupRuns(requestGroupId).some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status))
 }
 
+export function isReusableRequestGroup(requestGroupId: string): boolean {
+  const runs = listRequestGroupRuns(requestGroupId)
+  if (runs.length === 0) return false
+  return runs.some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status))
+}
+
 export function getRequestGroupDelegationTurnCount(requestGroupId: string): number {
   const row = getDb()
     .prepare<[string], { max_count: number | null }>(
@@ -359,10 +365,11 @@ export function findReconnectRequestGroupSelection(sessionId: string, message: s
     }
   }
 
-  const activeGroupCount = [...grouped.values()].filter((run) => isActiveRequestGroupStatus(run.status)).length
+  const reusableRuns = [...grouped.values()].filter((run) => isActiveRequestGroupStatus(run.status))
+  const activeGroupCount = reusableRuns.filter((run) => isActiveRequestGroupStatus(run.status)).length
   const continuation = looksLikeContinuationMessage(message)
 
-  const scored = [...grouped.values()]
+  const scored = reusableRuns
     .map((run, index) => ({ run, score: scoreReconnectCandidate(message, run, index) }))
     .filter((item) => item.score >= 18 || (continuation && activeGroupCount === 1 && item.score >= 14))
     .sort((a, b) => (b.score - a.score) || (b.run.updatedAt - a.run.updatedAt))
@@ -701,7 +708,13 @@ export function clearActiveRunController(runId: string): void {
   activeRunControllers.delete(runId)
 }
 
-export function cancelRootRun(runId: string): RootRun | undefined {
+interface CancelRootRunOptions {
+  eventLabel?: string
+  stepSummary?: string
+  runSummary?: string
+}
+
+export function cancelRootRun(runId: string, options: CancelRootRunOptions = {}): RootRun | undefined {
   const current = getRootRun(runId)
   if (!current) return undefined
 
@@ -711,7 +724,7 @@ export function cancelRootRun(runId: string): RootRun | undefined {
   if (activeRuns.length === 0) return undefined
 
   for (const run of activeRuns) {
-    appendRunEvent(run.id, "취소 요청")
+    appendRunEvent(run.id, options.eventLabel ?? "취소 요청")
     eventBus.emit("run.cancel.requested", { runId: run.id })
 
     const controller = activeRunControllers.get(run.id)
@@ -721,8 +734,8 @@ export function cancelRootRun(runId: string): RootRun | undefined {
     }
 
     const stepKey = resolveInterruptStepKey(run)
-    setRunStepStatus(run.id, stepKey, "cancelled", "사용자가 실행 취소를 요청했습니다.")
-    updateRunStatus(run.id, "cancelled", "사용자가 실행을 취소했습니다.", false)
+    setRunStepStatus(run.id, stepKey, "cancelled", options.stepSummary ?? "사용자가 실행 취소를 요청했습니다.")
+    updateRunStatus(run.id, "cancelled", options.runSummary ?? "사용자가 실행을 취소했습니다.", false)
   }
 
   return getRootRun(runId) ?? current

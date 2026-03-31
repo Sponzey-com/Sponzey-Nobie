@@ -8,7 +8,7 @@
 
 - `main.rs`: GUI, stdio, 로컬 실행 진입점 선택
 - `mqtt.rs`: MQTT 런타임 루프, 상태 발행, 요청 처리, 청크 응답 전달
-- `node.rs`: 요청 dispatch와 권한 게이트
+- `node.rs`: 요청 dispatch, 권한 게이트, 액션 기반 메서드 진입점
 - `gui.rs`: 고정 크기 설정 다이얼로그
 - `automation`, `features`, `platform`: 추상화 계층과 OS별 구현
 
@@ -16,3 +16,5 @@
 
 - 이 폴더는 전송 계층, UI, 실행 추상화를 비교적 명확히 분리하고 있습니다.
 - `node.rs`는 transport와 feature 코드를 잇는 중심 계약 지점입니다.
+- `gui.rs`는 MQTT 연결 상태를 보고, 끊김 뒤 `다시 연결` 동작을 바로 제공해야 합니다.
+- 마우스와 키보드는 세부 메서드와 함께 `mouse.action`, `keyboard.action`을 공통 진입점으로 받습니다.

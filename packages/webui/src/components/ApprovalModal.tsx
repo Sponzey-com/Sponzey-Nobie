@@ -22,7 +22,6 @@ export function ApprovalModal() {
     const interval = setInterval(() => {
       setCountdown((value) => {
         if (value <= 1) {
-          respond("deny")
           return 0
         }
         return value - 1

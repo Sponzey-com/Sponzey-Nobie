@@ -178,11 +178,18 @@ export function insertMemoryJournalRecord(input: MemoryJournalRecordInput): stri
 }
 
 function buildFtsQuery(query: string): string {
+  // FTS5 MATCH는 `.` `:` 같은 구두점이 섞인 토큰에 민감하므로,
+  // 검색어는 안전한 문자만 남긴 prefix 토큰으로 정규화한다.
+  const sanitized = normalizeWhitespace(query)
+    .replace(/[^0-9A-Za-z가-힣]+/g, " ")
+    .trim()
+
   const tokens = Array.from(
     new Set(
-      (normalizeWhitespace(query).match(/[0-9A-Za-z가-힣._:-]{2,}/g) ?? [])
-        .map((token) => token.replace(/"/g, "").trim())
-        .filter(Boolean),
+      sanitized
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2),
     ),
   ).slice(0, 8)
 
@@ -190,8 +197,8 @@ function buildFtsQuery(query: string): string {
     return tokens.map((token) => `${token}*`).join(" OR ")
   }
 
-  const condensed = condenseMemoryText(query, 48).replace(/"/g, "")
-  return condensed ? `"${condensed}"` : ""
+  const condensed = condenseMemoryText(sanitized, 48).replace(/"/g, "").trim()
+  return condensed ? condensed.split(/\s+/).map((token) => `${token}*`).join(" OR ") : ""
 }
 
 export function searchMemoryJournal(
@@ -201,25 +208,29 @@ export function searchMemoryJournal(
     kinds?: MemoryJournalKind[]
   },
 ): MemoryJournalRecord[] {
-  const ftsQuery = buildFtsQuery(query)
-  if (!ftsQuery) return []
+  try {
+    const ftsQuery = buildFtsQuery(query)
+    if (!ftsQuery) return []
 
-  const limit = options?.limit ?? 6
-  const kinds = options?.kinds ?? []
-  const db = getMemoryJournalDb()
-  const whereKind = kinds.length > 0 ? `AND m.kind IN (${kinds.map(() => "?").join(", ")})` : ""
+    const limit = options?.limit ?? 6
+    const kinds = options?.kinds ?? []
+    const db = getMemoryJournalDb()
+    const whereKind = kinds.length > 0 ? `AND m.kind IN (${kinds.map(() => "?").join(", ")})` : ""
 
-  return db
-    .prepare<unknown[], MemoryJournalRecord>(
-      `SELECT m.*
-       FROM memory_records_fts f
-       JOIN memory_records m ON m.rowid = f.rowid
-       WHERE memory_records_fts MATCH ?
-       ${whereKind}
-       ORDER BY bm25(memory_records_fts), m.created_at DESC
-       LIMIT ?`,
-    )
-    .all(ftsQuery, ...kinds, limit)
+    return db
+      .prepare<unknown[], MemoryJournalRecord>(
+        `SELECT m.*
+         FROM memory_records_fts f
+         JOIN memory_records m ON m.rowid = f.rowid
+         WHERE memory_records_fts MATCH ?
+         ${whereKind}
+         ORDER BY bm25(memory_records_fts), m.created_at DESC
+         LIMIT ?`,
+      )
+      .all(ftsQuery, ...kinds, limit)
+  } catch {
+    return []
+  }
 }
 
 function kindLabel(kind: MemoryJournalKind): string {
@@ -238,12 +249,16 @@ function kindLabel(kind: MemoryJournalKind): string {
 }
 
 export function buildMemoryJournalContext(query: string, limit = 6): string {
-  const records = searchMemoryJournal(query, {
-    limit,
-    kinds: ["instruction", "failure", "success", "response"],
-  })
-  if (!records.length) return ""
+  try {
+    const records = searchMemoryJournal(query, {
+      limit,
+      kinds: ["instruction", "failure", "success", "response"],
+    })
+    if (!records.length) return ""
 
-  const lines = records.map((record) => `- [${kindLabel(record.kind)}] ${record.summary}`)
-  return `[Execution Reference Memory]\n${lines.join("\n")}`
+    const lines = records.map((record) => `- [${kindLabel(record.kind)}] ${record.summary}`)
+    return `[Execution Reference Memory]\n${lines.join("\n")}`
+  } catch {
+    return ""
+  }
 }

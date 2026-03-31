@@ -5,13 +5,13 @@ import { createLogger } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startRootRun } from "../../runs/start.js"
 import { isAllowedUser } from "./auth.js"
-import { resolveSessionKey, getOrCreateTelegramSession, newSession } from "./session.js"
+import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
 import { TypingIndicator } from "./typing.js"
 import { TelegramResponder } from "./responder.js"
 import { FileHandler } from "./file-handler.js"
 import { registerCommands } from "./commands.js"
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
-import { findChannelMessageRef, insertChannelMessageRef } from "../../db/index.js"
+import { findChannelMessageRef, getSession, insertChannelMessageRef } from "../../db/index.js"
 
 const log = createLogger("channel:telegram")
 
@@ -364,5 +364,20 @@ export class TelegramChannel {
   stop(): void {
     log.info("Stopping Telegram bot...")
     void this.bot.stop()
+  }
+
+  async sendTextToSession(sessionId: string, text: string): Promise<number[]> {
+    const session = getSession(sessionId)
+    if (!session || session.source !== "telegram" || !session.source_id) {
+      throw new Error(`Telegram session ${sessionId} not found`)
+    }
+
+    const target = parseTelegramSessionKey(session.source_id)
+    if (!target) {
+      throw new Error(`Telegram session ${sessionId} has invalid source_id`)
+    }
+
+    const responder = new TelegramResponder(this.bot, target.chatId, target.threadId)
+    return responder.sendFinalResponse(text)
   }
 }

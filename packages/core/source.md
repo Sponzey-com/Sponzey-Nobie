@@ -9,7 +9,7 @@
 
 - `src/index.ts`: 외부 공개 API와 부트스트랩 헬퍼
 - `src/api/server.ts`: Fastify 서버와 라우트 등록
-- `src/runs/start.ts`: 루트 실행 생명주기와 오케스트레이션 루프
+- `src/runs/start.ts`: 루트 실행 생명주기, 루프 기반 분배, completion 결정
 - `src/agent/index.ts`: LLM 대화 루프와 도구 사용
 
 ## 주요 책임
@@ -18,3 +18,9 @@
 - run, session, request-group 상태를 일관되게 유지합니다.
 - 권한 작업이나 장치 작업은 가능하면 Yeonjang으로 라우팅합니다.
 - 메시지, 실행, 감사 로그, 스케줄, 메모리 항목을 저장합니다.
+- 현재 태스크 처리는 `분석 -> 처리 분배 -> 검토 -> 재분석` 루프를 기준으로 동작하며, 최종 완료는 메인 실행 루프에서 판단합니다.
+- 권한 작업에서 LLM/worker가 단순 안내문만 만들더라도, core는 그 문구를 완료로 보지 않고 승인 요청 또는 복구 루프로 되돌립니다.
+- 승인 거부는 사용자 거부와 시스템 타임아웃을 구분해서 기록하고, 권한 대기 UI도 서버 결과를 기준으로 정리합니다.
+- 반복 스케줄은 단순 내부 성공이 아니라, 요청 채널이 Telegram이면 같은 Telegram 세션으로 실제 메시지가 전달되어야 성공으로 봅니다.
+- 반복 스케줄은 가능하면 OS 스케줄러(Linux/macOS 계열 crontab, Windows Task Scheduler)로 내려서 관리하고, 실패 시 내부 scheduler로 폴백합니다.
+- 종료된 request-group은 새 요청에서 재사용하지 않고 새 태스크로 시작합니다.
