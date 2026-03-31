@@ -31,27 +31,31 @@ export class TelegramResponder {
     }
   }
 
-  async sendFinalResponse(text: string): Promise<void> {
+  async sendFinalResponse(text: string): Promise<number[]> {
+    const sentMessageIds: number[] = []
     const parts = splitMessage(text)
     const other =
       this.threadId !== undefined
         ? { message_thread_id: this.threadId }
         : {}
     for (const part of parts) {
-      await this.bot.api.sendMessage(this.chatId, part, other)
+      const msg = await this.bot.api.sendMessage(this.chatId, part, other)
+      sentMessageIds.push(msg.message_id)
     }
+    return sentMessageIds
   }
 
-  async sendError(message: string): Promise<void> {
+  async sendError(message: string): Promise<number> {
     const text = `❌ Error: ${message}`
     const other =
       this.threadId !== undefined
         ? { message_thread_id: this.threadId }
         : {}
-    await this.bot.api.sendMessage(this.chatId, text, other)
+    const msg = await this.bot.api.sendMessage(this.chatId, text, other)
+    return msg.message_id
   }
 
-  async sendFile(filePath: string, caption?: string | undefined): Promise<void> {
+  async sendFile(filePath: string, caption?: string | undefined): Promise<number> {
     const other =
       this.threadId !== undefined
         ? (caption !== undefined
@@ -59,6 +63,7 @@ export class TelegramResponder {
             : { message_thread_id: this.threadId })
         : (caption !== undefined ? { caption } : {})
 
-    await this.bot.api.sendDocument(this.chatId, new InputFile(filePath), other)
+    const msg = await this.bot.api.sendDocument(this.chatId, new InputFile(filePath), other)
+    return msg.message_id
   }
 }

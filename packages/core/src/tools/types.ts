@@ -5,6 +5,7 @@ export interface ToolContext {
   runId: string
   workDir: string
   userMessage: string
+  source: "webui" | "cli" | "telegram"
   allowWebAccess: boolean
   onProgress: (message: string) => void
   signal: AbortSignal

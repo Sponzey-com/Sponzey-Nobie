@@ -132,6 +132,13 @@ export interface SetupDraft {
     allowedUserIds: string
     allowedGroupIds: string
   }
+  mqtt: {
+    enabled: boolean
+    host: string
+    port: number
+    username: string
+    password: string
+  }
   remoteAccess: {
     authEnabled: boolean
     authToken: string
@@ -555,6 +562,13 @@ export function buildSetupDraft(): SetupDraft {
       allowedUserIds: toNumberArrayString(config.telegram?.allowedUserIds ?? []),
       allowedGroupIds: toNumberArrayString(config.telegram?.allowedGroupIds ?? []),
     },
+    mqtt: {
+      enabled: config.mqtt.enabled,
+      host: config.mqtt.host,
+      port: config.mqtt.port,
+      username: config.mqtt.username,
+      password: config.mqtt.password,
+    },
     remoteAccess: {
       authEnabled: config.webui.auth.enabled,
       authToken: config.webui.auth.token ?? "",
@@ -643,6 +657,16 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
     botToken: draft.channels.botToken,
     allowedUserIds: parseIdString(draft.channels.allowedUserIds),
     allowedGroupIds: parseIdString(draft.channels.allowedGroupIds),
+  }
+
+  raw.mqtt = {
+    ...toObject(raw.mqtt),
+    enabled: draft.mqtt.enabled,
+    host: draft.mqtt.host.trim(),
+    port: Math.max(1, Math.min(65535, Math.floor(Number.isFinite(draft.mqtt.port) ? draft.mqtt.port : 1883))),
+    username: draft.mqtt.username.trim(),
+    password: draft.mqtt.password,
+    allowAnonymous: false,
   }
 
   raw.webui = {
@@ -836,7 +860,13 @@ export function createCapabilities(): FeatureCapability[] {
   if (!config.mqtt.enabled) {
     mqttCapability.reason = "MQTT 브로커가 설정에서 비활성화되어 있습니다."
   } else if (mqtt.running) {
-    mqttCapability.reason = `mqtt://${mqtt.host}:${mqtt.port} 에서 브로커가 실행 중입니다.`
+    const hostLabel = mqtt.host === "0.0.0.0" ? "모든 네트워크 인터페이스" : mqtt.host
+    const authLabel = mqtt.authEnabled
+      ? mqtt.allowAnonymous
+        ? "ID/password 인증이 켜져 있고 익명 접속도 허용됩니다."
+        : "ID/password 인증이 필요합니다."
+      : "익명 접속만 허용됩니다."
+    mqttCapability.reason = `${hostLabel}:${mqtt.port} 에서 브로커가 실행 중입니다. ${authLabel}`
   } else if (mqtt.reason) {
     mqttCapability.reason = mqtt.reason
   }

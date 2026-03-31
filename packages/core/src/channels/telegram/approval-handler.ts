@@ -27,6 +27,7 @@ const pending = new Map<string, PendingApproval>()
 
 // Map from sessionId → active chat info (set by bot.ts before runAgent)
 export const activeChats = new Map<string, ActiveChat>()
+const activeChatRefs = new Map<string, number>()
 
 // Most recent active chat (for single-user cases when we don't have sessionId in event)
 let latestActiveChat: ActiveChat | undefined
@@ -39,10 +40,18 @@ export function setActiveChatForSession(
 ): void {
   const chat: ActiveChat = { chatId, userId, ...(threadId !== undefined ? { threadId } : {}) }
   activeChats.set(sessionId, chat)
+  activeChatRefs.set(sessionId, (activeChatRefs.get(sessionId) ?? 0) + 1)
   latestActiveChat = chat
 }
 
 export function clearActiveChatForSession(sessionId: string): void {
+  const remaining = (activeChatRefs.get(sessionId) ?? 1) - 1
+  if (remaining > 0) {
+    activeChatRefs.set(sessionId, remaining)
+    return
+  }
+
+  activeChatRefs.delete(sessionId)
   activeChats.delete(sessionId)
 }
 

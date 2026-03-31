@@ -57,10 +57,18 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
   riskLevel: "safe",
   requiresApproval: false,
 
-  async execute(params, _ctx: ToolContext): Promise<ToolResult> {
+  async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const filePath = params.filePath.replace(/^~/, homedir())
 
     try {
+      if (ctx.source !== "telegram") {
+        return {
+          success: false,
+          output: "telegram_send_file 도구는 Telegram 채널에서만 사용할 수 있습니다.",
+          error: "TELEGRAM_CHANNEL_REQUIRED",
+        }
+      }
+
       assertAllowedPath(filePath)
 
       if (!existsSync(filePath)) {
@@ -97,7 +105,7 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
       return {
         success: true,
         output: marker,
-        details: { filePath, size: stat.size },
+        details: { filePath, size: stat.size, source: ctx.source },
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

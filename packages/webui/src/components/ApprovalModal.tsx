@@ -51,6 +51,11 @@ export function ApprovalModal() {
             <span className="text-sm font-medium text-gray-600">{text("도구:", "Tool:")}</span>
             <code className="rounded bg-gray-100 px-2 py-0.5 text-sm font-mono">{resolvedApproval.toolName}</code>
           </div>
+          {resolvedApproval.guidance ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {resolvedApproval.guidance}
+            </div>
+          ) : null}
           <div>
             <p className="mb-1 text-sm font-medium text-gray-600">{text("파라미터:", "Parameters:")}</p>
             <pre className="overflow-x-auto rounded bg-gray-100 p-3 text-xs">{JSON.stringify(resolvedApproval.params, null, 2)}</pre>

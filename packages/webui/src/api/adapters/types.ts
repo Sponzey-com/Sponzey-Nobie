@@ -34,6 +34,8 @@ export interface StatusResponse {
     port: number
     url: string
     clientCount: number
+    authEnabled: boolean
+    allowAnonymous: boolean
     reason: string | null
   }
   paths: {
@@ -70,6 +72,33 @@ export interface TestBackendResponse {
   models?: string[]
   sourceUrl?: string
   error?: string
+}
+
+export interface MqttExtensionSnapshot {
+  extensionId: string
+  clientId: string | null
+  displayName: string | null
+  state: string | null
+  message: string | null
+  version: string | null
+  methods: string[]
+  lastSeenAt: number
+}
+
+export interface MqttExchangeLogEntry {
+  id: string
+  timestamp: number
+  direction: "nobie_to_extension" | "extension_to_nobie"
+  topic: string
+  extensionId: string | null
+  kind: "status" | "capabilities" | "request" | "response" | "event" | "unknown"
+  clientId: string | null
+  payload: unknown
+}
+
+export interface MqttRuntimeResponse {
+  extensions: MqttExtensionSnapshot[]
+  logs: MqttExchangeLogEntry[]
 }
 
 export interface TestTelegramResponse {
@@ -113,4 +142,6 @@ export interface ControlPlaneAdapter {
   generateAuthToken: () => Promise<{ token: string }>
   getMcpServers: () => Promise<McpServersResponse>
   reloadMcpServers: () => Promise<McpServersResponse>
+  getMqttRuntime: () => Promise<MqttRuntimeResponse>
+  disconnectMqttExtension: (extensionId: string) => Promise<{ ok: boolean; message: string }>
 }

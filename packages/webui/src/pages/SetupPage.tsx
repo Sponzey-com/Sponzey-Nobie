@@ -7,6 +7,7 @@ import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { McpSetupForm } from "../components/setup/McpSetupForm"
 import { BackendComposer } from "../components/setup/BackendComposer"
 import { BackendHealthCard } from "../components/setup/BackendHealthCard"
+import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { PersonalSettingsForm } from "../components/setup/PersonalSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { ReviewSummaryPanel } from "../components/setup/ReviewSummaryPanel"
@@ -831,6 +832,17 @@ export function SetupPage() {
                     port: currentValidation.fieldErrors.port,
                   } : undefined}
                 />
+                <MqttSettingsForm
+                  value={activeDraft.mqtt}
+                  onChange={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
+                  errors={shouldShowValidation ? {
+                    enabled: currentValidation.fieldErrors.mqttEnabled,
+                    host: currentValidation.fieldErrors.mqttHost,
+                    port: currentValidation.fieldErrors.mqttPort,
+                    username: currentValidation.fieldErrors.mqttUsername,
+                    password: currentValidation.fieldErrors.mqttPassword,
+                  } : undefined}
+                />
                 <AuthTokenPanel
                   authEnabled={activeDraft.remoteAccess.authEnabled}
                   authToken={activeDraft.remoteAccess.authToken}
@@ -1226,7 +1238,7 @@ function createSetupSteps(
       false,
       [
         t("다른 기기에서 접속해야 할 때만 설정합니다.", "Configure this only if you need access from another device."),
-        t("인증 토큰과 접속 주소를 확인합니다.", "Review the auth token and access address."),
+        t("인증 토큰과 MQTT 접속 정보를 확인합니다.", "Review the auth token and MQTT access details."),
         t("지금 필요 없다면 나중에 설정해도 됩니다.", "You can skip it for now and configure it later."),
       ],
       hasRemoteAccess,

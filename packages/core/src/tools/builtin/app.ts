@@ -4,6 +4,7 @@ import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import type { AgentTool, ToolResult } from "../types.js"
+import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -22,6 +23,13 @@ interface AppListParams {
 interface AppInfo {
   name: string
   path: string
+}
+
+interface YeonjangApplicationLaunchResult {
+  launched: boolean
+  application: string
+  pid?: number
+  message: string
 }
 
 // ─── App discovery ────────────────────────────────────────────────────────────
@@ -146,10 +154,36 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
     }
 
     try {
+      if (await canYeonjangHandleMethod("application.launch")) {
+        const remote = await invokeYeonjangMethod<YeonjangApplicationLaunchResult>(
+          "application.launch",
+          {
+            application: app,
+            args,
+            detached: background,
+          },
+          { timeoutMs: 15_000 },
+        )
+        return {
+          success: remote.launched,
+          output: remote.message || `"${app}" 실행`,
+          details: { via: "yeonjang", application: remote.application, pid: remote.pid ?? null },
+          ...(remote.launched ? {} : { error: "remote_launch_failed" }),
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 앱 실행 실패: ${message}`, error: message }
+      }
+    }
+
+    try {
       await launchApp(app, args, background)
       return {
         success: true,
         output: `"${app}" 실행${background ? " (백그라운드)" : ""}`,
+        details: { via: "local" },
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

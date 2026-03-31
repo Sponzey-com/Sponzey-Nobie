@@ -4,6 +4,7 @@ import type { McpServersResponse } from "../../contracts/mcp"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../../contracts/setup"
 import type {
   ControlPlaneAdapter,
+  MqttRuntimeResponse,
   ResetSetupResponse,
   SetupChecksResponse,
   StatusResponse,
@@ -87,4 +88,7 @@ export const localAdapter: ControlPlaneAdapter = {
     request<{ token: string }>("/api/setup/generate-auth-token", { method: "POST" }),
   getMcpServers: () => request<McpServersResponse>("/api/mcp/servers"),
   reloadMcpServers: () => request<McpServersResponse>("/api/mcp/reload", { method: "POST" }),
+  getMqttRuntime: () => request<MqttRuntimeResponse>("/api/settings/mqtt/runtime"),
+  disconnectMqttExtension: (extensionId: string) =>
+    request<{ ok: boolean; message: string }>(`/api/settings/mqtt/extensions/${encodeURIComponent(extensionId)}/disconnect`, { method: "POST" }),
 }

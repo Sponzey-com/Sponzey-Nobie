@@ -14,6 +14,7 @@ import { inferProviderId } from "../llm/index.js"
 import { createLogger } from "../logger/index.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { loadNobieMd } from "../memory/nobie-md.js"
+import { condenseMemoryText, extractFocusedErrorMessage, insertMemoryJournalRecord } from "../memory/journal.js"
 import { resolveRunRoute } from "./routing.js"
 import { isValidCron } from "../scheduler/cron.js"
 import type { RootRun, TaskProfile } from "./types.js"
@@ -116,14 +117,30 @@ function shouldReuseConversationContext(message: string): boolean {
     return true
   }
 
+  const koreanContinuationPatterns = [
+    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|아직|왜\s*안|안\s*돼|안돼|결과|오류|에러|실패)/u,
+    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
+  ]
+
+  if (koreanContinuationPatterns.some((pattern) => pattern.test(trimmed))) {
+    return true
+  }
+
   const englishReferencePatterns = [
     /\b(?:previous|earlier|before|existing)\b/i,
     /\b(?:that|it|those)\s+(?:file|folder|program|page|screen|code|calendar|calculator)\b/i,
     /\b(?:modify|edit|fix|change|continue|resume|update|extend|improve|refactor)\b/i,
     /\b(?:the file|the folder|the program|the page|the code)\b/i,
+    /\b(?:and|also|then|next|again|now|here|this|that|it|why|result|error|failed)\b/i,
+    /\b(?:show|send|fix|change|update|continue|resume|again)\b/i,
   ]
 
-  return englishReferencePatterns.some((pattern) => pattern.test(trimmed))
+  if (englishReferencePatterns.some((pattern) => pattern.test(trimmed))) {
+    return true
+  }
+
+  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
+  return trimmed.length <= 64 && tokenCount <= 8
 }
 
 function markAbortedRunCancelledIfActive(runId: string): void {
@@ -363,6 +380,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     contextMode: effectiveContextMode,
   })
 
+  rememberRunInstruction({
+    runId,
+    sessionId,
+    requestGroupId,
+    source: params.source,
+    message: params.message,
+  })
+
   bindActiveRunController(runId, controller)
   const interruptedWorkerRuns = workerSessionId
     ? interruptOrphanWorkerSessionRuns({
@@ -412,11 +437,30 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const finished = enqueueRequestGroupRun(requestGroupId, runId, async () => {
     let failed = false
     let currentMessage = params.message
+    const originalUserRequest = extractVerificationSourceRequest(params.message)
+    let currentModel = params.model
+    let currentProviderId = params.providerId
+    let currentProvider = params.provider
+    let currentTargetId = params.targetId
+    let currentTargetLabel = params.targetLabel
     const priorAssistantMessages: string[] = []
     const seenFollowupPrompts = new Set<string>()
     const seenCommandFailureRecoveryKeys = new Set<string>()
+    const seenExecutionRecoveryKeys = new Set<string>()
+    const seenLlmRecoveryKeys = new Set<string>()
+    let executionRecoveryLimitStop: {
+      summary: string
+      reason: string
+      remainingItems: string[]
+    } | null = null
+    let llmRecoveryLimitStop: {
+      summary: string
+      reason: string
+      remainingItems: string[]
+    } | null = null
     let activeWorkerRuntime = params.workerRuntime
-    const requiresFilesystemMutation = requestRequiresFilesystemMutation(params.message)
+    const requiresFilesystemMutation = requestRequiresFilesystemMutation(originalUserRequest)
+    const requiresPrivilegedToolExecution = requestRequiresPrivilegedToolExecution(originalUserRequest)
     const pendingToolParams = new Map<string, unknown>()
     const filesystemMutationPaths = new Set<string>()
     let sawRealFilesystemMutation = false
@@ -429,9 +473,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       appendRunEvent(runId, "대기 종료 후 실행 시작")
     }
 
-    if (activeWorkerRuntime && requiresFilesystemMutation) {
-      appendRunEvent(runId, `${activeWorkerRuntime.label} 대신 로컬 작업 도구로 실행을 전환합니다.`)
-      updateRunSummary(runId, '실제 파일/폴더 작업을 위해 로컬 도구 실행으로 전환합니다.')
+    if (activeWorkerRuntime && (requiresFilesystemMutation || requiresPrivilegedToolExecution)) {
+      appendRunEvent(runId, `${activeWorkerRuntime.label} 대신 실제 도구 실행 경로로 전환합니다.`)
+      updateRunSummary(
+        runId,
+        requiresFilesystemMutation
+          ? "실제 파일/폴더 작업을 위해 로컬 도구 실행으로 전환합니다."
+          : "시스템 권한 또는 장치 제어 작업을 위해 실제 도구 실행으로 전환합니다.",
+      )
       log.info('worker runtime bypassed for filesystem mutation request', {
         runId,
         sessionId,
@@ -492,7 +541,12 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       while (!controller.signal.aborted) {
         let preview = ""
         failed = false
+        let llmRecovery: { summary: string; reason: string; message: string } | null = null
+        let workerRuntimeRecovery: { summary: string; reason: string; message: string } | null = null
+        let executionRecovery: { summary: string; reason: string; toolNames: string[] } | null = null
         const failedCommandTools: FailedCommandTool[] = []
+        const successfulFileDeliveries: SuccessfulFileDelivery[] = []
+        const successfulTools: SuccessfulToolEvidence[] = []
         let commandFailureSeen = false
         let commandRecoveredWithinSamePass = false
 
@@ -511,11 +565,12 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             })
           : runAgent({
               userMessage: currentMessage,
+              memorySearchQuery: params.message,
               sessionId,
               runId,
-              model: params.model,
-              ...(params.providerId ? { providerId: params.providerId } : {}),
-              ...(params.provider ? { provider: params.provider } : {}),
+              model: currentModel,
+              ...(currentProviderId ? { providerId: currentProviderId } : {}),
+              ...(currentProvider ? { provider: currentProvider } : {}),
               workDir,
               source: params.source,
               signal: controller.signal,
@@ -528,6 +583,37 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           if (chunk.type === "text") {
             preview = `${preview}${chunk.delta}`.trim()
             if (preview) updateRunSummary(runId, preview.slice(-500))
+          } else if (chunk.type === "execution_recovery") {
+            executionRecovery = chunk
+            rememberRunFailure({
+              runId,
+              sessionId,
+              source: params.source,
+              summary: chunk.summary,
+              detail: chunk.reason,
+              title: `execution_recovery: ${chunk.toolNames.join(", ") || "tool"}`,
+            })
+            const currentRun = getRootRun(runId)
+            const usedTurns = currentRun?.delegationTurnCount ?? 0
+            const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+
+            if (maxTurns > 0 && usedTurns >= maxTurns) {
+              executionRecoveryLimitStop = {
+                summary: `실행 복구 재시도 한도(${maxTurns}회)에 도달했습니다.`,
+                reason: chunk.reason,
+                remainingItems: [
+                  `${chunk.toolNames.join(", ")} 실행 실패에 대한 추가 대안 탐색이 필요하지만 자동 한도에 도달했습니다.`,
+                ],
+              }
+              appendRunEvent(runId, `실행 복구 한도 도달 ${maxTurns}/${maxTurns}`)
+              controller.abort()
+            } else {
+              const nextTurn = usedTurns + 1
+              incrementDelegationTurnCount(runId, chunk.summary)
+              appendRunEvent(runId, `실행 복구 재시도 ${nextTurn}/${maxTurns > 0 ? maxTurns : "무제한"}`)
+              setRunStepStatus(runId, "executing", "running", chunk.summary)
+              updateRunStatus(runId, "running", chunk.summary, true)
+            }
           } else if (chunk.type === "tool_start") {
             pendingToolParams.set(chunk.toolName, chunk.params)
             const summary = `${chunk.toolName} 실행 중`
@@ -536,6 +622,12 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           } else if (chunk.type === "tool_end") {
             const toolParams = pendingToolParams.get(chunk.toolName)
             pendingToolParams.delete(chunk.toolName)
+            if (chunk.success) {
+              successfulTools.push({
+                toolName: chunk.toolName,
+                output: chunk.output,
+              })
+            }
             if (chunk.success && isRealFilesystemMutation(chunk.toolName, toolParams)) {
               sawRealFilesystemMutation = true
               for (const mutationPath of collectFilesystemMutationPaths(chunk.toolName, toolParams, workDir)) {
@@ -557,7 +649,88 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             const summary = chunk.success ? `${chunk.toolName} 실행 완료` : `${chunk.toolName} 실행 실패`
             appendRunEvent(runId, summary)
             updateRunSummary(runId, summary)
-          } else if (chunk.type === "error") {
+            if (chunk.success && chunk.toolName === "telegram_send_file") {
+              const delivery = parseTelegramFileSendMarker(chunk.output)
+              if (delivery) {
+                successfulFileDeliveries.push({
+                  toolName: chunk.toolName,
+                  channel: "telegram",
+                  filePath: delivery.filePath,
+                  ...(delivery.caption ? { caption: delivery.caption } : {}),
+                })
+                appendRunEvent(runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
+              }
+            }
+          } else if (chunk.type === "llm_recovery") {
+            rememberRunFailure({
+              runId,
+              sessionId,
+              source: params.source,
+              summary: chunk.summary,
+              detail: `${chunk.reason}\n${chunk.message}`,
+              title: "llm_recovery",
+            })
+            const currentRun = getRootRun(runId)
+            const usedTurns = currentRun?.delegationTurnCount ?? 0
+            const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+
+            if (maxTurns > 0 && usedTurns >= maxTurns) {
+              llmRecoveryLimitStop = {
+                summary: `LLM 오류 복구 재시도 한도(${maxTurns}회)에 도달했습니다.`,
+                reason: chunk.reason,
+                remainingItems: ["모델 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+              }
+              appendRunEvent(runId, `LLM 복구 한도 도달 ${maxTurns}/${maxTurns}`)
+            } else {
+              incrementDelegationTurnCount(runId, chunk.summary)
+              appendRunEvent(runId, `LLM 오류 복구 재시도 ${usedTurns + 1}/${maxTurns > 0 ? maxTurns : "무제한"}`)
+              setRunStepStatus(runId, "executing", "running", chunk.summary)
+              updateRunStatus(runId, "running", chunk.summary, true)
+              llmRecovery = chunk
+            }
+        } else if (chunk.type === "error") {
+            if (executionRecoveryLimitStop) {
+              appendRunEvent(runId, "실행 복구 한도에 도달해 자동 진행을 중단합니다.")
+              continue
+            }
+            if (activeWorkerRuntime && !controller.signal.aborted) {
+              const currentRun = getRootRun(runId)
+              const usedTurns = currentRun?.delegationTurnCount ?? 0
+              const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+              const summary = `${activeWorkerRuntime.label} 오류를 분석하고 다른 경로로 재시도합니다.`
+              const reason = describeWorkerRuntimeErrorReason(chunk.message)
+
+              rememberRunFailure({
+                runId,
+                sessionId,
+                source: params.source,
+                summary,
+                detail: `${reason}\n${chunk.message}`,
+                title: "worker_runtime_recovery",
+              })
+
+              if (maxTurns > 0 && usedTurns >= maxTurns) {
+                llmRecoveryLimitStop = {
+                  summary: `작업 세션 복구 재시도 한도(${maxTurns}회)에 도달했습니다.`,
+                  reason,
+                  remainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+                }
+                appendRunEvent(runId, `작업 세션 복구 한도 도달 ${maxTurns}/${maxTurns}`)
+              } else {
+                incrementDelegationTurnCount(runId, summary)
+                appendRunEvent(runId, `작업 세션 복구 재시도 ${usedTurns + 1}/${maxTurns > 0 ? maxTurns : "무제한"}`)
+                setRunStepStatus(runId, "executing", "running", summary)
+                updateRunStatus(runId, "running", summary, true)
+                workerRuntimeRecovery = {
+                  summary,
+                  reason,
+                  message: chunk.message,
+                }
+              }
+              await deliverChunk(params.onChunk, chunk, runId)
+              continue
+            }
+
             failed = !controller.signal.aborted
             appendRunEvent(runId, chunk.message)
             if (activeWorkerRuntime && workerSessionId) {
@@ -568,14 +741,189 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             } else {
               setRunStepStatus(runId, "executing", "failed", chunk.message)
               updateRunStatus(runId, "failed", chunk.message, false)
+              rememberRunFailure({
+                runId,
+                sessionId,
+                source: params.source,
+                summary: "실행 중 오류로 요청이 중단되었습니다.",
+                detail: chunk.message,
+                title: "run_error",
+              })
             }
           }
 
           await deliverChunk(params.onChunk, chunk, runId)
         }
 
+        if (executionRecoveryLimitStop) {
+          await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+            preview,
+            summary: executionRecoveryLimitStop.summary,
+            reason: executionRecoveryLimitStop.reason,
+            remainingItems: executionRecoveryLimitStop.remainingItems,
+          })
+          break
+        }
+
+        if (llmRecoveryLimitStop) {
+          await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+            preview,
+            summary: llmRecoveryLimitStop.summary,
+            reason: llmRecoveryLimitStop.reason,
+            remainingItems: llmRecoveryLimitStop.remainingItems,
+          })
+          break
+        }
+
+        if (llmRecovery && !controller.signal.aborted) {
+          const recoveryKey = buildLlmRecoveryKey({
+            targetId: currentTargetId,
+            workerRuntimeKind: activeWorkerRuntime?.kind,
+            providerId: currentProviderId,
+            model: currentModel,
+            reason: llmRecovery.reason,
+            message: llmRecovery.message,
+          })
+          const reroute = resolveRunRoute({
+            taskProfile: effectiveTaskProfile,
+            fallbackModel: currentModel,
+            avoidTargets: buildLlmRecoveryAvoidTargets(currentTargetId, activeWorkerRuntime?.kind),
+          })
+          const routeChanged = hasMeaningfulRouteChange({
+            currentTargetId,
+            currentModel,
+            currentProviderId,
+            currentWorkerRuntimeKind: activeWorkerRuntime?.kind,
+            nextTargetId: reroute.targetId,
+            nextModel: reroute.model ?? currentModel,
+            nextProviderId: reroute.providerId ?? currentProviderId,
+            nextWorkerRuntimeKind: reroute.workerRuntime?.kind,
+          })
+
+          if (!routeChanged && seenLlmRecoveryKeys.has(recoveryKey)) {
+            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+              preview,
+              summary: "같은 LLM 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
+              reason: llmRecovery.reason,
+              remainingItems: ["같은 실행 대상과 같은 모델에서 동일한 LLM 오류가 반복되어 다른 수동 조치가 필요합니다."],
+            })
+            break
+          }
+
+          seenLlmRecoveryKeys.add(recoveryKey)
+          appendRunEvent(runId, "LLM 오류를 분석하고 다른 방법으로 재시도합니다.")
+          if (routeChanged) {
+            appendRunEvent(
+              runId,
+              reroute.targetLabel
+                ? `LLM 복구 경로 전환: ${currentTargetLabel ?? currentTargetId ?? currentModel ?? "현재 대상"} -> ${reroute.targetLabel}`
+                : "LLM 복구를 위해 다른 실행 경로로 전환합니다.",
+            )
+            currentModel = reroute.model ?? currentModel
+            currentProviderId = reroute.providerId ?? currentProviderId
+            currentProvider = reroute.provider
+            currentTargetId = reroute.targetId ?? currentTargetId
+            currentTargetLabel = reroute.targetLabel ?? reroute.targetId ?? currentTargetLabel
+            activeWorkerRuntime = reroute.workerRuntime
+          } else if (activeWorkerRuntime) {
+            appendRunEvent(runId, `${activeWorkerRuntime.label} 경로 대신 기본 추론 경로로 전환합니다.`)
+            activeWorkerRuntime = undefined
+            currentProvider = undefined
+          }
+          currentMessage = buildLlmErrorRecoveryPrompt({
+            originalRequest: params.message,
+            previousResult: preview,
+            summary: llmRecovery.summary,
+            reason: llmRecovery.reason,
+            message: llmRecovery.message,
+          })
+          continue
+        }
+
+        if (workerRuntimeRecovery && !controller.signal.aborted) {
+          const recoveryKey = buildWorkerRuntimeRecoveryKey({
+            targetId: currentTargetId,
+            workerRuntimeKind: activeWorkerRuntime?.kind,
+            providerId: currentProviderId,
+            model: currentModel,
+            reason: workerRuntimeRecovery.reason,
+            message: workerRuntimeRecovery.message,
+          })
+          const reroute = resolveRunRoute({
+            taskProfile: effectiveTaskProfile,
+            fallbackModel: currentModel,
+            avoidTargets: buildLlmRecoveryAvoidTargets(currentTargetId, activeWorkerRuntime?.kind),
+          })
+          const routeChanged = hasMeaningfulRouteChange({
+            currentTargetId,
+            currentModel,
+            currentProviderId,
+            currentWorkerRuntimeKind: activeWorkerRuntime?.kind,
+            nextTargetId: reroute.targetId,
+            nextModel: reroute.model ?? currentModel,
+            nextProviderId: reroute.providerId ?? currentProviderId,
+            nextWorkerRuntimeKind: reroute.workerRuntime?.kind,
+          })
+
+          if (!routeChanged && seenLlmRecoveryKeys.has(recoveryKey)) {
+            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+              preview,
+              summary: "같은 작업 세션 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
+              reason: workerRuntimeRecovery.reason,
+              remainingItems: ["같은 작업 세션에서 동일한 오류가 반복되어 다른 수동 조치가 필요합니다."],
+            })
+            break
+          }
+
+          seenLlmRecoveryKeys.add(recoveryKey)
+          appendRunEvent(runId, "작업 세션 오류를 분석하고 다른 방법으로 재시도합니다.")
+          if (routeChanged) {
+            appendRunEvent(
+              runId,
+              reroute.targetLabel
+                ? `작업 세션 복구 경로 전환: ${currentTargetLabel ?? currentTargetId ?? currentModel ?? "현재 대상"} -> ${reroute.targetLabel}`
+                : "작업 세션 복구를 위해 다른 실행 경로로 전환합니다.",
+            )
+            currentModel = reroute.model ?? currentModel
+            currentProviderId = reroute.providerId ?? currentProviderId
+            currentProvider = reroute.provider
+            currentTargetId = reroute.targetId ?? currentTargetId
+            currentTargetLabel = reroute.targetLabel ?? reroute.targetId ?? currentTargetLabel
+            activeWorkerRuntime = reroute.workerRuntime
+          } else if (activeWorkerRuntime) {
+            appendRunEvent(runId, `${activeWorkerRuntime.label} 경로 대신 기본 추론 경로로 전환합니다.`)
+            activeWorkerRuntime = undefined
+            currentProvider = undefined
+          }
+          currentMessage = buildWorkerRuntimeErrorRecoveryPrompt({
+            originalRequest: params.message,
+            previousResult: preview,
+            summary: workerRuntimeRecovery.summary,
+            reason: workerRuntimeRecovery.reason,
+            message: workerRuntimeRecovery.message,
+          })
+          continue
+        }
+
         if (controller.signal.aborted || failed) {
           break
+        }
+
+        const deliverySatisfied = requestWantsDirectArtifactDelivery(originalUserRequest)
+          && successfulFileDeliveries.length > 0
+        if (deliverySatisfied) {
+          const deliverySummary = buildSuccessfulDeliverySummary(successfulFileDeliveries)
+          preview = [preview.trim(), deliverySummary].filter(Boolean).join("\n\n")
+          updateRunSummary(runId, deliverySummary)
+        } else if (!preview.trim()) {
+          const implicitPreview = buildImplicitExecutionSummary({
+            successfulTools,
+            sawRealFilesystemMutation,
+          })
+          if (implicitPreview) {
+            preview = implicitPreview
+            updateRunSummary(runId, implicitPreview)
+          }
         }
 
         const postPassRun = getRootRun(runId)
@@ -600,6 +948,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           }
 
           seenCommandFailureRecoveryKeys.add(commandFailureRecovery.key)
+          rememberRunFailure({
+            runId,
+            sessionId,
+            source: params.source,
+            summary: commandFailureRecovery.summary,
+            detail: commandFailureRecovery.reason,
+            title: "command_failure_recovery",
+          })
           incrementDelegationTurnCount(runId, commandFailureRecovery.summary)
           appendRunEvent(runId, `명령 실패 대안 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
           setRunStepStatus(runId, "executing", "running", commandFailureRecovery.summary)
@@ -615,18 +971,90 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           continue
         }
 
-        if (requiresFilesystemMutation && !sawRealFilesystemMutation) {
-          if (filesystemMutationRecoveryAttempted) {
+        const genericExecutionRecovery = executionRecovery && !commandFailureRecovery
+          ? selectGenericExecutionRecovery({
+              executionRecovery,
+              seenKeys: seenExecutionRecoveryKeys,
+            })
+          : null
+
+        if (genericExecutionRecovery) {
+          if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
             await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
               preview,
-              summary: "실제 파일/폴더 생성 또는 수정이 확인되지 않아 자동 진행을 멈췄습니다.",
-              reason: "응답 내용만 생성되었고 실제 로컬 파일 작업이 확인되지 않았습니다.",
-              remainingItems: [
-                "요청한 파일 또는 폴더가 실제로 생성되거나 수정되지 않았습니다.",
-                "로컬 도구 실행 권한과 대상 경로를 다시 확인해 주세요.",
-              ],
+              summary: `자동 후속 처리 한도(${maxTurnsAfterPass}회)에 도달했습니다.`,
+              reason: genericExecutionRecovery.reason,
+              remainingItems: ["실패한 도구에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
             })
             break
+          }
+
+          seenExecutionRecoveryKeys.add(genericExecutionRecovery.key)
+          rememberRunFailure({
+            runId,
+            sessionId,
+            source: params.source,
+            summary: genericExecutionRecovery.summary,
+            detail: genericExecutionRecovery.reason,
+            title: "execution_recovery_followup",
+          })
+          incrementDelegationTurnCount(runId, genericExecutionRecovery.summary)
+          appendRunEvent(runId, `도구 실패 대안 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+          setRunStepStatus(runId, "executing", "running", genericExecutionRecovery.summary)
+          updateRunStatus(runId, "running", genericExecutionRecovery.summary, true)
+          activeWorkerRuntime = undefined
+          currentMessage = buildExecutionRecoveryPrompt({
+            originalRequest: params.message,
+            previousResult: preview,
+            summary: genericExecutionRecovery.summary,
+            reason: genericExecutionRecovery.reason,
+            toolNames: executionRecovery?.toolNames ?? [],
+          })
+          continue
+        }
+
+        if (requiresFilesystemMutation && !deliverySatisfied && !sawRealFilesystemMutation) {
+          if (filesystemMutationRecoveryAttempted) {
+            if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
+              await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+                preview,
+                summary: "실제 파일/폴더 생성 또는 수정이 확인되지 않아 자동 진행을 멈췄습니다.",
+                reason: "응답 내용만 생성되었고 실제 로컬 파일 작업이 확인되지 않았습니다.",
+                remainingItems: [
+                  "요청한 파일 또는 폴더가 실제로 생성되거나 수정되지 않았습니다.",
+                  "로컬 도구 실행 권한과 대상 경로를 다시 확인해 주세요.",
+                ],
+              })
+              break
+            }
+
+            const summary = "실제 파일/폴더 변경 증거가 없어 다른 방법으로 재시도합니다."
+            rememberRunFailure({
+              runId,
+              sessionId,
+              source: params.source,
+              summary,
+              detail: "응답 내용만 생성되었고 실제 로컬 파일 작업 증거가 아직 없습니다.",
+              title: "filesystem_mutation_recovery",
+            })
+            incrementDelegationTurnCount(runId, summary)
+            appendRunEvent(runId, `파일 작업 복구 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+            updateRunSummary(runId, summary)
+            setRunStepStatus(runId, "executing", "running", summary)
+            updateRunStatus(runId, "running", summary, true)
+            activeWorkerRuntime = undefined
+            currentMessage = buildFilesystemVerificationRecoveryPrompt({
+              originalRequest: params.message,
+              previousResult: preview,
+              verificationSummary: summary,
+              verificationReason: "실행 응답만 있었고 실제 로컬 파일 또는 폴더 변경 증거가 아직 없습니다.",
+              missingItems: [
+                "요청한 파일 또는 폴더가 실제로 존재하는지 직접 확인해야 합니다.",
+                "누락되었다면 다른 방법으로 직접 생성하거나 수정해야 합니다.",
+              ],
+              mutationPaths: [...filesystemMutationPaths],
+            })
+            continue
           }
 
           filesystemMutationRecoveryAttempted = true
@@ -636,32 +1064,58 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           updateRunStatus(runId, "running", "실제 파일/폴더 작업을 다시 시도합니다.", true)
           activeWorkerRuntime = undefined
           currentMessage = buildFilesystemMutationFollowupPrompt({
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             previousResult: preview,
           })
           continue
         }
 
-        if (requiresFilesystemMutation && sawRealFilesystemMutation) {
+        if (requiresFilesystemMutation && !deliverySatisfied && sawRealFilesystemMutation) {
           const verification = await runFilesystemVerificationSubtask({
             parentRunId: runId,
             requestGroupId,
             sessionId,
             source: params.source,
             onChunk: params.onChunk,
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             mutationPaths: [...filesystemMutationPaths],
             workDir,
           })
 
           if (!verification.ok) {
-            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
-              preview,
+            if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
+              await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+                preview,
+                summary: verification.summary,
+                ...(verification.reason ? { reason: verification.reason } : {}),
+                ...(verification.remainingItems ? { remainingItems: verification.remainingItems } : {}),
+              })
+              break
+            }
+
+            rememberRunFailure({
+              runId,
+              sessionId,
+              source: params.source,
               summary: verification.summary,
-              ...(verification.reason ? { reason: verification.reason } : {}),
-              ...(verification.remainingItems ? { remainingItems: verification.remainingItems } : {}),
+              detail: verification.reason ?? verification.summary,
+              title: "filesystem_verification_recovery",
             })
-            break
+            incrementDelegationTurnCount(runId, verification.summary)
+            appendRunEvent(runId, `파일 검증 복구 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+            updateRunSummary(runId, verification.summary)
+            setRunStepStatus(runId, "executing", "running", verification.summary)
+            updateRunStatus(runId, "running", verification.summary, true)
+            activeWorkerRuntime = undefined
+            currentMessage = buildFilesystemVerificationRecoveryPrompt({
+              originalRequest: originalUserRequest,
+              previousResult: preview,
+              verificationSummary: verification.summary,
+              ...(verification.reason ? { verificationReason: verification.reason } : {}),
+              ...(verification.remainingItems ? { missingItems: verification.remainingItems } : {}),
+              mutationPaths: [...filesystemMutationPaths],
+            })
+            continue
           }
 
           appendRunEvent(runId, "실제 파일/폴더 결과 검증을 완료했습니다.")
@@ -689,8 +1143,63 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         setRunStepStatus(runId, "executing", "completed", preview || "응답 생성을 마쳤습니다.")
         setRunStepStatus(runId, "reviewing", "running", "남은 작업이 있는지 검토 중입니다.")
 
+        const directArtifactDeliveryRequested = requestWantsDirectArtifactDelivery(originalUserRequest)
+
+        if (deliverySatisfied) {
+          const deliverySummary = buildSuccessfulDeliverySummary(successfulFileDeliveries)
+          rememberRunSuccess({
+            runId,
+            sessionId,
+            source: params.source,
+            text: preview || deliverySummary,
+            summary: deliverySummary,
+          })
+          setRunStepStatus(runId, "reviewing", "completed", deliverySummary)
+          setRunStepStatus(runId, "finalizing", "completed", "전달 결과를 저장했습니다.")
+          setRunStepStatus(runId, "completed", "completed", preview || deliverySummary)
+          updateRunStatus(runId, "completed", preview || deliverySummary, false)
+          appendRunEvent(runId, "직접 파일 전달 요청 완료")
+          break
+        }
+
+        if (directArtifactDeliveryRequested) {
+          if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
+            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+              preview,
+              summary: "메신저로 결과물을 직접 전달하지 못해 자동 진행을 멈췄습니다.",
+              reason: "사용자는 결과물 자체를 보여주거나 보내달라고 요청했지만 실제 전달이 완료되지 않았습니다.",
+              remainingItems: ["결과물 자체를 메신저로 실제 전달하는 단계가 남아 있습니다."],
+            })
+            break
+          }
+
+          const summary = "메신저 결과 전달이 아직 끝나지 않아 다른 방법으로 계속 진행합니다."
+          rememberRunFailure({
+            runId,
+            sessionId,
+            source: params.source,
+            summary,
+            detail: "설명이나 로컬 저장만으로는 완료가 아니며, 요청된 결과물 자체를 메신저로 전달해야 합니다.",
+            title: "direct_artifact_delivery_recovery",
+          })
+          incrementDelegationTurnCount(runId, summary)
+          appendRunEvent(runId, `메신저 결과 전달 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+          updateRunSummary(runId, summary)
+          setRunStepStatus(runId, "reviewing", "running", summary)
+          setRunStepStatus(runId, "executing", "running", summary)
+          updateRunStatus(runId, "running", summary, true)
+          activeWorkerRuntime = undefined
+          currentMessage = buildDirectArtifactDeliveryRecoveryPrompt({
+            originalRequest: originalUserRequest,
+            previousResult: preview,
+            successfulTools,
+            successfulFileDeliveries,
+          })
+          continue
+        }
+
         const review = await reviewTaskCompletion({
-          originalRequest: params.message,
+          originalRequest: originalUserRequest,
           latestAssistantMessage: preview,
           priorAssistantMessages,
           ...(params.model ? { model: params.model } : {}),
@@ -704,8 +1213,61 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
 
         priorAssistantMessages.push(preview)
 
+        const hasCompletionEvidence = hasMeaningfulCompletionEvidence({
+          preview,
+          deliverySatisfied,
+          successfulTools,
+          sawRealFilesystemMutation,
+        })
+
+        if (!review && !hasCompletionEvidence) {
+          if (maxTurnsAfterPass > 0 && usedTurnsAfterPass >= maxTurnsAfterPass) {
+            await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+              preview,
+              summary: "실행 결과가 비어 있고 완료 근거가 없어 자동 진행을 멈췄습니다.",
+              reason: "명확한 응답, 성공한 도구 결과, 실제 파일 변경, 전달 완료 중 어떤 근거도 확인되지 않았습니다.",
+              remainingItems: ["실제 실행 결과를 남기거나 다른 방법으로 다시 시도해야 합니다."],
+            })
+            break
+          }
+
+          const summary = "실행 결과가 비어 있어 다른 방법으로 다시 시도합니다."
+          rememberRunFailure({
+            runId,
+            sessionId,
+            source: params.source,
+            summary,
+            detail: "명확한 응답, 성공한 도구 결과, 실제 파일 변경, 전달 완료 중 어떤 근거도 확인되지 않았습니다.",
+            title: "empty_result_recovery",
+          })
+          incrementDelegationTurnCount(runId, summary)
+          appendRunEvent(runId, `빈 결과 복구 재시도 ${usedTurnsAfterPass + 1}/${maxTurnsAfterPass > 0 ? maxTurnsAfterPass : "무제한"}`)
+          updateRunSummary(runId, summary)
+          setRunStepStatus(runId, "reviewing", "running", summary)
+          setRunStepStatus(runId, "executing", "running", summary)
+          updateRunStatus(runId, "running", summary, true)
+          currentMessage = buildEmptyResultRecoveryPrompt({
+            originalRequest: originalUserRequest,
+            previousResult: preview,
+            successfulTools,
+            sawRealFilesystemMutation,
+          })
+          continue
+        }
+
         if (!review || review.status === "complete") {
-          const reviewSummary = review?.summary?.trim() || preview || "실행을 완료했습니다."
+          const reviewSummary =
+            review?.summary?.trim()
+            || preview
+            || buildImplicitExecutionSummary({ successfulTools, sawRealFilesystemMutation })
+            || "실행을 완료했습니다."
+          rememberRunSuccess({
+            runId,
+            sessionId,
+            source: params.source,
+            text: preview || reviewSummary,
+            summary: reviewSummary,
+          })
           setRunStepStatus(runId, "reviewing", "completed", reviewSummary)
           setRunStepStatus(runId, "finalizing", "completed", "실행 결과를 저장했습니다.")
           setRunStepStatus(runId, "completed", "completed", preview || "실행을 완료했습니다.")
@@ -789,7 +1351,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             updateRunStatus(runId, "running", "중간에 끊긴 작업을 자동으로 다시 시도합니다.", true)
             activeWorkerRuntime = undefined
             currentMessage = buildTruncatedOutputRecoveryPrompt({
-              originalRequest: params.message,
+              originalRequest: originalUserRequest,
               previousResult: preview,
               summary: review.summary,
               reason: review.reason,
@@ -867,6 +1429,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         setRunStepStatus(runId, "executing", "failed", message)
         updateRunStatus(runId, "failed", message, false)
         appendRunEvent(runId, message)
+        rememberRunFailure({
+          runId,
+          sessionId,
+          source: params.source,
+          summary: "예상하지 못한 실행 오류가 발생했습니다.",
+          detail: message,
+          title: "unexpected_error",
+        })
       }
 
       await deliverChunk(params.onChunk, { type: "error", message }, runId)
@@ -1062,6 +1632,14 @@ async function moveRunToCancelledAfterStop(
     await emitStandaloneAssistantMessage(runId, sessionId, message, source, onChunk)
   }
   const summary = params.summary || "자동 진행을 중단하고 요청을 취소했습니다."
+  rememberRunFailure({
+    runId,
+    sessionId,
+    source,
+    summary,
+    detail: [params.reason, params.userMessage, params.preview, params.remainingItems?.join("\n")].filter(Boolean).join("\n"),
+    title: "cancelled_after_stop",
+  })
   setRunStepStatus(runId, "reviewing", "completed", summary)
   setRunStepStatus(runId, "finalizing", "completed", "중단 결과를 사용자에게 안내했습니다.")
   updateRunStatus(runId, "cancelled", summary, false)
@@ -1494,6 +2072,13 @@ async function completeRunWithAssistantMessage(
     eventBus.emit("agent.stream", { sessionId, runId, delta: text })
     await deliverChunk(onChunk, { type: "text", delta: text }, runId)
   }
+  rememberRunSuccess({
+    runId,
+    sessionId,
+    source,
+    text,
+    summary: text || "실행을 완료했습니다.",
+  })
   eventBus.emit("agent.end", { sessionId, runId, durationMs: 0 })
   await deliverChunk(onChunk, { type: "done", totalTokens: 0 }, runId)
 
@@ -1547,6 +2132,88 @@ function buildAwaitingUserMessage(params: {
   ].filter(Boolean)
 
   return lines.join("\n\n")
+}
+
+function rememberRunInstruction(params: {
+  runId: string
+  sessionId: string
+  requestGroupId: string
+  source: StartRootRunParams["source"]
+  message: string
+}): void {
+  safeInsertMemoryJournalRecord({
+    kind: "instruction",
+    title: "instruction",
+    content: params.message,
+    summary: condenseMemoryText(params.message, 280),
+    sessionId: params.sessionId,
+    runId: params.runId,
+    requestGroupId: params.requestGroupId,
+    source: params.source,
+    tags: ["instruction"],
+  })
+}
+
+function rememberRunSuccess(params: {
+  runId: string
+  sessionId: string
+  source: StartRootRunParams["source"]
+  text: string
+  summary: string
+}): void {
+  const run = getRootRun(params.runId)
+  safeInsertMemoryJournalRecord({
+    kind: "success",
+    title: "success",
+    content: params.text,
+    summary: condenseMemoryText(params.summary || params.text, 280),
+    sessionId: params.sessionId,
+    runId: params.runId,
+    ...(run?.requestGroupId ? { requestGroupId: run.requestGroupId } : {}),
+    source: params.source,
+    tags: ["success"],
+  })
+}
+
+function rememberRunFailure(params: {
+  runId: string
+  sessionId: string
+  source: StartRootRunParams["source"]
+  summary: string
+  detail?: string
+  title?: string
+}): void {
+  const run = getRootRun(params.runId)
+  const detail = params.detail?.trim() || params.summary
+  safeInsertMemoryJournalRecord({
+    kind: "failure",
+    title: params.title || "failure",
+    content: detail,
+    summary: extractFocusedErrorMessage(detail, 280) || condenseMemoryText(params.summary, 280),
+    sessionId: params.sessionId,
+    runId: params.runId,
+    ...(run?.requestGroupId ? { requestGroupId: run.requestGroupId } : {}),
+    source: params.source,
+    tags: ["failure"],
+  })
+}
+
+function safeInsertMemoryJournalRecord(params: {
+  kind: "instruction" | "success" | "failure" | "response"
+  title: string
+  content: string
+  summary: string
+  sessionId?: string
+  runId?: string
+  requestGroupId?: string
+  source?: string
+  tags?: string[]
+}): void {
+  try {
+    insertMemoryJournalRecord(params)
+  } catch (error) {
+    log.warn(`memory journal insert failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 interface FilesystemVerificationResult {
@@ -1745,12 +2412,6 @@ function inferFilesystemVerificationTargets(originalRequest: string, mutationPat
     }
   }
 
-  // 실제 도구 실행에서 확인된 경로가 있으면 그 경로를 최우선으로 신뢰한다.
-  // 후속 프롬프트나 intake 요약문에서 다시 경로를 추론하면 문장 조각이 섞여 오탐이 발생할 수 있다.
-  if (normalizedMutationPaths.length > 0) {
-    return [...targets.values()]
-  }
-
   const baseDir = inferFilesystemBaseDir(requestForInference)
   const quotedNames = extractQuotedFilesystemNames(requestForInference)
   const mentionsFolder = /(폴더|디렉터리|folder|directory)/iu.test(requestForInference)
@@ -1941,6 +2602,96 @@ function displayHomePath(value: string): string {
   return value.startsWith(home) ? value.replace(home, "~") : value
 }
 
+function parseTelegramFileSendMarker(output: string): { filePath: string; caption?: string } | null {
+  if (!output.startsWith("FILE_SEND:")) return null
+  const rest = output.slice("FILE_SEND:".length)
+  const separatorIndex = rest.lastIndexOf(":")
+  if (separatorIndex === -1) return null
+
+  const filePath = rest.slice(0, separatorIndex).trim()
+  const caption = rest.slice(separatorIndex + 1).trim()
+  if (!filePath) return null
+
+  return {
+    filePath,
+    ...(caption ? { caption } : {}),
+  }
+}
+
+function requestWantsDirectArtifactDelivery(message: string): boolean {
+  const normalized = extractVerificationSourceRequest(message).trim()
+  if (!normalized) return false
+
+  return /(?:보여줘|보내줘|전송해줘|첨부해줘|전달해줘|올려줘|공유해줘|show|send|deliver|attach|share|return)/iu.test(normalized)
+    && /(?:사진|이미지|스크린샷|캡처|파일|image|photo|screenshot|capture|file)/iu.test(normalized)
+}
+
+function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDelivery[]): string {
+  if (deliveries.length === 0) return "파일 전달 완료"
+  const last = deliveries[deliveries.length - 1]
+  if (!last) return "파일 전달 완료"
+  return `${last.channel === "telegram" ? "텔레그램" : "채널"} 파일 전달 완료: ${displayHomePath(last.filePath)}`
+}
+
+function buildImplicitExecutionSummary(params: {
+  successfulTools: SuccessfulToolEvidence[]
+  sawRealFilesystemMutation: boolean
+}): string | undefined {
+  const uniqueTools = [...new Set(params.successfulTools.map((tool) => tool.toolName).filter(Boolean))]
+  if (uniqueTools.length > 0) {
+    if (uniqueTools.length === 1) {
+      return `${uniqueTools[0]} 실행을 완료했습니다.`
+    }
+    return `${uniqueTools.slice(0, 3).join(", ")} 실행을 완료했습니다.`
+  }
+
+  if (params.sawRealFilesystemMutation) {
+    return "실제 파일 또는 폴더 작업을 완료했습니다."
+  }
+
+  return undefined
+}
+
+function buildDirectArtifactDeliveryRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  successfulTools: SuccessfulToolEvidence[]
+  successfulFileDeliveries: SuccessfulFileDelivery[]
+}): string {
+  const toolLines = params.successfulTools
+    .slice(-5)
+    .map((tool, index) => `${index + 1}. ${tool.toolName}`)
+  const deliveryLines = params.successfulFileDeliveries
+    .slice(-3)
+    .map((delivery, index) => `${index + 1}. ${delivery.channel}: ${displayHomePath(delivery.filePath)}`)
+
+  return [
+    "[Direct Artifact Delivery Recovery]",
+    "사용자는 결과물 자체를 보여주거나 보내달라고 요청했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
+    toolLines.length > 0 ? ["성공한 도구 실행:", ...toolLines].join("\n") : "",
+    deliveryLines.length > 0 ? ["이미 전달된 파일:", ...deliveryLines].join("\n") : "",
+    "설명, 권한 안내, 수동 해결 방법 제시만으로 완료 처리하지 마세요.",
+    "결과물 자체를 실제로 전달하거나, 전달이 불가능하면 다른 실행 경로를 찾아 계속 진행하세요.",
+    "도구 목록을 다시 확인하고, 적절한 Yeonjang 도구나 전달 도구를 우선 사용하세요.",
+    "사용자가 요청한 결과물 자체가 실제로 전달되기 전에는 완료라고 말하지 마세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function hasMeaningfulCompletionEvidence(params: {
+  preview: string
+  deliverySatisfied: boolean
+  successfulTools: SuccessfulToolEvidence[]
+  sawRealFilesystemMutation: boolean
+}): boolean {
+  if (params.preview.trim()) return true
+  if (params.deliverySatisfied) return true
+  if (params.successfulTools.length > 0) return true
+  return params.sawRealFilesystemMutation
+}
+
 function safeStat(value: string): ReturnType<typeof statSync> | undefined {
   try {
     return statSync(value)
@@ -1960,7 +2711,7 @@ function safeReadSnippet(value: string): string | undefined {
 }
 
 function requestRequiresFilesystemMutation(message: string): boolean {
-  const normalized = message.trim()
+  const normalized = extractVerificationSourceRequest(message).trim()
   if (!normalized) return false
 
   const lowered = normalized.toLowerCase()
@@ -2026,6 +2777,13 @@ function requestRequiresFilesystemMutation(message: string): boolean {
   return mentionsFilesystemTarget && mentionsMutation
 }
 
+function requestRequiresPrivilegedToolExecution(message: string): boolean {
+  const normalized = extractVerificationSourceRequest(message).trim()
+  if (!normalized) return false
+
+  return /(화면|스크린샷|캡처|카메라|사진|마우스|클릭|키보드|입력|타이핑|단축키|앱\s*실행|프로그램\s*실행|프로세스|창|윈도우|시스템\s*제어|screen|screenshot|capture|camera|photo|mouse|click|keyboard|type|shortcut|app\s*launch|program|process|window|system\s*control)/iu.test(normalized)
+}
+
 function isRealFilesystemMutation(toolName: string, params: unknown): boolean {
   if (toolName === "file_write" || toolName === "file_patch" || toolName === "file_delete") {
     return true
@@ -2062,6 +2820,18 @@ interface FailedCommandTool {
   toolName: string
   output: string
   params?: unknown
+}
+
+interface SuccessfulFileDelivery {
+  toolName: string
+  channel: "telegram"
+  filePath: string
+  caption?: string
+}
+
+interface SuccessfulToolEvidence {
+  toolName: string
+  output: string
 }
 
 function isCommandFailureRecoveryTool(toolName: string): boolean {
@@ -2114,6 +2884,26 @@ function selectCommandFailureRecovery(params: {
   return null
 }
 
+function normalizeExecutionRecoveryKey(toolNames: string[], reason: string): string {
+  const normalizedTools = [...new Set(toolNames)].sort().join(",")
+  const normalizedReason = reason.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240)
+  return `${normalizedTools}:${normalizedReason}`
+}
+
+function selectGenericExecutionRecovery(params: {
+  executionRecovery: { summary: string; reason: string; toolNames: string[] }
+  seenKeys: Set<string>
+}): { key: string; summary: string; reason: string } | null {
+  if (params.executionRecovery.toolNames.length === 0) return null
+  const key = normalizeExecutionRecoveryKey(params.executionRecovery.toolNames, params.executionRecovery.reason)
+  if (params.seenKeys.has(key)) return null
+  return {
+    key,
+    summary: params.executionRecovery.summary,
+    reason: params.executionRecovery.reason,
+  }
+}
+
 function buildCommandFailureRecoveryPrompt(params: {
   originalRequest: string
   previousResult: string
@@ -2141,6 +2931,158 @@ function buildCommandFailureRecoveryPrompt(params: {
   ].filter(Boolean).join("\n\n")
 }
 
+function buildExecutionRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  summary: string
+  reason: string
+  toolNames: string[]
+}): string {
+  const toolLine = params.toolNames.length > 0
+    ? `실패한 도구: ${[...new Set(params.toolNames)].join(", ")}`
+    : ""
+
+  return [
+    "[Execution Recovery]",
+    "이전 시도에서 실행 도구가 실패했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    `복구 요약: ${params.summary}`,
+    `실패 분석: ${params.reason}`,
+    toolLine,
+    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
+    "도구 목록을 다시 확인하고, 같은 실패 경로를 그대로 반복하지 마세요.",
+    "가능한 경우 Yeonjang 도구를 먼저 사용하고, 불가능하면 다른 실행 도구 또는 다른 경로를 선택하세요.",
+    "도구의 가능 여부를 다시 확인한 뒤 남은 작업을 이어서 처리하세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function buildLlmErrorRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  summary: string
+  reason: string
+  message: string
+}): string {
+  return [
+    "[LLM Error Recovery]",
+    "이전 시도에서 모델 호출 중 오류가 발생했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    `복구 요약: ${params.summary}`,
+    `오류 분석: ${params.reason}`,
+    `원본 오류: ${params.message}`,
+    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
+    "방금 실패한 접근을 그대로 반복하지 말고, 오류 원인에 맞춰 다른 진행 방법을 찾으세요.",
+    "필요하면 더 짧은 응답, 더 단순한 단계 분해, 다른 도구 조합, 다른 실행 경로를 선택하세요.",
+    "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function describeWorkerRuntimeErrorReason(message: string): string {
+  if (/(exited with code 1|exit code 1|code 1)/i.test(message)) {
+    return "작업 세션 프로세스가 오류 종료되어 같은 경로로는 진행할 수 없습니다."
+  }
+  if (/(not found|enoent|command not found)/i.test(message)) {
+    return "작업 세션 실행 명령을 찾지 못했습니다."
+  }
+  if (/(permission denied|operation not permitted|eacces|권한)/i.test(message)) {
+    return "작업 세션 실행 권한 또는 접근 제한 때문에 실패했습니다."
+  }
+  if (/(timeout|timed out|시간 초과)/i.test(message)) {
+    return "작업 세션 응답이 시간 안에 끝나지 않았습니다."
+  }
+  return "작업 세션 경로에서 오류가 발생해 다른 경로나 다른 대상 전환이 필요합니다."
+}
+
+function buildWorkerRuntimeErrorRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  summary: string
+  reason: string
+  message: string
+}): string {
+  return [
+    "[Worker Runtime Error Recovery]",
+    "이전 시도에서 외부 작업 세션 실행이 실패했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    `복구 요약: ${params.summary}`,
+    `오류 분석: ${params.reason}`,
+    `원본 오류: ${params.message}`,
+    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
+    "같은 작업 세션 경로를 그대로 반복하지 말고, 다른 실행 경로, 다른 대상, 또는 기본 추론 경로를 선택하세요.",
+    "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function buildLlmRecoveryAvoidTargets(
+  targetId: string | undefined,
+  workerRuntimeKind: string | undefined,
+): string[] {
+  return [targetId, workerRuntimeKind]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+}
+
+function buildLlmRecoveryKey(params: {
+  targetId: string | undefined
+  workerRuntimeKind: string | undefined
+  providerId: string | undefined
+  model: string | undefined
+  reason: string
+  message: string
+}): string {
+  const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default"
+  const fingerprint = normalizeLlmRecoveryFingerprint(params.reason, params.message)
+  return `${route}::${fingerprint}`
+}
+
+function buildWorkerRuntimeRecoveryKey(params: {
+  targetId: string | undefined
+  workerRuntimeKind: string | undefined
+  providerId: string | undefined
+  model: string | undefined
+  reason: string
+  message: string
+}): string {
+  const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default"
+  const fingerprint = normalizeLlmRecoveryFingerprint(params.reason, params.message)
+  return `worker::${route}::${fingerprint}`
+}
+
+function normalizeLlmRecoveryFingerprint(reason: string, message: string): string {
+  const combined = `${reason}\n${message}`
+    .toLowerCase()
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, "<id>")
+    .replace(/\b\d{3,}\b/g, "<num>")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (/timeout|timed out|etimedout|deadline/i.test(combined)) return "timeout"
+  if (/rate limit|too many requests|429/i.test(combined)) return "rate-limit"
+  if (/context|token|too large|max context|maximum context/i.test(combined)) return "context-limit"
+  if (/schema|parameter|unsupported|invalid_request|tool|function/i.test(combined)) return "request-schema"
+  if (/auth|unauthorized|forbidden|401|403|api key/i.test(combined)) return "auth"
+  if (/network|socket|connect|connection|reset|refused|econn|dns|fetch failed/i.test(combined)) return "network"
+  return combined.slice(0, 160)
+}
+
+function hasMeaningfulRouteChange(params: {
+  currentTargetId: string | undefined
+  currentModel: string | undefined
+  currentProviderId: string | undefined
+  currentWorkerRuntimeKind: string | undefined
+  nextTargetId: string | undefined
+  nextModel: string | undefined
+  nextProviderId: string | undefined
+  nextWorkerRuntimeKind: string | undefined
+}): boolean {
+  return (params.currentWorkerRuntimeKind ?? "") !== (params.nextWorkerRuntimeKind ?? "")
+    || (params.currentTargetId ?? "") !== (params.nextTargetId ?? "")
+    || (params.currentProviderId ?? "") !== (params.nextProviderId ?? "")
+    || (params.currentModel ?? "") !== (params.nextModel ?? "")
+}
+
 function buildFilesystemMutationFollowupPrompt(params: {
   originalRequest: string
   previousResult: string
@@ -2153,6 +3095,59 @@ function buildFilesystemMutationFollowupPrompt(params: {
     "요청한 파일이나 폴더가 로컬 환경에서 실제로 생성되거나 수정되어야만 완료입니다.",
     "이제 사용 가능한 파일 또는 쉘 도구로 실제 로컬 작업을 수행하세요.",
     "수동 안내, 예시 코드만 제시하거나 실제 파일 변경 없이 완료했다고 말하지 마세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function buildFilesystemVerificationRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  verificationSummary: string
+  verificationReason?: string
+  missingItems?: string[]
+  mutationPaths?: string[]
+}): string {
+  const missing = params.missingItems?.filter((item) => item.trim()).map((item) => `- ${item}`) ?? []
+  const targets = params.mutationPaths?.filter((item) => item.trim()).map((item) => `- ${displayHomePath(item)}`) ?? []
+
+  return [
+    "[Filesystem Verification Recovery]",
+    "이전 시도에서 실제 파일 또는 폴더 결과를 자동 검증하지 못했습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    `검증 요약: ${params.verificationSummary}`,
+    params.verificationReason?.trim() ? `검증 사유: ${params.verificationReason.trim()}` : "",
+    targets.length > 0 ? ["현재 확인 대상 경로:", ...targets].join("\n") : "",
+    missing.length > 0 ? ["누락되었거나 다시 확인할 항목:", ...missing].join("\n") : "",
+    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
+    "실제 파일 도구나 로컬 명령으로 경로 존재 여부를 직접 확인하세요.",
+    "대상이 없으면 다른 방법으로 직접 생성하거나 수정하세요.",
+    "이미 생성되었다면 실제 경로를 다시 찾아 검증 근거를 확보하세요.",
+    "실제 존재 여부를 다시 확인하기 전에는 완료라고 말하지 마세요.",
+    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
+  ].filter(Boolean).join("\n\n")
+}
+
+function buildEmptyResultRecoveryPrompt(params: {
+  originalRequest: string
+  previousResult: string
+  successfulTools: SuccessfulToolEvidence[]
+  sawRealFilesystemMutation: boolean
+}): string {
+  const successfulToolLines = params.successfulTools
+    .slice(-3)
+    .map((tool, index) => `${index + 1}. ${tool.toolName}`)
+
+  return [
+    "[Empty Result Recovery]",
+    "이전 시도는 실행이 끝났지만 완료로 볼 수 있는 명확한 결과가 남지 않았습니다.",
+    `원래 사용자 요청: ${params.originalRequest}`,
+    params.previousResult.trim() ? `현재까지 텍스트 결과: ${params.previousResult.trim()}` : "",
+    successfulToolLines.length > 0 ? ["성공한 도구 실행:", ...successfulToolLines].join("\n") : "",
+    params.sawRealFilesystemMutation ? "실제 파일 또는 폴더 변경은 감지되었지만 사용자에게 전달할 명확한 결과 정리가 없습니다." : "",
+    "이전 시도를 그대로 완료 처리하지 말고, 무엇이 실제로 완료되었는지 확인하세요.",
+    "결과가 있다면 그 결과를 명확하게 정리해 전달하세요.",
+    "결과가 부족하다면 남은 작업을 이어서 실제로 완료하세요.",
+    "아무 일도 하지 않았는데 완료라고 말하지 마세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")
 }

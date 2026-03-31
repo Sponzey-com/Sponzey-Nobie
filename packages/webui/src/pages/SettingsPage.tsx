@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import { api, type MqttRuntimeResponse } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
@@ -7,6 +8,8 @@ import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { BackendComposer } from "../components/setup/BackendComposer"
 import { BackendHealthCard } from "../components/setup/BackendHealthCard"
+import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
+import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { RoutingPriorityEditor } from "../components/setup/RoutingPriorityEditor"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
@@ -23,7 +26,7 @@ import { useSetupStore } from "../stores/setup"
 import { useUiI18n } from "../lib/ui-i18n"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
-type TabId = "backends" | "routing" | "security" | "channels" | "remote" | "advanced"
+type TabId = "backends" | "routing" | "security" | "channels" | "mqtt" | "remote" | "advanced"
 
 function cloneDraft(draft: SetupDraft): SetupDraft {
   return JSON.parse(JSON.stringify(draft)) as SetupDraft
@@ -52,6 +55,10 @@ export function SettingsPage() {
   const [tab, setTab] = useState<TabId>("backends")
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
   const [editorVersion, setEditorVersion] = useState(0)
+  const [mqttRuntime, setMqttRuntime] = useState<MqttRuntimeResponse | null>(null)
+  const [mqttRuntimeLoading, setMqttRuntimeLoading] = useState(false)
+  const [mqttRuntimeError, setMqttRuntimeError] = useState("")
+  const [disconnectingExtensionId, setDisconnectingExtensionId] = useState<string | null>(null)
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const { text, displayText } = useUiI18n()
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -72,12 +79,36 @@ export function SettingsPage() {
     setLocalDraft(cloneDraft(draft))
   }, [draft])
 
+  const loadMqttRuntime = useCallback(async () => {
+    setMqttRuntimeLoading(true)
+    try {
+      const runtime = await api.mqttRuntime()
+      setMqttRuntime(runtime)
+      setMqttRuntimeError("")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setMqttRuntimeError(message)
+    } finally {
+      setMqttRuntimeLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (tab !== "mqtt") return
+    void loadMqttRuntime()
+    const timer = window.setInterval(() => {
+      void loadMqttRuntime()
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [tab, editorVersion, loadMqttRuntime])
+
   const tabs = useMemo(
     () => [
       { id: "backends" as const, label: pickUiText(uiLanguage, "AI 연결", "AI Backends"), capabilityKey: "ai.backends" },
       { id: "routing" as const, label: pickUiText(uiLanguage, "AI 순서", "AI Routing"), capabilityKey: "ai.routing" },
       { id: "security" as const, label: pickUiText(uiLanguage, "보안", "Security"), capabilityKey: "settings.control" },
       { id: "channels" as const, label: pickUiText(uiLanguage, "채널", "Channels"), capabilityKey: "telegram.channel" },
+      { id: "mqtt" as const, label: pickUiText(uiLanguage, "MQTT", "MQTT"), capabilityKey: "mqtt.broker" },
       { id: "remote" as const, label: pickUiText(uiLanguage, "원격 접근", "Remote Access"), capabilityKey: "settings.control" },
       { id: "advanced" as const, label: pickUiText(uiLanguage, "고급", "Advanced"), capabilityKey: "mcp.client" },
     ],
@@ -95,7 +126,8 @@ export function SettingsPage() {
   const activeCapability = resolveSettingsCapability(
     activeTab.id,
     capabilities.find((item) => item.key === activeTab.capabilityKey),
-    activeDraft.channels,
+    activeDraft,
+    isDirty,
   )
 
   async function handleReset() {
@@ -114,6 +146,20 @@ export function SettingsPage() {
     setLocalDraft(cloneDraft(draft))
     setEditorVersion((current) => current + 1)
   }
+
+  const handleDisconnectMqttExtension = useCallback(async (extensionId: string) => {
+    setDisconnectingExtensionId(extensionId)
+    try {
+      const result = await api.disconnectMqttExtension(extensionId)
+      setMqttRuntimeError(result.ok ? "" : result.message)
+      await loadMqttRuntime()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setMqttRuntimeError(message)
+    } finally {
+      setDisconnectingExtensionId(null)
+    }
+  }, [loadMqttRuntime])
 
   function patchDraft<K extends keyof SetupDraft>(key: K, value: SetupDraft[K]) {
     setLocalDraft((current) => {
@@ -336,6 +382,31 @@ export function SettingsPage() {
           </div>
         )
 
+      case "mqtt":
+        return (
+          <div key={`mqtt-${editorVersion}`} className="space-y-4">
+            {activeCapability?.reason ? (
+              <RuntimeNotice
+                title={text("MQTT 상태", "MQTT Status")}
+                message={activeCapability.reason}
+                tone={activeCapability.status === "error" ? "error" : "info"}
+              />
+            ) : null}
+            <MqttSettingsForm
+              value={activeDraft.mqtt}
+              onChange={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
+            />
+            <MqttRuntimePanel
+              runtime={mqttRuntime}
+              loading={mqttRuntimeLoading}
+              error={mqttRuntimeError}
+              disconnectingExtensionId={disconnectingExtensionId}
+              onRefresh={() => void loadMqttRuntime()}
+              onDisconnect={(extensionId) => void handleDisconnectMqttExtension(extensionId)}
+            />
+          </div>
+        )
+
       case "remote":
         return (
           <div key={`remote-${editorVersion}`} className="space-y-4">
@@ -414,7 +485,8 @@ export function SettingsPage() {
               const capability = resolveSettingsCapability(
                 item.id,
                 capabilities.find((candidate) => candidate.key === item.capabilityKey),
-                activeDraft.channels,
+                activeDraft,
+                isDirty,
               )
               return (
                 <button
@@ -461,19 +533,50 @@ export function SettingsPage() {
 function resolveSettingsCapability(
   tabId: TabId,
   capability: ReturnType<typeof useCapabilitiesStore.getState>["items"][number] | undefined,
-  channels: { telegramEnabled: boolean; botToken: string },
+  draft: SetupDraft,
+  isDirty: boolean,
 ) {
-  if (tabId !== "channels" || !capability) return capability
-  if (capability.status === "error") return capability
+  if (!capability) return capability
 
-  const hasTelegramConfig = Boolean(channels.botToken.trim())
-  return {
-    ...capability,
-    status: "ready" as const,
-    reason: hasTelegramConfig && channels.telegramEnabled && capability.reason?.includes("런타임이 시작되지 않았습니다.")
-      ? "Telegram 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다."
-      : undefined,
+  if (tabId === "channels") {
+    if (capability.status === "error") return capability
+    const hasTelegramConfig = Boolean(draft.channels.botToken.trim())
+    return {
+      ...capability,
+      status: "ready" as const,
+      reason: hasTelegramConfig && draft.channels.telegramEnabled && capability.reason?.includes("런타임이 시작되지 않았습니다.")
+        ? "Telegram 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다."
+        : undefined,
+    }
   }
+
+  if (tabId === "mqtt") {
+    const wantsEnabled = draft.mqtt.enabled
+    const hasCredentials = Boolean(draft.mqtt.username.trim()) && Boolean(draft.mqtt.password.trim())
+    if (wantsEnabled && !hasCredentials) {
+      return {
+        ...capability,
+        status: "error" as const,
+        reason: "MQTT 브로커를 켜려면 아이디와 비밀번호를 모두 입력해야 합니다.",
+      }
+    }
+    if (wantsEnabled && isDirty) {
+      return {
+        ...capability,
+        status: "ready" as const,
+        reason: "MQTT 활성화가 체크되어 있습니다. 저장하면 브로커를 다시 시작합니다.",
+      }
+    }
+    if (!wantsEnabled && isDirty) {
+      return {
+        ...capability,
+        status: "disabled" as const,
+        reason: "MQTT 비활성화가 체크되어 있습니다. 저장하면 브로커를 중지합니다.",
+      }
+    }
+  }
+
+  return capability
 }
 
 function RuntimeNotice({

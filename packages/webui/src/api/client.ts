@@ -1,5 +1,5 @@
 import { localAdapter } from "./adapters/local"
-import type { ControlPlaneAdapter, ResetSetupResponse, SetupChecksResponse, StatusResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse } from "./adapters/types"
+import type { ControlPlaneAdapter, MqttRuntimeResponse, ResetSetupResponse, SetupChecksResponse, StatusResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse } from "./adapters/types"
 import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
@@ -72,6 +72,8 @@ export const api = {
   generateAuthToken: () => getControlPlaneAdapter().generateAuthToken(),
   mcpServers: () => getControlPlaneAdapter().getMcpServers(),
   reloadMcpServers: () => getControlPlaneAdapter().reloadMcpServers(),
+  mqttRuntime: () => getControlPlaneAdapter().getMqttRuntime(),
+  disconnectMqttExtension: (extensionId: string) => getControlPlaneAdapter().disconnectMqttExtension(extensionId),
   updateStatus: () => request<UpdateSnapshot>("/api/update/status"),
   checkForUpdates: () => request<UpdateSnapshot>("/api/update/check", { method: "POST" }),
 
@@ -203,7 +205,7 @@ export const api = {
     request<void>(`/api/plugins/${name}`, { method: "DELETE" }),
 }
 
-export type { StatusResponse, SetupChecksResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse, ResetSetupResponse, FeatureCapability }
+export type { StatusResponse, SetupChecksResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse, ResetSetupResponse, FeatureCapability, MqttRuntimeResponse }
 
 export interface Schedule {
   id: string

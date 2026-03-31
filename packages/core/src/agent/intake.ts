@@ -8,6 +8,7 @@ import type { TaskIntakeTaskProfile } from "./intake-prompt.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
+import { getMqttExtensionSnapshots } from "../mqtt/broker.js"
 
 const log = createLogger("agent:intake")
 
@@ -260,10 +261,43 @@ function buildConversationContext(sessionId: string | undefined, requestGroupId:
     }
   }
 
+  const runtimeContext = buildRuntimeIntakeContext()
+  if (runtimeContext.length > 0) {
+    lines.push("Runtime environment:")
+    lines.push(...runtimeContext)
+    lines.push("")
+  }
+
   lines.push("Latest user message:")
   lines.push(latestUserMessage.trim())
 
   return lines.join("\n")
+}
+
+function buildRuntimeIntakeContext(): string[] {
+  const snapshots = getMqttExtensionSnapshots()
+  const connected = snapshots.filter((item) => (item.state ?? "").toLowerCase() !== "offline")
+
+  if (connected.length === 0) return []
+
+  const lines = [`- Connected Yeonjang extensions: ${connected.length}`]
+  for (const extension of connected.slice(0, 4)) {
+    lines.push(
+      `- Extension: ${extension.extensionId}`
+      + `${extension.displayName ? ` (${extension.displayName})` : ""}`
+      + `${extension.state ? `, state=${extension.state}` : ""}`,
+    )
+  }
+
+  if (connected.length === 1) {
+    const only = connected[0]
+    lines.push(
+      `- There is exactly one connected extension (${only?.extensionId ?? "unknown"}). `
+      + "Unless the user explicitly mentions another device or another computer, do not ask which device to use.",
+    )
+  }
+
+  return lines
 }
 
 function parseRelativeDelays(userMessage: string): Array<{

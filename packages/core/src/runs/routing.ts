@@ -15,6 +15,7 @@ export interface RouteActionInput {
   preferredTarget?: string | undefined
   taskProfile?: string | undefined
   fallbackModel?: string | undefined
+  avoidTargets?: string[] | undefined
 }
 
 export interface ResolvedRunRoute {
@@ -66,8 +67,13 @@ export function resolveRunRouteFromDraft(
 
 function buildCandidateTargets(draft: SetupDraft, input: RouteActionInput): string[] {
   const result: string[] = []
+  const avoided = new Set(
+    (input.avoidTargets ?? [])
+      .flatMap((value) => expandAvoidTargetIds(normalizeTargetId(value) ?? value))
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+  )
   const add = (value: string | undefined) => {
-    if (!value || result.includes(value)) return
+    if (!value || result.includes(value) || avoided.has(value)) return
     result.push(value)
   }
 
@@ -86,6 +92,14 @@ function buildCandidateTargets(draft: SetupDraft, input: RouteActionInput): stri
   }
 
   return result
+}
+
+function expandAvoidTargetIds(value: string | undefined): string[] {
+  if (!value) return []
+  const normalized = value.trim()
+  if (!normalized) return []
+  if (normalized.includes(":")) return [normalized]
+  return [normalized, `provider:${normalized}`, `worker:${normalized}`]
 }
 
 function resolveBackend(

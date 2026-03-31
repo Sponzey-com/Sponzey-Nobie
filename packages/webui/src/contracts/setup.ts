@@ -81,6 +81,14 @@ export interface SetupRemoteAccessDraft {
   port: number
 }
 
+export interface SetupMqttDraft {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  password: string
+}
+
 export interface SetupDraft {
   personal: SetupPersonalDraft
   aiBackends: AIBackendCard[]
@@ -93,6 +101,7 @@ export interface SetupDraft {
   }
   security: SetupSecurityDraft
   channels: SetupChannelDraft
+  mqtt: SetupMqttDraft
   remoteAccess: SetupRemoteAccessDraft
 }
 

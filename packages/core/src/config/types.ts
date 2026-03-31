@@ -67,6 +67,9 @@ export interface MqttConfig {
   enabled: boolean
   host: string
   port: number
+  username: string
+  password: string
+  allowAnonymous: boolean
 }
 
 export interface SearchConfig {
@@ -186,9 +189,12 @@ export const DEFAULT_CONFIG: NobieConfig = {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   },
   mqtt: {
-    enabled: true,
-    host: "127.0.0.1",
+    enabled: false,
+    host: "0.0.0.0",
     port: 1883,
+    username: "",
+    password: "",
+    allowAnonymous: false,
   },
   search: {
     web: {

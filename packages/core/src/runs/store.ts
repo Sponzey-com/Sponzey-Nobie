@@ -61,6 +61,29 @@ const RECONNECT_STOP_WORDS = new Set([
   "the", "that", "it", "those", "this", "file", "folder", "program", "page", "screen", "code", "modify", "edit", "fix", "change", "update", "continue", "resume",
 ])
 
+const CONTINUATION_MESSAGE_PATTERNS = [
+  /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|이쪽|그쪽|저쪽|아직|왜\s*안|안\s*돼|안돼|실패|오류|에러|결과)/u,
+  /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
+  /\b(?:and|also|then|next|continue|resume|again|now|here|this|that|it|but|why|result|failed|error)\b/i,
+  /\b(?:show|send|fix|change|update|continue|resume|again|failed|error|result)\b/i,
+]
+
+function isActiveRequestGroupStatus(status: RunStatus): boolean {
+  return ACTIVE_REQUEST_GROUP_STATUSES.includes(status)
+}
+
+function looksLikeContinuationMessage(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+
+  if (CONTINUATION_MESSAGE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return true
+  }
+
+  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
+  return trimmed.length <= 64 && tokenCount <= 8
+}
+
 function extractQuotedReconnectTerms(value: string): string[] {
   const result: string[] = []
   const regex = /["'“”‘’]([^"'“”‘’]{2,80})["'“”‘’]/g
@@ -83,17 +106,30 @@ function scoreReconnectCandidate(message: string, run: RootRun, recencyIndex: nu
   const haystack = [run.title, run.prompt, run.summary].join("\n").toLowerCase()
   const quotedTerms = extractQuotedReconnectTerms(message)
   const tokens = tokenizeReconnectTerms(message)
-  let score = Math.max(0, 20 - recencyIndex)
+  const overlap = tokens.filter((token) => haystack.includes(token))
+  const continuation = looksLikeContinuationMessage(message)
+  let score = 0
 
   for (const quoted of quotedTerms) {
     if (haystack.includes(quoted)) score += 80
   }
 
-  const overlap = tokens.filter((token) => haystack.includes(token))
   score += overlap.length * 12
 
-  if (quotedTerms.length === 0 && tokens.length === 0) {
-    score += Math.max(0, 12 - recencyIndex)
+  if (overlap.length > 0 || quotedTerms.length > 0) {
+    score += Math.max(0, 10 - recencyIndex)
+  }
+
+  if (continuation) {
+    score += isActiveRequestGroupStatus(run.status) ? 24 : 10
+    score += Math.max(0, 6 - recencyIndex)
+    if (overlap.length === 0 && quotedTerms.length === 0 && recencyIndex === 0) {
+      score += 8
+    }
+  }
+
+  if (isActiveRequestGroupStatus(run.status)) {
+    score += overlap.length > 0 || continuation ? 8 : 0
   }
 
   return score
@@ -323,15 +359,18 @@ export function findReconnectRequestGroupSelection(sessionId: string, message: s
     }
   }
 
+  const activeGroupCount = [...grouped.values()].filter((run) => isActiveRequestGroupStatus(run.status)).length
+  const continuation = looksLikeContinuationMessage(message)
+
   const scored = [...grouped.values()]
     .map((run, index) => ({ run, score: scoreReconnectCandidate(message, run, index) }))
-    .filter((item) => item.score >= 12)
+    .filter((item) => item.score >= 18 || (continuation && activeGroupCount === 1 && item.score >= 14))
     .sort((a, b) => (b.score - a.score) || (b.run.updatedAt - a.run.updatedAt))
 
   const best = scored[0]?.run
   const secondScore = scored[1]?.score ?? -1
   const bestScore = scored[0]?.score ?? -1
-  const ambiguous = Boolean(best && secondScore >= 12 && bestScore - secondScore < 15)
+  const ambiguous = Boolean(best && secondScore >= 18 && bestScore - secondScore < 12)
 
   return {
     ...(best ? { best } : {}),
