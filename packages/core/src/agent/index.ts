@@ -125,7 +125,7 @@ const DEFAULT_SYSTEM_PROMPT = [
 export type AgentChunk =
   | { type: "text"; delta: string }
   | { type: "tool_start"; toolName: string; params: unknown }
-  | { type: "tool_end"; toolName: string; success: boolean; output: string }
+  | { type: "tool_end"; toolName: string; success: boolean; output: string; details?: unknown }
   | { type: "execution_recovery"; toolNames: string[]; summary: string; reason: string }
   | { type: "llm_recovery"; summary: string; reason: string; message: string }
   | { type: "done"; totalTokens: number }
@@ -435,7 +435,13 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         ctx,
       )
 
-      yield { type: "tool_end", toolName: tu.name, success: result.success, output: result.output }
+      yield {
+        type: "tool_end",
+        toolName: tu.name,
+        success: result.success,
+        output: result.output,
+        ...(result.details !== undefined ? { details: result.details } : {}),
+      }
 
       if (shouldSignalExecutionRecovery(tu.name, result)) {
         executionRecoveryFailures.push({
@@ -535,14 +541,14 @@ function describeLlmErrorReason(message: string): string {
   if (/(rate limit|too many requests|429)/i.test(message)) {
     return "모델 호출 빈도 제한 때문에 응답 생성이 중단되었습니다."
   }
+  if (/(cloudflare|challenge|authentication|unauthorized|forbidden|api key|credential|401|403)/i.test(message)) {
+    return "인증 또는 접근 차단 문제 때문에 모델 호출이 실패했습니다."
+  }
   if (/(context|token|maximum context|too long|length)/i.test(message)) {
     return "입력 길이 또는 컨텍스트 크기 때문에 모델 호출이 실패했습니다."
   }
   if (/(invalid|unsupported|schema|parameter|tool)/i.test(message)) {
     return "모델 또는 도구 호출 파라미터가 현재 실행 대상과 맞지 않아 실패했습니다."
-  }
-  if (/(authentication|unauthorized|forbidden|api key|credential|401|403)/i.test(message)) {
-    return "인증 또는 권한 문제 때문에 모델 호출이 실패했습니다."
   }
   if (/(network|socket|econn|connection|dns|getaddrinfo|reset|refused)/i.test(normalized)) {
     return "네트워크 또는 연결 문제 때문에 모델 호출이 끊겼습니다."

@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { homedir } from "node:os"
-import type { AgentTool, ToolContext, ToolResult } from "../types.js"
+import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult } from "../types.js"
 import { getConfig } from "../../config/index.js"
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
@@ -97,15 +97,19 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
         }
       }
 
-      const caption = params.caption
-      const marker = caption !== undefined
-        ? `FILE_SEND:${filePath}:${caption}`
-        : `FILE_SEND:${filePath}:`
+      const details: ArtifactDeliveryResultDetails = {
+        kind: "artifact_delivery",
+        channel: "telegram",
+        filePath,
+        size: stat.size,
+        source: ctx.source,
+        ...(params.caption ? { caption: params.caption } : {}),
+      }
 
       return {
         success: true,
-        output: marker,
-        details: { filePath, size: stat.size, source: ctx.source },
+        output: "텔레그램 파일 전송 요청을 생성했습니다.",
+        details,
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

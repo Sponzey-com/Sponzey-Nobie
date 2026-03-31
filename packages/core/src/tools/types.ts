@@ -11,6 +11,26 @@ export interface ToolContext {
   signal: AbortSignal
 }
 
+export interface ArtifactDeliveryResultDetails {
+  kind: "artifact_delivery"
+  channel: "telegram"
+  filePath: string
+  caption?: string
+  size: number
+  source: ToolContext["source"]
+}
+
+export function isArtifactDeliveryResultDetails(value: unknown): value is ArtifactDeliveryResultDetails {
+  if (!value || typeof value !== "object") return false
+
+  const candidate = value as Partial<ArtifactDeliveryResultDetails>
+  return candidate.kind === "artifact_delivery"
+    && candidate.channel === "telegram"
+    && typeof candidate.filePath === "string"
+    && typeof candidate.size === "number"
+    && typeof candidate.source === "string"
+}
+
 export interface ToolResult {
   success: boolean
   output: string

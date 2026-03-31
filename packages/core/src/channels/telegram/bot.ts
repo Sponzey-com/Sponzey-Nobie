@@ -4,6 +4,7 @@ import { eventBus } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startRootRun } from "../../runs/start.js"
+import { isArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { isAllowedUser } from "./auth.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
 import { TypingIndicator } from "./typing.js"
@@ -239,7 +240,7 @@ export class TelegramChannel {
         const started = startRootRun({
           message: text,
           sessionId,
-          ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id } : {}),
+          ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
           model: undefined,
           source: "telegram",
           onChunk: async (chunk) => {
@@ -265,28 +266,32 @@ export class TelegramChannel {
                 toolMessageIds.delete(chunk.toolName)
               }
 
-              if (chunk.output.startsWith("FILE_SEND:")) {
-                const rest = chunk.output.slice("FILE_SEND:".length)
-                const colonIdx = rest.indexOf(":")
-                if (colonIdx !== -1) {
-                  const filePath = rest.slice(0, colonIdx)
-                  const caption = rest.slice(colonIdx + 1) || undefined
-                  try {
-                    const sentMessageId = await responder.sendFile(filePath, caption)
-                    if (startedRunId) {
-                      this.recordOutgoingMessageRef({
-                        sessionId,
-                        runId: startedRunId,
-                        chatId,
-                        ...(threadId !== undefined ? { threadId } : {}),
-                        messageId: sentMessageId,
-                        role: "assistant",
-                      })
-                    }
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err)
-                    log.error(`Failed to send file: ${msg}`)
+              if (chunk.success && isArtifactDeliveryResultDetails(chunk.details)) {
+                try {
+                  const sentMessageId = await responder.sendFile(chunk.details.filePath, chunk.details.caption)
+                  if (startedRunId) {
+                    this.recordOutgoingMessageRef({
+                      sessionId,
+                      runId: startedRunId,
+                      chatId,
+                      ...(threadId !== undefined ? { threadId } : {}),
+                      messageId: sentMessageId,
+                      role: "assistant",
+                    })
                   }
+
+                  return {
+                    artifactDeliveries: [{
+                      toolName: chunk.toolName,
+                      channel: "telegram",
+                      filePath: chunk.details.filePath,
+                      ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
+                      messageId: sentMessageId,
+                    }],
+                  }
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err)
+                  log.error(`Failed to send file: ${msg}`)
                 }
               }
             } else if (chunk.type === "done") {
