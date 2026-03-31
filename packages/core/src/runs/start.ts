@@ -3,7 +3,18 @@ import { extname, join, resolve } from "node:path"
 import { homedir } from "node:os"
 import type { AgentChunk, AgentContextMode } from "../agent/index.js"
 import { reviewTaskCompletion } from "../agent/completion-review.js"
-import { analyzeTaskIntake, type TaskIntakeActionItem, type TaskIntakeResult } from "../agent/intake.js"
+import {
+  analyzeRequestEntrySemantics,
+  analyzeTaskIntake,
+  buildActiveQueueCancellationMessage,
+  defaultTaskExecutionSemantics,
+  defaultTaskStructuredRequest,
+  type ActiveQueueCancellationMode,
+  type TaskExecutionSemantics,
+  type TaskStructuredRequest,
+  type TaskIntakeActionItem,
+  type TaskIntakeResult,
+} from "../agent/intake.js"
 import { runAgent } from "../agent/index.js"
 import { eventBus } from "../events/index.js"
 import type { ApprovalDecision, ApprovalResolutionReason } from "../events/index.js"
@@ -22,7 +33,6 @@ import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { runWorkerRuntime } from "./worker-runtime.js"
 import { buildScheduledFollowupPrompt, extractDirectChannelDeliveryText, getScheduledRunExecutionOptions } from "./scheduled.js"
-import { getActiveTelegramChannel } from "../channels/telegram/runtime.js"
 import { grantRunApprovalScope, grantRunSingleApproval } from "../tools/dispatcher.js"
 import {
   appendRunEvent,
@@ -105,47 +115,6 @@ function buildWorkerSessionId(params: {
   return `B-${params.requestGroupId.slice(0, 8)}-${workerRole}-${normalizedTarget || "default"}`
 }
 
-function shouldReuseConversationContext(message: string): boolean {
-  const trimmed = message.trim()
-  if (!trimmed) return false
-
-  const koreanReferencePatterns = [
-    /(?:아까|방금|이전|전에|앞에서|위에서)\b/u,
-    /(?:기존(?:에)?|만들었던|만든|작성한|열었던|하던)\s*(?:것|거|파일|폴더|프로그램|화면|페이지)?/u,
-    /(?:그|저)\s*(?:것|거|파일|폴더|프로그램|화면|페이지|코드|달력|계산기)/u,
-    /(?:수정|고쳐|바꿔|이어(?:서)?|계속(?:해서)?|추가(?:해)?|보완(?:해)?|업데이트(?:해)?|리팩터링(?:해)?)/u,
-  ]
-
-  if (koreanReferencePatterns.some((pattern) => pattern.test(trimmed))) {
-    return true
-  }
-
-  const koreanContinuationPatterns = [
-    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|아직|왜\s*안|안\s*돼|안돼|결과|오류|에러|실패)/u,
-    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
-  ]
-
-  if (koreanContinuationPatterns.some((pattern) => pattern.test(trimmed))) {
-    return true
-  }
-
-  const englishReferencePatterns = [
-    /\b(?:previous|earlier|before|existing)\b/i,
-    /\b(?:that|it|those)\s+(?:file|folder|program|page|screen|code|calendar|calculator)\b/i,
-    /\b(?:modify|edit|fix|change|continue|resume|update|extend|improve|refactor)\b/i,
-    /\b(?:the file|the folder|the program|the page|the code)\b/i,
-    /\b(?:and|also|then|next|again|now|here|this|that|it|why|result|error|failed)\b/i,
-    /\b(?:show|send|fix|change|update|continue|resume|again)\b/i,
-  ]
-
-  if (englishReferencePatterns.some((pattern) => pattern.test(trimmed))) {
-    return true
-  }
-
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  return trimmed.length <= 64 && tokenCount <= 8
-}
-
 function markAbortedRunCancelledIfActive(runId: string): void {
   const current = getRootRun(runId)
   if (!current) return
@@ -155,75 +124,15 @@ function markAbortedRunCancelledIfActive(runId: string): void {
   updateRunStatus(runId, "cancelled", "사용자가 실행을 취소했습니다.", false)
 }
 
-function isEnglishCancellationRequest(message: string): boolean {
-  return !/[가-힣]/.test(message) && /[a-z]/i.test(message)
-}
-
-function detectActiveQueueCancellationMode(message: string): "latest" | "all" | null {
-  const trimmed = message.trim()
-  if (!trimmed) return null
-  if (/(일정|예약|알림|스케줄|schedule|reminder|notification|alarm)/iu.test(trimmed)) return null
-  if (!/(취소|중단|멈춰|그만|cancel|abort|stop)/iu.test(trimmed)) return null
-
-  const directPatterns = [
-    /^(지금|현재|방금)?\s*(진행\s*중인|하고\s*있는|돌고\s*있는)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(이|그)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(cancel|stop|abort)(\s+the)?(\s+(current|active|running|latest|queued))?(\s+(task|run|request|job|queue))?[.!?]*$/i,
-  ]
-
-  const looksDirect = directPatterns.some((pattern) => pattern.test(trimmed))
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  if (!looksDirect && tokenCount > 8) return null
-
-  if (/(모두|전부|다\s*(취소|중단)?|all|everything|every\s*(task|run|request|job)?)/iu.test(trimmed)) {
-    return "all"
-  }
-  return "latest"
-}
-
-function buildActiveQueueCancellationMessage(params: {
-  originalMessage: string
-  mode: "latest" | "all"
-  cancelledTitles: string[]
-  remainingCount: number
-  hadTargets: boolean
-}): string {
-  const english = isEnglishCancellationRequest(params.originalMessage)
-  if (!params.hadTargets) {
-    return english
-      ? "There is no active task in this conversation to cancel."
-      : "현재 이 대화에서 취소할 실행 중 작업이 없습니다."
-  }
-
-  const titleLines = params.cancelledTitles.map((title) => `- ${title}`).join("\n")
-  if (english) {
-    const heading = params.mode === "all"
-      ? `Cancelled ${params.cancelledTitles.length} active task(s) in this conversation.`
-      : "Cancelled the most recent active task in this conversation."
-    const tail = params.remainingCount > 0
-      ? `\n\n${params.remainingCount} other active task(s) are still running.`
-      : ""
-    return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
-  }
-
-  const heading = params.mode === "all"
-    ? `현재 대화의 활성 작업 ${params.cancelledTitles.length}건을 취소했습니다.`
-    : "현재 대화에서 가장 최근 활성 작업 1건을 취소했습니다."
-  const tail = params.remainingCount > 0
-    ? `\n\n아직 ${params.remainingCount}건의 다른 활성 작업은 계속 진행 중입니다.`
-    : ""
-  return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
-}
-
 async function tryHandleActiveQueueCancellation(params: {
   runId: string
   sessionId: string
   source: StartRootRunParams["source"]
   onChunk: StartRootRunParams["onChunk"]
   message: string
+  mode: ActiveQueueCancellationMode | null
 }): Promise<LoopDirective | null> {
-  const mode = detectActiveQueueCancellationMode(params.message)
-  if (!mode) return null
+  if (!params.mode) return null
 
   const activeGroups = listActiveSessionRequestGroups(params.sessionId, params.runId)
   if (activeGroups.length === 0) {
@@ -231,7 +140,7 @@ async function tryHandleActiveQueueCancellation(params: {
       kind: "complete",
       text: buildActiveQueueCancellationMessage({
         originalMessage: params.message,
-        mode,
+        mode: params.mode,
         cancelledTitles: [],
         remainingCount: 0,
         hadTargets: false,
@@ -240,7 +149,7 @@ async function tryHandleActiveQueueCancellation(params: {
     }
   }
 
-  const targets = mode === "all" ? activeGroups : activeGroups.length > 0 ? [activeGroups[0]!] : []
+  const targets = params.mode === "all" ? activeGroups : activeGroups.length > 0 ? [activeGroups[0]!] : []
   const cancelledTitles: string[] = []
   for (const target of targets) {
     const cancelled = cancelRootRun(target.id)
@@ -252,7 +161,7 @@ async function tryHandleActiveQueueCancellation(params: {
     kind: "complete",
     text: buildActiveQueueCancellationMessage({
       originalMessage: params.message,
-      mode,
+      mode: params.mode,
       cancelledTitles,
       remainingCount,
       hadTargets: cancelledTitles.length > 0,
@@ -262,49 +171,20 @@ async function tryHandleActiveQueueCancellation(params: {
 }
 
 function inferDelegatedTaskProfile(params: {
-  originalMessage: string
   intake: TaskIntakeResult
   action: TaskIntakeActionItem
 }): string {
   const payload = params.action.payload
   const explicit = getString(payload.task_profile) || getString(payload.taskProfile)
   if (explicit) return explicit
-
-  const combined = [
-    params.originalMessage,
-    params.intake.intent.summary,
-    params.action.title,
-    getString(payload.goal) || "",
-    getString(payload.context) || "",
-  ].join("\n")
-
-  if (requestRequiresFilesystemMutation(combined) || /(코드|프로그램|웹\s*페이지|html|css|javascript|typescript|react|vue|앱|app|script|component|폴더|파일|directory|folder|file|code|program|web\s*app|ui)/iu.test(combined)) {
-    return "coding"
-  }
-
-  if (/(검색|리서치|조사|최신|뉴스|공식\s*문서|웹\s*검색|browse|search|research|latest|current|news|official\s*docs?|documentation|web)/iu.test(combined)) {
-    return "research"
-  }
-
-  if (/(검토|리뷰|원인|버그|문제\s*분석|review|bug|issue|root cause|investigat)/iu.test(combined)) {
-    return "review"
-  }
-
-  if (/(요약|정리|summar|digest)/iu.test(combined)) {
-    return "summarization"
-  }
-
-  if (/(설치|실행|운영|프로세스|서비스|daemon|shell|command|환경\s*설정|automation|deploy|runbook)/iu.test(combined)) {
-    return "operations"
-  }
-
-  return "general_chat"
+  return normalizeTaskProfile(params.intake.intent.category === "schedule_request" ? "operations" : "general_chat")
 }
 
 export interface StartRootRunParams {
   message: string
   sessionId: string | undefined
   requestGroupId?: string | undefined
+  forceRequestGroupReuse?: boolean | undefined
   model: string | undefined
   providerId?: string | undefined
   provider?: LLMProvider | undefined
@@ -317,7 +197,11 @@ export interface StartRootRunParams {
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
   taskProfile?: TaskProfile | undefined
-  onChunk?: ((chunk: AgentChunk) => Promise<void> | void) | undefined
+  originalRequest?: string | undefined
+  executionSemantics?: TaskExecutionSemantics | undefined
+  structuredRequest?: TaskStructuredRequest | undefined
+  immediateCompletionText?: string | undefined
+  onChunk?: ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | void> | ChunkDeliveryReceipt | void) | undefined
 }
 
 export interface StartedRootRun {
@@ -334,6 +218,14 @@ type LoopDirective =
       eventLabel?: string
     }
   | {
+      kind: "retry_intake"
+      summary: string
+      reason: string
+      message: string
+      remainingItems?: string[]
+      eventLabel?: string
+    }
+  | {
       kind: "awaiting_user"
       preview: string
       summary: string
@@ -343,15 +235,68 @@ type LoopDirective =
       eventLabel?: string
     }
 
+function buildResolvedExecutionProfile(params: {
+  message: string
+  originalRequest?: string
+  executionSemantics?: TaskExecutionSemantics
+  structuredRequest?: TaskStructuredRequest
+}): {
+  originalRequest: string
+  structuredRequest: TaskStructuredRequest
+  executionSemantics: TaskExecutionSemantics
+  requiresFilesystemMutation: boolean
+  requiresPrivilegedToolExecution: boolean
+  wantsDirectArtifactDelivery: boolean
+  approvalRequired: boolean
+  approvalTool: string
+} {
+  const executionSemantics = params.executionSemantics ?? defaultTaskExecutionSemantics()
+  const structuredRequest = params.structuredRequest ?? buildFallbackStructuredRequest(params.originalRequest?.trim() || params.message)
+  return {
+    originalRequest: params.originalRequest?.trim() || params.message,
+    structuredRequest,
+    executionSemantics,
+    requiresFilesystemMutation: executionSemantics.filesystemEffect === "mutate",
+    requiresPrivilegedToolExecution: executionSemantics.privilegedOperation === "required",
+    wantsDirectArtifactDelivery: executionSemantics.artifactDelivery === "direct",
+    approvalRequired: executionSemantics.approvalRequired,
+    approvalTool: executionSemantics.approvalTool,
+  }
+}
+
+function allowsTextOnlyCompletion(params: { executionSemantics: TaskExecutionSemantics }): boolean {
+  return params.executionSemantics.filesystemEffect === "none"
+    && params.executionSemantics.privilegedOperation === "none"
+    && params.executionSemantics.artifactDelivery === "none"
+}
+
+function buildFallbackStructuredRequest(message: string): TaskStructuredRequest {
+  const normalized = message.trim()
+  const sourceLanguage = /[가-힣]/u.test(normalized)
+    ? /[A-Za-z]/.test(normalized) ? "mixed" : "ko"
+    : /[A-Za-z]/.test(normalized) ? "en" : "unknown"
+
+  return {
+    ...defaultTaskStructuredRequest(),
+    source_language: sourceLanguage,
+    normalized_english: normalized,
+    target: normalized || "Execute the requested work.",
+    to: "the current channel",
+    context: normalized ? [`Original user request: ${normalized}`] : [],
+    complete_condition: ["The requested work is completed and the result is delivered in the current channel."],
+  }
+}
+
 export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const runId = crypto.randomUUID()
+  const entrySemantics = analyzeRequestEntrySemantics(params.message)
   const explicitReusableRequestGroupId =
-    params.requestGroupId && isReusableRequestGroup(params.requestGroupId)
+    params.requestGroupId && (params.forceRequestGroupReuse || isReusableRequestGroup(params.requestGroupId))
       ? params.requestGroupId
       : undefined
-  const requestedClosedRequestGroup = Boolean(params.requestGroupId && !explicitReusableRequestGroupId)
-  const shouldReconnectGroup = params.requestGroupId == null && shouldReuseConversationContext(params.message)
+  const requestedClosedRequestGroup = Boolean(params.requestGroupId && !params.forceRequestGroupReuse && !explicitReusableRequestGroupId)
+  const shouldReconnectGroup = params.requestGroupId == null && entrySemantics.reuse_conversation_context
   const reconnectSelection = shouldReconnectGroup
     ? findReconnectRequestGroupSelection(sessionId, params.message)
     : undefined
@@ -372,7 +317,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const now = Date.now()
   const workDir = params.workDir ?? process.cwd()
   const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
-  const shouldReuseContext = shouldReuseConversationContext(params.message)
+  const shouldReuseContext = entrySemantics.reuse_conversation_context
   const effectiveContextMode = params.contextMode ?? (isRootRequest ? (shouldReuseContext ? "full" : "isolated") : "request_group")
   const workerSessionId = buildWorkerSessionId({
     isRootRequest,
@@ -467,7 +412,13 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const finished = enqueueRequestGroupRun(requestGroupId, runId, async () => {
     let failed = false
     let currentMessage = params.message
-    const originalUserRequest = extractVerificationSourceRequest(params.message)
+    let executionProfile = buildResolvedExecutionProfile({
+      message: params.message,
+      ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+      ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
+      ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
+    })
+    let originalUserRequest = executionProfile.originalRequest
     let currentModel = params.model
     let currentProviderId = params.providerId
     let currentProvider = params.provider
@@ -489,20 +440,26 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       remainingItems: string[]
     } | null = null
     let activeWorkerRuntime = params.workerRuntime
-    const requiresFilesystemMutation = requestRequiresFilesystemMutation(originalUserRequest)
-    const requiresPrivilegedToolExecution = requestRequiresPrivilegedToolExecution(originalUserRequest)
+    let requiresFilesystemMutation = executionProfile.requiresFilesystemMutation
+    let requiresPrivilegedToolExecution = executionProfile.requiresPrivilegedToolExecution
     const pendingToolParams = new Map<string, unknown>()
     const filesystemMutationPaths = new Set<string>()
     let sawRealFilesystemMutation = false
     let filesystemMutationRecoveryAttempted = false
     let truncatedOutputRecoveryAttempted = false
     let intakeProcessed = params.skipIntake || reconnectNeedsClarification
-    let pendingLoopDirective: LoopDirective | null = reconnectNeedsClarification
-      ? buildReconnectClarificationDirective({
-          ...(reconnectTarget ? { reconnectTarget: { title: reconnectTarget.title } } : {}),
-          ...(reconnectSelection ? { reconnectSelection } : {}),
-        })
-      : null
+    let pendingLoopDirective: LoopDirective | null = params.immediateCompletionText?.trim()
+      ? {
+          kind: "complete",
+          text: params.immediateCompletionText.trim(),
+          eventLabel: "예약 직접 전달 실행",
+        }
+      : reconnectNeedsClarification
+        ? buildReconnectClarificationDirective({
+            ...(reconnectTarget ? { reconnectTarget: { title: reconnectTarget.title } } : {}),
+            ...(reconnectSelection ? { reconnectSelection } : {}),
+          })
+        : null
 
     if (queuedBehindRequestGroupRun && !controller.signal.aborted) {
       setRunStepStatus(runId, "executing", "running", "응답을 생성 중입니다.")
@@ -532,6 +489,41 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         if (pendingLoopDirective) {
           const directive = pendingLoopDirective
           pendingLoopDirective = null
+          if (directive.kind === "retry_intake") {
+            const currentRun = getRootRun(runId)
+            const usedTurns = currentRun?.delegationTurnCount ?? 0
+            const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+
+            if (directive.eventLabel) {
+              appendRunEvent(runId, directive.eventLabel)
+            }
+            rememberRunFailure({
+              runId,
+              sessionId,
+              source: params.source,
+              summary: directive.summary,
+              detail: directive.reason,
+              title: "schedule_intake_recovery",
+            })
+
+            if (maxTurns > 0 && usedTurns >= maxTurns) {
+              await moveRunToCancelledAfterStop(runId, sessionId, params.source, params.onChunk, {
+                preview: "",
+                summary: `일정 해석 복구 재시도 한도(${maxTurns}회)에 도달했습니다.`,
+                reason: directive.reason,
+                remainingItems: directive.remainingItems ?? ["일정 요청을 다시 해석해야 하지만 자동 재시도 한도에 도달했습니다."],
+              })
+              break
+            }
+
+            incrementDelegationTurnCount(runId, directive.summary)
+            appendRunEvent(runId, `일정 해석 복구 재시도 ${usedTurns + 1}/${maxTurns > 0 ? maxTurns : "무제한"}`)
+            setRunStepStatus(runId, "executing", "running", directive.summary)
+            updateRunStatus(runId, "running", directive.summary, true)
+            currentMessage = directive.message
+            intakeProcessed = false
+            continue
+          }
           await executeLoopDirective({
             runId,
             sessionId,
@@ -550,6 +542,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             source: params.source,
             onChunk: params.onChunk,
             message: params.message,
+            mode: entrySemantics.active_queue_cancellation_mode,
           })
           if (cancellationDirective) {
             pendingLoopDirective = cancellationDirective
@@ -557,7 +550,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           }
 
           const intakeDirective = await tryHandleIntakeBridge({
-            message: params.message,
+            message: currentMessage,
+            originalRequest: originalUserRequest,
             sessionId,
             requestGroupId,
             model: params.model,
@@ -565,6 +559,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             source: params.source,
             runId,
             onChunk: params.onChunk,
+            reuseConversationContext: entrySemantics.reuse_conversation_context,
           })
           if (intakeDirective) {
             pendingLoopDirective = intakeDirective
@@ -682,18 +677,6 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             const summary = chunk.success ? `${chunk.toolName} 실행 완료` : `${chunk.toolName} 실행 실패`
             appendRunEvent(runId, summary)
             updateRunSummary(runId, summary)
-            if (chunk.success && chunk.toolName === "telegram_send_file") {
-              const delivery = parseTelegramFileSendMarker(chunk.output)
-              if (delivery) {
-                successfulFileDeliveries.push({
-                  toolName: chunk.toolName,
-                  channel: "telegram",
-                  filePath: delivery.filePath,
-                  ...(delivery.caption ? { caption: delivery.caption } : {}),
-                })
-                appendRunEvent(runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
-              }
-            }
           } else if (chunk.type === "llm_recovery") {
             rememberRunFailure({
               runId,
@@ -760,7 +743,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                   message: chunk.message,
                 }
               }
-              await deliverChunk(params.onChunk, chunk, runId)
+              const receipt = await deliverChunk(params.onChunk, chunk, runId)
+              applyChunkDeliveryReceipt(runId, receipt, successfulFileDeliveries)
               continue
             }
 
@@ -785,7 +769,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             }
           }
 
-          await deliverChunk(params.onChunk, chunk, runId)
+          const receipt = await deliverChunk(params.onChunk, chunk, runId)
+          applyChunkDeliveryReceipt(runId, receipt, successfulFileDeliveries)
         }
 
         if (executionRecoveryLimitStop) {
@@ -864,7 +849,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             currentProvider = undefined
           }
           currentMessage = buildLlmErrorRecoveryPrompt({
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             previousResult: preview,
             summary: llmRecovery.summary,
             reason: llmRecovery.reason,
@@ -929,7 +914,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             currentProvider = undefined
           }
           currentMessage = buildWorkerRuntimeErrorRecoveryPrompt({
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             previousResult: preview,
             summary: workerRuntimeRecovery.summary,
             reason: workerRuntimeRecovery.reason,
@@ -942,9 +927,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           break
         }
 
-        const deliverySatisfied = requestWantsDirectArtifactDelivery(originalUserRequest)
-          && successfulFileDeliveries.length > 0
-        if (deliverySatisfied) {
+        const hasAnySuccessfulDelivery = successfulFileDeliveries.length > 0
+        const deliverySatisfied = executionProfile.wantsDirectArtifactDelivery && hasAnySuccessfulDelivery
+        if (hasAnySuccessfulDelivery) {
           const deliverySummary = buildSuccessfulDeliverySummary(successfulFileDeliveries)
           preview = [preview.trim(), deliverySummary].filter(Boolean).join("\n\n")
           updateRunSummary(runId, deliverySummary)
@@ -995,7 +980,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           updateRunStatus(runId, "running", commandFailureRecovery.summary, true)
           activeWorkerRuntime = undefined
           currentMessage = buildCommandFailureRecoveryPrompt({
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             previousResult: preview,
             summary: commandFailureRecovery.summary,
             reason: commandFailureRecovery.reason,
@@ -1037,7 +1022,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           updateRunStatus(runId, "running", genericExecutionRecovery.summary, true)
           activeWorkerRuntime = undefined
           currentMessage = buildExecutionRecoveryPrompt({
-            originalRequest: params.message,
+            originalRequest: originalUserRequest,
             previousResult: preview,
             summary: genericExecutionRecovery.summary,
             reason: genericExecutionRecovery.reason,
@@ -1176,7 +1161,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         setRunStepStatus(runId, "executing", "completed", preview || "응답 생성을 마쳤습니다.")
         setRunStepStatus(runId, "reviewing", "running", "남은 작업이 있는지 검토 중입니다.")
 
-        const directArtifactDeliveryRequested = requestWantsDirectArtifactDelivery(originalUserRequest)
+        const directArtifactDeliveryRequested = executionProfile.wantsDirectArtifactDelivery
 
         if (deliverySatisfied) {
           const deliverySummary = buildSuccessfulDeliverySummary(successfulFileDeliveries)
@@ -1247,6 +1232,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         priorAssistantMessages.push(preview)
 
         const hasCompletionEvidence = hasMeaningfulCompletionEvidence({
+          executionProfile,
           preview,
           deliverySatisfied,
           successfulTools,
@@ -1254,6 +1240,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         })
 
         const syntheticApproval = detectSyntheticApprovalRequest({
+          executionProfile,
           originalRequest: originalUserRequest,
           preview,
           review,
@@ -1418,8 +1405,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         if (shouldRetryTruncatedOutput({
           review,
           preview,
-          originalRequest: params.message,
-          requiresFilesystemMutation,
+          executionProfile,
         })) {
           if (!truncatedOutputRecoveryAttempted) {
             if (maxTurns > 0 && usedTurns >= maxTurns) {
@@ -1503,6 +1489,7 @@ interface SyntheticApprovalRequest {
 }
 
 function detectSyntheticApprovalRequest(params: {
+  executionProfile: ReturnType<typeof buildResolvedExecutionProfile>
   originalRequest: string
   preview: string
   review: Awaited<ReturnType<typeof reviewTaskCompletion>>
@@ -1512,27 +1499,18 @@ function detectSyntheticApprovalRequest(params: {
   successfulFileDeliveries: SuccessfulFileDelivery[]
   sawRealFilesystemMutation: boolean
 }): SyntheticApprovalRequest | null {
-  if (!params.preview.trim()) return null
+  if (!params.preview.trim() && params.review?.status !== "ask_user") return null
   if (params.successfulTools.length > 0 || params.successfulFileDeliveries.length > 0 || params.sawRealFilesystemMutation) {
     return null
   }
 
-  const combined = [
-    params.preview,
-    params.review?.summary,
-    params.review?.reason,
-    params.review?.userMessage,
-  ]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join("\n")
-  const looksLikePermission = looksLikePermissionGuidance(combined)
-  const reviewExplicitlyNeedsApproval = params.review?.status === "ask_user" && looksLikePermission
-  const privilegedRequestNeedsApproval = params.requiresPrivilegedToolExecution && looksLikePermission
+  const reviewExplicitlyNeedsApproval = params.review?.status === "ask_user"
+  const privilegedRequestNeedsApproval = params.executionProfile.approvalRequired || params.requiresPrivilegedToolExecution
 
   if (!reviewExplicitlyNeedsApproval && !privilegedRequestNeedsApproval) return null
   if (!params.usesWorkerRuntime && !params.requiresPrivilegedToolExecution) return null
 
-  const toolName = inferSyntheticApprovalToolName(`${params.originalRequest}\n${combined}`)
+  const toolName = params.executionProfile.approvalTool || "external_action"
   const summary =
     params.review?.summary?.trim()
     || defaultSyntheticApprovalSummary(toolName)
@@ -1552,28 +1530,6 @@ function detectSyntheticApprovalRequest(params: {
   }
 }
 
-function inferSyntheticApprovalToolName(text: string): string {
-  if (/(화면|스크린샷|캡처|screen|screenshot|capture)/i.test(text)) {
-    return "screen_capture"
-  }
-  if (/(카메라|사진|camera|photo)/i.test(text)) {
-    return "yeonjang_camera_capture"
-  }
-  if (/(마우스|클릭|mouse|click)/i.test(text)) {
-    return "mouse_click"
-  }
-  if (/(키보드|입력|타이핑|단축키|keyboard|typing|shortcut|type)/i.test(text)) {
-    return "keyboard_type"
-  }
-  if (/(파일|폴더|쓰기|생성|write|file|folder|directory)/i.test(text)) {
-    return "file_write"
-  }
-  if (/(프로그램|앱|실행|launch|application|program)/i.test(text)) {
-    return "app_launch"
-  }
-  return "external_action"
-}
-
 function buildSyntheticApprovalContinuationPrompt(params: {
   originalRequest: string
   preview: string
@@ -1590,12 +1546,6 @@ function buildSyntheticApprovalContinuationPrompt(params: {
     "설명이나 수동 해결 방법을 다시 제시하지 말고, 사용 가능한 Nobie/Yeonjang 도구를 이용해 승인된 작업을 실제로 수행하고 마무리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
   ].join("\n\n")
-}
-
-function looksLikePermissionGuidance(text: string): boolean {
-  if (!text.trim()) return false
-  return /(허용|승인|권한|allow|approve|permission|샌드박스|sandbox)/i.test(text)
-    || /(직접 실행|터미널에서 직접|허용 목록|다음 중 한 가지 방법|manual(?:ly)?|run .*command|allowlist|whitelist)/i.test(text)
 }
 
 function extractSyntheticApprovalGuidance(preview: string): string | undefined {
@@ -1826,6 +1776,10 @@ async function executeLoopDirective(params: {
     return "break"
   }
 
+  if (params.directive.kind === "retry_intake") {
+    throw new Error("retry_intake directive must be handled inside the main loop before executeLoopDirective")
+  }
+
   await moveRunToAwaitingUser(params.runId, params.sessionId, params.source, params.onChunk, {
     preview: params.directive.preview,
     summary: params.directive.summary,
@@ -1857,6 +1811,7 @@ function ensureSessionExists(sessionId: string, source: StartRootRunParams["sour
 
 async function tryHandleIntakeBridge(params: {
   message: string
+  originalRequest: string
   sessionId: string
   requestGroupId: string
   model: string | undefined
@@ -1864,8 +1819,9 @@ async function tryHandleIntakeBridge(params: {
   source: StartRootRunParams["source"]
   runId: string
   onChunk: StartRootRunParams["onChunk"]
+  reuseConversationContext: boolean
 }): Promise<LoopDirective | null> {
-  const intakeSessionId = params.requestGroupId !== params.runId || shouldReuseConversationContext(params.message)
+  const intakeSessionId = params.requestGroupId !== params.runId || params.reuseConversationContext
     ? params.sessionId
     : undefined
   const intake = await analyzeTaskIntake({
@@ -1874,6 +1830,7 @@ async function tryHandleIntakeBridge(params: {
     requestGroupId: params.requestGroupId,
     ...(params.model ? { model: params.model } : {}),
     workDir: params.workDir,
+    source: params.source,
   }).catch(() => null)
 
   if (!intake) return null
@@ -1920,6 +1877,28 @@ async function tryHandleIntakeBridge(params: {
         ok: scheduleResult.ok,
         message: scheduleResult.message,
       })
+      const shouldRetryScheduleIntake = !scheduleResult.ok
+        && scheduleResult.successCount === 0
+        && delegatedActions.length === 0
+
+      if (shouldRetryScheduleIntake) {
+        return {
+          kind: "retry_intake",
+          summary: "일정 요청을 다시 분석하고 가능한 일정 방안으로 재시도합니다.",
+          reason: scheduleResult.detail || scheduleResult.message,
+          message: buildScheduleIntakeRecoveryPrompt({
+            originalRequest: params.originalRequest,
+            previousReceipt: scheduleResult.message,
+            reason: scheduleResult.detail || scheduleResult.message,
+          }),
+          remainingItems: [
+            "유효한 run_at 또는 cron 일정으로 다시 해석",
+            "필요한 경우에만 최소한의 확인 질문 생성",
+          ],
+          eventLabel: "일정 해석 실패로 재분석",
+        }
+      }
+
       if (scheduleResult.message.trim()) {
         responseParts.push(scheduleResult.message.trim())
       }
@@ -1932,11 +1911,10 @@ async function tryHandleIntakeBridge(params: {
 
     for (const delegatedAction of delegatedActions) {
       const delegatedTaskProfile = inferDelegatedTaskProfile({
-        originalMessage: params.message,
         intake,
         action: delegatedAction,
       })
-      const followupPrompt = buildFollowupPrompt(params.message, intake, delegatedAction, delegatedTaskProfile)
+      const followupPrompt = buildFollowupPrompt(params.originalRequest, intake, delegatedAction, delegatedTaskProfile)
       const route = resolveRunRoute({
         preferredTarget:
           getString(delegatedAction.payload.preferred_target)
@@ -1971,6 +1949,9 @@ async function tryHandleIntakeBridge(params: {
         sessionId: params.sessionId,
         taskProfile: normalizeTaskProfile(delegatedTaskProfile),
         requestGroupId: params.requestGroupId,
+        originalRequest: params.message,
+        executionSemantics: intake.execution.execution_semantics,
+        structuredRequest: intake.structured_request,
         model: route.model ?? params.model,
         ...(route.providerId ? { providerId: route.providerId } : {}),
         ...(route.provider ? { provider: route.provider } : {}),
@@ -2020,6 +2001,8 @@ interface ScheduleActionExecutionResult {
   ok: boolean
   message: string
   detail: string
+  successCount: number
+  failureCount: number
 }
 
 function executeScheduleActions(
@@ -2027,6 +2010,7 @@ function executeScheduleActions(
   intake: TaskIntakeResult,
   params: {
     message: string
+    originalRequest: string
     sessionId: string
     requestGroupId: string
     model: string | undefined
@@ -2041,6 +2025,8 @@ function executeScheduleActions(
       ok: false,
       message: receipt || "일정 요청을 해석했지만 생성할 스케줄 정보가 부족합니다.",
       detail: "일정 생성 항목이 없습니다.",
+      successCount: 0,
+      failureCount: 1,
     }
   }
 
@@ -2059,6 +2045,8 @@ function executeScheduleActions(
     ok: results.every((result) => result.ok),
     message: [receipt, "", heading, ...results.map((result) => `- ${result.detail}`)].join("\n"),
     detail: results.map((result) => result.detail).join(" / "),
+    successCount: results.filter((result) => result.ok).length,
+    failureCount: results.filter((result) => !result.ok).length,
   }
 }
 
@@ -2067,6 +2055,7 @@ function executeScheduleAction(
   intake: TaskIntakeResult,
   params: {
     message: string
+    originalRequest: string
     sessionId: string
     requestGroupId: string
     model: string | undefined
@@ -2087,6 +2076,8 @@ function executeScheduleAction(
     ok: false,
     message: receipt || "현재 이 일정 요청 유형은 아직 처리할 수 없습니다.",
     detail: action.title,
+    successCount: 0,
+    failureCount: 1,
   }
 }
 
@@ -2095,6 +2086,7 @@ function executeCreateScheduleAction(
   intake: TaskIntakeResult,
   params: {
     message: string
+    originalRequest: string
     sessionId: string
     requestGroupId: string
     model: string | undefined
@@ -2109,6 +2101,8 @@ function executeCreateScheduleAction(
       ok: false,
       message: receipt || "일정 요청을 해석했지만 생성할 스케줄 정보가 부족합니다.",
       detail: "일정 생성 정보가 부족합니다.",
+      successCount: 0,
+      failureCount: 1,
     }
   }
 
@@ -2127,19 +2121,19 @@ function executeCreateScheduleAction(
           ? `${receipt}\n\n일정 생성 실패: run_at 형식이 올바르지 않습니다.`
           : "일정 생성 실패: run_at 형식이 올바르지 않습니다.",
         detail: `${actionScheduleText ?? title}: run_at 형식이 올바르지 않습니다.`,
+        successCount: 0,
+        failureCount: 1,
       }
     }
 
     const followup = getFollowupRunPayload(action)
-    const directDeliveryText = params.source === "telegram"
-      ? extractDirectChannelDeliveryText(task)
-      : null
+    const immediateCompletionText = followup.literalText ?? extractDirectChannelDeliveryText(task)
     log.info("registering delayed run", {
       sessionId: params.sessionId,
       title,
       runAt,
       task,
-      directDelivery: directDeliveryText != null,
+      directDelivery: immediateCompletionText != null,
       preferredTarget: followup.preferredTarget ?? null,
       taskProfile: followup.taskProfile ?? null,
     })
@@ -2153,13 +2147,17 @@ function executeCreateScheduleAction(
         taskProfile: scheduledTaskProfile,
         preferredTarget: followup.preferredTarget ?? intake.execution.suggested_target,
         toolsEnabled: executionOptions.toolsEnabled,
+        destination: followup.destination ?? intake.structured_request.to,
       }),
       sessionId: params.sessionId,
       requestGroupId: params.requestGroupId,
       model: params.model,
+      originalRequest: params.originalRequest,
+      executionSemantics: intake.execution.execution_semantics,
+      structuredRequest: intake.structured_request,
       source: params.source,
       onChunk: params.onChunk,
-      ...(directDeliveryText ? { directDeliveryText } : {}),
+      ...(immediateCompletionText ? { immediateCompletionText } : {}),
       toolsEnabled: executionOptions.toolsEnabled,
       contextMode: executionOptions.contextMode,
       ...(params.workDir ? { workDir: params.workDir } : {}),
@@ -2174,6 +2172,8 @@ function executeCreateScheduleAction(
         ? `${receipt}\n\n일회성 예약 실행이 저장되었습니다.\n- 이름: ${title}\n- 실행 시각: ${scheduleText}`
         : `일회성 예약 실행이 저장되었습니다.\n- 이름: ${title}\n- 실행 시각: ${scheduleText}`,
       detail: `${scheduleText}: ${task}`,
+      successCount: 1,
+      failureCount: 0,
     }
   }
 
@@ -2186,6 +2186,8 @@ function executeCreateScheduleAction(
         ? `${receipt}\n\n일정 생성 실패: ${reason}`
         : `일정 생성 실패: ${reason}`,
       detail: `${actionScheduleText ?? title}: ${reason}`,
+      successCount: 0,
+      failureCount: 1,
     }
   }
 
@@ -2215,6 +2217,8 @@ function executeCreateScheduleAction(
       ? `${receipt}\n\n스케줄이 저장되었습니다.\n- 이름: ${title}\n- 일정: ${scheduleText}${executionSync.reason ? `\n- 실행 방식: 내부 scheduler (${executionSync.reason})` : executionSync.driver === "internal" ? "\n- 실행 방식: 내부 scheduler" : "\n- 실행 방식: 시스템 스케줄러"}`
       : `스케줄이 저장되었습니다.\n- 이름: ${title}\n- 일정: ${scheduleText}${executionSync.reason ? `\n- 실행 방식: 내부 scheduler (${executionSync.reason})` : executionSync.driver === "internal" ? "\n- 실행 방식: 내부 scheduler" : "\n- 실행 방식: 시스템 스케줄러"}`,
     detail: `${scheduleText}: ${task}`,
+    successCount: 1,
+    failureCount: 0,
   }
 }
 
@@ -2232,6 +2236,8 @@ function executeCancelScheduleAction(
       ok: false,
       message: receipt || "취소할 예약 알림을 찾지 못했습니다.",
       detail: "취소 대상 스케줄 ID가 없습니다.",
+      successCount: 0,
+      failureCount: 1,
     }
   }
 
@@ -2249,6 +2255,8 @@ function executeCancelScheduleAction(
       ok: false,
       message: receipt || "취소할 예약 알림을 찾지 못했습니다.",
       detail: "활성 예약 알림을 찾지 못했습니다.",
+      successCount: 0,
+      failureCount: 1,
     }
   }
 
@@ -2260,6 +2268,8 @@ function executeCancelScheduleAction(
     ok: true,
     message: receipt ? `${receipt}\n\n${summary}` : summary,
     detail: cancelledNames.join(", "),
+    successCount: cancelledNames.length,
+    failureCount: 0,
   }
 }
 
@@ -2284,6 +2294,37 @@ function buildDelegatedReceipt(
   return [header, ...lines].join("\n")
 }
 
+function formatStructuredRequestBlock(intake: TaskIntakeResult, fallbackContext: string, fallbackTarget: string): string {
+  const structured = intake.structured_request
+  const target = structured.target.trim() || fallbackTarget.trim()
+  const destination = structured.to.trim() || "the current execution target"
+  const contextLines = structured.context.length > 0
+    ? structured.context
+    : [fallbackContext.trim()].filter(Boolean)
+  const completeConditionLines = structured.complete_condition.length > 0
+    ? structured.complete_condition
+    : ["Produce the requested result in the current execution."]
+
+  return [
+    "[target]",
+    target,
+    "",
+    "[to]",
+    destination,
+    "",
+    "[context]",
+    ...contextLines.map((item) => `- ${item}`),
+    structured.normalized_english
+      ? ["", "[normalized-english]", structured.normalized_english].join("\n")
+      : "",
+    "",
+    "[complete-condition]",
+    ...completeConditionLines.map((item) => `- ${item}`),
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 function buildFollowupPrompt(originalMessage: string, intake: TaskIntakeResult, action: TaskIntakeActionItem, taskProfile: string): string {
   const payload = action.payload
   const goal = getString(payload.goal) || action.title
@@ -2291,14 +2332,13 @@ function buildFollowupPrompt(originalMessage: string, intake: TaskIntakeResult, 
   const successCriteria = toStringList(payload.success_criteria)
   const constraints = toStringList(payload.constraints)
   const preferredTarget = getString(payload.preferred_target) || getString(payload.preferredTarget) || intake.execution.suggested_target
-  const requiresFilesystemMutation = requestRequiresFilesystemMutation(originalMessage)
+  const requiresFilesystemMutation = intake.execution.execution_semantics.filesystemEffect === "mutate"
 
   return [
     "[Task Intake Bridge]",
     "이 요청은 intake router에서 접수되어 후속 실행으로 전달되었습니다.",
     `원래 사용자 요청: ${originalMessage}`,
-    `목표: ${goal}`,
-    `문맥: ${context}`,
+    formatStructuredRequestBlock(intake, context, goal),
     `작업 프로필: ${taskProfile}`,
     preferredTarget ? `선호 대상: ${preferredTarget}` : "",
     successCriteria.length > 0 ? ["성공 조건:", ...successCriteria.map((item) => `- ${item}`)].join("\n") : "",
@@ -2311,8 +2351,28 @@ function buildFollowupPrompt(originalMessage: string, intake: TaskIntakeResult, 
   ].filter(Boolean).join("\n\n")
 }
 
+function buildScheduleIntakeRecoveryPrompt(params: {
+  originalRequest: string
+  previousReceipt: string
+  reason: string
+}): string {
+  return [
+    "[Schedule Intake Recovery]",
+    "The previous schedule-analysis pass did not create a valid schedule action.",
+    `Original user request: ${params.originalRequest}`,
+    `Previous schedule receipt: ${params.previousReceipt}`,
+    `Failure reason: ${params.reason}`,
+    "Re-analyze this as a scheduling request.",
+    "Produce a concrete create_schedule or cancel_schedule action with a valid run_at or cron value.",
+    "Only ask a clarification question if a required time expression or delivery target is truly missing.",
+    "Do not return a success receipt unless a schedule action can actually be executed.",
+  ].join("\n\n")
+}
+
 function getFollowupRunPayload(action: TaskIntakeActionItem): {
   goal?: string
+  literalText?: string
+  destination?: string
   taskProfile?: string
   preferredTarget?: string
 } {
@@ -2323,11 +2383,15 @@ function getFollowupRunPayload(action: TaskIntakeActionItem): {
 
   const record = payload as Record<string, unknown>
   const goal = getString(record.goal)
+  const literalText = getString(record.literal_text) || getString(record.literalText)
+  const destination = getString(record.destination)
   const taskProfile = getString(record.task_profile) || getString(record.taskProfile)
   const preferredTarget = getString(record.preferred_target) || getString(record.preferredTarget)
 
   return {
     ...(goal ? { goal } : {}),
+    ...(literalText ? { literalText } : {}),
+    ...(destination ? { destination } : {}),
     ...(taskProfile ? { taskProfile } : {}),
     ...(preferredTarget ? { preferredTarget } : {}),
   }
@@ -2693,7 +2757,7 @@ function verifyFilesystemTargets(params: {
 
 function inferFilesystemVerificationTargets(originalRequest: string, mutationPaths: string[], workDir: string): FilesystemVerificationTarget[] {
   const targets = new Map<string, FilesystemVerificationTarget>()
-  const requestForInference = extractVerificationSourceRequest(originalRequest)
+  const requestForInference = originalRequest.trim()
   const normalizedMutationPaths = mutationPaths
     .map((item) => normalizeFilesystemPath(item, workDir))
     .filter((item): item is string => Boolean(item))
@@ -2737,18 +2801,6 @@ function inferFilesystemVerificationTargets(originalRequest: string, mutationPat
   }
 
   return [...targets.values()]
-}
-
-function extractVerificationSourceRequest(value: string): string {
-  const normalized = value.split("\r").join("")
-  const markers = ["\uc6d0\ub798 \uc0ac\uc6a9\uc790 \uc694\uccad:", "Original user request:"]
-
-  for (const marker of markers) {
-    const line = normalized.split("\n").find((item) => item.startsWith(marker))
-    if (line) return line.slice(marker.length).trim()
-  }
-
-  return normalized
 }
 
 function extractQuotedFilesystemNames(value: string): string[] {
@@ -2902,30 +2954,6 @@ function displayHomePath(value: string): string {
   return value.startsWith(home) ? value.replace(home, "~") : value
 }
 
-function parseTelegramFileSendMarker(output: string): { filePath: string; caption?: string } | null {
-  if (!output.startsWith("FILE_SEND:")) return null
-  const rest = output.slice("FILE_SEND:".length)
-  const separatorIndex = rest.lastIndexOf(":")
-  if (separatorIndex === -1) return null
-
-  const filePath = rest.slice(0, separatorIndex).trim()
-  const caption = rest.slice(separatorIndex + 1).trim()
-  if (!filePath) return null
-
-  return {
-    filePath,
-    ...(caption ? { caption } : {}),
-  }
-}
-
-function requestWantsDirectArtifactDelivery(message: string): boolean {
-  const normalized = extractVerificationSourceRequest(message).trim()
-  if (!normalized) return false
-
-  return /(?:보여줘|보내줘|전송해줘|첨부해줘|전달해줘|올려줘|공유해줘|show|send|deliver|attach|share|return)/iu.test(normalized)
-    && /(?:사진|이미지|스크린샷|캡처|파일|image|photo|screenshot|capture|file)/iu.test(normalized)
-}
-
 function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDelivery[]): string {
   if (deliveries.length === 0) return "파일 전달 완료"
   const last = deliveries[deliveries.length - 1]
@@ -2981,15 +3009,17 @@ function buildDirectArtifactDeliveryRecoveryPrompt(params: {
 }
 
 function hasMeaningfulCompletionEvidence(params: {
+  executionProfile: ReturnType<typeof buildResolvedExecutionProfile>
   preview: string
   deliverySatisfied: boolean
   successfulTools: SuccessfulToolEvidence[]
   sawRealFilesystemMutation: boolean
 }): boolean {
-  if (params.preview.trim() && !looksLikePermissionGuidance(params.preview)) return true
   if (params.deliverySatisfied) return true
   if (params.successfulTools.length > 0) return true
-  return params.sawRealFilesystemMutation
+  if (params.sawRealFilesystemMutation) return true
+  if (!params.preview.trim()) return false
+  return allowsTextOnlyCompletion({ executionSemantics: params.executionProfile.executionSemantics })
 }
 
 function safeStat(value: string): ReturnType<typeof statSync> | undefined {
@@ -3008,80 +3038,6 @@ function safeReadSnippet(value: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-function requestRequiresFilesystemMutation(message: string): boolean {
-  const normalized = extractVerificationSourceRequest(message).trim()
-  if (!normalized) return false
-
-  const lowered = normalized.toLowerCase()
-  const filesystemKeywords = [
-    "repo",
-    "repository",
-    "directory",
-    "folder",
-    "file",
-    "path",
-    "downloads",
-    "desktop",
-    "documents",
-    "readme",
-    "html",
-    "css",
-    "js",
-    "json",
-    "md",
-    "txt",
-    "csv",
-    "xml",
-    "yaml",
-    "yml",
-    "\ud30c\uc77c",
-    "\ud3f4\ub354",
-    "\ub514\ub809\ud130\ub9ac",
-    "\uacbd\ub85c",
-    "\ub2e4\uc6b4\ub85c\ub4dc",
-    "\ubc14\ud0d5\ud654\uba74",
-    "\ubb38\uc11c",
-    "\ud504\ub85c\uc81d\ud2b8",
-    "\uc800\uc7a5\uc18c",
-  ]
-  const mutationKeywords = [
-    "rename",
-    "create",
-    "write",
-    "save",
-    "edit",
-    "update",
-    "delete",
-    "copy",
-    "move",
-    "mkdir",
-    "touch",
-    "\uc0dd\uc131",
-    "\ub9cc\ub4e4",
-    "\uc791\uc131",
-    "\uc800\uc7a5",
-    "\uc218\uc815",
-    "\ud3b8\uc9d1",
-    "\uc0ad\uc81c",
-    "\ubcf5\uc0ac",
-    "\uc774\ub3d9",
-    "\ubc14\uafd4",
-    "\ucd94\uac00",
-  ]
-
-  const mentionsFilesystemTarget = filesystemKeywords.some((keyword) => lowered.includes(keyword.toLowerCase()))
-  const mentionsMutation = mutationKeywords.some((keyword) => lowered.includes(keyword.toLowerCase()))
-
-  return mentionsFilesystemTarget && mentionsMutation
-}
-
-function requestRequiresPrivilegedToolExecution(message: string): boolean {
-  const normalized = extractVerificationSourceRequest(message).trim()
-  if (!normalized) return false
-
-  return /(화면|스크린샷|캡처|카메라|사진|마우스|클릭|키보드|입력|타이핑|단축키|앱\s*실행|프로그램\s*실행|프로세스|창|윈도우|시스템\s*제어|screen|screenshot|capture|camera|photo|mouse|click|keyboard|type|shortcut|app\s*launch|program|process|window|system\s*control)/iu.test(normalized)
 }
 
 function isRealFilesystemMutation(toolName: string, params: unknown): boolean {
@@ -3127,11 +3083,16 @@ interface SuccessfulFileDelivery {
   channel: "telegram"
   filePath: string
   caption?: string
+  messageId?: number
 }
 
 interface SuccessfulToolEvidence {
   toolName: string
   output: string
+}
+
+interface ChunkDeliveryReceipt {
+  artifactDeliveries?: SuccessfulFileDelivery[]
 }
 
 function isCommandFailureRecoveryTool(toolName: string): boolean {
@@ -3360,9 +3321,9 @@ function normalizeLlmRecoveryFingerprint(reason: string, message: string): strin
 
   if (/timeout|timed out|etimedout|deadline/i.test(combined)) return "timeout"
   if (/rate limit|too many requests|429/i.test(combined)) return "rate-limit"
+  if (/cloudflare|challenge|auth|unauthorized|forbidden|401|403|api key/i.test(combined)) return "auth"
   if (/context|token|too large|max context|maximum context/i.test(combined)) return "context-limit"
   if (/schema|parameter|unsupported|invalid_request|tool|function/i.test(combined)) return "request-schema"
-  if (/auth|unauthorized|forbidden|401|403|api key/i.test(combined)) return "auth"
   if (/network|socket|connect|connection|reset|refused|econn|dns|fetch failed/i.test(combined)) return "network"
   return combined.slice(0, 160)
 }
@@ -3455,11 +3416,10 @@ function buildEmptyResultRecoveryPrompt(params: {
 function shouldRetryTruncatedOutput(params: {
   review: NonNullable<Awaited<ReturnType<typeof reviewTaskCompletion>>>
   preview: string
-  originalRequest: string
-  requiresFilesystemMutation: boolean
+  executionProfile: ReturnType<typeof buildResolvedExecutionProfile>
 }): boolean {
   if (params.review.status !== "ask_user") return false
-  if (!params.requiresFilesystemMutation && !requestRequiresFilesystemMutation(params.originalRequest)) return false
+  if (!params.executionProfile.requiresFilesystemMutation) return false
 
   const combined = [
     params.review.summary,
@@ -3512,12 +3472,31 @@ async function deliverChunk(
   onChunk: StartRootRunParams["onChunk"],
   chunk: AgentChunk,
   runId: string,
-): Promise<void> {
-  if (!onChunk) return
+): Promise<ChunkDeliveryReceipt | undefined> {
+  if (!onChunk) return undefined
   try {
-    await onChunk(chunk)
+    return (await onChunk(chunk)) ?? undefined
   } catch (error) {
     log.warn(`runId=${runId} chunk delivery failed: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+}
+
+function applyChunkDeliveryReceipt(
+  runId: string,
+  receipt: ChunkDeliveryReceipt | undefined,
+  successfulFileDeliveries: SuccessfulFileDelivery[],
+): void {
+  for (const delivery of receipt?.artifactDeliveries ?? []) {
+    const alreadyRecorded = successfulFileDeliveries.some((existing) =>
+      existing.channel === delivery.channel
+      && existing.filePath === delivery.filePath
+      && existing.messageId === delivery.messageId,
+    )
+    if (alreadyRecorded) continue
+
+    successfulFileDeliveries.push(delivery)
+    appendRunEvent(runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
   }
 }
 
@@ -3546,10 +3525,13 @@ function scheduleDelayedRootRun(params: {
   sessionId: string
   requestGroupId?: string
   model: string | undefined
+  originalRequest?: string
+  executionSemantics?: TaskExecutionSemantics
+  structuredRequest?: TaskStructuredRequest
   workDir?: string
   source: StartRootRunParams["source"]
   onChunk: StartRootRunParams["onChunk"]
-  directDeliveryText?: string
+  immediateCompletionText?: string
   preferredTarget?: string
   taskProfile?: TaskProfile
   toolsEnabled?: boolean
@@ -3561,7 +3543,7 @@ function scheduleDelayedRootRun(params: {
     sessionId: params.sessionId,
     source: params.source,
     runAtMs: params.runAtMs,
-    directDelivery: params.directDeliveryText != null,
+    directDelivery: params.immediateCompletionText != null,
     preferredTarget: params.preferredTarget ?? null,
     taskProfile: params.taskProfile ?? null,
     toolsEnabled: params.toolsEnabled ?? true,
@@ -3571,22 +3553,6 @@ function scheduleDelayedRootRun(params: {
   const fire = () => {
     delayedRunTimers.delete(jobId)
     void enqueueDelayedSessionRun(params.sessionId, jobId, async () => {
-      if (params.source === "telegram" && params.directDeliveryText) {
-        const telegram = getActiveTelegramChannel()
-        if (telegram) {
-          log.info("delayed direct telegram delivery firing", {
-            jobId,
-            sessionId: params.sessionId,
-          })
-          await telegram.sendTextToSession(params.sessionId, params.directDeliveryText)
-          return
-        }
-        log.warn("delayed direct telegram delivery fell back to run because channel is unavailable", {
-          jobId,
-          sessionId: params.sessionId,
-        })
-      }
-
       const route = resolveRunRoute({
         preferredTarget: params.preferredTarget,
         taskProfile: params.taskProfile,
@@ -3609,6 +3575,10 @@ function scheduleDelayedRootRun(params: {
         sessionId: params.sessionId,
         ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
         requestGroupId: params.requestGroupId,
+        ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+        ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
+        ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
+        ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
         model: route.model ?? params.model,
         ...(route.providerId ? { providerId: route.providerId } : {}),
         ...(route.provider ? { provider: route.provider } : {}),

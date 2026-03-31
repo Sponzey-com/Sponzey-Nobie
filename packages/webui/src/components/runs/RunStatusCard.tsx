@@ -48,10 +48,24 @@ export function RunStatusCard({
   treeNodes?: RunStatusTreeNode[]
 }) {
   const { text, displayText, language } = useUiI18n()
+  const isSelectable = typeof onSelect === "function"
 
   return (
     <div
-      className={`rounded-2xl border p-4 transition ${selected ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-white"}`}
+      className={`rounded-2xl border p-4 transition ${
+        selected ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-white"
+      } ${isSelectable ? "cursor-pointer hover:border-stone-300 hover:shadow-sm" : ""}`}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (!onSelect) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      role={isSelectable ? "button" : undefined}
+      tabIndex={isSelectable ? 0 : undefined}
+      aria-pressed={isSelectable ? selected : undefined}
     >
       <div className="mb-3">
         <div className="min-w-0">
@@ -116,6 +130,7 @@ export function RunStatusCard({
       <div className="flex items-center justify-between">
         <button
           onClick={onSelect}
+          type="button"
           className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50"
         >
           {text("상세 보기", "View details")}

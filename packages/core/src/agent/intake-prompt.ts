@@ -23,6 +23,15 @@ export type TaskIntakeActionType =
 
 export type TaskIntakePriority = "low" | "normal" | "high" | "urgent"
 
+export type TaskApprovalToolName =
+  | "screen_capture"
+  | "yeonjang_camera_capture"
+  | "mouse_click"
+  | "keyboard_type"
+  | "file_write"
+  | "app_launch"
+  | "external_action"
+
 export type TaskIntakeTaskProfile =
   | "general_chat"
   | "planning"
@@ -123,6 +132,14 @@ export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {
     '      "payload": {}',
     "    }",
     "  ],",
+    '  "structured_request": {',
+    '    "source_language": "ko | en | mixed | unknown",',
+    '    "normalized_english": "normalized request written in English for internal execution",',
+    '    "target": "the concrete thing that should be achieved",',
+    '    "to": "where or to whom the result should be delivered, applied, or addressed",',
+    '    "context": ["execution context item 1"],',
+    '    "complete_condition": ["concrete success condition 1"]',
+    "  },",
     '  "scheduling": {',
     '    "detected": true,',
     '    "kind": "one_time | recurring | none",',
@@ -138,7 +155,14 @@ export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {
     '    "suggested_target": "embedded | codex_cli | claude_code | local_reasoner | auto",',
     `    "max_delegation_turns": ${maxDelegationTurns},`,
     '    "needs_tools": false,',
-    '    "needs_web": false',
+    '    "needs_web": false,',
+    '    "execution_semantics": {',
+    '      "filesystem_effect": "none | mutate",',
+    '      "privileged_operation": "none | required",',
+    '      "artifact_delivery": "none | direct",',
+    '      "approval_required": false,',
+    '      "approval_tool": "screen_capture | yeonjang_camera_capture | mouse_click | keyboard_type | file_write | app_launch | external_action"',
+    "    }",
     "  },",
     '  "notes": ["optional short internal notes"]',
     "}",
@@ -158,7 +182,7 @@ export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {
     "",
     "### type = create_schedule",
     "Use for new schedules and reminders.",
-    '{ "title": "...", "task": "...", "schedule_kind": "one_time | recurring", "schedule_text": "...", "run_at": "optional ISO datetime", "cron": "optional cron", "timezone": "optional timezone", "followup_run_payload": { "goal": "...", "task_profile": "planning | research | operations | general_chat | ...", "preferred_target": "auto" } }',
+    '{ "title": "...", "task": "...", "schedule_kind": "one_time | recurring", "schedule_text": "...", "run_at": "optional ISO datetime", "cron": "optional cron", "timezone": "optional timezone", "followup_run_payload": { "goal": "...", "literal_text": "optional exact literal text to deliver", "destination": "optional explicit delivery destination", "task_profile": "planning | research | operations | general_chat | ...", "preferred_target": "auto" } }',
     "",
     "### type = ask_user",
     "Use when execution cannot safely proceed.",
@@ -169,6 +193,31 @@ export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {
     "- Use task_intake when the user asked for work to be done and execution will continue after intake.",
     "- Use schedule_request when the user asked for later or recurring execution.",
     "- Use clarification when timing, scope, or risky details are missing.",
+    "",
+    "## Execution Semantics Rules",
+    "- execution.execution_semantics is mandatory for every accepted or delegated request.",
+    "- filesystem_effect = mutate when the request requires creating, updating, deleting, renaming, or moving real files or folders.",
+    "- privileged_operation = required when the request needs system permission, device control, local UI interaction, camera, screen capture, keyboard, mouse, or application launch.",
+    "- artifact_delivery = direct when the user wants the artifact itself returned, attached, shown, sent, or delivered through the active delivery destination.",
+    "- approval_required = true when the action should require explicit approval before execution.",
+    "- approval_tool must name the primary tool that needs approval.",
+    "- Do not leave execution_semantics ambiguous. Choose the closest concrete values.",
+    "",
+    "## Structured Request Rules",
+    '- structured_request is mandatory for every actionable request and every clarification.',
+    "- source_language must describe the user's latest message language.",
+    "- normalized_english must be written in English for internal execution planning.",
+    "- target must describe the final thing that should exist, be delivered, or be changed.",
+    "- to must describe where or to whom the result should be delivered, applied, shown, sent, or addressed.",
+    "- Do not use vague values like current channel if the exact delivery destination is known from runtime context.",
+    "- Prefer explicit values such as telegram chat -100123456789, thread 42, webui session <id>, cli session <id>, or a concrete extension id.",
+    "- Use to = the active session destination only when no more specific destination is available.",
+    "- For literal delivery requests like \"say X\", keep target specific to the literal content and keep to specific to the delivery destination.",
+    "- For scheduled literal delivery requests, also set followup_run_payload.literal_text to the exact text and followup_run_payload.destination to the exact delivery destination whenever known.",
+    "- context must list the facts and constraints needed to execute the request.",
+    "- complete_condition must list concrete checks that define success.",
+    "- Keep exact user-specified literals, names, folder names, file names, paths, quoted text, URLs, and identifiers unchanged inside the structured request. Wrap them with English explanation if needed, but do not translate the literal itself.",
+    "- The structured_request fields should be specific enough that the downstream run can execute without re-reading the whole conversation.",
     "",
     "## Scheduling Examples",
     'User: "내일 오후 3시에 회의 준비하라고 알려줘" -> category = schedule_request, user_message.mode = accepted_receipt, action_items includes create_schedule, scheduling.status = accepted.',

@@ -11,7 +11,10 @@ export function CancelRunButton({
 
   return (
     <button
-      onClick={onCancel}
+      onClick={(event) => {
+        event.stopPropagation()
+        onCancel()
+      }}
       disabled={!canCancel}
       className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
     >

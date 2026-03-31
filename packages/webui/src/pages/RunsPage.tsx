@@ -21,6 +21,10 @@ function truncateText(value: string, maxLength = 88) {
   return `${normalized.slice(0, maxLength - 1)}…`
 }
 
+function isInternalRunPrompt(prompt: string) {
+  return prompt.trim().startsWith("[")
+}
+
 function describeChildRun(run: RunItem, text: TextFn) {
   const prompt = run.prompt.trim()
   if (prompt.startsWith("[Task Intake Bridge]")) return text("작업 분해 및 대상 선택", "Task intake and target selection")
@@ -97,6 +101,17 @@ function computeGroupSummary(groupRuns: RunItem[]): string {
   return latestRun?.summary?.trim() || latestRun?.prompt?.trim() || ""
 }
 
+function computeGroupRequest(groupRuns: RunItem[]): string {
+  const latestUserFacingRun = [...groupRuns]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .find((run) => run.prompt.trim().length > 0 && !isInternalRunPrompt(run.prompt))
+
+  if (latestUserFacingRun?.prompt.trim()) return latestUserFacingRun.prompt.trim()
+
+  const anchorRun = [...groupRuns].sort((a, b) => a.createdAt - b.createdAt)[0]
+  return anchorRun?.prompt?.trim() || ""
+}
+
 function buildRunMonitorCards(allRuns: RunItem[], text: TextFn) {
   const grouped = new Map<string, RunItem[]>()
   for (const run of allRuns) {
@@ -120,6 +135,7 @@ function buildRunMonitorCards(allRuns: RunItem[], text: TextFn) {
       )
       const groupStatus = computeGroupStatus(groupRuns)
       const groupSummary = computeGroupSummary(groupRuns)
+      const groupRequest = computeGroupRequest(groupRuns)
 
       return {
         key: anchorRun.requestGroupId || anchorRun.id,
@@ -137,6 +153,7 @@ function buildRunMonitorCards(allRuns: RunItem[], text: TextFn) {
           canCancel,
         },
         runs: groupRuns,
+        requestText: groupRequest,
         treeNodes: buildRunTreeNodes(groupRuns, text),
         timeline: buildGroupTimeline(groupRuns, text),
       }
@@ -156,6 +173,7 @@ export function RunsPage() {
   const selectedCard = cards.find((card) => card.key === selectedRunId || card.representative.id === selectedRunId) ?? cards[0] ?? null
   const selectedRun = selectedCard?.representative ?? null
   const selectedTimeline = selectedCard?.timeline ?? []
+  const selectedRequestText = selectedCard?.requestText ?? selectedRun?.prompt ?? ""
 
   return (
     <div className="flex h-full overflow-hidden bg-stone-100">
@@ -200,7 +218,7 @@ export function RunsPage() {
               />
               <div className="rounded-2xl border border-stone-200 bg-white p-5">
                 <div className="mb-2 text-sm font-semibold text-stone-900">{text("원래 요청", "Original request")}</div>
-                <p className="text-sm leading-6 text-stone-600">{selectedRun.prompt}</p>
+                <p className="text-sm leading-6 text-stone-600">{selectedRequestText}</p>
               </div>
             </div>
           </div>
