@@ -1,3 +1,4 @@
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -196,6 +197,62 @@ pub struct MouseClickResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseActionKind {
+    Move,
+    Click,
+    DoubleClick,
+    ButtonDown,
+    ButtonUp,
+    Scroll,
+}
+
+impl MouseActionKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Move => "move",
+            Self::Click => "click",
+            Self::DoubleClick => "double_click",
+            Self::ButtonDown => "button_down",
+            Self::ButtonUp => "button_up",
+            Self::Scroll => "scroll",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseActionRequest {
+    pub action: MouseActionKind,
+    #[serde(default)]
+    pub x: Option<i32>,
+    #[serde(default)]
+    pub y: Option<i32>,
+    #[serde(default = "default_mouse_button")]
+    pub button: String,
+    #[serde(default)]
+    pub delta_x: Option<i32>,
+    #[serde(default)]
+    pub delta_y: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseActionResult {
+    pub accepted: bool,
+    pub action: MouseActionKind,
+    #[serde(default)]
+    pub x: Option<i32>,
+    #[serde(default)]
+    pub y: Option<i32>,
+    #[serde(default)]
+    pub button: Option<String>,
+    #[serde(default)]
+    pub delta_x: Option<i32>,
+    #[serde(default)]
+    pub delta_y: Option<i32>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyboardTypeRequest {
     pub text: String,
@@ -205,6 +262,52 @@ pub struct KeyboardTypeRequest {
 pub struct KeyboardTypeResult {
     pub typed: bool,
     pub text_len: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyboardActionKind {
+    TypeText,
+    KeyPress,
+    KeyDown,
+    KeyUp,
+    Shortcut,
+}
+
+impl KeyboardActionKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::TypeText => "type_text",
+            Self::KeyPress => "key_press",
+            Self::KeyDown => "key_down",
+            Self::KeyUp => "key_up",
+            Self::Shortcut => "shortcut",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyboardActionRequest {
+    pub action: KeyboardActionKind,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub modifiers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyboardActionResult {
+    pub accepted: bool,
+    pub action: KeyboardActionKind,
+    #[serde(default)]
+    pub text_len: Option<usize>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub modifiers: Vec<String>,
     pub message: String,
 }
 
@@ -226,5 +329,110 @@ pub trait AutomationBackend {
     fn capture_screen(&self, request: ScreenCaptureRequest) -> anyhow::Result<ScreenCaptureResult>;
     fn move_mouse(&self, request: MouseMoveRequest) -> anyhow::Result<MouseMoveResult>;
     fn click_mouse(&self, request: MouseClickRequest) -> anyhow::Result<MouseClickResult>;
+    fn perform_mouse_action(
+        &self,
+        request: MouseActionRequest,
+    ) -> anyhow::Result<MouseActionResult> {
+        match request.action {
+            MouseActionKind::Move => {
+                let x = required_coordinate(request.x, "x", request.action.as_str())?;
+                let y = required_coordinate(request.y, "y", request.action.as_str())?;
+                let result = self.move_mouse(MouseMoveRequest { x, y })?;
+                Ok(MouseActionResult {
+                    accepted: result.moved,
+                    action: MouseActionKind::Move,
+                    x: Some(result.x),
+                    y: Some(result.y),
+                    button: None,
+                    delta_x: None,
+                    delta_y: None,
+                    message: result.message,
+                })
+            }
+            MouseActionKind::Click | MouseActionKind::DoubleClick => {
+                let x = required_coordinate(request.x, "x", request.action.as_str())?;
+                let y = required_coordinate(request.y, "y", request.action.as_str())?;
+                let button = request.button;
+                let result = self.click_mouse(MouseClickRequest {
+                    x,
+                    y,
+                    button: button.clone(),
+                    double: matches!(request.action, MouseActionKind::DoubleClick),
+                })?;
+                Ok(MouseActionResult {
+                    accepted: result.clicked,
+                    action: if result.double {
+                        MouseActionKind::DoubleClick
+                    } else {
+                        MouseActionKind::Click
+                    },
+                    x: Some(result.x),
+                    y: Some(result.y),
+                    button: Some(result.button),
+                    delta_x: None,
+                    delta_y: None,
+                    message: result.message,
+                })
+            }
+            MouseActionKind::ButtonDown
+            | MouseActionKind::ButtonUp
+            | MouseActionKind::Scroll => {
+                bail!(
+                    "mouse.action `{}` is scaffolded but not implemented yet",
+                    request.action.as_str()
+                )
+            }
+        }
+    }
     fn type_text(&self, request: KeyboardTypeRequest) -> anyhow::Result<KeyboardTypeResult>;
+    fn perform_keyboard_action(
+        &self,
+        request: KeyboardActionRequest,
+    ) -> anyhow::Result<KeyboardActionResult> {
+        match request.action {
+            KeyboardActionKind::TypeText => {
+                let text = required_text(request.text, "text", request.action.as_str())?;
+                let result = self.type_text(KeyboardTypeRequest { text })?;
+                Ok(KeyboardActionResult {
+                    accepted: result.typed,
+                    action: KeyboardActionKind::TypeText,
+                    text_len: Some(result.text_len),
+                    key: None,
+                    modifiers: Vec::new(),
+                    message: result.message,
+                })
+            }
+            KeyboardActionKind::KeyPress
+            | KeyboardActionKind::KeyDown
+            | KeyboardActionKind::KeyUp
+            | KeyboardActionKind::Shortcut => {
+                let key = required_text(request.key, "key", request.action.as_str())?;
+                bail!(
+                    "keyboard.action `{}` for key `{}` is scaffolded but not implemented yet",
+                    request.action.as_str(),
+                    key
+                )
+            }
+        }
+    }
+}
+
+fn required_coordinate(
+    value: Option<i32>,
+    field: &str,
+    action: &str,
+) -> anyhow::Result<i32> {
+    value.ok_or_else(|| anyhow::anyhow!("mouse.action `{action}` requires `{field}`"))
+}
+
+fn required_text(
+    value: Option<String>,
+    field: &str,
+    action: &str,
+) -> anyhow::Result<String> {
+    let text = value.unwrap_or_default();
+    if text.trim().is_empty() {
+        bail!("keyboard.action `{action}` requires non-empty `{field}`");
+    }
+    Ok(text)
 }

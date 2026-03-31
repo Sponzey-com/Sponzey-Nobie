@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import type { WebSocket } from "@fastify/websocket"
 import { eventBus } from "../../events/index.js"
-import type { ApprovalDecision } from "../../events/index.js"
+import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js"
 import { authMiddleware } from "../middleware/auth.js"
@@ -53,9 +53,12 @@ function setupEventForwarding(): void {
 }
 
 // Map of runId → approval resolve fn (for WebSocket-based approval)
-const pendingApprovals = new Map<string, (decision: ApprovalDecision) => void>()
+const pendingApprovals = new Map<string, (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void>()
 
-export function registerApprovalFromWs(runId: string, resolve: (d: ApprovalDecision) => void): void {
+export function registerApprovalFromWs(
+  runId: string,
+  resolve: (d: ApprovalDecision, reason?: ApprovalResolutionReason) => void,
+): void {
   pendingApprovals.set(runId, resolve)
 }
 
@@ -86,12 +89,13 @@ export function registerWsRoute(app: FastifyInstance): void {
                 : "deny"
           const resolve = pendingApprovals.get(msg.runId)
           if (resolve) {
-            resolve(decision)
+            resolve(decision, "user")
             pendingApprovals.delete(msg.runId)
             eventBus.emit("approval.resolved", {
               runId: msg.runId,
               decision,
               toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+              reason: "user",
             })
           } else if (resolvePendingInteraction(msg.runId, decision)) {
             log.info(`approval.respond fallback resolved runId=${msg.runId} decision=${decision}`)
@@ -99,6 +103,7 @@ export function registerWsRoute(app: FastifyInstance): void {
               runId: msg.runId,
               decision,
               toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+              reason: "user",
             })
           } else {
             log.warn(`approval.respond ignored: no pending resolver for runId=${msg.runId}`)

@@ -6,6 +6,7 @@ import { serveCommand } from "./commands/serve.js"
 import { runServiceAction, type ServiceAction } from "./commands/service/index.js"
 import { memoryInitCommand, memoryShowCommand } from "./commands/memory.js"
 import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
+import { scheduleRunCommand } from "./commands/schedule.js"
 import {
   pluginListCommand,
   pluginInstallCommand,
@@ -73,6 +74,18 @@ program
   .action(() => {
     serveCommand().catch((err: unknown) => {
       console.error("Fatal:", err instanceof Error ? err.message : String(err))
+      process.exit(1)
+    })
+  })
+
+const schedule = program.command("schedule").description("저장된 스케줄 관리")
+
+schedule
+  .command("run <id>")
+  .description("저장된 스케줄을 한 번 실행합니다 (system cron 실행용)")
+  .action((id: string) => {
+    scheduleRunCommand(id).catch((err: unknown) => {
+      console.error("Error:", err instanceof Error ? err.message : String(err))
       process.exit(1)
     })
   })

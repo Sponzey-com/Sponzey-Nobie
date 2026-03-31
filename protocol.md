@@ -342,9 +342,100 @@ nobie/v1/node/<extensionId>/event
 - `camera.list`
 - `camera.capture`
 - `screen.capture`
+- `mouse.action`
 - `mouse.move`
 - `mouse.click`
+- `keyboard.action`
 - `keyboard.type`
+
+## 7.1 마우스 액션 메서드
+
+`mouse.action`은 마우스 입력을 액션 기반으로 받는 공통 메서드입니다.
+
+요청 예시:
+
+```json
+{
+  "id": "req-mouse-1",
+  "method": "mouse.action",
+  "params": {
+    "action": "move",
+    "x": 320,
+    "y": 240
+  }
+}
+```
+
+```json
+{
+  "id": "req-mouse-2",
+  "method": "mouse.action",
+  "params": {
+    "action": "click",
+    "x": 640,
+    "y": 480,
+    "button": "left"
+  }
+}
+```
+
+지원 액션:
+
+- `move`
+- `click`
+- `double_click`
+- `button_down`
+- `button_up`
+- `scroll`
+
+원칙:
+
+- `move`, `click`, `double_click`는 현재 공통 추상화에서 직접 해석됩니다.
+- `button_down`, `button_up`, `scroll`은 현재 계약에 포함되지만, OS별 구현이 붙기 전까지는 `not_implemented`를 반환할 수 있습니다.
+- `mouse.move`, `mouse.click`은 기존 호출과의 호환용 메서드로 유지됩니다.
+
+## 7.2 키보드 액션 메서드
+
+`keyboard.action`은 키보드 입력을 액션 기반으로 받는 공통 메서드입니다.
+
+요청 예시:
+
+```json
+{
+  "id": "req-keyboard-1",
+  "method": "keyboard.action",
+  "params": {
+    "action": "type_text",
+    "text": "hello from yeonjang"
+  }
+}
+```
+
+```json
+{
+  "id": "req-keyboard-2",
+  "method": "keyboard.action",
+  "params": {
+    "action": "shortcut",
+    "key": "c",
+    "modifiers": ["cmd"]
+  }
+}
+```
+
+지원 액션:
+
+- `type_text`
+- `key_press`
+- `key_down`
+- `key_up`
+- `shortcut`
+
+원칙:
+
+- `type_text`는 현재 공통 추상화에서 직접 해석됩니다.
+- `key_press`, `key_down`, `key_up`, `shortcut`은 현재 계약에 포함되지만, OS별 구현이 붙기 전까지는 `not_implemented`를 반환할 수 있습니다.
+- `keyboard.type`은 기존 호출과의 호환용 메서드로 유지됩니다.
 
 ## 8. 바이너리 데이터 전송
 

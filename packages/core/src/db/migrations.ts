@@ -53,6 +53,7 @@ export const MIGRATIONS: Migration[] = [
           prompt          TEXT NOT NULL,
           enabled         INTEGER DEFAULT 1,
           target_channel  TEXT DEFAULT 'telegram',
+          execution_driver TEXT DEFAULT 'internal',
           model           TEXT,
           max_retries     INTEGER DEFAULT 3,
           timeout_sec     INTEGER DEFAULT 300,
@@ -264,6 +265,25 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_channel_message_refs_request_group
           ON channel_message_refs(request_group_id, created_at DESC);
       `)
+    },
+  },
+  {
+    version: 9,
+    up(db) {
+      const scheduleColumns = db.prepare(`PRAGMA table_info(schedules)`).all() as Array<{ name: string }>
+      if (!scheduleColumns.some((column) => column.name === "target_session_id")) {
+        db.exec(`ALTER TABLE schedules ADD COLUMN target_session_id TEXT`)
+      }
+    },
+  },
+  {
+    version: 10,
+    up(db) {
+      const scheduleColumns = db.prepare(`PRAGMA table_info(schedules)`).all() as Array<{ name: string }>
+      if (!scheduleColumns.some((column) => column.name === "execution_driver")) {
+        db.exec(`ALTER TABLE schedules ADD COLUMN execution_driver TEXT DEFAULT 'internal'`)
+      }
+      db.exec(`UPDATE schedules SET execution_driver = 'internal' WHERE execution_driver IS NULL OR execution_driver = ''`)
     },
   },
 ]

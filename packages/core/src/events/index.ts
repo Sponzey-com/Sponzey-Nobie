@@ -2,6 +2,7 @@ import type { RootRun, RunStep } from "../runs/types.js"
 
 export type ApprovalDecision = "allow_once" | "allow_run" | "deny"
 export type ApprovalKind = "approval" | "screen_confirmation"
+export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system"
 
 export interface NobieEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
@@ -33,9 +34,15 @@ export interface NobieEvents {
     params: unknown
     kind?: ApprovalKind
     guidance?: string
-    resolve: (decision: ApprovalDecision) => void
+    resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
   }
-  "approval.resolved": { runId: string; decision: ApprovalDecision; toolName: string; kind?: ApprovalKind }
+  "approval.resolved": {
+    runId: string
+    decision: ApprovalDecision
+    toolName: string
+    kind?: ApprovalKind
+    reason?: ApprovalResolutionReason
+  }
   "scheduler.trigger": { scheduleId: string; scheduleTime: Date }
   "config.changed": Record<string, never>
   "plugin.loaded": { pluginId: string }

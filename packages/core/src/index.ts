@@ -85,6 +85,9 @@ export { startChannels, TelegramChannel } from "./channels/index.js"
 export { startRootRun } from "./runs/start.js"
 export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
 
+// Scheduler
+export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"
+
 // API server
 export { startServer, closeServer } from "./api/server.js"
 

@@ -1,6 +1,11 @@
 const TOOL_REQUIRING_TASK_PATTERN =
   /\b(file|files|code|repo|repository|command|commands|shell|terminal|browser|click|open|search|web|website|url|link|process|run|execute|edit|write|read|fetch|download)\b|파일|코드|저장소|명령|쉘|터미널|브라우저|클릭|열어|검색|웹|사이트|링크|주소|프로세스|실행|수정|작성|읽기|가져와|다운로드/u
 
+const DIRECT_CHANNEL_DELIVERY_PATTERNS = [
+  /^(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘)$/u,
+  /^(?:say|send)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))\s+(?:in|via)\s+(?:telegram|message|messenger)$/iu,
+] as const
+
 export interface ScheduledRunExecutionOptions {
   toolsEnabled: boolean
   contextMode: "isolated"
@@ -24,6 +29,21 @@ export function getScheduledRunExecutionOptions(
     toolsEnabled: !shouldDisableToolsForScheduledTask(task, taskProfile),
     contextMode: "isolated",
   }
+}
+
+export function extractDirectChannelDeliveryText(task: string): string | null {
+  const normalizedTask = task.trim().replace(/\s+/gu, " ")
+  if (!normalizedTask) return null
+
+  for (const pattern of DIRECT_CHANNEL_DELIVERY_PATTERNS) {
+    const match = normalizedTask.match(pattern)
+    if (!match) continue
+    const candidate = match.slice(1).find((value) => typeof value === "string" && value.trim().length > 0)
+    if (!candidate) continue
+    return candidate.trim()
+  }
+
+  return null
 }
 
 export function buildScheduledFollowupPrompt(params: {

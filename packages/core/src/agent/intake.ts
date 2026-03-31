@@ -1,4 +1,4 @@
-import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta } from "../db/index.js"
+import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession } from "../db/index.js"
 import { getConfig } from "../config/index.js"
 import { getDefaultModel, getProvider, inferProviderId } from "../llm/index.js"
 import { createLogger } from "../logger/index.js"
@@ -9,6 +9,7 @@ import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js"
+import { describeCron } from "../scheduler/cron.js"
 
 const log = createLogger("agent:intake")
 
@@ -64,6 +65,20 @@ export async function analyzeTaskIntake(params: {
   workDir?: string
 }): Promise<TaskIntakeResult | null> {
   const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
+  const scheduleManagement = detectSessionScheduleManagementRequest(
+    params.userMessage,
+    params.sessionId,
+    maxDelegationTurns,
+  )
+  if (scheduleManagement) {
+    log.info("schedule management heuristic matched", {
+      sessionId: params.sessionId ?? null,
+      category: scheduleManagement.intent.category,
+      actions: scheduleManagement.action_items.map((item) => item.type),
+    })
+    return scheduleManagement
+  }
+
   const heuristic = detectRelativeScheduleRequest(params.userMessage, Date.now(), maxDelegationTurns)
   if (heuristic) {
     log.info("relative schedule heuristic matched", {
@@ -131,6 +146,191 @@ export async function analyzeTaskIntake(params: {
     rawPreview: raw.slice(0, 600),
   })
   return parsed
+}
+
+function detectSessionScheduleManagementRequest(
+  userMessage: string,
+  sessionId: string | undefined,
+  maxDelegationTurns: number,
+): TaskIntakeResult | null {
+  if (!sessionId) return null
+
+  const trimmed = userMessage.trim()
+  if (!trimmed) return null
+
+  const activeSchedules = getSchedulesForSession(sessionId, true)
+  const mentionsSchedule = /(예약|알림|스케줄|schedule|schedules|reminder|reminders|notification|notifications|alarm|alarms)/iu.test(trimmed)
+  const looksLikeScheduleCancel = mentionsSchedule
+    && /(취소|중지|꺼|멈춰|삭제|cancel|stop|disable|delete|remove|turn off)/iu.test(trimmed)
+  const looksLikeScheduleList = !looksLikeScheduleCancel
+    && mentionsSchedule
+    && /(현재|활성|목록|리스트|보여|알려줘|current|active|list|show|tell me)/iu.test(trimmed)
+
+  if (looksLikeScheduleCancel) {
+    if (activeSchedules.length === 0) {
+      return {
+        intent: {
+          category: "direct_answer",
+          summary: "취소할 활성 예약 알림이 없음",
+          confidence: 0.99,
+        },
+        user_message: {
+          mode: "direct_answer",
+          text: "현재 이 대화에 취소할 활성 예약 알림은 없습니다.",
+        },
+        action_items: [{
+          id: "reply-no-active-schedules",
+          type: "reply",
+          title: "활성 예약 알림 없음 응답",
+          priority: "normal",
+          reason: "현재 세션에 활성 예약 알림이 없습니다.",
+          payload: { content: "현재 이 대화에 취소할 활성 예약 알림은 없습니다." },
+        }],
+        scheduling: {
+          detected: true,
+          kind: "none",
+          status: "not_applicable",
+          schedule_text: "",
+        },
+        execution: {
+          requires_run: false,
+          requires_delegation: false,
+          suggested_target: "auto",
+          max_delegation_turns: maxDelegationTurns,
+          needs_tools: false,
+          needs_web: false,
+        },
+        notes: ["session-schedule-management", "cancel-schedules", "none-active"],
+      }
+    }
+
+    const cancelAll = /(모든|모두|전부|다|전체|all|every|each)/iu.test(trimmed)
+    const targetSchedules = cancelAll || activeSchedules.length === 1
+      ? activeSchedules
+      : activeSchedules.filter((schedule) => trimmed.includes(schedule.name) || trimmed.includes(schedule.prompt))
+
+    if (targetSchedules.length === 0) {
+      const choices = activeSchedules.map((schedule, index) => `${index + 1}. ${schedule.name}`).join("\n")
+      return {
+        intent: {
+          category: "clarification",
+          summary: "어떤 예약 알림을 취소할지 모호함",
+          confidence: 0.95,
+        },
+        user_message: {
+          mode: "clarification_receipt",
+          text: `취소할 예약 알림을 특정해 주세요.\n${choices}`,
+        },
+        action_items: [{
+          id: "ask-cancel-schedule-target",
+          type: "ask_user",
+          title: "취소할 예약 알림 확인",
+          priority: "normal",
+          reason: "현재 활성 예약 알림이 여러 개라 대상을 특정해야 합니다.",
+          payload: { question: "어떤 예약 알림을 취소할까요?", missing_fields: ["schedule_target"] },
+        }],
+        scheduling: {
+          detected: true,
+          kind: "recurring",
+          status: "needs_clarification",
+          schedule_text: activeSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+        },
+        execution: {
+          requires_run: false,
+          requires_delegation: false,
+          suggested_target: "auto",
+          max_delegation_turns: maxDelegationTurns,
+          needs_tools: false,
+          needs_web: false,
+        },
+        notes: ["session-schedule-management", "cancel-schedules", "needs-target"],
+      }
+    }
+
+    return {
+      intent: {
+        category: "schedule_request",
+        summary: `${targetSchedules.length}개의 예약 알림 취소 요청`,
+        confidence: 0.99,
+      },
+      user_message: {
+        mode: "accepted_receipt",
+        text: targetSchedules.length === 1
+          ? `"${targetSchedules[0]?.name}" 예약 알림 취소를 진행합니다.`
+          : `${targetSchedules.length}개의 예약 알림 취소를 진행합니다.`,
+      },
+      action_items: [{
+        id: "cancel-session-schedules",
+        type: "cancel_schedule",
+        title: targetSchedules.length === 1 ? targetSchedules[0]?.name ?? "예약 알림 취소" : "예약 알림 일괄 취소",
+        priority: "high",
+        reason: "현재 세션에 연결된 활성 예약 알림을 취소합니다.",
+        payload: {
+          schedule_ids: targetSchedules.map((schedule) => schedule.id),
+        },
+      }],
+      scheduling: {
+        detected: true,
+        kind: "recurring",
+        status: "accepted",
+        schedule_text: targetSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+      },
+      execution: {
+        requires_run: false,
+        requires_delegation: false,
+        suggested_target: "auto",
+        max_delegation_turns: maxDelegationTurns,
+        needs_tools: false,
+        needs_web: false,
+      },
+      notes: ["session-schedule-management", "cancel-schedules"],
+    }
+  }
+
+  if (looksLikeScheduleList) {
+    const content = activeSchedules.length === 0
+      ? "현재 이 대화에 활성화된 예약 알림은 없습니다."
+      : [
+          "현재 이 대화에 활성화된 예약 알림입니다.",
+          ...activeSchedules.map((schedule, index) => `${index + 1}. ${schedule.name} · ${describeCron(schedule.cron_expression)}`),
+        ].join("\n")
+
+    return {
+      intent: {
+        category: "direct_answer",
+        summary: "현재 대화의 활성 예약 알림 목록 조회",
+        confidence: 0.99,
+      },
+      user_message: {
+        mode: "direct_answer",
+        text: content,
+      },
+      action_items: [{
+        id: "reply-active-schedules",
+        type: "reply",
+        title: "활성 예약 알림 목록 응답",
+        priority: "normal",
+        reason: "현재 세션에 연결된 활성 예약 알림을 보여줍니다.",
+        payload: { content },
+      }],
+      scheduling: {
+        detected: true,
+        kind: activeSchedules.length > 0 ? "recurring" : "none",
+        status: "not_applicable",
+        schedule_text: activeSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+      },
+      execution: {
+        requires_run: false,
+        requires_delegation: false,
+        suggested_target: "auto",
+        max_delegation_turns: maxDelegationTurns,
+        needs_tools: false,
+        needs_web: false,
+      },
+      notes: ["session-schedule-management", "list-schedules"],
+    }
+  }
+  return null
 }
 
 export function detectRelativeScheduleRequest(

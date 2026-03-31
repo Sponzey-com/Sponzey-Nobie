@@ -1,5 +1,5 @@
 import { eventBus } from "../events/index.js"
-import type { ApprovalDecision, ApprovalKind } from "../events/index.js"
+import type { ApprovalDecision, ApprovalKind, ApprovalResolutionReason } from "../events/index.js"
 import { insertAuditLog } from "../db/index.js"
 import { createLogger } from "../logger/index.js"
 import { getConfig } from "../config/index.js"
@@ -7,6 +7,52 @@ import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, s
 import type { AgentTool, AnyTool, ToolContext, ToolResult } from "./types.js"
 
 const log = createLogger("tools:dispatcher")
+
+function describeApprovalDenial(
+  toolName: string,
+  kind: ApprovalKind,
+  reason: ApprovalResolutionReason,
+): { eventLabel: string; stepSummary: string; runSummary: string } {
+  if (reason === "timeout") {
+    return kind === "screen_confirmation"
+      ? {
+          eventLabel: `${toolName} 준비 확인 시간 초과`,
+          stepSummary: `${toolName} 실행 전 준비 확인 응답 시간이 지나 시스템이 요청을 중단했습니다.`,
+          runSummary: `${toolName} 준비 확인 시간이 지나 시스템이 요청을 중단했습니다.`,
+        }
+      : {
+          eventLabel: `${toolName} 승인 시간 초과`,
+          stepSummary: `${toolName} 승인 대기 시간이 지나 시스템이 요청을 중단했습니다.`,
+          runSummary: `${toolName} 승인 시간이 지나 시스템이 요청을 중단했습니다.`,
+        }
+  }
+
+  if (reason === "system" || reason === "abort") {
+    return kind === "screen_confirmation"
+      ? {
+          eventLabel: `${toolName} 준비 확인 중단`,
+          stepSummary: `${toolName} 실행 전 준비 확인이 시스템에 의해 중단되었습니다.`,
+          runSummary: `${toolName} 준비 확인이 시스템에 의해 중단되었습니다.`,
+        }
+      : {
+          eventLabel: `${toolName} 승인 처리 중단`,
+          stepSummary: `${toolName} 승인 처리가 시스템에 의해 중단되었습니다.`,
+          runSummary: `${toolName} 승인 처리가 시스템에 의해 중단되었습니다.`,
+        }
+  }
+
+  return kind === "screen_confirmation"
+    ? {
+        eventLabel: `${toolName} 준비 확인 거부`,
+        stepSummary: `${toolName} 실행 전 준비 확인이 거부되어 요청을 취소했습니다.`,
+        runSummary: `${toolName} 준비 확인이 거부되어 요청을 취소했습니다.`,
+      }
+    : {
+        eventLabel: `${toolName} 실행 거부`,
+        stepSummary: `${toolName} 실행이 거부되어 요청을 취소했습니다.`,
+        runSummary: `${toolName} 실행이 거부되어 요청을 취소했습니다.`,
+      }
+}
 
 export class ToolDispatcher {
   private tools = new Map<string, AnyTool>()
@@ -110,7 +156,7 @@ export class ToolDispatcher {
       if (decision === "deny") {
         result = {
           success: false,
-          output: `Execution of "${name}" was denied by the user. The current request was cancelled.`,
+          output: `Execution of "${name}" was denied. The current request was cancelled.`,
           error: "denied",
         }
         this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, "user:deny")
@@ -199,8 +245,8 @@ export class ToolDispatcher {
               if (!resolved) {
                 resolved = true
                 log.warn(`Approval timeout for tool "${toolName}" — denying by default`)
-                this.finishApproval(ctx.runId, toolName, "deny")
-                eventBus.emit("approval.resolved", { runId: ctx.runId, decision: "deny", toolName, kind })
+                this.finishApproval(ctx.runId, toolName, "deny", "timeout")
+                eventBus.emit("approval.resolved", { runId: ctx.runId, decision: "deny", toolName, kind, reason: "timeout" })
                 resolve("deny")
               }
             }, 60_000)
@@ -219,11 +265,11 @@ export class ToolDispatcher {
         params,
         kind,
         ...(guidance ? { guidance } : {}),
-        resolve: (decision) => {
+        resolve: (decision, reason = "user") => {
           if (!resolved) {
             resolved = true
             if (timeout) clearTimeout(timeout)
-            this.finishApproval(ctx.runId, toolName, decision)
+            this.finishApproval(ctx.runId, toolName, decision, reason)
             resolve(decision)
           }
         },
@@ -258,7 +304,12 @@ export class ToolDispatcher {
     })
   }
 
-  private finishApproval(runId: string, toolName: string, decision: ApprovalDecision): void {
+  private finishApproval(
+    runId: string,
+    toolName: string,
+    decision: ApprovalDecision,
+    reason: ApprovalResolutionReason = "user",
+  ): void {
     const interaction = this.pendingInteractionKinds.get(runId)
     const kind = interaction?.kind ?? "approval"
     const stepKey = interaction?.stepKey ?? "awaiting_approval"
@@ -294,16 +345,9 @@ export class ToolDispatcher {
       return
     }
 
-    appendRunEvent(runId, kind === "screen_confirmation" ? `${toolName} 준비 확인 거부` : `${toolName} 실행 거부`)
-    setRunStepStatus(
-      runId,
-      stepKey,
-      "cancelled",
-      kind === "screen_confirmation"
-        ? `${toolName} 실행 전 준비 확인이 완료되지 않아 요청을 취소했습니다.`
-        : `${toolName} 실행이 거부되어 요청을 취소했습니다.`,
-    )
-    cancelRootRun(runId)
+    const denial = describeApprovalDenial(toolName, kind, reason)
+    setRunStepStatus(runId, stepKey, "cancelled", denial.stepSummary)
+    cancelRootRun(runId, denial)
   }
 
   private writeAudit(

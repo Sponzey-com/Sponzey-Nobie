@@ -331,6 +331,8 @@ export interface DbSchedule {
   prompt: string
   enabled: number          // 0 | 1
   target_channel: string
+  target_session_id: string | null
+  execution_driver: string
   model: string | null
   max_retries: number
   timeout_sec: number
@@ -371,13 +373,27 @@ export function getSchedule(id: string): DbSchedule | undefined {
     .get(id)
 }
 
+export function getSchedulesForSession(sessionId: string, enabledOnly = false): DbSchedule[] {
+  const enabledClause = enabledOnly ? "AND s.enabled = 1" : ""
+  return getDb()
+    .prepare<[string], DbSchedule>(
+      `SELECT s.*,
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+       FROM schedules s
+       WHERE s.target_session_id = ?
+       ${enabledClause}
+       ORDER BY s.created_at DESC`,
+    )
+    .all(sessionId)
+}
+
 export function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at">): void {
   getDb()
     .prepare(
-      `INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, target_session_id, execution_driver, model, max_retries, timeout_sec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(s.id, s.name, s.cron_expression, s.prompt, s.enabled, s.target_channel, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at)
+    .run(s.id, s.name, s.cron_expression, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at)
 }
 
 export function updateSchedule(id: string, fields: Partial<Omit<DbSchedule, "id" | "created_at" | "last_run_at" | "next_run_at">>): void {
