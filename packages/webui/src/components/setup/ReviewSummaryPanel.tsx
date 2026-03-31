@@ -127,6 +127,14 @@ export function ReviewSummaryPanel({
         <div>{text("호스트", "Host")}: {draft.remoteAccess.host}</div>
         <div>{text("포트", "Port")}: {draft.remoteAccess.port}</div>
         <div>{text("인증", "Authentication")}: {draft.remoteAccess.authEnabled ? text("사용", "Enabled") : text("사용 안 함", "Disabled")}</div>
+        <div>{text("MQTT", "MQTT")}: {draft.mqtt.enabled ? text("사용", "Enabled") : text("사용 안 함", "Disabled")}</div>
+        {draft.mqtt.enabled ? (
+          <>
+            <div>{text("MQTT 호스트", "MQTT Host")}: {draft.mqtt.host}</div>
+            <div>{text("MQTT 포트", "MQTT Port")}: {draft.mqtt.port}</div>
+            <div>{text("MQTT 아이디", "MQTT Username")}: {draft.mqtt.username}</div>
+          </>
+        ) : null}
       </SummaryCard>
     </div>
   )

@@ -7,10 +7,55 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { writeFileSync, readFileSync, unlinkSync } from "node:fs"
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import type { AgentTool, ToolResult } from "../../types.js"
+import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import { PATHS } from "../../../config/index.js"
 
 const execFileAsync = promisify(execFile)
+
+interface YeonjangScreenCaptureResult {
+  output_path?: string
+  file_name?: string
+  file_extension?: string
+  mime_type?: string
+  size_bytes?: number
+  transfer_encoding?: string
+  base64_data?: string
+  message: string
+}
+
+function extensionFromMimeType(mimeType?: string): string {
+  switch ((mimeType ?? "").toLowerCase()) {
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpg"
+    case "image/webp":
+      return "webp"
+    case "image/png":
+    default:
+      return "png"
+  }
+}
+
+function saveInlineScreenCapture(base64: string, mimeType?: string): string {
+  const artifactsDir = join(PATHS.stateDir, "artifacts", "screens")
+  mkdirSync(artifactsDir, { recursive: true })
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const filePath = join(artifactsDir, `screen-capture-${timestamp}.${extensionFromMimeType(mimeType)}`)
+  writeFileSync(filePath, Buffer.from(base64, "base64"))
+  return filePath
+}
+
+function validateYeonjangBinaryResult(remote: YeonjangScreenCaptureResult): string {
+  if (!remote.base64_data) {
+    throw new Error("연장 screen.capture 응답에 바이너리(base64_data)가 없습니다.")
+  }
+  if (remote.transfer_encoding && remote.transfer_encoding !== "base64") {
+    throw new Error(`연장 screen.capture 응답 전달 형식이 base64가 아닙니다: ${remote.transfer_encoding}`)
+  }
+  return remote.base64_data
+}
 
 async function captureScreenToBase64(): Promise<string> {
   const tmpPath = join(tmpdir(), `nobie-screen-${Date.now()}.png`)
@@ -46,11 +91,48 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
   requiresApproval: false,
   execute: async (): Promise<ToolResult> => {
     try {
+      if (await canYeonjangHandleMethod("screen.capture")) {
+        const remote = await invokeYeonjangMethod<YeonjangScreenCaptureResult>(
+          "screen.capture",
+          { inline_base64: true },
+          { timeoutMs: 20_000 },
+        )
+        const base64 = validateYeonjangBinaryResult(remote)
+        const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
+        return {
+          success: true,
+          output: `Yeonjang 스크린샷 캡처 완료.\n로컬 저장: ${localSavedPath}`,
+          details: {
+            via: "yeonjang",
+            fileName: remote.file_name,
+            fileExtension: remote.file_extension,
+            mimeType: remote.mime_type ?? "image/png",
+            sizeBytes: remote.size_bytes,
+            transferEncoding: "base64",
+            localSavedPath,
+            localFileSize: statSync(localSavedPath).size,
+          },
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 화면 캡처 실패: ${message}`, error: message }
+      }
+    }
+
+    try {
       const base64 = await captureScreenToBase64()
+      const localSavedPath = saveInlineScreenCapture(base64, "image/png")
       return {
         success: true,
-        output: `[스크린샷 캡처 완료 — base64 PNG, ${Math.round(base64.length / 1024)}KB]\ndata:image/png;base64,${base64.slice(0, 100)}…`,
-        details: { base64, mimeType: "image/png" },
+        output: `스크린샷 캡처 완료.\n로컬 저장: ${localSavedPath}`,
+        details: {
+          via: "local",
+          mimeType: "image/png",
+          localSavedPath,
+          localFileSize: statSync(localSavedPath).size,
+        },
       }
     } catch (err) {
       return { success: false, output: `화면 캡처 실패: ${err instanceof Error ? err.message : String(err)}` }

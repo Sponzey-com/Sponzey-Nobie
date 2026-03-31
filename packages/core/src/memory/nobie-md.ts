@@ -2,7 +2,9 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 
 const MAX_NOBIE_MD_SIZE = 8000
+const MAX_SYS_PROP_SIZE = 20000
 const MEMORY_FILENAMES = ["NOBIE.md", "WIZBY.md", "HOWIE.md"] as const
+const SYS_PROP_FILENAME = "sys_prop.md"
 
 /**
  * Walk up from workDir (up to 3 parent levels) searching for NOBIE.md first,
@@ -20,6 +22,28 @@ export function loadNobieMd(workDir: string): string | null {
         } catch {
           return null
         }
+      }
+    }
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return null
+}
+
+/**
+ * Walk up from workDir (up to 3 parent levels) searching for sys_prop.md.
+ * Returns the file contents (trimmed to 20KB) or null if not found.
+ */
+export function loadSysPropMd(workDir: string): string | null {
+  let current = workDir
+  for (let i = 0; i < 4; i++) {
+    const candidate = join(current, SYS_PROP_FILENAME)
+    if (existsSync(candidate)) {
+      try {
+        return readFileSync(candidate, "utf-8").slice(0, MAX_SYS_PROP_SIZE)
+      } catch {
+        return null
       }
     }
     const parent = dirname(current)

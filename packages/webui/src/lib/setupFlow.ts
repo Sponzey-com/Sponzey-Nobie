@@ -71,6 +71,7 @@ export function mergeSetupStepDraft(savedDraft: SetupDraft, localDraft: SetupDra
       break
     case "remote_access":
       nextDraft.remoteAccess = cloneValue(localSlice.remoteAccess ?? savedDraft.remoteAccess)
+      nextDraft.mqtt = cloneValue(localSlice.mqtt ?? savedDraft.mqtt)
       break
     default:
       break
@@ -107,6 +108,7 @@ export function revertSetupStepDraft(localDraft: SetupDraft, savedDraft: SetupDr
       break
     case "remote_access":
       nextDraft.remoteAccess = cloneValue(savedSlice.remoteAccess ?? savedDraft.remoteAccess)
+      nextDraft.mqtt = cloneValue(savedSlice.mqtt ?? savedDraft.mqtt)
       break
     default:
       break
@@ -379,6 +381,26 @@ function validateRemoteAccess(draft: SetupDraft): StepValidation {
     summary.push(fieldErrors.authToken)
   }
 
+  if (!draft.mqtt.host.trim()) {
+    fieldErrors.mqttHost = "MQTT 호스트를 입력해야 합니다."
+    summary.push(fieldErrors.mqttHost)
+  }
+
+  if (!Number.isFinite(draft.mqtt.port) || draft.mqtt.port < 1 || draft.mqtt.port > 65535) {
+    fieldErrors.mqttPort = "MQTT 포트는 1에서 65535 사이여야 합니다."
+    summary.push(fieldErrors.mqttPort)
+  }
+
+  if (draft.mqtt.enabled && !draft.mqtt.username.trim()) {
+    fieldErrors.mqttUsername = "MQTT 아이디를 입력해야 합니다."
+    summary.push(fieldErrors.mqttUsername)
+  }
+
+  if (draft.mqtt.enabled && !draft.mqtt.password.trim()) {
+    fieldErrors.mqttPassword = "MQTT 비밀번호를 입력해야 합니다."
+    summary.push(fieldErrors.mqttPassword)
+  }
+
   return {
     valid: summary.length === 0,
     summary: unique(summary),
@@ -397,6 +419,7 @@ function validateReview(draft: SetupDraft): StepValidation {
     { label: "작업 능력 확장", result: validateSkills(draft) },
     { label: "보안", result: validateSecurity(draft) },
     { label: "대화 채널", result: validateChannels(draft) },
+    { label: "원격 접근", result: validateRemoteAccess(draft) },
   ]
 
   const summary = requiredChecks
@@ -430,7 +453,7 @@ function getSetupStepSlice(draft: SetupDraft, stepId: SetupStepId) {
     case "channels":
       return { channels: draft.channels }
     case "remote_access":
-      return { remoteAccess: draft.remoteAccess }
+      return { remoteAccess: draft.remoteAccess, mqtt: draft.mqtt }
     default:
       return {}
   }

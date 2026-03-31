@@ -1,0 +1,36 @@
+{
+  "macos": {
+    "bundleId": "com.sponzey.nobie.yeonjang",
+    "usageDescriptions": {
+      "camera": "Yeonjang needs camera access so Nobie can capture still images from this Mac.",
+      "microphone": "Reserved for future camera and media extensions.",
+      "appleEvents": "Yeonjang may control local applications for Nobie automation tasks."
+    },
+    "runtimePermissions": {
+      "screenRecording": {
+        "requestedAtRuntime": true,
+        "api": [
+          "CGPreflightScreenCaptureAccess",
+          "CGRequestScreenCaptureAccess"
+        ],
+        "note": "macOS Screen Recording permission is requested at runtime before screen capture. No additional code-signing entitlement is configured because Apple does not document a supported screen-capture entitlement for this use case."
+      }
+    },
+    "entitlements": {
+      "camera": true,
+      "sandbox": false
+    }
+  },
+  "windows": {
+    "notes": [
+      "Camera access is managed by Windows privacy settings.",
+      "No separate application manifest has been added yet."
+    ]
+  },
+  "linux": {
+    "notes": [
+      "Camera access depends on device permissions and desktop portal configuration.",
+      "No desktop portal manifest has been added yet."
+    ]
+  }
+}

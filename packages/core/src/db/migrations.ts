@@ -241,6 +241,31 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_root_runs_worker_session ON root_runs(worker_session_id, updated_at DESC)`)
     },
   },
+  {
+    version: 8,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_message_refs (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          root_run_id TEXT NOT NULL,
+          request_group_id TEXT NOT NULL,
+          external_chat_id TEXT NOT NULL,
+          external_thread_id TEXT,
+          external_message_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_message_refs_source_chat_message
+          ON channel_message_refs(source, external_chat_id, external_message_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_message_refs_request_group
+          ON channel_message_refs(request_group_id, created_at DESC);
+      `)
+    },
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

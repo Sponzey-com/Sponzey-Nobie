@@ -7,6 +7,7 @@ import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js"
+import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
 
 function buildLegacySettingsSnapshot() {
@@ -48,6 +49,14 @@ function buildLegacySettingsSnapshot() {
       allowedGroupIds: cfg.telegram?.allowedGroupIds ?? [],
       isRunning: telegramChannel !== null,
     },
+    mqtt: {
+      enabled: cfg.mqtt.enabled,
+      host: cfg.mqtt.host,
+      port: cfg.mqtt.port,
+      username: cfg.mqtt.username,
+      hasPassword: Boolean(cfg.mqtt.password),
+      allowAnonymous: cfg.mqtt.allowAnonymous,
+    },
   }
 }
 
@@ -67,6 +76,21 @@ export function registerSettingsRoute(app: FastifyInstance): void {
     return buildSettingsResponse()
   })
 
+  app.get("/api/settings/mqtt/runtime", { preHandler: authMiddleware }, async () => {
+    return {
+      extensions: getMqttExtensionSnapshots(),
+      logs: getMqttExchangeLogs(),
+    }
+  })
+
+  app.post<{ Params: { extensionId: string } }>(
+    "/api/settings/mqtt/extensions/:extensionId/disconnect",
+    { preHandler: authMiddleware },
+    async (req) => {
+      return disconnectMqttExtension(req.params.extensionId)
+    },
+  )
+
   app.put<{ Body: Record<string, unknown> }>(
     "/api/settings",
     { preHandler: authMiddleware },
@@ -81,6 +105,11 @@ export function registerSettingsRoute(app: FastifyInstance): void {
       ) {
         const payload = body as { draft: ReturnType<typeof buildSetupDraft>; state?: ReturnType<typeof readSetupState> }
         const saved = saveSetupDraft(payload.draft, payload.state)
+        try {
+          await restartMqttBrokerFromConfig()
+        } catch {
+          // The config save itself succeeded. Runtime issues are exposed through MQTT status/capabilities.
+        }
         return reply.status(200).send({
           ok: true,
           draft: saved.draft,
@@ -167,9 +196,26 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (Array.isArray(tg.allowedGroupIds)) rawTg.allowedGroupIds = tg.allowedGroupIds
       }
 
+      if (body.mqtt && typeof body.mqtt === "object") {
+        const mqtt = body.mqtt as Record<string, unknown>
+        if (!raw.mqtt) raw.mqtt = {}
+        const rawMqtt = raw.mqtt as Record<string, unknown>
+        if (typeof mqtt.enabled === "boolean") rawMqtt.enabled = mqtt.enabled
+        if (typeof mqtt.host === "string") rawMqtt.host = mqtt.host.trim()
+        if (typeof mqtt.port === "number") rawMqtt.port = Math.max(1, Math.min(65535, Math.floor(mqtt.port)))
+        if (typeof mqtt.username === "string") rawMqtt.username = mqtt.username.trim()
+        if (typeof mqtt.password === "string") rawMqtt.password = mqtt.password
+        rawMqtt.allowAnonymous = false
+      }
+
       writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
       const reloaded = reloadConfig()
       updateActiveRunsMaxDelegationTurns(reloaded.orchestration.maxDelegationTurns)
+      try {
+        await restartMqttBrokerFromConfig()
+      } catch {
+        // The config save succeeded; runtime failure is surfaced by MQTT status/capabilities.
+      }
 
       return reply.status(200).send({ ok: true, ...buildSettingsResponse() })
     },
@@ -178,6 +224,11 @@ export function registerSettingsRoute(app: FastifyInstance): void {
   app.post("/api/settings/reset", { preHandler: authMiddleware }, async () => {
     stopActiveTelegramChannel()
     const snapshot = resetSetupEnvironment()
+    try {
+      await restartMqttBrokerFromConfig()
+    } catch {
+      // Keep returning the reset snapshot even when MQTT runtime restart fails.
+    }
     return {
       ok: true,
       ...snapshot,
@@ -187,6 +238,11 @@ export function registerSettingsRoute(app: FastifyInstance): void {
 
   app.post("/api/settings/reload", { preHandler: authMiddleware }, async () => {
     reloadConfig()
+    try {
+      await restartMqttBrokerFromConfig()
+    } catch {
+      // Keep returning the reloaded snapshot even when MQTT runtime restart fails.
+    }
     return { ok: true, ...buildSettingsResponse() }
   })
 

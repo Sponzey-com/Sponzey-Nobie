@@ -70,6 +70,19 @@ export interface DbAuditLog {
   approved_by: string | null
 }
 
+export interface DbChannelMessageRef {
+  id: string
+  source: string
+  session_id: string
+  root_run_id: string
+  request_group_id: string
+  external_chat_id: string
+  external_thread_id: string | null
+  external_message_id: string
+  role: string
+  created_at: number
+}
+
 export function insertSession(session: Omit<DbSession, "token_count">): void {
   const db = getDb()
   db.prepare(
@@ -169,6 +182,65 @@ export function insertAuditLog(log: Omit<DbAuditLog, "id">): void {
       log.approval_required,
       log.approved_by,
     )
+}
+
+export function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): string {
+  const id = crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO channel_message_refs
+       (id, source, session_id, root_run_id, request_group_id, external_chat_id, external_thread_id, external_message_id, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      ref.source,
+      ref.session_id,
+      ref.root_run_id,
+      ref.request_group_id,
+      ref.external_chat_id,
+      ref.external_thread_id,
+      ref.external_message_id,
+      ref.role,
+      ref.created_at,
+    )
+  return id
+}
+
+export function findChannelMessageRef(params: {
+  source: string
+  externalChatId: string
+  externalMessageId: string
+  externalThreadId?: string
+}): DbChannelMessageRef | undefined {
+  const withThread = params.externalThreadId
+    ? getDb()
+        .prepare<[string, string, string, string], DbChannelMessageRef>(
+          `SELECT *
+           FROM channel_message_refs
+           WHERE source = ?
+             AND external_chat_id = ?
+             AND external_message_id = ?
+             AND (external_thread_id = ? OR external_thread_id IS NULL)
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get(params.source, params.externalChatId, params.externalMessageId, params.externalThreadId)
+    : undefined
+
+  if (withThread) return withThread
+
+  return getDb()
+    .prepare<[string, string, string], DbChannelMessageRef>(
+      `SELECT *
+       FROM channel_message_refs
+       WHERE source = ?
+         AND external_chat_id = ?
+         AND external_message_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .get(params.source, params.externalChatId, params.externalMessageId)
 }
 
 // ── Memory Items ───────────────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react"
 import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
-import { CapabilityBadge } from "../CapabilityBadge"
 import { CancelRunButton } from "./CancelRunButton"
 import { RunTargetBadge } from "./RunTargetBadge"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
@@ -12,20 +11,6 @@ export interface RunStatusTreeNode {
   summary?: string
   status: RootRun["status"]
   isRoot?: boolean
-}
-
-function toCapabilityStatus(status: RootRun["status"]) {
-  switch (status) {
-    case "completed":
-      return "ready" as const
-    case "failed":
-      return "error" as const
-    case "cancelled":
-    case "interrupted":
-      return "disabled" as const
-    default:
-      return "planned" as const
-  }
 }
 
 function toStatusPillClass(status: RootRun["status"]) {
@@ -68,8 +53,8 @@ export function RunStatusCard({
     <div
       className={`rounded-2xl border p-4 transition ${selected ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-white"}`}
     >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="mb-3">
+        <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-stone-900">{run.title}</div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
             <span>{toTaskProfileText(run.taskProfile, language)} · {text(`단계 ${run.currentStepIndex}/${run.totalSteps}`, `Step ${run.currentStepIndex}/${run.totalSteps}`)}</span>
@@ -81,7 +66,6 @@ export function RunStatusCard({
             {text("현재 상태:", "Current status:")} {displayText(run.summary)}
           </div>
         </div>
-        <CapabilityBadge status={toCapabilityStatus(run.status)} />
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">

@@ -2,6 +2,7 @@ import { insertMemoryItem, searchMemoryItems, getRecentMemoryItems, getDb, type 
 import { getEmbeddingProvider, encodeEmbedding } from "./embedding.js"
 import { getConfig } from "../config/index.js"
 import { searchMemoryItems2, type MemorySearchResult } from "./search.js"
+import { buildMemoryJournalContext } from "./journal.js"
 
 export type { DbMemoryItem }
 export type { MemorySearchResult }
@@ -68,12 +69,17 @@ export function recentMemories(limit = 10): DbMemoryItem[] {
 
 /** Build a formatted memory context block for system prompt injection */
 export async function buildMemoryContext(userMessage: string): Promise<string> {
-  const results = await searchMemory(userMessage, 5)
-  if (!results.length) return ""
+  const [results, journalContext] = await Promise.all([
+    searchMemory(userMessage, 5),
+    Promise.resolve(buildMemoryJournalContext(userMessage, 6)),
+  ])
 
-  const lines = results.map((r) => {
-    const date = new Date(r.created_at).toLocaleDateString("ko-KR")
-    return `- ${r.content} (${date})`
-  })
-  return `[관련 기억]\n${lines.join("\n")}`
+  const relatedMemoryContext = results.length
+    ? `[관련 기억]\n${results.map((r) => {
+      const date = new Date(r.created_at).toLocaleDateString("ko-KR")
+      return `- ${r.content} (${date})`
+    }).join("\n")}`
+    : ""
+
+  return [relatedMemoryContext, journalContext].filter(Boolean).join("\n\n")
 }

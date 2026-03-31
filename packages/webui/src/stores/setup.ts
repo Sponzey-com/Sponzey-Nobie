@@ -179,6 +179,13 @@ function createInitialSetupDraft(): SetupDraft {
       allowedUserIds: "",
       allowedGroupIds: "",
     },
+    mqtt: {
+      enabled: false,
+      host: "0.0.0.0",
+      port: 1883,
+      username: "",
+      password: "",
+    },
     remoteAccess: {
       authEnabled: false,
       authToken: "",

@@ -143,11 +143,17 @@ export class ToolDispatcher {
     return result
   }
 
-  private getInteractionGuidance(kind: ApprovalKind): string | undefined {
+  private getInteractionGuidance(kind: ApprovalKind, toolName: string, params: Record<string, unknown>): string | undefined {
+    const action = describeApprovalAction(toolName, params)
     if (kind === "screen_confirmation") {
-      return "대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다."
+      return action
+        ? `${action}\n대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다.`
+        : "대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다."
     }
-    return undefined
+    if (action) {
+      return `${action}\n실행 내용을 확인한 뒤 승인하거나 취소해 주세요.`
+    }
+    return "실행 내용을 확인한 뒤 승인하거나 취소해 주세요."
   }
 
   private shouldRequireApproval(tool: AnyTool): boolean {
@@ -176,7 +182,7 @@ export class ToolDispatcher {
       kind === "screen_confirmation"
         ? `${toolName} 실행 전 화면 준비 확인을 기다립니다.`
         : `${toolName} 실행 승인을 기다립니다.`
-    const guidance = this.getInteractionGuidance(kind)
+    const guidance = this.getInteractionGuidance(kind, toolName, params)
 
     log.info(`requesting ${kind} runId=${ctx.runId} tool=${toolName}`)
     this.pendingInteractionKinds.set(ctx.runId, { toolName, kind, stepKey })
@@ -234,7 +240,7 @@ export class ToolDispatcher {
 
   listPendingInteractions(): Array<{ runId: string; toolName: string; kind: ApprovalKind; guidance?: string }> {
     return [...this.pendingInteractionKinds.entries()].map(([runId, interaction]) => {
-      const guidance = this.getInteractionGuidance(interaction.kind)
+      const guidance = this.getInteractionGuidance(interaction.kind, interaction.toolName, {})
       if (guidance) {
         return {
           runId,
@@ -346,6 +352,43 @@ export function listPendingInteractions(): Array<{ runId: string; toolName: stri
   return toolDispatcher.listPendingInteractions()
 }
 
+function describeApprovalAction(toolName: string, params: Record<string, unknown>): string | undefined {
+  switch (toolName) {
+    case "screen_capture":
+      return "현재 화면 전체를 캡처하려고 합니다."
+    case "screen_find_text":
+      return `현재 화면을 캡처하고 화면 안에서 텍스트를 찾으려고 합니다${typeof params.text === "string" && params.text.trim() ? `: ${params.text.trim()}` : "."}`
+    case "shell_exec":
+      return typeof params.command === "string" && params.command.trim()
+        ? `다음 로컬 명령을 실행하려고 합니다: ${params.command.trim()}`
+        : "로컬 명령을 실행하려고 합니다."
+    case "app_launch":
+      return typeof params.appName === "string" && params.appName.trim()
+        ? `애플리케이션을 실행하려고 합니다: ${params.appName.trim()}`
+        : "애플리케이션을 실행하려고 합니다."
+    case "process_kill":
+      return "로컬 프로세스를 종료하려고 합니다."
+    case "yeonjang_camera_capture":
+      return `연장을 통해 카메라 사진을 촬영하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`
+    case "mouse_move":
+      return "마우스 포인터를 이동하려고 합니다."
+    case "mouse_click":
+      return "마우스 클릭을 실행하려고 합니다."
+    case "keyboard_type":
+      return "키보드 입력을 자동으로 실행하려고 합니다."
+    case "keyboard_shortcut":
+      return "키보드 단축키를 자동으로 실행하려고 합니다."
+    case "window_focus":
+      return "특정 창으로 포커스를 이동하려고 합니다."
+    case "file_delete":
+      return typeof params.path === "string" && params.path.trim()
+        ? `파일을 삭제하려고 합니다: ${params.path.trim()}`
+        : "파일을 삭제하려고 합니다."
+    default:
+      return undefined
+  }
+}
+
 const FILE_APPROVAL_TOOL_NAMES = new Set([
   "file_read",
   "file_write",
@@ -358,6 +401,11 @@ const FILE_APPROVAL_TOOL_NAMES = new Set([
 const APPROVAL_REQUIRED_TOOL_NAMES = new Set([
   ...FILE_APPROVAL_TOOL_NAMES,
   "app_launch",
+  "shell_exec",
+  "process_kill",
+  "screen_capture",
+  "screen_find_text",
+  "yeonjang_camera_capture",
 ])
 
 const SCREEN_INTERACTION_TOOL_NAMES = new Set([

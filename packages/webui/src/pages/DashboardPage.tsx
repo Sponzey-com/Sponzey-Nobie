@@ -154,6 +154,9 @@ export function DashboardPage() {
               <StatusRow label={text("Setup 완료", "Setup complete")} value={checks?.setupCompleted ? text("예", "Yes") : text("아니오", "No")} />
               <StatusRow label={text("Telegram 토큰", "Telegram token")} value={checks?.telegramConfigured ? text("설정됨", "Configured") : ""} />
               <StatusRow label={text("Telegram 사용", "Telegram enabled")} value={draft.channels.telegramEnabled ? text("예", "Yes") : text("아니오", "No")} />
+              <StatusRow label={text("MQTT 사용", "MQTT enabled")} value={draft.mqtt.enabled ? text("예", "Yes") : text("아니오", "No")} />
+              <StatusRow label="MQTT Host" value={draft.mqtt.host} mono />
+              <StatusRow label="MQTT Port" value={String(draft.mqtt.port)} />
               <StatusRow label="WebUI Host" value={draft.remoteAccess.host} mono />
               <StatusRow label="WebUI Port" value={String(draft.remoteAccess.port)} />
               <StatusRow label={text("WebUI 인증", "WebUI auth")} value={draft.remoteAccess.authEnabled ? text("예", "Yes") : text("아니오", "No")} />

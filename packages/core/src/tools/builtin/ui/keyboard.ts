@@ -1,8 +1,10 @@
 /**
- * Keyboard control tools. Uses @nut-tree/nut-js when available.
+ * Keyboard control tools. Uses Yeonjang first when available,
+ * then falls back to local nut-js control.
  */
 
-import type { AgentTool, ToolResult } from "../../types.js"
+import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
+import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
 
 const TYPE_DELAY_MS = 500
 
@@ -12,17 +14,26 @@ async function getNutKeyboard(): Promise<{ keyboard: any; Key: any }> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const mod = await import(pkg)
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       return mod as never
-    } catch { /* try next */ }
+    } catch {
+      // try next package
+    }
   }
   throw new Error("@nut-tree/nut-js not installed. Run: pnpm add @nut-tree-fork/nut-js")
 }
 
-// ── keyboard_type ─────────────────────────────────────────────────────────
-
 interface KeyboardTypeParams {
   text: string
+}
+
+interface KeyboardShortcutParams {
+  keys: string[]
+}
+
+interface YeonjangKeyboardTypeResult {
+  typed: boolean
+  text_len: number
+  message: string
 }
 
 export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
@@ -37,24 +48,45 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: KeyboardTypeParams): Promise<ToolResult> => {
+  execute: async (params: KeyboardTypeParams, ctx: ToolContext): Promise<ToolResult> => {
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
+
+    try {
+      if (await canYeonjangHandleMethod("keyboard.type")) {
+        const remote = await invokeYeonjangMethod<YeonjangKeyboardTypeResult>(
+          "keyboard.type",
+          { text: params.text },
+          { timeoutMs: 15_000 },
+        )
+        return {
+          success: remote.typed,
+          output: remote.message || `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
+          details: { via: "yeonjang", textLength: remote.text_len },
+          ...(remote.typed ? {} : { error: "remote_keyboard_type_failed" }),
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 키보드 입력 실패: ${message}`, error: message }
+      }
+      ctx.onProgress("Yeonjang 연장을 찾지 못해 로컬 키보드 입력으로 전환합니다.")
+    }
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const { keyboard } = await getNutKeyboard()
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       await keyboard.type(params.text)
-      return { success: true, output: `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"` }
+      return {
+        success: true,
+        output: `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
+        details: { via: "local" },
+      }
     } catch (err) {
       return { success: false, output: `키보드 입력 실패: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
-}
-
-// ── keyboard_shortcut ─────────────────────────────────────────────────────
-
-interface KeyboardShortcutParams {
-  keys: string[]
 }
 
 export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
@@ -92,7 +124,7 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       await keyboard.releaseKey(...resolvedKeys.reverse())
 
-      return { success: true, output: `단축키 실행: ${params.keys.join("+")}` }
+      return { success: true, output: `단축키 실행: ${params.keys.join("+")}`, details: { via: "local" } }
     } catch (err) {
       return { success: false, output: `단축키 실행 실패: ${err instanceof Error ? err.message : String(err)}` }
     }
