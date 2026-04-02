@@ -15,3 +15,4 @@
 
 - 이 폴더는 전송 계층 역할에 집중하는 것이 좋습니다.
 - store는 직접 fetch를 만들기보다 이 계층을 통해 백엔드와 통신해야 합니다.
+- WebUI의 새 run 시작 경로는 이제 `client.ts`의 `createRun -> /api/runs`를 기본으로 사용하고, 화면 쪽에서 과거 `api/agent/run` fallback을 다시 두지 않는 방향으로 정리 중입니다.

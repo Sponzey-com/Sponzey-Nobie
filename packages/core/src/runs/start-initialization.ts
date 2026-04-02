@@ -36,10 +36,12 @@ export function applyStartInitialization(
     runId: string
     sessionId: string
     requestGroupId: string
+    originRunId?: string | undefined
+    originRequestGroupId?: string | undefined
     source: FinalizationSource
     message: string
     controller: AbortController
-    requestGroupQueueActive: boolean
+    requestGroupExecutionQueueActive: boolean
     targetLabel?: string | undefined
     model?: string | undefined
     reconnectTargetTitle?: string | undefined
@@ -71,7 +73,7 @@ export function applyStartInitialization(
         keepRunId: params.runId,
       }).length
     : 0
-  const queuedBehindRequestGroupRun = params.requestGroupQueueActive
+  const queuedBehindRequestGroupRun = params.requestGroupExecutionQueueActive
 
   dependencies.setRunStepStatus(params.runId, "received", "completed", "요청을 받았습니다.")
   dependencies.setRunStepStatus(params.runId, "classified", "completed", "일반 채팅 요청으로 분류했습니다.")
@@ -99,6 +101,12 @@ export function applyStartInitialization(
   if (params.reconnectTargetTitle && params.requestGroupId !== params.runId) {
     dependencies.appendRunEvent(params.runId, `기존 요청 그룹 재연결: ${params.reconnectTargetTitle}`)
     dependencies.updateRunSummary(params.runId, `기존 요청 "${params.reconnectTargetTitle}" 작업 흐름에 이어서 연결합니다.`)
+  }
+  if (params.originRunId) {
+    dependencies.appendRunEvent(params.runId, `예약 등록 run 연결: ${params.originRunId}`)
+  }
+  if (params.originRequestGroupId) {
+    dependencies.appendRunEvent(params.runId, `예약 등록 request-group 연결: ${params.originRequestGroupId}`)
   }
   if (params.shouldReconnectGroup && params.reconnectCandidateCount === 0) {
     dependencies.appendRunEvent(params.runId, "재사용 가능한 기존 태스크 후보가 없어 새 태스크로 시작합니다.")

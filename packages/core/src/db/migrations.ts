@@ -286,6 +286,18 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`UPDATE schedules SET execution_driver = 'internal' WHERE execution_driver IS NULL OR execution_driver = ''`)
     },
   },
+  {
+    version: 11,
+    up(db) {
+      const scheduleColumns = db.prepare(`PRAGMA table_info(schedules)`).all() as Array<{ name: string }>
+      if (!scheduleColumns.some((column) => column.name === "origin_run_id")) {
+        db.exec(`ALTER TABLE schedules ADD COLUMN origin_run_id TEXT`)
+      }
+      if (!scheduleColumns.some((column) => column.name === "origin_request_group_id")) {
+        db.exec(`ALTER TABLE schedules ADD COLUMN origin_request_group_id TEXT`)
+      }
+    },
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

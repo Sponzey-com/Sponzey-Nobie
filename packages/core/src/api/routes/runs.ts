@@ -6,6 +6,7 @@ import {
   listRootRuns,
 } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
+import { buildTaskModels } from "../../runs/task-model.js"
 
 export async function startLocalRun(params: {
   message: string
@@ -27,6 +28,10 @@ export async function startLocalRun(params: {
 export function registerRunsRoute(app: FastifyInstance): void {
   app.get("/api/runs", { preHandler: authMiddleware }, async () => {
     return { runs: listRootRuns() }
+  })
+
+  app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
+    return { tasks: buildTaskModels(listRootRuns(200)) }
   })
 
   app.get<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {

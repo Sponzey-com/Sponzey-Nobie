@@ -330,3 +330,15 @@
 - 가장 먼저 손대야 할 것은 성능보다 사용자 체감에 직접 영향을 주는
 
   `즉시 접수 응답`과 `예약 실행 분리`다.
+
+## 10. 문서 동기화와 소멸 정책
+
+- 구조 전환 결과는 코드와 문서가 같이 움직여야 의미가 있다.
+- 고정해야 할 문서는 `process.md`, `process-to.md`, `analyse.md`, `result.md`, 현재 `.design/task00x.md`, 관련 `source.md`다.
+- 구현이 먼저 바뀐 경우에는 `.design/task00x.md` 진행 메모에 차이를 먼저 기록하고, 안정화되면 `process.md/process-to.md`로 승격한다.
+- 구형 코드 제거 우선순위는 다음과 같다.
+  1. 사용자 화면을 왜곡하는 heuristic 보정 코드
+  2. 중복 queue/route/helper
+  3. execution/delivery/completion 혼합 보조 경로
+  4. 임시 compat 경로
+- 삭제는 replacement 경로가 기본 경로가 되고, dead-path 검색 기준과 회귀 테스트가 추가되고, build/test가 통과한 뒤에 한다.

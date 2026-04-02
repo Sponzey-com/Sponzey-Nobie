@@ -54,6 +54,7 @@ describe("recovery entry pass", () => {
     }, {
       applyTerminalApplication,
       runExternalRecoverySequence: vi.fn(),
+      enqueueRunRecovery: async ({ task }) => task(),
     })
 
     expect(result).toEqual({ kind: "break" })
@@ -79,6 +80,7 @@ describe("recovery entry pass", () => {
     }, {
       applyTerminalApplication: vi.fn(),
       runExternalRecoverySequence,
+      enqueueRunRecovery: async ({ task }) => task(),
     })
 
     expect(result).toEqual({
@@ -105,6 +107,7 @@ describe("recovery entry pass", () => {
     }, {
       applyTerminalApplication: vi.fn(),
       runExternalRecoverySequence: vi.fn().mockResolvedValue({ kind: "none" }),
+      enqueueRunRecovery: async ({ task }) => task(),
     })
 
     expect(result).toEqual({ kind: "break" })
@@ -116,6 +119,7 @@ describe("recovery entry pass", () => {
     }, {
       applyTerminalApplication: vi.fn(),
       runExternalRecoverySequence: vi.fn().mockResolvedValue({ kind: "none" }),
+      enqueueRunRecovery: async ({ task }) => task(),
     })
 
     expect(result).toEqual({ kind: "continue" })

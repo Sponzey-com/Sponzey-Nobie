@@ -6,6 +6,7 @@ import {
   type FinalizationDependencies,
   type FinalizationSource,
 } from "./finalization.js"
+import { decideTerminalApplicationOutcome } from "./terminal-outcome-policy.js"
 
 export type TerminalApplication =
   | ({ kind: "awaiting_user" } & AwaitingUserParams)
@@ -32,7 +33,11 @@ export async function applyTerminalApplication(
   },
   dependencies: TerminalApplicationDependencies = defaultTerminalApplicationDependencies,
 ): Promise<"awaiting_user" | "cancelled"> {
-  if (params.application.kind === "awaiting_user") {
+  const terminalOutcome = decideTerminalApplicationOutcome({
+    applicationKind: params.application.kind,
+  })
+
+  if (terminalOutcome === "awaiting_user") {
     await dependencies.moveRunToAwaitingUser({
       runId: params.runId,
       sessionId: params.sessionId,

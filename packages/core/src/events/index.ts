@@ -43,6 +43,64 @@ export interface NobieEvents {
     kind?: ApprovalKind
     reason?: ApprovalResolutionReason
   }
+  "schedule.created": {
+    runId: string
+    requestGroupId: string
+    registrationKind: "one_time" | "recurring"
+    title: string
+    task: string
+    source: "webui" | "cli" | "telegram"
+    scheduleText: string
+    scheduleId?: string
+    runAtMs?: number
+    cron?: string
+    targetSessionId?: string
+    driver?: string
+  }
+  "schedule.cancelled": {
+    runId: string
+    requestGroupId: string
+    cancelledScheduleIds: string[]
+    cancelledNames: string[]
+  }
+  "schedule.run.start": {
+    scheduleId: string
+    scheduleRunId: string
+    runId: string
+    scheduleName: string
+    targetChannel: string
+    targetSessionId?: string
+    originRunId?: string
+    originRequestGroupId?: string
+    trigger: string
+  }
+  "schedule.run.complete": {
+    scheduleId: string
+    scheduleRunId: string
+    runId: string
+    scheduleName: string
+    targetChannel: string
+    targetSessionId?: string
+    originRunId?: string
+    originRequestGroupId?: string
+    trigger: string
+    success: boolean
+    durationMs: number
+    summary?: string
+  }
+  "schedule.run.failed": {
+    scheduleId: string
+    scheduleRunId: string
+    runId: string
+    scheduleName: string
+    targetChannel: string
+    targetSessionId?: string
+    originRunId?: string
+    originRequestGroupId?: string
+    trigger: string
+    error?: string
+    attempts: number
+  }
   "scheduler.trigger": { scheduleId: string; scheduleTime: Date }
   "config.changed": Record<string, never>
   "plugin.loaded": { pluginId: string }

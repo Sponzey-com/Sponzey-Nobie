@@ -6,6 +6,7 @@ import {
 import {
   buildCommandFailureRecoveryPrompt,
   buildExecutionRecoveryPrompt,
+  describeCommandFailureReason,
   selectCommandFailureRecovery,
   selectGenericExecutionRecovery,
   type FailedCommandTool,
@@ -102,12 +103,33 @@ export function decideExecutionPostPassRecovery(params: {
     }
   }
 
+  if (params.commandFailureSeen && !params.commandRecoveredWithinSamePass && params.failedCommandTools.length > 0) {
+    const latestFailure = params.failedCommandTools[params.failedCommandTools.length - 1]
+    return {
+      kind: "stop",
+      summary: "실행 실패 뒤 사용할 새 명령 대안을 찾지 못해 자동 진행을 멈춥니다.",
+      reason: latestFailure
+        ? `${describeCommandFailureReason(latestFailure.output)} 이미 시도한 명령 실패 복구 경로와 같은 대안만 남았습니다.`
+        : "이미 시도한 명령 실패 복구 경로와 같은 대안만 남았습니다.",
+      remainingItems: ["다른 명령/도구/실행 대상을 사용하려면 수동 판단이나 추가 입력이 필요합니다."],
+    }
+  }
+
   const genericExecutionRecovery = params.executionRecovery
     ? selectGenericExecutionRecovery({
         executionRecovery: params.executionRecovery,
         seenKeys: params.seenExecutionRecoveryKeys,
       })
     : null
+
+  if (!genericExecutionRecovery && params.executionRecovery) {
+    return {
+      kind: "stop",
+      summary: "실행 실패 뒤 사용할 새 대안을 찾지 못해 자동 진행을 멈춥니다.",
+      reason: `${params.executionRecovery.reason} 이미 시도한 실행 복구 경로와 같은 대안만 남았거나 구조화된 대안이 부족합니다.`,
+      remainingItems: ["다른 도구 조합이나 다른 실행 전략을 쓰려면 수동 판단이나 추가 입력이 필요합니다."],
+    }
+  }
 
   if (!genericExecutionRecovery) {
     return { kind: "none" }

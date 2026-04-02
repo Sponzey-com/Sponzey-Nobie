@@ -19,6 +19,7 @@ describe("start driver dependencies", () => {
       syntheticApprovalScopes: scopes,
       logInfo: vi.fn(),
       logWarn: vi.fn(),
+      logError: vi.fn(),
     })
 
     expect(driverDependencies.getSyntheticApprovalAlreadyApproved()).toBe(false)

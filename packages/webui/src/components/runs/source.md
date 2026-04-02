@@ -17,3 +17,4 @@
 - 이 폴더는 백엔드 run 상태를 사람이 읽을 수 있는 작업 모니터 화면으로 번역합니다.
 - 라벨이나 배치의 작은 변경도 체감 품질에 큰 영향을 줍니다.
 - `RunStatusCard`는 이제 작은 버튼 하나만이 아니라 카드 전체 클릭과 키보드 입력으로 선택할 수 있고, 취소 버튼은 카드 선택 이벤트를 막아 직접 제어와 선택이 서로 충돌하지 않도록 합니다.
+- `RunStatusCard`와 `RunSummaryPanel`은 raw run group을 직접 알지 않고, 상위 페이지가 `task-monitor.ts`에서 계산한 task projection과 extra content를 주입받는 쪽으로 유지하는 편이 맞습니다.

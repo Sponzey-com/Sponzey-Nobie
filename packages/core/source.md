@@ -18,6 +18,9 @@
 - Telegram/WebUI/CLI 같은 진입점에는 공통 ingress receipt와 `startIngressRun()` 경계를 두어, 무거운 intake가 끝나기 전에도 요청이 접수되었음을 먼저 반환합니다.
 - 이 ingress 경계는 `sessionId`, `runId(requestId)`, `source`를 먼저 고정하고, 그 resolved 식별자를 실제 run 루프로 넘기는 역할도 맡습니다.
 - request-group 재사용 여부와 활성 실행 취소 같은 진입 해석은 `runs/entry-semantics.ts`로 분리해, intake와 실행 이전 경계를 더 명확히 나누고 있습니다.
+- 상태 모니터와 후속 디버그 표면은 이제 `runs/task-model.ts` projection을 통해 기존 `run/requestGroup` 저장 구조를 `Task / Attempt / Recovery Attempt / Delivery`로 읽을 수 있게 정리 중입니다.
+- 이 task projection은 stable `activities` kind(`attempt.*`, `recovery.*`, `delivery.*`)와 `monitor` 관측 포인트(`activeAttemptCount`, `duplicateExecutionRisk`, `deliveryStatus` 등)를 함께 계산해, UI와 디버그 API가 free-form event label 재해석에 덜 의존하도록 정리 중입니다.
+- 같은 projection은 이제 `runIds`, `latestAttemptId`, `attempt.prompt`도 함께 내려, 프런트가 raw run을 다시 `requestGroupId`로 묶는 구형 heuristic 없이 explicit task ownership을 따라가게 정리 중입니다.
 - pending directive와 cancellation/intake bridge를 묶는 loop 진입 경계도 `runs/loop-entry-pass.ts`로 분리하기 시작했고, `runs/start.ts`는 상단 orchestration보다 결과 반영에 더 집중하는 방향으로 정리 중입니다.
 - 각 pass 결과를 다음 loop 상태로 적용하는 경계도 `runs/loop-pass-application.ts`로 분리하기 시작했고, `runs/start.ts`는 loop-entry/recovery-entry/post-execution/review-cycle 결과를 다시 길게 풀지 않고 다음 상태 반영에 더 집중하는 방향으로 정리 중입니다.
 - while-loop 본문도 `runs/execution-cycle-pass.ts`로 분리하기 시작했고, `runs/start.ts`는 execution attempt, recovery entry, post-execution, review cycle 전체의 결과 상태만 반영하는 방향으로 더 좁혀지고 있습니다.
@@ -30,7 +33,9 @@
 - request-group 재사용, reconnect candidate 선택, clarification 필요 여부, context mode와 worker session 계산도 `runs/start-plan.ts`로 분리하기 시작했고, `runs/start.ts`는 상단 초기 계산보다 plan 결과 반영에 더 집중하는 방향으로 정리 중입니다.
 - start-plan, session ensure, run 생성, start initialization도 `runs/start-launch.ts`로 분리하기 시작했고, `runs/start.ts`는 최상단 시작 준비 glue보다 root run 시작 orchestration에 더 집중하는 방향으로 정리 중입니다.
 - worker session id 계산, active queue 취소, session ensure, journal, filesystem verification wrapper도 `runs/start-support.ts`로 분리하기 시작했고, `runs/start.ts`는 시작 공통 보조 로직의 중복 선언 없이 orchestration에 더 집중하는 방향으로 정리 중입니다.
-- request-group queue, delayed session queue, delayed run arm/fire도 `runs/run-queueing.ts`로 분리하기 시작했고, `runs/start.ts`는 큐 map과 타이머 관리 세부보다 시작 orchestration과 dependency wiring에 더 집중하는 방향으로 정리 중입니다.
+- 같은 세션의 intake bridge 분석도 `runs/intake-queue.ts`에서 `sessionId` 단위 explicit queue로 직렬화되기 시작했고, intake와 execution을 다른 목적 queue로 나누는 방향으로 정리 중입니다.
+- root run 실행 직렬화는 `runs/execution-queue.ts`로, delayed session queue와 delayed run arm/fire는 `runs/run-queueing.ts`로 분리하기 시작했고, `runs/start.ts`는 큐 map과 타이머 관리 세부보다 시작 orchestration과 dependency wiring에 더 집중하는 방향으로 정리 중입니다.
+- recovery entry와 external recovery sequence도 `runs/recovery-queue.ts`에서 `runId` 단위 explicit queue로 직렬화되기 시작했고, execution attempt와 recovery apply를 다른 목적 queue로 나누는 방향으로 정리 중입니다.
 - finalization dependency 조립, loop directive apply, intake bridge wrapper도 `runs/start-bridges.ts`로 분리하기 시작했고, `runs/start.ts`는 로컬 bridge 함수 없이 `startRootRun` orchestration에 더 집중하는 방향으로 정리 중입니다.
 - finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립도 `runs/start-driver-dependencies.ts`로 분리하기 시작했고, `runs/start.ts`는 runtime wiring보다 launch와 queue 위의 시작 orchestration에 더 집중하는 방향으로 정리 중입니다.
 - run 생성 직후 instruction journal, active controller binding, orphan worker 정리, 초기 step/status/event 적용도 `runs/start-initialization.ts`로 분리하기 시작했고, `runs/start.ts`는 상단 초기화 세부보다 초기화 결과 반영에 더 집중하는 방향으로 정리 중입니다.
@@ -39,6 +44,20 @@
 - root run driver의 fatal failure 종료와 error chunk 전달도 `runs/root-run-driver-failure.ts`로 분리하기 시작했고, `runs/root-run-driver.ts`는 error fallback glue보다 driver orchestration에 더 집중하는 방향으로 정리 중입니다.
 - request-group queue 안의 execution profile 초기화, root loop 실행, fatal failure 처리, cleanup도 `runs/root-run-driver.ts`로 분리하기 시작했고, `runs/start.ts`는 queue callback glue보다 시작 orchestration과 dependency wiring에 더 집중하는 방향으로 정리 중입니다.
 - intake 결과의 즉시 응답, schedule retry_intake, delegated follow-up 생성을 묶는 `runs/intake-bridge-pass.ts`도 분리하기 시작했고, `runs/start.ts`는 상단 intake bridge 세부보다 결과 반영에 더 집중하는 방향으로 정리 중입니다.
+- one-time delayed run은 이제 `runs/run-queueing.ts`에서 원 `requestGroupId`를 재사용하지 않고 새 root task instance로 시작합니다. 예약 등록을 만든 run/request-group은 lineage 용 `originRunId`, `originRequestGroupId`로 남기고, 그 정보가 새 run의 초기 이벤트에도 반영되도록 schedule lifecycle 분리를 진행 중입니다.
+- 반복 스케줄 등록도 이제 `runs/action-execution.ts` receipt에 `scheduleId`, `targetSessionId`, `originRunId`, `originRequestGroupId`를 담아, 저장된 스케줄과 등록 태스크 lineage를 구조적으로 다시 따라갈 수 있게 정리 중입니다.
+- 반복 스케줄 등록/취소도 이제 `schedule.created`, `schedule.cancelled` typed event로 따로 나가기 시작했고, 실제 firing은 `schedule.run.*` typed event로 이어집니다. 즉 등록 lifecycle과 실행 lifecycle을 다른 레코드로 보면서 `scheduleId`, `runId`, `requestGroupId`, `targetSessionId` 축으로 연결하는 방향입니다.
+- recurring schedule 엔티티도 `origin_run_id`, `origin_request_group_id`를 저장하기 시작해, 실행 실패는 `runId = scheduleRunId`인 별도 lifecycle record로 남고 원 등록 태스크는 lineage 정보로만 참조되는 방향입니다.
+- 반복 스케줄 firing도 이제 `scheduler/queueing.ts`의 `scheduleId` 단위 explicit queue에서 직렬화되기 시작했습니다. tick/manual trigger가 같은 스케줄에서 서로 다른 목적 흐름으로 흩어지지 않도록 정리 중입니다.
+- scheduler tick의 due/skip 판단과 `queue_active` duplicate firing 방지 규칙도 이제 `scheduler/tick-policy.ts`로 분리되어, 같은 `scheduleId`가 이미 queue에 있으면 새 firing을 만들지 않도록 고정하는 방향입니다.
+- root run 실행도 이제 `runs/execution-queue.ts`의 `requestGroupId` 단위 explicit execution queue에서 직렬화되기 시작했습니다. delayed/session queue와 실행 queue를 다른 목적 경계로 나누는 방향입니다.
+- 반복 스케줄의 direct Telegram delivery도 이제 `scheduler/delivery-queue.ts`의 `targetChannel + targetSessionId` 단위 explicit delivery queue에서 직렬화되기 시작했습니다. schedule 실행과 채널 전달을 분리된 목적 queue로 다루는 방향입니다.
+- completion도 이제 `runs/completion-state.ts`를 통해 `해석/실행/전달/복구 종료` 4축 상태를 따로 계산하기 시작했고, review가 `complete`를 돌려줘도 receipt 기준 4축 근거가 부족하면 그대로 완료로 닫지 않는 방향입니다.
+- direct artifact delivery가 이미 성공했고 receipt 기준 completion 4축 상태가 settled이면 `runs/review-gate.ts`가 completion review 호출 자체를 생략하도록 정리되기 시작했습니다.
+- terminal 상태 의미도 `runs/terminal-outcome-policy.ts`로 모으기 시작했고, `completed`는 receipt 기준 completion state가 만족될 때만, `cancelled`는 explicit stop/abort일 때만, `failed`는 abort가 아닌 fatal failure일 때만 쓰도록 정리 중입니다.
+- execution recovery도 이제 `runs/execution-postpass.ts`가 새 recovery key나 구조화된 대안이 없을 때 `stop`을 명시적으로 반환해, `실행 실패 + 대안 없음`과 `실행 실패 + 대안 있음`을 다른 종료 경로로 나누는 방향입니다.
+- 즉 현재 explicit queue 경계는 intake는 `sessionId`, execution은 `requestGroupId`, recovery는 `runId`, schedule은 `scheduleId`, scheduler delivery는 `targetChannel + targetSessionId`를 기준으로 정리되는 방향입니다.
+- 이 구조에서는 scheduler 내부의 구형 `running` set보다 `queueing.ts`가 유지하는 explicit schedule queue가 주 상태가 되며, schedule 실행 여부 판단을 한곳으로 모으는 방향으로 정리 중입니다.
 - run, session, request-group 상태를 일관되게 유지합니다.
 - 권한 작업이나 장치 작업은 가능하면 Yeonjang으로 라우팅합니다.
 - 메시지, 실행, 감사 로그, 스케줄, 메모리 항목을 저장합니다.

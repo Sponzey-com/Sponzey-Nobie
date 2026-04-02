@@ -5,6 +5,18 @@ import { createLogger } from "../logger/index.js"
 import { getNextRun, isValidCron } from "./cron.js"
 import { getActiveTelegramChannel } from "../channels/telegram/runtime.js"
 import { extractDirectChannelDeliveryText } from "../runs/scheduled.js"
+import { enqueueScheduledDelivery } from "./delivery-queue.js"
+import { resolveScheduleTickDirective } from "./tick-policy.js"
+import {
+  enqueueScheduleExecution,
+  hasScheduleExecutionQueue,
+  listScheduleExecutionQueueIds,
+} from "./queueing.js"
+import {
+  buildScheduleRunCompleteEvent,
+  buildScheduleRunFailedEvent,
+  buildScheduleRunStartEvent,
+} from "./lifecycle.js"
 
 const log = createLogger("scheduler")
 
@@ -12,7 +24,6 @@ const RETRY_DELAY_MS = 5_000
 
 class Scheduler {
   private timer: NodeJS.Timeout | null = null
-  private running = new Set<string>()
 
   start(): void {
     if (this.timer) return
@@ -40,6 +51,7 @@ class Scheduler {
     activeJobIds: string[]
     nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
   } {
+    const activeJobIds = listScheduleExecutionQueueIds()
     const schedules = getSchedules()
     const nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }> = []
 
@@ -56,8 +68,8 @@ class Scheduler {
 
     return {
       running: this.timer !== null,
-      activeJobs: this.running.size,
-      activeJobIds: [...this.running],
+      activeJobs: activeJobIds.length,
+      activeJobIds,
       nextRuns: nextRuns.slice(0, 10),
     }
   }
@@ -67,26 +79,22 @@ class Scheduler {
     const schedules = getSchedules()
 
     for (const s of schedules) {
-      if (!s.enabled) continue
-      if (s.execution_driver === "system_crontab") continue
-      if (!isValidCron(s.cron_expression)) continue
+      const directive = resolveScheduleTickDirective({
+        schedule: s,
+        nowMs: now,
+        queueActive: hasScheduleExecutionQueue(s.id),
+        isValidCron,
+        getNextRun,
+      })
 
-      if (this.running.has(s.id)) {
-        log.info(`Schedule "${s.name}" already running — skipping`)
+      if (directive.kind === "skip") {
+        if (directive.reason === "queue_active") {
+          log.info(`Schedule "${s.name}" already queued or running — skipping tick`)
+        }
         continue
       }
 
-      let nextRun: Date
-      try {
-        const base = s.last_run_at ? new Date(s.last_run_at) : new Date(s.created_at)
-        nextRun = getNextRun(s.cron_expression, base)
-      } catch {
-        continue
-      }
-
-      if (nextRun.getTime() > now) continue
-
-      void this.runNow(s.id, `scheduler tick (due: ${nextRun.toISOString()})`)
+      void this.runNow(s.id, directive.trigger)
     }
   }
 
@@ -105,6 +113,22 @@ class Scheduler {
     const schedule = getSchedule(scheduleId)
     if (!schedule) throw new Error(`Schedule ${scheduleId} not found`)
 
+    return enqueueScheduleExecution({
+      scheduleId,
+      scheduleName: schedule.name,
+      trigger,
+      task: () => this.executeQueuedRun(scheduleId, trigger),
+    }, {
+      logInfo: (message, payload) => log.info(message, payload),
+      logWarn: (message) => log.warn(message),
+      logError: (message, payload) => log.error(message, payload),
+    })
+  }
+
+  private async executeQueuedRun(scheduleId: string, trigger: string): Promise<{ runId: string; finished: Promise<void> }> {
+    const schedule = getSchedule(scheduleId)
+    if (!schedule) throw new Error(`Schedule ${scheduleId} not found`)
+
     const runId = crypto.randomUUID()
     const startedAt = Date.now()
 
@@ -119,9 +143,11 @@ class Scheduler {
     })
 
     log.info(`Running schedule "${schedule.name}" (${scheduleId}), trigger=${trigger}`)
-    eventBus.emit("schedule.run.start" as never, { scheduleId, runId } as never)
-
-    this.running.add(scheduleId)
+    eventBus.emit("schedule.run.start", buildScheduleRunStartEvent({
+      schedule,
+      scheduleRunId: runId,
+      trigger,
+    }))
 
     const finished = (async () => {
       const maxRetries = schedule.max_retries ?? 3
@@ -136,7 +162,10 @@ class Scheduler {
           await new Promise<void>((r) => setTimeout(r, RETRY_DELAY_MS))
         }
 
-        const result = await this._execute(schedule)
+        const result = await this._execute({
+          schedule,
+          scheduleRunId: runId,
+        })
         if (result.success) {
           success = true
           summary = result.summary
@@ -148,8 +177,6 @@ class Scheduler {
       }
 
       const finishedAt = Date.now()
-      this.running.delete(scheduleId)
-
       updateScheduleRun(runId, {
         finished_at: finishedAt,
         success: success ? 1 : 0,
@@ -158,21 +185,23 @@ class Scheduler {
       })
 
       log.info(`Schedule "${schedule.name}" run ${runId} finished (success=${success}) in ${finishedAt - startedAt}ms`)
-      eventBus.emit("schedule.run.complete" as never, {
-        scheduleId,
-        runId,
+      eventBus.emit("schedule.run.complete", buildScheduleRunCompleteEvent({
+        schedule,
+        scheduleRunId: runId,
+        trigger,
         success,
         durationMs: finishedAt - startedAt,
-      } as never)
+        summary,
+      }))
 
       if (!success) {
-        eventBus.emit("schedule.run.failed" as never, {
-          scheduleId,
-          runId,
-          name: schedule.name,
+        eventBus.emit("schedule.run.failed", buildScheduleRunFailedEvent({
+          schedule,
+          scheduleRunId: runId,
+          trigger,
           error: lastError,
           attempts: attempt,
-        } as never)
+        }))
         log.warn(`Schedule "${schedule.name}" failed after ${attempt} attempt(s): ${lastError}`)
       }
     })()
@@ -180,7 +209,11 @@ class Scheduler {
     return { runId, finished }
   }
 
-  private async _execute(schedule: DbSchedule): Promise<{ success: boolean; summary: string | null; error: string | null }> {
+  private async _execute(params: {
+    schedule: DbSchedule
+    scheduleRunId: string
+  }): Promise<{ success: boolean; summary: string | null; error: string | null }> {
+    const { schedule, scheduleRunId } = params
     const directTelegramMessage = schedule.target_channel === "telegram"
       ? extractDirectChannelDeliveryText(schedule.prompt)
       : null
@@ -204,7 +237,17 @@ class Scheduler {
       }
 
       try {
-        await telegram.sendTextToSession(schedule.target_session_id, directTelegramMessage)
+        await enqueueScheduledDelivery({
+          targetChannel: "telegram",
+          targetSessionId: schedule.target_session_id,
+          scheduleId: schedule.id,
+          scheduleRunId,
+          task: () => telegram.sendTextToSession(schedule.target_session_id!, directTelegramMessage),
+        }, {
+          logInfo: (message, payload) => log.info(message, payload),
+          logWarn: (message) => log.warn(message),
+          logError: (message, payload) => log.error(message, payload),
+        })
         return {
           success: true,
           summary: directTelegramMessage.slice(0, 2000) || null,
@@ -266,7 +309,17 @@ class Scheduler {
       }
 
       try {
-        await telegram.sendTextToSession(schedule.target_session_id, summary)
+        await enqueueScheduledDelivery({
+          targetChannel: "telegram",
+          targetSessionId: schedule.target_session_id,
+          scheduleId: schedule.id,
+          scheduleRunId,
+          task: () => telegram.sendTextToSession(schedule.target_session_id!, summary),
+        }, {
+          logInfo: (message, payload) => log.info(message, payload),
+          logWarn: (message) => log.warn(message),
+          logError: (message, payload) => log.error(message, payload),
+        })
       } catch (err) {
         return {
           success: false,

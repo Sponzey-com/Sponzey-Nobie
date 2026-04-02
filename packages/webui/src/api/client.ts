@@ -5,6 +5,7 @@ import type { FeatureCapability } from "../contracts/capabilities"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
+import type { TaskModel } from "../contracts/tasks"
 import type { UpdateSnapshot } from "../contracts/update"
 
 const BASE = ""
@@ -82,13 +83,9 @@ export const api = {
       `/api/instructions/active${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
-  sendMessage: (message: string, sessionId?: string) =>
-    request<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>("/api/agent/run", {
-      method: "POST",
-      body: JSON.stringify({ message, sessionId }),
-    }),
-
   runs: () => request<{ runs: RootRun[] }>("/api/runs"),
+
+  tasks: () => request<{ tasks: TaskModel[] }>("/api/tasks"),
 
   run: (runId: string) => request<{ run: RootRun }>(`/api/runs/${runId}`),
 

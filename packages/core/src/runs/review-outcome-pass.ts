@@ -156,6 +156,7 @@ export async function runReviewOutcomePass(
     source: params.source,
     onChunk: params.onChunk,
     preview: params.preview,
+    state: completionPass.state,
     application: completionPass.application,
     maxTurns: completionPass.maxTurns,
     recoveryBudgetUsage: params.recoveryBudgetUsage,

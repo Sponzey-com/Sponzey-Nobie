@@ -18,24 +18,36 @@
 - CLI chunk helper의 텍스트, tool 상태, 오류 출력 동작
 - WebUI chat delivery helper의 assistant text/tool call 누적과 flush 동작
 - schedule action 실행, 예약 등록/취소, delegated follow-up prompt/receipt 조립 동작
+- schedule registration lifecycle helper의 `schedule.created / schedule.cancelled` typed event 조립 동작
+- schedule firing lifecycle helper의 `originRunId / originRequestGroupId` lineage 유지와 `runId = scheduleRunId` 분리 동작
 - loop pass application helper의 loop-entry / recovery-entry / post-execution / review-cycle 결과 적용 동작
 - execution cycle helper의 execution attempt / recovery entry / post-execution / review cycle 통합 동작
 - recovery key, route change, command/tool failure recovery 동작
 - recovery alternative 후보(`other_tool`, `other_extension`, `other_channel`, `other_schedule`) 동작
 - recovery budget helper의 failure kind별 사용량/한도 동작
 - direct artifact 전달 실패 recovery candidate와 채널별 텍스트 전달 실패 설명 동작
+- run recovery queue helper의 `runId` 단위 직렬화와 queue 상태 정리 동작
 - delivery outcome, preview 보정, direct delivery application을 묶는 delivery pass helper 동작
 - execution evidence, filesystem mutation detection, completion evidence, `ToolExecutionReceipt.executor` 분류 동작
 - `tool_start/tool_end` chunk apply helper 동작
 - error chunk helper의 worker runtime recovery / fatal failure / 전달 동작
 - execution attempt helper의 stream 생성 / chunk loop / error chunk / tracked delivery 통합 동작
 - intake bridge helper의 즉시 응답 / schedule retry_intake / delegated follow-up 생성 동작
+- intake bridge helper의 schedule registration typed event emission 동작
+- session intake queue helper의 `sessionId` 단위 직렬화와 queue 상태 정리 동작
 - loop directive helper의 complete / awaiting_user / retry_intake guard 동작
 - loop bootstrap helper의 initial directive / queued restart / worker runtime bypass 동작
 - start plan helper의 request-group / reconnect / context mode / worker session 계산 동작
 - start initialization helper의 journal / queue 상태 / reconnect 이벤트 / worker session 이벤트 동작
 - start launch helper의 start-plan / session ensure / run 생성 / start initialization 통합 동작
-- run queueing helper의 request-group 직렬화, delayed run arm/fire 동작
+- request-group execution queue helper의 `requestGroupId` 단위 직렬화와 queue 상태 정리 동작
+- task model helper의 `Task / Attempt / Recovery Attempt / Delivery` projection, recovery visibility, delivery 상태 분리, 표준 activity kind, monitor 관측 포인트 동작
+- webui task monitor helper의 `/api/tasks` adapter, explicit `runIds/latestAttemptId` 연결, 내부 attempt visibility, delivery 성공/실패 분리 동작
+- task004 obsolete policy guard의 process/result 문서 동기화 키워드, `/api/tasks` 경로 유지, WebUI 구형 fallback/regroup dead path 부재 동작
+- run queueing helper의 delayed run arm/fire 동작
+- scheduler queueing helper의 `scheduleId` 단위 직렬화와 queue 상태 정리 동작
+- scheduler tick policy helper의 due 판단과 duplicate firing skip 동작
+- scheduler delivery queue helper의 `targetChannel + targetSessionId` 단위 직렬화와 queue 상태 정리 동작
 - start bridges helper의 finalization dependency 조립, loop directive apply, intake bridge 위임 동작
 - start driver dependencies helper의 finalization/runtime/driver wiring 조립 동작
 - execution profile helper의 fallback structured request / intent envelope / loop runtime state 초기화 동작
@@ -61,15 +73,19 @@
 - synthetic approval 승인 후 continuation 결정과 `scope grant -> running 전환 -> next message` apply helper 동작
 - synthetic approval scope 재사용 / 승인 요청 / continuation pass helper 동작
 - completion review 호출과 synthetic approval 감지 묶음 helper 동작
+- review gate helper의 direct delivery 성공 시 completion review 생략 동작
+- terminal outcome policy helper의 completed/failed/cancelled/awaiting_user 판정 동작
 - review pass와 review outcome pass를 묶는 review cycle helper 동작
 - review outcome helper의 synthetic approval retry / completion retry·break 동작
 - 실행 종료 후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입 helper 동작
+- completion state helper의 `해석/실행/전달/복구 종료` 4축 분리와 receipt 우선 completion 판단 동작
 - completion review 이후 flow decision과 application decision 조합 helper 동작
 - completion application의 `complete/stop/retry/awaiting_user` pass helper 동작
 - `retry_intake`의 failure journal, interpretation budget, retry/stop apply helper 동작
 - execution chunk failure와 unexpected error의 failed/cancelled apply helper 동작
 - review 준비와 direct delivery complete/stop/retry pass helper 동작
 - execution post-pass, delivery pass, filesystem post-pass, review-entry를 묶는 post-execution helper 동작
+- execution post-pass helper의 `대안 있음 => retry`, `대안 없음 => stop` decision 동작
 - filesystem post-pass의 stop/initial_retry/retry/verified apply helper 동작
 - retry/continuation 공통 running 상태 적용 helper 동작
 - recovery retry 공통의 실패 기록, budget 소모, recovery event, running 전환 helper 동작

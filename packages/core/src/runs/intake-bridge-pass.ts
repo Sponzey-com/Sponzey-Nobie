@@ -1,5 +1,9 @@
 import type { LLMProvider } from "../llm/index.js"
 import {
+  buildScheduleRegistrationCancelledEvent,
+  buildScheduleRegistrationCreatedEvent,
+} from "../scheduler/lifecycle.js"
+import {
   analyzeTaskIntake,
   type TaskExecutionSemantics,
   type TaskIntentEnvelope,
@@ -47,6 +51,8 @@ interface IntakeBridgePassDependencies {
   appendRunEvent: (runId: string, message: string) => void
   updateRunSummary: (runId: string, summary: string) => void
   incrementDelegationTurnCount: (runId: string, summary: string) => void
+  emitScheduleCreated: (payload: ReturnType<typeof buildScheduleRegistrationCreatedEvent>) => void
+  emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void
   scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void
   startDelegatedRun: (params: DelegatedRunStartParams) => void
   normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
@@ -174,6 +180,46 @@ export async function runIntakeBridgePass(
 
       if (scheduleResult.message.trim()) {
         responseParts.push(scheduleResult.message.trim())
+      }
+
+      for (const receipt of scheduleResult.receipts) {
+        if (receipt.kind === "schedule_create_one_time") {
+          dependencies.emitScheduleCreated(buildScheduleRegistrationCreatedEvent({
+            runId: params.runId,
+            requestGroupId: params.requestGroupId,
+            registrationKind: "one_time",
+            title: receipt.title,
+            task: receipt.task,
+            source: receipt.source,
+            scheduleText: receipt.scheduleText,
+            runAtMs: receipt.runAtMs,
+          }))
+          continue
+        }
+
+        if (receipt.kind === "schedule_create_recurring") {
+          dependencies.emitScheduleCreated(buildScheduleRegistrationCreatedEvent({
+            runId: receipt.originRunId,
+            requestGroupId: receipt.originRequestGroupId,
+            registrationKind: "recurring",
+            title: receipt.title,
+            task: receipt.task,
+            source: receipt.source,
+            scheduleText: receipt.scheduleText,
+            scheduleId: receipt.scheduleId,
+            cron: receipt.cron,
+            ...(receipt.targetSessionId ? { targetSessionId: receipt.targetSessionId } : {}),
+            driver: receipt.driver,
+          }))
+          continue
+        }
+
+        dependencies.emitScheduleCancelled(buildScheduleRegistrationCancelledEvent({
+          runId: params.runId,
+          requestGroupId: params.requestGroupId,
+          cancelledScheduleIds: receipt.cancelledScheduleIds,
+          cancelledNames: receipt.cancelledNames,
+        }))
       }
     }
 

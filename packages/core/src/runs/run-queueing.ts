@@ -13,7 +13,6 @@ import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 const MAX_DELAY_TIMER_MS = 2_147_483_647
 const delayedRunTimers = new Map<string, NodeJS.Timeout>()
 const delayedSessionQueues = new Map<string, Promise<void>>()
-const requestGroupExecutionQueues = new Map<string, Promise<RootRun | undefined>>()
 
 interface QueueLoggingDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
@@ -21,15 +20,13 @@ interface QueueLoggingDependencies {
   logError: (message: string, payload?: Record<string, unknown>) => void
 }
 
-interface RequestGroupQueueDependencies extends QueueLoggingDependencies {
-  getRootRun: (runId: string) => RootRun | undefined
-}
-
 interface DelayedRunDependencies extends QueueLoggingDependencies {
   startRootRun: (params: {
     message: string
     sessionId: string
     requestGroupId?: string | undefined
+    originRunId?: string | undefined
+    originRequestGroupId?: string | undefined
     model: string | undefined
     providerId?: string | undefined
     provider?: LLMProvider | undefined
@@ -52,52 +49,6 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
   now?: () => number
   resolveRoute?: typeof resolveRunRoute
   setTimer?: typeof setTimeout
-}
-
-export function hasRequestGroupQueue(requestGroupId: string): boolean {
-  return requestGroupExecutionQueues.has(requestGroupId)
-}
-
-export function enqueueRequestGroupRun(
-  params: {
-    requestGroupId: string
-    runId: string
-    task: () => Promise<RootRun | undefined>
-  },
-  dependencies: RequestGroupQueueDependencies,
-): Promise<RootRun | undefined> {
-  const previous = requestGroupExecutionQueues.get(params.requestGroupId)
-  if (previous) {
-    dependencies.logInfo("request group run queued behind active group task", {
-      runId: params.runId,
-      requestGroupId: params.requestGroupId,
-    })
-  }
-
-  const next = (previous ?? Promise.resolve<RootRun | undefined>(undefined))
-    .catch((error) => {
-      dependencies.logWarn(
-        `previous request group queue recovered: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
-    })
-    .then(() => params.task())
-    .catch((error) => {
-      dependencies.logError("request group queue task failed", {
-        runId: params.runId,
-        requestGroupId: params.requestGroupId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      return dependencies.getRootRun(params.runId)
-    })
-    .finally(() => {
-      if (requestGroupExecutionQueues.get(params.requestGroupId) === next) {
-        requestGroupExecutionQueues.delete(params.requestGroupId)
-      }
-    })
-
-  requestGroupExecutionQueues.set(params.requestGroupId, next)
-  return next
 }
 
 function enqueueDelayedSessionRun(
@@ -144,7 +95,8 @@ export function scheduleDelayedRootRun(
     runAtMs: number
     message: string
     sessionId: string
-    requestGroupId?: string
+    originRunId?: string
+    originRequestGroupId?: string
     model: string | undefined
     originalRequest?: string
     executionSemantics?: TaskExecutionSemantics
@@ -169,8 +121,10 @@ export function scheduleDelayedRootRun(
   dependencies.logInfo("delayed run armed", {
     jobId,
     sessionId: params.sessionId,
+    originRunId: params.originRunId ?? null,
     source: params.source,
     runAtMs: params.runAtMs,
+    originRequestGroupId: params.originRequestGroupId ?? null,
     directDelivery: params.immediateCompletionText != null,
     preferredTarget: params.preferredTarget ?? null,
     taskProfile: params.taskProfile ?? null,
@@ -192,6 +146,8 @@ export function scheduleDelayedRootRun(
         dependencies.logInfo("delayed run firing", {
           jobId,
           sessionId: params.sessionId,
+          originRunId: params.originRunId ?? null,
+          originRequestGroupId: params.originRequestGroupId ?? null,
           targetId: route.targetId ?? null,
           targetLabel: route.targetLabel ?? null,
           model: route.model ?? params.model ?? null,
@@ -204,8 +160,9 @@ export function scheduleDelayedRootRun(
         const started = dependencies.startRootRun({
           message: params.message,
           sessionId: params.sessionId,
+          ...(params.originRunId ? { originRunId: params.originRunId } : {}),
+          ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
           ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
-          ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
           ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
           ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
           ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),

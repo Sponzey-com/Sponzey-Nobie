@@ -57,7 +57,7 @@ describe("prepare start launch", () => {
       model: "gpt-5",
       targetId: "provider:openai",
       targetLabel: "OpenAI",
-      hasRequestGroupQueue: (requestGroupId) => requestGroupId === "group-prev",
+      hasRequestGroupExecutionQueue: (requestGroupId) => requestGroupId === "group-prev",
     }, {
       buildStartPlan: buildStartPlan as any,
       isReusableRequestGroup: vi.fn(),
@@ -89,12 +89,79 @@ describe("prepare start launch", () => {
     }))
     expect(applyStartInitialization).toHaveBeenCalledWith(expect.objectContaining({
       requestGroupId: "group-prev",
-      requestGroupQueueActive: true,
+      requestGroupExecutionQueueActive: true,
       reconnectTargetTitle: "기존 작업",
       reusableWorkerSessionRun: true,
     }), expect.any(Object))
     expect(result.run).toEqual({ id: "run-1" })
     expect(result.queuedBehindRequestGroupRun).toBe(true)
     expect(result.startPlan.requestGroupId).toBe("group-prev")
+  })
+
+  it("forwards delayed schedule lineage into start initialization", () => {
+    const buildStartPlan = vi.fn(() => ({
+      entrySemantics: {
+        reuse_conversation_context: true,
+        active_queue_cancellation_mode: null,
+      },
+      requestedClosedRequestGroup: false,
+      shouldReconnectGroup: false,
+      reconnectSelection: {
+        best: undefined,
+        candidates: [],
+        ambiguous: false,
+      },
+      reconnectTarget: undefined,
+      reconnectCandidateCount: 0,
+      reconnectNeedsClarification: false,
+      requestGroupId: "group-delayed",
+      isRootRequest: true,
+      effectiveTaskProfile: "general_chat",
+      initialDelegationTurnCount: 0,
+      shouldReuseContext: true,
+      effectiveContextMode: "full",
+      workerSessionId: undefined,
+      reusableWorkerSessionRun: undefined,
+    }))
+    const applyStartInitialization = vi.fn(() => ({
+      queuedBehindRequestGroupRun: false,
+      interruptedWorkerRunCount: 0,
+    }))
+
+    prepareStartLaunch({
+      message: "delayed hello",
+      sessionId: "session-delayed",
+      runId: "run-delayed",
+      source: "telegram",
+      controller: new AbortController(),
+      now: 456,
+      maxDelegationTurns: 3,
+      originRunId: "origin-run-1",
+      originRequestGroupId: "origin-group-1",
+      hasRequestGroupExecutionQueue: () => false,
+    }, {
+      buildStartPlan: buildStartPlan as any,
+      isReusableRequestGroup: vi.fn(),
+      findReconnectRequestGroupSelection: vi.fn(),
+      getRequestGroupDelegationTurnCount: vi.fn(),
+      buildWorkerSessionId: vi.fn(),
+      normalizeTaskProfile: vi.fn(),
+      findLatestWorkerSessionRun: vi.fn(),
+      ensureSessionExists: vi.fn(),
+      createRootRun: vi.fn(() => ({ id: "run-delayed" })) as any,
+      applyStartInitialization: applyStartInitialization as any,
+      rememberRunInstruction: vi.fn(),
+      bindActiveRunController: vi.fn(),
+      interruptOrphanWorkerSessionRuns: vi.fn(),
+      appendRunEvent: vi.fn(),
+      updateRunSummary: vi.fn(),
+      setRunStepStatus: vi.fn(),
+      updateRunStatus: vi.fn(),
+    })
+
+    expect(applyStartInitialization).toHaveBeenCalledWith(expect.objectContaining({
+      originRunId: "origin-run-1",
+      originRequestGroupId: "origin-group-1",
+    }), expect.any(Object))
   })
 })

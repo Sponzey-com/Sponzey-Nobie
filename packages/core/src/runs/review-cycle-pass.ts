@@ -8,6 +8,7 @@ import type { TaskExecutionSemantics } from "../agent/intake.js"
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
+import { decideReviewGate } from "./review-gate.js"
 
 interface ReviewCyclePassDependencies {
   rememberRunApprovalScope: (runId: string) => void
@@ -40,12 +41,14 @@ interface ReviewCyclePassDependencies {
 }
 
 interface ReviewCyclePassModuleDependencies {
+  decideReviewGate: typeof decideReviewGate
   runReviewPass: typeof runReviewPass
   runReviewOutcomePass: typeof runReviewOutcomePass
   getRootRun: typeof getRootRun
 }
 
 const defaultModuleDependencies: ReviewCyclePassModuleDependencies = {
+  decideReviewGate,
   runReviewPass,
   runReviewOutcomePass,
   getRootRun,
@@ -87,27 +90,42 @@ export async function runReviewCyclePass(
   dependencies: ReviewCyclePassDependencies,
   moduleDependencies: ReviewCyclePassModuleDependencies = defaultModuleDependencies,
 ): Promise<ReviewOutcomePassResult> {
-  const reviewPass = await moduleDependencies.runReviewPass({
-    executionProfile: {
-      approvalRequired: params.approvalRequired,
-      approvalTool: params.approvalTool,
-    },
-    originalRequest: params.originalRequest,
+  const reviewGate = moduleDependencies.decideReviewGate({
+    executionSemantics: params.executionSemantics,
     preview: params.preview,
-    priorAssistantMessages: params.priorAssistantMessages,
-    ...(params.model ? { model: params.model } : {}),
-    ...(params.providerId ? { providerId: params.providerId } : {}),
-    ...(params.provider ? { provider: params.provider } : {}),
-    ...(params.workDir ? { workDir: params.workDir } : {}),
-    usesWorkerRuntime: params.usesWorkerRuntime,
-    requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
+    deliveryOutcome: params.deliveryOutcome,
     successfulTools: params.successfulTools,
-    successfulFileDeliveries: params.successfulFileDeliveries,
     sawRealFilesystemMutation: params.sawRealFilesystemMutation,
-  }, {
-    ...defaultReviewPassDependencies,
-    ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+    requiresFilesystemMutation: params.requiresFilesystemMutation,
+    truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
   })
+
+  const reviewPass = reviewGate.kind === "skip"
+    ? {
+        review: null,
+        syntheticApproval: null,
+      }
+    : await moduleDependencies.runReviewPass({
+        executionProfile: {
+          approvalRequired: params.approvalRequired,
+          approvalTool: params.approvalTool,
+        },
+        originalRequest: params.originalRequest,
+        preview: params.preview,
+        priorAssistantMessages: params.priorAssistantMessages,
+        ...(params.model ? { model: params.model } : {}),
+        ...(params.providerId ? { providerId: params.providerId } : {}),
+        ...(params.provider ? { provider: params.provider } : {}),
+        ...(params.workDir ? { workDir: params.workDir } : {}),
+        usesWorkerRuntime: params.usesWorkerRuntime,
+        requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
+        successfulTools: params.successfulTools,
+        successfulFileDeliveries: params.successfulFileDeliveries,
+        sawRealFilesystemMutation: params.sawRealFilesystemMutation,
+      }, {
+        ...defaultReviewPassDependencies,
+        ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+      })
 
   params.priorAssistantMessages.push(params.preview)
   const currentRun = moduleDependencies.getRootRun(params.runId)

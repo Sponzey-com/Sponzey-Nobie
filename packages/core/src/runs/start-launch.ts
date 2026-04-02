@@ -85,6 +85,8 @@ export function prepareStartLaunch(
     now: number
     maxDelegationTurns: number
     requestGroupId?: string | undefined
+    originRunId?: string | undefined
+    originRequestGroupId?: string | undefined
     forceRequestGroupReuse?: boolean | undefined
     contextMode?: AgentContextMode | undefined
     taskProfile?: TaskProfile | undefined
@@ -92,7 +94,7 @@ export function prepareStartLaunch(
     targetLabel?: string | undefined
     model?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
-    hasRequestGroupQueue: (requestGroupId: string) => boolean
+    hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
   },
   dependencies: StartLaunchDependencies = defaultDependencies,
 ): PreparedStartLaunch {
@@ -137,10 +139,12 @@ export function prepareStartLaunch(
     runId: params.runId,
     sessionId: params.sessionId,
     requestGroupId: startPlan.requestGroupId,
+    ...(params.originRunId ? { originRunId: params.originRunId } : {}),
+    ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
     source: params.source,
     message: params.message,
     controller: params.controller,
-    requestGroupQueueActive: params.hasRequestGroupQueue(startPlan.requestGroupId),
+      requestGroupExecutionQueueActive: params.hasRequestGroupExecutionQueue(startPlan.requestGroupId),
     ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
     ...(params.model ? { model: params.model } : {}),
     ...(startPlan.reconnectTarget ? { reconnectTargetTitle: startPlan.reconnectTarget.title } : {}),

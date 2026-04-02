@@ -1,4 +1,5 @@
 import type { RunChunkDeliveryHandler } from "./delivery.js"
+import type { CompletionStageState } from "./completion-state.js"
 import {
   markRunCompleted,
   type FinalizationDependencies,
@@ -8,6 +9,7 @@ import { applyRecoveryRetryState, type RecoveryRetryApplicationDependencies } fr
 import { type RecoveryBudgetUsage } from "./recovery-budget.js"
 import { applyTerminalApplication } from "./terminal-application.js"
 import type { CompletionApplicationDecision } from "./completion-application.js"
+import { decideCompletionTerminalOutcome } from "./terminal-outcome-policy.js"
 
 export type CompletionApplicationPassResult =
   | { kind: "break" }
@@ -20,12 +22,14 @@ export type CompletionApplicationPassResult =
     }
 
 interface CompletionApplicationPassModuleDependencies {
+  decideCompletionTerminalOutcome: typeof decideCompletionTerminalOutcome
   markRunCompleted: typeof markRunCompleted
   applyTerminalApplication: typeof applyTerminalApplication
   applyRecoveryRetryState: typeof applyRecoveryRetryState
 }
 
 const defaultModuleDependencies: CompletionApplicationPassModuleDependencies = {
+  decideCompletionTerminalOutcome,
   markRunCompleted,
   applyTerminalApplication,
   applyRecoveryRetryState,
@@ -38,6 +42,7 @@ export async function applyCompletionApplicationPass(
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     preview: string
+    state: CompletionStageState
     application: CompletionApplicationDecision
     maxTurns: number
     recoveryBudgetUsage: RecoveryBudgetUsage
@@ -47,6 +52,28 @@ export async function applyCompletionApplicationPass(
   moduleDependencies: CompletionApplicationPassModuleDependencies = defaultModuleDependencies,
 ): Promise<CompletionApplicationPassResult> {
   if (params.application.kind === "complete") {
+    const terminalOutcome = moduleDependencies.decideCompletionTerminalOutcome({
+      state: params.state,
+    })
+
+    if (terminalOutcome.kind === "stop") {
+      await moduleDependencies.applyTerminalApplication({
+        runId: params.runId,
+        sessionId: params.sessionId,
+        source: params.source,
+        onChunk: params.onChunk,
+        application: {
+          kind: "stop",
+          preview: params.preview,
+          summary: terminalOutcome.summary,
+          reason: terminalOutcome.reason,
+          remainingItems: terminalOutcome.remainingItems,
+        },
+        dependencies: params.finalizationDependencies,
+      })
+      return { kind: "break" }
+    }
+
     moduleDependencies.markRunCompleted({
       runId: params.runId,
       sessionId: params.sessionId,

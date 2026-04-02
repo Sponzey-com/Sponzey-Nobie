@@ -52,6 +52,51 @@ describe("run completion flow", () => {
     }
   })
 
+  it("does not complete when a complete review conflicts with unsatisfied direct delivery", () => {
+    const decision = decideCompletionFlow({
+      review: {
+        status: "complete",
+        summary: "스크린샷 전달까지 끝났습니다.",
+        reason: "모든 작업이 끝났습니다.",
+        remainingItems: [],
+      },
+      executionSemantics: {
+        ...baseExecutionSemantics,
+        artifactDelivery: "direct",
+      },
+      preview: "스크린샷을 만들었습니다.",
+      deliverySatisfied: false,
+      successfulTools: [{ toolName: "screencapture", output: "saved capture" }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision.kind).toBe("recover_empty_result")
+    if (decision.kind === "recover_empty_result") {
+      expect(decision.reason).toContain("receipt 기준")
+      expect(decision.reason).toContain("직접 결과 전달")
+    }
+  })
+
+  it("completes when execution and direct delivery are both satisfied", () => {
+    const decision = decideCompletionFlow({
+      review: null,
+      executionSemantics: {
+        ...baseExecutionSemantics,
+        artifactDelivery: "direct",
+      },
+      preview: "스크린샷을 보냈습니다.",
+      deliverySatisfied: true,
+      successfulTools: [{ toolName: "screencapture", output: "saved capture" }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision.kind).toBe("complete")
+  })
+
   it("returns followup or invalid_followup based on prompt presence", () => {
     const valid = decideCompletionFlow({
       review: {

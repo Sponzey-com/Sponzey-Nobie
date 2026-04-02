@@ -39,6 +39,10 @@ describe("run completion pass", () => {
       followupAlreadySeen: false,
     })
 
+    expect(result.state.interpretationStatus).toBe("satisfied")
+    expect(result.state.executionStatus).toBe("satisfied")
+    expect(result.state.deliveryStatus).toBe("not_required")
+    expect(result.state.recoveryStatus).toBe("settled")
     expect(result.decision.kind).toBe("complete")
     expect(result.application.kind).toBe("complete")
   })

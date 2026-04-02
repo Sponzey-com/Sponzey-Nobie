@@ -32,6 +32,17 @@ describe("completion application pass", () => {
       source: "telegram",
       onChunk: undefined,
       preview: "결과",
+      state: {
+        executionSatisfied: true,
+        deliveryRequired: false,
+        deliverySatisfied: true,
+        completionSatisfied: true,
+        interpretationStatus: "satisfied",
+        executionStatus: "satisfied",
+        deliveryStatus: "not_required",
+        recoveryStatus: "settled",
+        blockingReasons: [],
+      },
       application: {
         kind: "complete",
         summary: "완료",
@@ -47,6 +58,7 @@ describe("completion application pass", () => {
       },
       finalizationDependencies: createFinalizationDependencies(),
     }, createRetryDependencies(), {
+      decideCompletionTerminalOutcome: vi.fn().mockReturnValue({ kind: "complete" }),
       markRunCompleted,
       applyTerminalApplication: vi.fn(),
       applyRecoveryRetryState: vi.fn(),
@@ -73,6 +85,18 @@ describe("completion application pass", () => {
       source: "webui",
       onChunk: undefined,
       preview: "partial",
+      state: {
+        executionSatisfied: false,
+        deliveryRequired: false,
+        deliverySatisfied: false,
+        completionSatisfied: false,
+        interpretationStatus: "followup_required",
+        executionStatus: "missing",
+        deliveryStatus: "not_required",
+        recoveryStatus: "required",
+        blockingReasons: ["completion review가 추가 follow-up 작업을 요구합니다."],
+        conflictReason: "completion review가 추가 follow-up 작업을 요구합니다.",
+      },
       application: {
         kind: "retry",
         budgetKind: "execution",
@@ -94,6 +118,7 @@ describe("completion application pass", () => {
       },
       finalizationDependencies: createFinalizationDependencies(),
     }, createRetryDependencies(), {
+      decideCompletionTerminalOutcome: vi.fn(),
       markRunCompleted: vi.fn(),
       applyTerminalApplication: vi.fn(),
       applyRecoveryRetryState,
@@ -118,6 +143,18 @@ describe("completion application pass", () => {
       source: "cli",
       onChunk: undefined,
       preview: "partial",
+      state: {
+        executionSatisfied: false,
+        deliveryRequired: false,
+        deliverySatisfied: false,
+        completionSatisfied: false,
+        interpretationStatus: "user_input_required",
+        executionStatus: "missing",
+        deliveryStatus: "not_required",
+        recoveryStatus: "required",
+        blockingReasons: ["completion review가 사용자 추가 입력을 요구합니다."],
+        conflictReason: "completion review가 사용자 추가 입력을 요구합니다.",
+      },
       application: {
         kind: "awaiting_user",
         summary: "추가 입력이 필요합니다.",
@@ -132,6 +169,7 @@ describe("completion application pass", () => {
       },
       finalizationDependencies: createFinalizationDependencies(),
     }, createRetryDependencies(), {
+      decideCompletionTerminalOutcome: vi.fn(),
       markRunCompleted: vi.fn(),
       applyTerminalApplication,
       applyRecoveryRetryState: vi.fn(),
@@ -145,6 +183,64 @@ describe("completion application pass", () => {
       application: expect.objectContaining({
         kind: "awaiting_user",
         summary: "추가 입력이 필요합니다.",
+      }),
+    }))
+  })
+
+  it("blocks complete application when completion state is not satisfied", async () => {
+    const markRunCompleted = vi.fn()
+    const applyTerminalApplication = vi.fn().mockResolvedValue("cancelled")
+
+    const result = await applyCompletionApplicationPass({
+      runId: "run-4",
+      sessionId: "session-4",
+      source: "telegram",
+      onChunk: undefined,
+      preview: "스크린샷을 만들었습니다.",
+      state: {
+        executionSatisfied: true,
+        deliveryRequired: true,
+        deliverySatisfied: false,
+        completionSatisfied: false,
+        interpretationStatus: "satisfied",
+        executionStatus: "satisfied",
+        deliveryStatus: "missing",
+        recoveryStatus: "required",
+        blockingReasons: ["요청된 직접 결과 전달이 아직 완료되지 않았습니다."],
+        conflictReason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",
+      },
+      application: {
+        kind: "complete",
+        summary: "완료",
+        persistedText: "완료했습니다.",
+        statusText: "완료했습니다.",
+      },
+      maxTurns: 3,
+      recoveryBudgetUsage: {
+        interpretation: 0,
+        execution: 0,
+        delivery: 0,
+        external: 0,
+      },
+      finalizationDependencies: createFinalizationDependencies(),
+    }, createRetryDependencies(), {
+      decideCompletionTerminalOutcome: vi.fn().mockReturnValue({
+        kind: "stop",
+        summary: "완료 판정 근거가 부족해 자동 진행을 중단합니다.",
+        reason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",
+        remainingItems: ["실행/전달/복구 상태를 다시 확인해야 합니다."],
+      }),
+      markRunCompleted,
+      applyTerminalApplication,
+      applyRecoveryRetryState: vi.fn(),
+    })
+
+    expect(result).toEqual({ kind: "break" })
+    expect(markRunCompleted).not.toHaveBeenCalled()
+    expect(applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
+      application: expect.objectContaining({
+        kind: "stop",
+        reason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",
       }),
     }))
   })
