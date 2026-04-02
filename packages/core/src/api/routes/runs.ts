@@ -5,7 +5,7 @@ import {
   getRootRun,
   listRootRuns,
 } from "../../runs/store.js"
-import { startRootRun } from "../../runs/start.js"
+import { startIngressRun } from "../../runs/ingress.js"
 
 export async function startLocalRun(params: {
   message: string
@@ -13,11 +13,14 @@ export async function startLocalRun(params: {
   model: string | undefined
   source: "webui" | "cli" | "telegram"
 }) {
-  const started = startRootRun(params)
+  const { started, receipt, requestId, sessionId, source } = startIngressRun(params)
   return {
+    requestId,
     runId: started.runId,
-    sessionId: started.sessionId,
+    sessionId,
+    source,
     status: started.status,
+    receipt: receipt.text,
   }
 }
 

@@ -15,3 +15,5 @@
 
 - CLI는 의도적으로 얇게 유지됩니다.
 - 백엔드 로직을 복제하기보다 `core` 기능을 깔끔하게 노출하는 역할이 맞습니다.
+- 실행 자체는 `core`가 맡고, CLI는 이제 `startIngressRun()`으로 시작 직후 공통 ingress receipt를 먼저 출력해 접수 지연 체감을 줄입니다.
+- 실행 중 chunk 텍스트, tool 상태, 오류 출력은 `src/chunk-delivery.ts` helper로 분리해 `commands/run.ts`가 ingress와 승인 흐름에 더 집중하도록 정리하고 있습니다.

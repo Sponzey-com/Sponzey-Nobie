@@ -1,6 +1,5 @@
 import type { Bot } from "grammy"
-import { InputFile } from "grammy"
-import { splitMessage } from "./markdown.js"
+import { sendTelegramFile, sendTelegramPlainMessage, sendTelegramTextParts } from "./message-delivery.js"
 
 export class TelegramResponder {
   constructor(
@@ -32,38 +31,35 @@ export class TelegramResponder {
   }
 
   async sendFinalResponse(text: string): Promise<number[]> {
-    const sentMessageIds: number[] = []
-    const parts = splitMessage(text)
-    const other =
-      this.threadId !== undefined
-        ? { message_thread_id: this.threadId }
-        : {}
-    for (const part of parts) {
-      const msg = await this.bot.api.sendMessage(this.chatId, part, other)
-      sentMessageIds.push(msg.message_id)
-    }
-    return sentMessageIds
+    return sendTelegramTextParts({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      text,
+    })
   }
 
   async sendError(message: string): Promise<number> {
-    const text = `❌ Error: ${message}`
-    const other =
-      this.threadId !== undefined
-        ? { message_thread_id: this.threadId }
-        : {}
-    const msg = await this.bot.api.sendMessage(this.chatId, text, other)
-    return msg.message_id
+    return sendTelegramPlainMessage({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      text: `❌ Error: ${message}`,
+    })
+  }
+
+  async sendReceipt(text: string): Promise<number> {
+    return sendTelegramPlainMessage({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      text,
+    })
   }
 
   async sendFile(filePath: string, caption?: string | undefined): Promise<number> {
-    const other =
-      this.threadId !== undefined
-        ? (caption !== undefined
-            ? { message_thread_id: this.threadId, caption }
-            : { message_thread_id: this.threadId })
-        : (caption !== undefined ? { caption } : {})
-
-    const msg = await this.bot.api.sendDocument(this.chatId, new InputFile(filePath), other)
-    return msg.message_id
+    return sendTelegramFile({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      filePath,
+      ...(caption !== undefined ? { caption } : {}),
+    })
   }
 }

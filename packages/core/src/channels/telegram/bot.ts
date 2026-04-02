@@ -3,8 +3,7 @@ import type { TelegramConfig } from "../../config/types.js"
 import { eventBus } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
-import { startRootRun } from "../../runs/start.js"
-import { isArtifactDeliveryResultDetails } from "../../tools/types.js"
+import { startIngressRun } from "../../runs/ingress.js"
 import { isAllowedUser } from "./auth.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
 import { TypingIndicator } from "./typing.js"
@@ -13,6 +12,7 @@ import { FileHandler } from "./file-handler.js"
 import { registerCommands } from "./commands.js"
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
 import { findChannelMessageRef, getSession, insertChannelMessageRef } from "../../db/index.js"
+import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js"
 
 const log = createLogger("channel:telegram")
 
@@ -215,9 +215,7 @@ export class TelegramChannel {
       })
       typing.start()
 
-      let bufferedText = ""
       let startedRunId = ""
-      const toolMessageIds = new Map<string, number>()
       const repliedTaskRef = replyToMessageId !== undefined
         ? findChannelMessageRef({
             source: "telegram",
@@ -237,110 +235,53 @@ export class TelegramChannel {
           }
         }
 
-        const started = startRootRun({
+        const onChunk = createTelegramChunkDeliveryHandler({
+          responder,
+          sessionId,
+          chatId,
+          ...(threadId !== undefined ? { threadId } : {}),
+          getRunId: () => startedRunId || undefined,
+          recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
+          logError: (message) => log.error(message),
+        })
+
+        const { started, receipt } = startIngressRun({
           message: text,
           sessionId,
           ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
           model: undefined,
           source: "telegram",
-          onChunk: async (chunk) => {
-            if (chunk.type === "text") {
-              bufferedText += chunk.delta
-            } else if (chunk.type === "tool_start") {
-              const msgId = await responder.sendToolStatus(chunk.toolName)
-              toolMessageIds.set(chunk.toolName, msgId)
-              if (startedRunId) {
-                this.recordOutgoingMessageRef({
-                  sessionId,
-                  runId: startedRunId,
-                  chatId,
-                  ...(threadId !== undefined ? { threadId } : {}),
-                  messageId: msgId,
-                  role: "tool",
-                })
-              }
-            } else if (chunk.type === "tool_end") {
-              const msgId = toolMessageIds.get(chunk.toolName)
-              if (msgId !== undefined) {
-                await responder.updateToolStatus(msgId, chunk.toolName, chunk.success)
-                toolMessageIds.delete(chunk.toolName)
-              }
-
-              if (chunk.success && isArtifactDeliveryResultDetails(chunk.details)) {
-                try {
-                  const sentMessageId = await responder.sendFile(chunk.details.filePath, chunk.details.caption)
-                  if (startedRunId) {
-                    this.recordOutgoingMessageRef({
-                      sessionId,
-                      runId: startedRunId,
-                      chatId,
-                      ...(threadId !== undefined ? { threadId } : {}),
-                      messageId: sentMessageId,
-                      role: "assistant",
-                    })
-                  }
-
-                  return {
-                    artifactDeliveries: [{
-                      toolName: chunk.toolName,
-                      channel: "telegram",
-                      filePath: chunk.details.filePath,
-                      ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
-                      messageId: sentMessageId,
-                    }],
-                  }
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err)
-                  log.error(`Failed to send file: ${msg}`)
-                }
-              }
-            } else if (chunk.type === "done") {
-              if (bufferedText) {
-                const sentMessageIds = await responder.sendFinalResponse(bufferedText)
-                if (startedRunId) {
-                  for (const messageId of sentMessageIds) {
-                    this.recordOutgoingMessageRef({
-                      sessionId,
-                      runId: startedRunId,
-                      chatId,
-                      ...(threadId !== undefined ? { threadId } : {}),
-                      messageId,
-                      role: "assistant",
-                    })
-                  }
-                }
-                bufferedText = ""
-              }
-            } else if (chunk.type === "error") {
-              const errorMessageId = await responder.sendError(chunk.message)
-              if (startedRunId) {
-                this.recordOutgoingMessageRef({
-                  sessionId,
-                  runId: startedRunId,
-                  chatId,
-                  ...(threadId !== undefined ? { threadId } : {}),
-                  messageId: errorMessageId,
-                  role: "assistant",
-                })
-              }
-              bufferedText = ""
-            }
-          },
+          onChunk,
         })
 
         startedRunId = started.runId
         this.addSessionRun(sessionKey, started.runId)
-        await started.finished
+        if (receipt.text.trim()) {
+          const receiptMessageId = await responder.sendReceipt(receipt.text)
+          this.recordOutgoingMessageRef({
+            sessionId,
+            runId: startedRunId,
+            chatId,
+            ...(threadId !== undefined ? { threadId } : {}),
+            messageId: receiptMessageId,
+            role: "assistant",
+          })
+        }
+        typing.stop()
+        void started.finished.finally(() => {
+          this.removeSessionRun(sessionKey, startedRunId)
+          clearActiveChatForSession(sessionId)
+        })
+        return
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         log.error(`Error handling message: ${message}`)
         await responder.sendError(message).catch(() => undefined)
       } finally {
-        typing.stop()
-        if (startedRunId) {
-          this.removeSessionRun(sessionKey, startedRunId)
+        if (!startedRunId) {
+          typing.stop()
+          clearActiveChatForSession(sessionId)
         }
-        clearActiveChatForSession(sessionId)
       }
     })
 

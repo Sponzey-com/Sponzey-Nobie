@@ -247,11 +247,22 @@ flowchart TD
 이 문서는 앞으로의 메인 루프 정리 기준이다.  
 코드는 이 문서 기준으로 다음 방향으로 정리되어야 한다.
 
+### 8.1 Ingress 경계
+
+1. 채널/API/CLI 진입점은 먼저 `Ingress`를 지난다.
+2. `Ingress`는 `sessionId`, `runId(requestId)`, `source`를 먼저 고정한다.
+3. `Ingress`는 즉시 접수 응답만 반환한다.
+4. 무거운 intake 분석과 실제 실행은 `Ingress` 밖에서 계속 진행한다.
+5. `request_group` 재사용 여부와 활성 실행 취소 같은 진입 해석은 intake가 아니라 별도 entry-semantics 계층에서 결정한다.
+
+### 8.2 Intake 산출물
+
 1. intake 또는 메인 루프 초입에서 사용자 요청 언어를 식별한다.
 2. 내부 처리용 영문 정규화 요청문을 만든다.
 3. `target / context / complete-condition` 구조를 명시적으로 생성한다.
-4. 이후의 판단은 가능하면 이 구조화된 요청문 기준으로 처리한다.
-5. 완료 여부는 메인 루프의 `complete-condition 충족 여부`로만 결정한다.
+4. intake 결과는 `intent envelope`로 고정한다.
+5. 이후의 판단은 가능하면 이 envelope 기준으로 처리한다.
+6. 완료 여부는 메인 루프의 `complete-condition 충족 여부`로만 결정한다.
 
 ```mermaid
 sequenceDiagram

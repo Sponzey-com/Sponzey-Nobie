@@ -8,6 +8,7 @@
 
 - `index.ts`: commander 기반 명령 등록과 진입점
 - `commands/*`: 개별 명령 구현
+- `chunk-delivery.ts`: CLI 텍스트, tool 상태, 오류 출력 helper
 
 ## 메모
 

@@ -3,6 +3,9 @@ import type { RootRun } from "../contracts/runs"
 import { isAiRelatedError, mapChatErrorMessage } from "../lib/chat-errors"
 import { getCurrentUiLanguage } from "./uiLanguage"
 import { useRunsStore } from "./runs"
+import { createPendingAssistantTracker } from "./chat-delivery"
+export type { ToolCall } from "./chat-delivery"
+import type { ToolCall } from "./chat-delivery"
 
 export interface Message {
   id: string
@@ -12,13 +15,6 @@ export interface Message {
   streaming?: boolean
   pendingContent?: string
   toolCalls?: ToolCall[]
-}
-
-export interface ToolCall {
-  name: string
-  params: unknown
-  result?: string
-  success?: boolean
 }
 
 export interface ApprovalRequest {
@@ -43,6 +39,7 @@ interface ChatState {
   setInputError: (message: string) => void
   clearInputError: () => void
   addUserMessage: (content: string) => void
+  addAssistantMessage: (content: string) => void
   setPendingApproval: (req: ApprovalRequest | null) => void
   clearMessages: () => void
 }
@@ -66,21 +63,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...s.messages, { id: crypto.randomUUID(), role: "user", content }],
     })),
 
+  addAssistantMessage: (content) =>
+    set((s) => ({
+      messages: [...s.messages, { id: crypto.randomUUID(), role: "assistant", content }],
+    })),
+
   setPendingApproval: (req) => set({ pendingApproval: req }),
 
   clearMessages: () => {
-    pendingAssistantByRun.clear()
+    pendingAssistantTracker.clear()
     set({ messages: [], sessionId: null, running: false, pendingApproval: null, inputError: "" })
   },
 }))
 
-interface PendingAssistantRunState {
-  sessionId: string
-  content: string
-  toolCalls: ToolCall[]
-}
-
-const pendingAssistantByRun = new Map<string, PendingAssistantRunState>()
+const pendingAssistantTracker = createPendingAssistantTracker()
 
 export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
   const store = useChatStore.getState()
@@ -118,11 +114,7 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
     case "agent.start":
       if (!incomingSessionId || !runId) break
       if (activeSessionId && incomingSessionId !== activeSessionId) break
-      pendingAssistantByRun.set(runId, {
-        sessionId: incomingSessionId,
-        content: "",
-        toolCalls: [],
-      })
+      pendingAssistantTracker.start(runId, incomingSessionId)
       store.setSessionId(incomingSessionId)
       store.clearInputError()
       store.setRunning(true)
@@ -219,45 +211,30 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
 }
 
 function appendPendingDelta(runId: string, delta: string): void {
-  const current = pendingAssistantByRun.get(runId)
-  if (!current) return
-  current.content += delta
+  pendingAssistantTracker.appendDelta(runId, delta)
 }
 
 function addPendingToolCall(runId: string, call: ToolCall): void {
-  const current = pendingAssistantByRun.get(runId)
-  if (!current) return
-  current.toolCalls.push(call)
+  pendingAssistantTracker.addToolCall(runId, call)
 }
 
 function updatePendingToolCall(runId: string, name: string, result: string, success: boolean): void {
-  const current = pendingAssistantByRun.get(runId)
-  if (!current) return
-  current.toolCalls = current.toolCalls.map((toolCall) =>
-    toolCall.name === name && toolCall.result === undefined
-      ? { ...toolCall, result, success }
-      : toolCall,
-  )
+  pendingAssistantTracker.updateToolCall(runId, name, result, success)
 }
 
 function flushPendingAssistantRun(runId: string): void {
-  const current = pendingAssistantByRun.get(runId)
-  if (!current) return
-  pendingAssistantByRun.delete(runId)
-
-  const content = current.content.trim()
-  const hasToolCalls = current.toolCalls.length > 0
-  if (!content && !hasToolCalls) return
+  const flushed = pendingAssistantTracker.flush(runId)
+  if (!flushed) return
 
   useChatStore.setState((state) => ({
     messages: [
       ...state.messages,
       {
         id: crypto.randomUUID(),
-        runId,
+        runId: flushed.runId,
         role: "assistant",
-        content,
-        ...(hasToolCalls ? { toolCalls: current.toolCalls } : {}),
+        content: flushed.content,
+        ...(flushed.toolCalls ? { toolCalls: flushed.toolCalls } : {}),
       },
     ],
   }))

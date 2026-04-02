@@ -14,4 +14,5 @@
 ## 메모
 
 - UI는 상태 의존성이 크고, 백엔드가 WebSocket으로 상태를 계속 밀어준다는 전제를 갖고 있습니다.
+- WebUI도 delivery 책임을 직접 store 본문에 두기보다, 채팅용 pending assistant 누적/flush를 `src/stores/chat-delivery.ts`로 분리하기 시작했습니다.
 - 설정과 런타임 모니터링은 부가 관리 화면이 아니라 제품의 핵심 흐름입니다.
