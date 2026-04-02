@@ -25,7 +25,7 @@ describe("apply start initialization", () => {
       source: "telegram",
       message: "hello",
       controller,
-      requestGroupQueueActive: true,
+      requestGroupExecutionQueueActive: true,
       model: "gpt-5.4",
       shouldReconnectGroup: false,
       reconnectCandidateCount: 0,
@@ -50,7 +50,7 @@ describe("apply start initialization", () => {
       source: "webui",
       message: "continue",
       controller: new AbortController(),
-      requestGroupQueueActive: false,
+      requestGroupExecutionQueueActive: false,
       targetLabel: "OpenAI",
       reconnectTargetTitle: "기존 달력 작업",
       shouldReconnectGroup: true,
@@ -74,7 +74,7 @@ describe("apply start initialization", () => {
       source: "cli",
       message: "work",
       controller: new AbortController(),
-      requestGroupQueueActive: false,
+      requestGroupExecutionQueueActive: false,
       shouldReconnectGroup: false,
       reconnectCandidateCount: 0,
       requestedClosedRequestGroup: false,
@@ -86,5 +86,27 @@ describe("apply start initialization", () => {
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-3", "기존 작업 세션 재사용: worker-session-1")
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-3", "작업 세션 연결: worker-session-1")
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-3", "이전 작업 세션 잔여 실행 2건 정리")
+  })
+
+  it("records delayed schedule lineage events", () => {
+    const dependencies = createDependencies()
+
+    applyStartInitialization({
+      runId: "run-4",
+      sessionId: "session-4",
+      requestGroupId: "group-4",
+      originRunId: "origin-run-1",
+      originRequestGroupId: "origin-group-1",
+      source: "telegram",
+      message: "say hello later",
+      controller: new AbortController(),
+      requestGroupExecutionQueueActive: false,
+      shouldReconnectGroup: false,
+      reconnectCandidateCount: 0,
+      requestedClosedRequestGroup: false,
+    }, dependencies)
+
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-4", "예약 등록 run 연결: origin-run-1")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-4", "예약 등록 request-group 연결: origin-group-1")
   })
 })

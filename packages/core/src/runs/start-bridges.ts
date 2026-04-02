@@ -2,6 +2,10 @@ import { applyLoopDirective } from "./loop-directive-application.js"
 import type { LoopDirective } from "./loop-directive.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type {
+  buildScheduleRegistrationCancelledEvent,
+  buildScheduleRegistrationCreatedEvent,
+} from "../scheduler/lifecycle.js"
 import {
   runIntakeBridgePass,
   type DelegatedRunStartParams,
@@ -70,6 +74,8 @@ export async function runStartIntakeBridge(
     appendRunEvent: (runId: string, message: string) => void
     updateRunSummary: (runId: string, summary: string) => void
     incrementDelegationTurnCount: (runId: string, summary: string) => void
+    emitScheduleCreated: (payload: ReturnType<typeof buildScheduleRegistrationCreatedEvent>) => void
+    emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
     logInfo: (message: string, payload: Record<string, unknown>) => void
   },
@@ -79,6 +85,8 @@ export async function runStartIntakeBridge(
     appendRunEvent: dependencies.appendRunEvent,
     updateRunSummary: dependencies.updateRunSummary,
     incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
+    emitScheduleCreated: dependencies.emitScheduleCreated,
+    emitScheduleCancelled: dependencies.emitScheduleCancelled,
     scheduleDelayedRun: params.scheduleDelayedRun,
     startDelegatedRun: params.startDelegatedRun,
     normalizeTaskProfile: dependencies.normalizeTaskProfile,

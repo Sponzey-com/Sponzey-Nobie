@@ -284,10 +284,21 @@
 ### 목표
 
 - Completion은 다음을 따로 본다.
-  - 해석 성공 여부
-  - 실행 성공 여부
-  - 전달 성공 여부
-  - 추가 확인 필요 여부
+  - 해석 상태
+  - 실행 상태
+  - 전달 상태
+  - 복구 종료 상태
+- Completion review는 보조 신호이고, 구조화된 receipt가 우선한다.
+- direct artifact delivery가 이미 성공했고 4축 상태가 settled면 completion review는 생략 가능하다.
+- terminal 상태는 아래 의미로 고정한다.
+  - `completed`: receipt 기준 completion state가 만족될 때만 사용
+  - `failed`: abort가 아닌 fatal failure일 때만 사용
+  - `cancelled`: explicit stop 또는 abort일 때만 사용
+  - `awaiting_user`: 추가 입력 대기 상태로 별도 유지
+- 실행 실패 뒤에는
+  - 새 recovery key나 구조화된 대안이 있으면 retry
+  - 없으면 terminal stop
+  으로 분리한다.
 
 ### 기대 효과
 
@@ -321,41 +332,44 @@
 ### Intake Queue
 
 - 목적: LLM 해석 부하 제어
-- 단위: `task intake job`
+- 단위: `sessionId`
 - 병렬 정책:
-  - 세션 기준 1개
+  - 같은 세션의 intake bridge 분석은 1개만 직렬화
   - 전체 시스템 기준 제한 가능
 
 ### Execution Queue
 
 - 목적: 도구 실행 충돌 방지
-- 단위: `execution attempt`
+- 단위: `requestGroupId`
 - 병렬 정책:
-  - Yeonjang 대상 자원별 직렬화 가능
-  - 파일 수정 충돌 방지 가능
+  - 같은 request group의 root run 실행은 직렬화
+  - delayed/session queue와 분리된 execution 전용 경계로 유지
+  - 필요 시 Yeonjang 대상 자원별 세부 직렬화로 확장 가능
 
 ### Recovery Queue
 
 - 목적: 실패한 실행의 원인 분석과 대안 생성
-- 단위: `recovery job`
+- 단위: `runId`
 - 병렬 정책:
-  - 같은 task에 대해서는 순차 평가
+  - 같은 run의 recovery entry / external recovery sequence는 순차 평가
   - 해석 실패, 실행 실패, 전달 실패를 분리 관리
 
 ### Delivery Queue
 
 - 목적: 채널 메시지 순서 보장
-- 단위: `delivery job`
+- 단위: `targetChannel + targetSessionId`
 - 병렬 정책:
-  - 채널/세션별 순서 보장
+  - 현재 explicit queue는 scheduler direct delivery를 기준으로 채널/세션별 순서 보장
+  - 실행 루프 내부 텍스트/파일 전달 순서는 별도 delivery helper가 유지
 
 ### Schedule Queue
 
 - 목적: 예약 실행 lifecycle 분리
-- 단위: `scheduled task firing`
+- 단위: `scheduleId`
 - 병렬 정책:
   - 원 요청 태스크와 분리
   - 동일 schedule id에 대한 중복 firing 방지
+  - tick/manual trigger 모두 같은 schedule queue를 타며 `queue_active`면 skip
 
 ## 4-3. 워커 큐 도입 시 기대 효과
 
@@ -396,13 +410,23 @@
 - `task.accepted`
 - `intake.started`
 - `intake.completed`
-- `execution.started`
-- `execution.failed`
+- `attempt.started`
+- `attempt.awaiting_approval`
+- `attempt.awaiting_user`
+- `attempt.completed`
+- `attempt.failed`
+- `attempt.cancelled`
 - `recovery.started`
+- `recovery.awaiting_approval`
+- `recovery.awaiting_user`
+- `recovery.completed`
+- `recovery.failed`
+- `recovery.cancelled`
 - `recovery.alternative_selected`
 - `recovery.retry_scheduled`
-- `delivery.started`
-- `delivery.completed`
+- `delivery.pending`
+- `delivery.delivered`
+- `delivery.failed`
 - `task.completed`
 
 ## 5-3. 추천 방향
@@ -437,12 +461,16 @@
 - 독립 task instance
 - 독립 run
 - 독립 completion
+- 원 `request_group` 재사용 금지
+- firing lifecycle의 `runId`는 `scheduleRunId`로 별도 유지
 
 단, 연결 정보는 유지한다.
 
 예:
 - `parent_task_id`
 - `schedule_id`
+- `origin_run_id`
+- `origin_request_group_id`
 - `origin_session_id`
 - `origin_channel`
 
@@ -451,6 +479,7 @@
 - 중복 실행처럼 보이는 현상 감소
 - 예약 실행 실패가 원 요청 태스크를 오염시키지 않음
 - 상태 모니터에서 등록과 실행을 분리해서 보여줄 수 있음
+- `schedule.created / schedule.cancelled`와 `schedule.run.*`를 다른 lifecycle 레코드로 볼 수 있음
 
 ---
 
@@ -488,12 +517,71 @@
 - 최종 전달 작업
 - telegram text, telegram file, webui response 등
 
-## 7-3. 기대 효과
+## 7-3. 현재 구현 기준 연결 키
+
+- `Task.id`
+  - 기본값은 `requestGroupId`
+  - 즉 현재 사용자 의도 단위의 owner key는 `request_group`이다
+- `Attempt.id`
+  - 각 실제 실행 시도는 `runId`
+  - 한 `Task` 아래에 여러 `Attempt`가 누적될 수 있다
+- `Recovery Attempt.id`
+  - 현재는 recovery 성격의 `runId`를 그대로 쓴다
+  - 단 기본 사용자 뷰에서는 `userVisible=false`로 숨기고, 내부 디버그 뷰에서 별도 추적하는 기준을 둔다
+- `Delivery.taskId`
+  - 전달 상태는 별도 run이 아니라 `Task` 소유 상태로 본다
+  - 다만 `sourceAttemptId`로 어떤 시도 결과에서 나온 전달인지 연결한다
+
+## 7-4. 현재 구현 기준 Attempt 분류
+
+- `primary`
+  - 사용자의 원래 요청을 직접 처리하는 첫 run
+- `followup`
+  - 같은 task 안에서 이어지는 후속 run
+- `intake_bridge`
+  - task 분해/대상 선택 같은 내부 intake 보조 run
+- `approval_continuation`
+  - synthetic approval 이후 이어지는 continuation run
+- `verification`
+  - filesystem verification 같은 내부 검증 run
+- `filesystem_retry`
+  - 실제 파일·폴더 작업을 다시 시도하는 recovery run
+- `truncated_recovery`
+  - 중간 절단 복구용 recovery run
+- `scheduled_execution`
+  - 예약 firing으로 시작된 독립 실행 run
+
+## 7-5. 기대 효과
 
 - “왜 두 번 돌았는지”를 설명 가능
 - “왜 완료인데 또 움직였는지”를 추적 가능
 - 상태 모니터 UI도 더 정직해짐
 - “실패했지만 복구 루프를 타는 중”인지도 명확히 구분 가능
+
+## 7-6. 현재 구현 기준 상태 모니터 관측 포인트
+
+- `activeAttemptCount`
+  - 현재 진행 중이거나 대기 중인 시도 수
+- `runningAttemptCount`
+  - 실제로 실행 중인 시도 수
+- `queuedAttemptCount`
+  - 실행 대기 중인 시도 수
+- `visibleAttemptCount`
+  - 사용자용 뷰에 노출되는 시도 수
+- `internalAttemptCount`
+  - 내부 디버그용 시도 수
+- `recoveryAttemptCount`
+  - recovery attempt 총 수
+- `activeRecoveryCount`
+  - 현재 진행 중인 recovery attempt 수
+- `duplicateExecutionRisk`
+  - 같은 task 안에 active attempt가 둘 이상이라 중복 실행처럼 보일 위험이 있는지
+- `awaitingApproval`
+  - 현재 approval gate에 걸려 있는지
+- `awaitingUser`
+  - 현재 추가 입력을 기다리는지
+- `deliveryStatus`
+  - `not_requested / pending / delivered / failed`
 
 ---
 
@@ -649,6 +737,57 @@ flowchart LR
 
 - Intent Envelope를 전역 표준으로 고정
 - 이후 실행, 전달, 완료 판정은 이 구조를 기준으로 움직이게 함
+
+---
+
+## 11. 문서 동기화와 구형 코드 제거 정책
+
+구조 전환이 진행되는 동안은 코드 변경과 문서 갱신을 분리하지 않는다.
+
+### 11-1. 변경 시 함께 갱신해야 할 문서
+
+- `process.md`
+- `process-to.md`
+- `analyse.md`
+- `result.md`
+- 현재 작업의 `.design/task00x.md`
+- 관련 구현 폴더의 `source.md`
+  - 최소 범위: `packages/core/src`, `packages/core/src/runs`, `packages/core/src/api`, `packages/webui/src`, `tests`
+
+### 11-2. 프로세스 문서와 구현 차이 기록 규칙
+
+- 구현이 먼저 바뀌고 프로세스 문서가 아직 못 따라온 경우, 차이를 현재 `.design/task00x.md` 진행 메모에 먼저 적는다.
+- 차이가 한 라운드 이상 유지되거나 다른 계층에서 재사용되기 시작하면 `process.md`와 `process-to.md`로 승격한다.
+- `analyse.md`는 “왜 바꾸는가”를, `result.md`는 “어떤 구조로 정리할 것인가”를 유지하고, 실제 확정 상태는 `process.md/process-to.md`가 가진다.
+
+### 11-3. obsolete code 식별 기준
+
+다음 경로는 구형 코드 후보로 본다.
+
+- 새 `TaskModel`이 있는데도 raw run을 다시 `requestGroupId` heuristic으로 regroup하는 경로
+- explicit queue helper가 있는데 같은 목적의 set/map/직렬화 로직을 다시 들고 있는 경로
+- execution, delivery, completion이 한 함수에 다시 섞이는 보조 경로
+- `/api/runs`, `/api/tasks`가 있는데 과거 `/api/agent/run` 같은 surface를 맞추기 위해 남겨둔 임시 compat 경로
+
+### 11-4. 구형 코드 제거 우선순위와 삭제 시점
+
+1. 사용자 화면을 왜곡하는 heuristic 보정 코드
+2. 같은 목적을 가진 중복 queue/route/helper
+3. 실행/전달/완료가 다시 섞인 보조 경로
+4. 외부 클라이언트 호환 때문에 남겨둔 임시 compat 코드
+
+삭제는 아래 조건이 모두 맞을 때 진행한다.
+
+- replacement 경로가 이미 기본 경로로 쓰이고 있다.
+- dead-path 검색 기준과 회귀 테스트가 추가돼 있다.
+- 관련 `pnpm test`와 대상 패키지 build가 통과한다.
+
+### 11-5. dead path 검색 기준
+
+- WebUI 상태 모니터 경로에 `requestGroupId` 재묶기 heuristic이 없어야 한다.
+- WebUI 채팅 경로에 `api.sendMessage` fallback 같은 임시 compat run-start 경로가 없어야 한다.
+- 상태 모니터용 task surface는 `/api/tasks`를 기준으로 유지되어야 한다.
+- 테스트는 위 기준을 문자열 검색과 adapter 회귀로 함께 고정한다.
 
 ---
 

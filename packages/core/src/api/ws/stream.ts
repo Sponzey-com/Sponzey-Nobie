@@ -47,9 +47,11 @@ function setupEventForwarding(): void {
     log.info(`approval.resolved runId=${e.runId} decision=${e.decision} tool=${e.toolName}`)
     broadcast({ type: "approval.resolved", ...e })
   })
-  eventBus.on("schedule.run.start" as never, (e: unknown) => broadcast({ type: "schedule.run.start", ...(e as object) }))
-  eventBus.on("schedule.run.complete" as never, (e: unknown) => broadcast({ type: "schedule.run.complete", ...(e as object) }))
-  eventBus.on("schedule.run.failed" as never, (e: unknown) => broadcast({ type: "schedule.run.failed", ...(e as object) }))
+  eventBus.on("schedule.created", (e) => broadcast({ type: "schedule.created", ...e }))
+  eventBus.on("schedule.cancelled", (e) => broadcast({ type: "schedule.cancelled", ...e }))
+  eventBus.on("schedule.run.start", (e) => broadcast({ type: "schedule.run.start", ...e }))
+  eventBus.on("schedule.run.complete", (e) => broadcast({ type: "schedule.run.complete", ...e }))
+  eventBus.on("schedule.run.failed", (e) => broadcast({ type: "schedule.run.failed", ...e }))
 }
 
 // Map of runId → approval resolve fn (for WebSocket-based approval)

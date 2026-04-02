@@ -18,6 +18,21 @@ function createDependencies() {
 
 function createModuleDependencies() {
   return {
+    decideReviewGate: vi.fn(() => ({
+      kind: "run" as const,
+      state: {
+        executionSatisfied: false,
+        deliveryRequired: false,
+        deliverySatisfied: false,
+        completionSatisfied: false,
+        interpretationStatus: "satisfied" as const,
+        executionStatus: "missing" as const,
+        deliveryStatus: "not_required" as const,
+        recoveryStatus: "required" as const,
+        blockingReasons: ["명확한 실행 근거가 확인되지 않았습니다."],
+        conflictReason: "명확한 실행 근거가 확인되지 않았습니다.",
+      },
+    })),
     runReviewPass: vi.fn(async () => ({
       review: {
         status: "followup",
@@ -140,5 +155,43 @@ describe("run review cycle pass", () => {
       clearWorkerRuntime: true,
       normalizedFollowupPrompt: "need more detail",
     })
+  })
+
+  it("skips review pass when direct delivery already satisfies completion", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = createModuleDependencies()
+    moduleDependencies.decideReviewGate.mockReturnValue({
+      kind: "skip",
+      state: {
+        executionSatisfied: true,
+        deliveryRequired: true,
+        deliverySatisfied: true,
+        completionSatisfied: true,
+        interpretationStatus: "satisfied",
+        executionStatus: "satisfied",
+        deliveryStatus: "satisfied",
+        recoveryStatus: "settled",
+        blockingReasons: [],
+      },
+      reason: "직접 결과 전달과 receipt 기준 완료 근거가 이미 충족되어 completion review를 생략합니다.",
+    })
+    const params = createParams()
+    params.deliveryOutcome = {
+      directArtifactDeliveryRequested: true,
+      hasSuccessfulArtifactDelivery: true,
+      deliverySatisfied: true,
+      requiresDirectArtifactRecovery: false,
+    }
+    params.successfulTools = [{ toolName: "screencapture", output: "saved capture" }]
+
+    await runReviewCyclePass(params, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.runReviewPass).not.toHaveBeenCalled()
+    expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        review: null,
+      }),
+      expect.any(Object),
+    )
   })
 })

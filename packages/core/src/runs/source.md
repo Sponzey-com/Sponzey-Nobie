@@ -18,7 +18,11 @@
 - `start-plan.ts`: request-group 재사용, reconnect selection, context mode, worker session 계산 helper
 - `start-launch.ts`: start-plan, session ensure, run 생성, start initialization helper
 - `start-support.ts`: worker session id, active queue 취소, session ensure, journal, filesystem verification wrapper helper
-- `run-queueing.ts`: request-group queue, delayed session queue, delayed run arm/fire helper
+- `task-model.ts`: 기존 run/request-group 저장 구조를 `Task / Attempt / Recovery Attempt / Delivery` projection으로 읽고, 표준 activity timeline, monitor 관측 포인트, explicit `runIds/latestAttemptId` 연결을 계산하는 helper
+- `intake-queue.ts`: `sessionId` 단위 intake 직렬화 helper
+- `execution-queue.ts`: `requestGroupId` 단위 execution 직렬화 helper
+- `recovery-queue.ts`: `runId` 단위 recovery 직렬화 helper
+- `run-queueing.ts`: delayed session queue, delayed run arm/fire helper, one-time delayed run lifecycle 분리 경계
 - `start-bridges.ts`: finalization dependency 조립, loop directive apply, intake bridge wrapper helper
 - `start-driver-dependencies.ts`: finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립 helper
 - `start-initialization.ts`: instruction journal, active controller binding, 초기 step/status/event 적용 helper
@@ -68,6 +72,8 @@
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계, tracked chunk 전달/receipt 적용 helper
+- `completion-state.ts`: completion을 `해석/실행/전달/복구 종료` 4축 상태로 계산하는 helper
+- `terminal-outcome-policy.ts`: `completed/failed/cancelled/awaiting_user` terminal 상태 의미를 판정하는 helper
 - `completion-flow.ts`: completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 결정 helper
 - `completion-pass.ts`: completion review 결과를 flow decision과 application decision으로 묶는 completion pass helper
 - `completion-application-pass.ts`: completion application의 `complete/stop/retry/awaiting_user` 적용 helper
@@ -76,6 +82,7 @@
 - `retry-application.ts`: recovery retry 공통의 실패 기록, budget 소모, recovery event, running 전환 helper
 - `completion-application.ts`: completion decision 적용, 빈 결과 복구/후속 처리/중간 절단 복구/ask_user/stop 후처리 helper
 - `review-pass.ts`: completion review 호출과 synthetic approval 감지 묶음 helper
+- `review-gate.ts`: direct artifact delivery 완료 시 불필요한 completion review 생략 여부를 계산하는 helper
 - `review-cycle-pass.ts`: review pass와 review outcome pass를 한 번에 묶는 review tail helper
 - `review-outcome-pass.ts`: review 이후 synthetic approval/ completion retry·stop 적용을 묶는 helper
 - `finalization.ts`: assistant 응답 송신, awaiting_user 전환, cancelled-after-stop 전환, completed 전환 helper, `markRunCompleted`
@@ -102,13 +109,20 @@
 - `start-plan.ts`는 loop 시작 전 request-group/reconnect 계산 경계입니다. request-group 재사용, reconnect candidate 선택, clarification 필요 여부, context mode와 worker session 계산을 `start.ts` 밖 helper로 묶어 상단 초기 계산 glue를 줄입니다.
 - `start-launch.ts`는 root run 시작 준비 경계입니다. start-plan, session ensure, run 생성, start initialization을 `start.ts` 밖 helper로 묶어 최상단 launch glue를 줄입니다.
 - `start-support.ts`는 시작 공통 보조 경계입니다. worker session id 계산, active queue 취소, session ensure, journal, filesystem verification wrapper를 `start.ts` 밖 helper로 묶어 중복 선언을 줄입니다.
-- `run-queueing.ts`는 큐/지연 실행 경계입니다. request-group queue, delayed session queue, delayed run arm/fire를 `start.ts` 밖 helper로 묶어 메인 진입점이 큐 map과 타이머 관리 세부를 직접 들고 있지 않게 정리합니다.
+- `intake-queue.ts`는 intake queue 경계입니다. `sessionId` 단위 직렬화를 통해 같은 세션의 intake bridge 분석이 root run execution queue와 섞이지 않도록 분리합니다.
+- `execution-queue.ts`는 execution queue 경계입니다. `requestGroupId` 단위 직렬화를 delayed/session queue와 분리해, root run 실행 직렬화가 별도 목적 queue라는 점을 코드 표면으로 올립니다.
+- `recovery-queue.ts`는 recovery queue 경계입니다. `runId` 단위 직렬화를 통해 같은 run 안의 recovery entry와 external recovery sequence가 execution attempt 본문과 다른 목적 queue를 타도록 분리합니다.
+- `run-queueing.ts`는 큐/지연 실행 경계입니다. delayed session queue와 delayed run arm/fire를 `start.ts` 밖 helper로 묶어 메인 진입점이 지연 실행용 큐 map과 타이머 관리 세부를 직접 들고 있지 않게 정리합니다.
+- `task-model.ts`는 상태 모니터와 디버그 API가 기존 `run` 저장 구조 위에서 `Task / Attempt / Recovery Attempt / Delivery`를 읽을 수 있게 하는 projection 경계입니다. 현재 연결 키는 `taskId=requestGroupId`, `attemptId=runId`, `delivery.taskId=requestGroupId`, `delivery.sourceAttemptId=latest attempt runId` 기준으로 두고, recovery 성격 run은 별도 `recoveryAttempts`로 다시 드러냅니다.
+- 이 projection은 이제 `runIds`, `latestAttemptId`, `attempt.prompt`까지 함께 내려 프런트가 raw run을 다시 `requestGroupId`로 regroup하지 않고 explicit task ownership만 따라가게 정리 중입니다.
+- 이 projection은 이제 free-form recent event label과 별개로 `activities`의 표준 kind(`attempt.*`, `recovery.*`, `delivery.*`)와 `monitor` 관측 포인트(`activeAttemptCount`, `duplicateExecutionRisk`, `deliveryStatus` 등)를 함께 계산합니다. 따라서 상태 모니터는 문자열 재해석보다 stable signal을 우선 사용할 수 있습니다.
 - `start-bridges.ts`는 시작 bridge 경계입니다. finalization dependency 조립, loop directive apply, intake bridge wrapper를 `start.ts` 밖 helper로 묶어 메인 진입점이 로컬 wrapper 함수 없이 orchestration에 집중하게 정리합니다.
 - `start-driver-dependencies.ts`는 driver wiring 경계입니다. finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립을 `start.ts` 밖 helper로 묶어 메인 진입점이 runtime wiring 세부를 직접 들고 있지 않게 정리합니다.
 - `start-initialization.ts`는 run 생성 직후 초기화 경계입니다. instruction journal, active controller binding, orphan worker 정리, 초기 step/status/event 적용을 `start.ts` 밖 helper로 묶어 상단 초기화 glue를 줄입니다.
 - `execution-profile.ts`는 execution profile 초기화 경계입니다. fallback structured request/intent envelope 계산과 recovery/delivery 추적 set 초기화를 `start.ts` 밖 helper로 묶어 상단 setup glue를 줄입니다.
 - `root-run-driver.ts`는 request-group queue 내부 실행 경계입니다. execution profile 초기화, root loop 실행, fatal failure 처리, cleanup을 `start.ts` 밖 helper로 묶어 queue callback glue를 줄입니다.
 - `intake-bridge-pass.ts`는 intake bridge apply 경계입니다. intake 결과에서 즉시 응답, schedule retry_intake, delegated follow-up run 생성을 `start.ts` 밖 helper로 묶어 상단 intake orchestration을 더 줄입니다.
+- 이 bridge는 이제 schedule action receipt를 `schedule.created`, `schedule.cancelled` typed event로도 내보냅니다. 따라서 예약 등록/취소는 현재 run의 응답 텍스트뿐 아니라 별도 lifecycle 레코드로도 관찰됩니다.
 - `action-execution.ts`는 intake 결과에서 나온 `create_schedule`, `cancel_schedule`, delegated follow-up prompt/receipt 조립을 `start.ts` 밖으로 뺀 경계입니다. 이 분리로 예약 등록/취소와 후속 실행 브리지 구성은 루프 제어가 아니라 실행 계층 책임으로 옮겨가기 시작했습니다.
 - 예약 등록/취소 결과도 이제 `ScheduleActionReceipt`로 구조화되어, 일회성 예약/반복 예약/취소가 각각 어떤 실행 결과였는지 completion과 recovery가 문자열 재해석 없이 알 수 있게 정리하고 있습니다.
 - 일회성 예약 receipt는 destination을 항상 명시적인 문자열로 정규화하고, recurring receipt는 optional reason을 undefined 속성으로 남기지 않도록 정리해 타입 경계를 안정화합니다.
@@ -144,6 +158,7 @@
 - 실행 중 `chunk failure`와 `unexpected error`의 `event/status/journal/cancelled` 적용도 `failure-application.ts`로 분리해, `start.ts`가 fatal failure 종료 세부를 직접 들고 있지 않도록 더 좁아졌습니다.
 - review 진입 직전의 `prepare review + direct delivery complete/stop/retry` glue도 `review-entry-pass.ts`로 묶어, `start.ts`는 delivery/review 경계의 다음 상태 반영에 더 집중하게 정리했습니다.
 - `post-execution-pass.ts`는 execution 이후 `retry/break/continue`와 preview, delivery outcome, seen recovery key를 한 번에 계산해 `start.ts`의 post-pass glue를 더 줄입니다.
+- `execution-postpass.ts`는 이제 새 recovery key나 구조화된 대안이 없으면 `none`으로 넘기지 않고 `stop`을 반환합니다. 따라서 `실행 실패 + 대안 있음 => retry`, `실행 실패 + 대안 없음 => terminal stop` 규칙을 post-pass 경계에서 구조적으로 고정합니다.
 - filesystem post-pass의 `stop / initial_retry / retry / verified` 적용도 `filesystem-postpass-application.ts`로 묶어, `start.ts`는 filesystem decision의 다음 상태 반영에 더 집중하게 정리했습니다.
 - direct delivery retry, synthetic approval continuation, completion retry에 공통으로 쓰이는 running 상태/event/summary 적용도 `running-application.ts`로 분리해, `start.ts`는 message 전환과 clear flag 반영만 맡는 방향으로 더 좁혀졌습니다.
 - command failure, generic execution failure, filesystem mutation/verification retry, direct delivery retry, completion retry에 공통으로 쓰이는 실패 기록, budget 소모, recovery event, running 전환도 `retry-application.ts`로 분리하기 시작했고, `start.ts`는 retry별 고유한 next message와 clear flag 반영에 더 집중합니다.
@@ -188,6 +203,7 @@
 - `external-recovery-pass.ts`는 LLM/worker runtime 외부 복구의 `plan -> apply -> next state` 패스를 묶는 경계입니다. `start.ts`는 외부 복구 종류별로 거의 같은 블록을 두 번 들고 있지 않고 helper 결과만 반영합니다.
 - `external-recovery-sequence.ts`는 `llm -> worker_runtime` 외부 복구 순회 경계입니다. `start.ts`는 더 이상 recovery 종류 배열을 직접 순회하며 stop/retry를 수동으로 접지 않고, 전체 시퀀스 결과만 반영합니다.
 - `recovery-entry-pass.ts`는 chunk loop 직후 복구 진입 경계입니다. execution/LLM 복구 한도 중단, external recovery sequence, failed/aborted 종료를 한 패스로 묶어 `start.ts`가 직접 큰 분기 블록을 들고 있지 않도록 정리합니다.
+- 이 복구 진입 경계는 이제 `recovery-queue.ts`를 통해 같은 `runId` 안에서 직렬화됩니다. 따라서 recovery 시퀀스는 execution loop와 분리된 explicit recovery queue를 타는 방향으로 정리 중입니다.
 - `external-retry-application.ts`는 external recovery 재시도 적용 경계입니다. LLM/worker runtime 복구 실패 기록, external budget 사용, retry/stop 상태 전환을 `start.ts` 밖으로 공통화합니다.
 - `filesystem-recovery.ts`는 파일 작업 복구 경계입니다. 실제 파일 변경이 없는 경우와 검증 실패 경우를 `initial_retry/retry/stop/verified` decision으로 구조화해, `start.ts`가 직접 문자열과 분기를 오래 들고 있지 않게 정리합니다.
 - `filesystem-postpass.ts`는 파일 변경/검증 post-pass orchestration 경계입니다. missing mutation decision, verification subrun 호출, verification decision 적용을 하나의 helper 결과로 묶어 `start.ts`가 큰 두 블록을 직접 들고 있지 않게 정리합니다.
@@ -196,7 +212,15 @@
 - `delivery-application.ts`는 direct artifact 전달 decision의 실제 적용 경계입니다. `start.ts`는 성공/중단/재시도 상태 반영만 하고, 전달 복구의 title/detail/step summary는 helper가 구조화합니다.
 - `delivery.ts`의 `deliverTrackedChunk()`는 실행 루프가 `deliverChunk + applyChunkDeliveryReceipt`를 직접 묶지 않도록, chunk 전달과 receipt 적용을 delivery 계층에서 한 번에 처리합니다.
 - `root-loop-launch.ts`는 이제 `originalUserRequest`를 별도 중간 값으로 다시 노출하지 않고, `rootLoopParams.originalRequest`와 verification/intake bridge wrapper 안에서만 유지합니다.
+- one-time delayed run은 이제 원 `requestGroupId`를 다시 사용하지 않고 새 root task instance로 시작합니다. 대신 예약 등록을 만든 run/request-group은 `originRunId`, `originRequestGroupId`로 lineage를 보존하고, 이 값은 delayed arm/fire 로그와 새 run의 초기 이벤트에 함께 반영됩니다.
+- recurring schedule 등록 receipt도 이제 `scheduleId`, `targetSessionId`, `originRunId`, `originRequestGroupId`를 함께 가져가, 반복 스케줄 엔티티와 등록 태스크 lineage를 문자열 대신 구조화 결과로 연결합니다.
+- 반복 스케줄의 실제 firing은 `scheduler` 쪽 typed lifecycle event에서 `scheduleRunId`, `targetSessionId`, `originRunId`, `originRequestGroupId`까지 함께 내보내고, intake bridge는 등록/취소 시점에 `schedule.created`, `schedule.cancelled` event를 추가로 내보냅니다. 따라서 `runs` 밖 모니터링에서도 등록 이벤트와 실행 이벤트를 `scheduleId` 축으로 연결하면서, 실패가 원 등록 run을 직접 덮어쓰지 않도록 분리할 수 있습니다.
+- queue 구조 측면에서는 `runs/intake-queue.ts`가 `sessionId` 단위 explicit intake queue를, `runs/execution-queue.ts`가 `requestGroupId` 단위 explicit execution queue를, `runs/recovery-queue.ts`가 `runId` 단위 explicit recovery queue를, `scheduler/queueing.ts`가 `scheduleId` 단위 explicit schedule queue를 맡기 시작했습니다. `runs/run-queueing.ts`는 delayed session queue만 맡아 목적이 다른 직렬화 경계를 분리하는 방향으로 이어지고 있습니다.
+- direct Telegram schedule delivery는 이제 `scheduler/delivery-queue.ts`가 `targetChannel + targetSessionId` 기준으로 직렬화합니다. 즉 run delivery helper와 scheduler delivery queue가 서로 다른 목적 경계를 맡는 방향으로 정리 중입니다.
 - 도구가 실제로 실행된 태스크는 가능하면 `preview` 문구보다 구조화된 액션 결과와 delivery receipt를 완료 근거로 우선 사용합니다.
+- `completion-state.ts`는 completion을 `interpretationStatus`, `executionStatus`, `deliveryStatus`, `recoveryStatus`로 나눠 계산하고, 그 위에 `completionSatisfied`를 올립니다. 따라서 direct artifact delivery가 아직 안 끝났거나 follow-up/truncated recovery가 남았는데 review가 `complete`를 반환해도, `completion-flow.ts`는 receipt 기준 4축 상태를 먼저 보고 다시 복구 쪽을 우선 탑니다.
+- `review-gate.ts`는 direct artifact delivery가 이미 성공했고 receipt 기준 completion 4축 상태가 settled인 경우 completion review 호출 자체를 생략합니다. 따라서 전달 성공 뒤 불필요한 재검토를 줄이고, `review-cycle-pass.ts`는 아직 미완료 근거가 남은 경우에만 review pass를 실제로 태웁니다.
+- `terminal-outcome-policy.ts`는 terminal 상태 의미를 한곳에 고정합니다. `completion-application-pass.ts`는 이 정책을 통해 receipt 기준 completion state가 만족될 때만 `completed`로 닫고, `failure-application.ts`는 abort만 `cancelled`로 분류하며, `terminal-application.ts`는 `awaiting_user/stop`만 각각 `awaiting_user/cancelled`로 매핑합니다.
 - 권한이 필요한 작업에서 worker나 LLM이 설명문으로만 `허용/승인 필요`를 말하면, 그 문구를 그냥 완료로 닫지 않고 메인 루프에서 synthetic approval 요청으로 승격해 다시 진행합니다.
 - completion review가 실패해도 권한 안내 문구만으로는 완료 근거로 보지 않고, 승인 요청이나 다른 복구 경로를 우선 탑니다.
 - 승인 거부 사유가 `사용자 거부`인지 `시스템 타임아웃`인지 구분해서 취소 요약을 남기며, 타임아웃을 사용자 취소로 기록하지 않습니다.

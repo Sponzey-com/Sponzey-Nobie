@@ -1,6 +1,7 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
 import type { DeliveryOutcome } from "./delivery.js"
+import { deriveCompletionStageState, type CompletionStageState } from "./completion-state.js"
 import {
   canConsumeRecoveryBudget,
   getRecoveryBudgetState,
@@ -17,6 +18,7 @@ import {
 } from "./completion-flow.js"
 
 export interface CompletionPassResult {
+  state: CompletionStageState
   decision: CompletionFlowDecision
   application: CompletionApplicationDecision
   usedTurns: number
@@ -39,6 +41,17 @@ export function runCompletionPass(params: {
   defaultMaxDelegationTurns: number
   followupAlreadySeen: boolean
 }): CompletionPassResult {
+  const state = deriveCompletionStageState({
+    review: params.review,
+    executionSemantics: params.executionSemantics,
+    preview: params.preview,
+    deliverySatisfied: params.deliveryOutcome.deliverySatisfied,
+    successfulTools: params.successfulTools,
+    sawRealFilesystemMutation: params.sawRealFilesystemMutation,
+    requiresFilesystemMutation: params.requiresFilesystemMutation,
+    truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
+  })
+
   const decision = decideCompletionFlow({
     review: params.review,
     executionSemantics: params.executionSemantics,
@@ -86,6 +99,7 @@ export function runCompletionPass(params: {
   })
 
   return {
+    state,
     decision,
     application,
     usedTurns,

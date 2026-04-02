@@ -14,4 +14,5 @@
 - run 상태, 메시지 이력, 스케줄 이력, Telegram 메시지 참조, 메모리가 모두 여기서 만납니다.
 - 스케줄은 이제 `target_channel`뿐 아니라 `target_session_id`도 저장해서, 반복 실행 결과를 어느 Telegram 세션으로 돌려보낼지 추적합니다.
 - 반복 스케줄은 `execution_driver`도 함께 저장해서 내부 scheduler인지, 시스템 스케줄러(crontab / schtasks)인지 구분합니다.
+- 반복 스케줄은 `origin_run_id`, `origin_request_group_id`도 함께 저장해서, 나중의 `schedule.run.*` 실패/완료가 어떤 등록 태스크에서 만들어졌는지 DB 기준으로도 다시 연결할 수 있게 정리 중입니다.
 - `better-sqlite3`를 동기 방식으로 쓰므로 헬퍼 함수도 비교적 직접적인 형태입니다.

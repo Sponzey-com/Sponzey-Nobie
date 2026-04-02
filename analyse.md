@@ -134,3 +134,12 @@
 - 영문 요청이 느린 직접 원인은 `영어` 자체가 아니라 `자연어 -> intake LLM -> 일정 실패 -> 재분석` 경로다.
 - 자연어 해석은 계속 LLM이 맡는 것이 맞고, 개선 포인트는 자연어를 명령화하는 것이 아니라 `접수 응답 분리`, `실패 루프 축소`, `예약 실행 분리`, `구조화 결과 전달 안정화`에 있다.
 - 예약 중복의 직접 원인은 `delayed run의 request group 재사용`이다.
+
+## 전환 이후 확인 규칙
+
+- 현재 분석 문서는 “왜 바꾸는가”를 기록한다.
+- 실제 구조가 바뀐 뒤의 확정 규칙은 `process.md`, `process-to.md`, 현재 `.design/task00x.md`에 함께 반영되어야 한다.
+- dead path로 보는 대표 징후는 다음과 같다.
+  - WebUI가 raw run을 다시 `requestGroupId` heuristic으로 regroup하는 경로
+  - 새 `/api/runs`, `/api/tasks` 표면이 있는데 과거 run-start surface fallback을 계속 두는 경로
+  - explicit queue helper가 있는데 같은 목적의 직렬화 set/map을 다시 들고 있는 경로

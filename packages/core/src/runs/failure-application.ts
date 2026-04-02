@@ -1,4 +1,5 @@
 import type { FinalizationSource } from "./finalization.js"
+import { decideFatalFailureTerminalOutcome } from "./terminal-outcome-policy.js"
 
 interface FatalFailureApplicationDependencies {
   appendRunEvent: (runId: string, event: string) => void
@@ -42,6 +43,7 @@ export function applyFatalFailure(
   params: FatalFailureApplicationParams,
   dependencies: FatalFailureApplicationDependencies,
 ): "failed" | "cancelled" {
+  const terminalOutcome = decideFatalFailureTerminalOutcome({ aborted: params.aborted })
   const shouldAppendMessageEvent = !params.aborted || params.appendMessageEventOnAbort === true
   const shouldAppendExtraEvents = !params.aborted || params.appendExtraEventsOnAbort === true
 
@@ -54,7 +56,7 @@ export function applyFatalFailure(
     }
   }
 
-  if (params.aborted) {
+  if (terminalOutcome === "cancelled") {
     dependencies.markAbortedRunCancelledIfActive(params.runId)
     return "cancelled"
   }

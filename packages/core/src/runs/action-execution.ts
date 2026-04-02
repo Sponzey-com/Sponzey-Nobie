@@ -43,16 +43,21 @@ export type ScheduleActionReceipt =
     }
   | {
       kind: "schedule_create_recurring"
+      scheduleId: string
       title: string
       task: string
       cron: string
       scheduleText: string
       source: "webui" | "cli" | "telegram"
+      targetSessionId?: string
+      originRunId: string
+      originRequestGroupId: string
       driver: ScheduleExecutionDriver
       driverReason?: string
     }
   | {
       kind: "schedule_cancel"
+      cancelledScheduleIds: string[]
       cancelledNames: string[]
     }
 
@@ -60,7 +65,8 @@ export interface ScheduleDelayedRunRequest {
   runAtMs: number
   message: string
   sessionId: string
-  requestGroupId?: string
+  originRunId?: string
+  originRequestGroupId?: string
   model: string | undefined
   originalRequest?: string
   executionSemantics?: TaskExecutionSemantics
@@ -77,6 +83,7 @@ export interface ScheduleDelayedRunRequest {
 }
 
 export interface ScheduleActionExecutionParams {
+  runId: string
   message: string
   originalRequest: string
   sessionId: string
@@ -95,8 +102,15 @@ export interface ScheduleActionDependencies {
     cron: string
     source: "webui" | "cli" | "telegram"
     sessionId: string
+    originRunId: string
+    originRequestGroupId: string
     model: string | undefined
-  }) => { driver: ScheduleExecutionDriver; reason?: string | undefined }
+  }) => {
+    scheduleId: string
+    targetSessionId?: string
+    driver: ScheduleExecutionDriver
+    reason?: string | undefined
+  }
   cancelSchedules: (scheduleIds: string[]) => string[]
 }
 
@@ -116,6 +130,7 @@ export function createDefaultScheduleActionDependencies(
     createRecurringSchedule: (params) => {
       const now = Date.now()
       const scheduleId = crypto.randomUUID()
+      const targetSessionId = params.source === "telegram" ? params.sessionId : undefined
       insertSchedule({
         id: scheduleId,
         name: params.title,
@@ -123,15 +138,22 @@ export function createDefaultScheduleActionDependencies(
         prompt: params.task,
         enabled: 1,
         target_channel: params.source === "telegram" ? "telegram" : "agent",
-        target_session_id: params.source === "telegram" ? params.sessionId : null,
+        target_session_id: targetSessionId ?? null,
         execution_driver: "internal",
+        origin_run_id: params.originRunId,
+        origin_request_group_id: params.originRequestGroupId,
         model: params.model ?? null,
         max_retries: 3,
         timeout_sec: 300,
         created_at: now,
         updated_at: now,
       })
-      return reconcileScheduleExecution(scheduleId)
+      const execution = reconcileScheduleExecution(scheduleId)
+      return {
+        scheduleId,
+        ...(targetSessionId ? { targetSessionId } : {}),
+        ...execution,
+      }
     },
     cancelSchedules: (scheduleIds) => {
       const cancelledNames: string[] = []
@@ -329,7 +351,8 @@ function executeCreateScheduleAction(
         destination: followup.destination ?? intake.intent_envelope.destination,
       }),
       sessionId: params.sessionId,
-      requestGroupId: params.requestGroupId,
+      originRunId: params.runId,
+      originRequestGroupId: params.requestGroupId,
       model: params.model,
       originalRequest: params.originalRequest,
       executionSemantics: intake.intent_envelope.execution_semantics,
@@ -392,6 +415,8 @@ function executeCreateScheduleAction(
     cron,
     source: params.source,
     sessionId: params.sessionId,
+    originRunId: params.runId,
+    originRequestGroupId: params.requestGroupId,
     model: params.model,
   })
   const scheduleText = actionScheduleText || cron
@@ -411,11 +436,15 @@ function executeCreateScheduleAction(
     failureCount: 0,
     receipts: [{
       kind: "schedule_create_recurring",
+      scheduleId: executionSync.scheduleId,
       title,
       task,
       cron,
       scheduleText,
       source: params.source,
+      ...(executionSync.targetSessionId ? { targetSessionId: executionSync.targetSessionId } : {}),
+      originRunId: params.runId,
+      originRequestGroupId: params.requestGroupId,
       driver: executionSync.driver,
       ...(executionSync.reason ? { driverReason: executionSync.reason } : {}),
     }],
@@ -467,6 +496,7 @@ function executeCancelScheduleAction(
     failureCount: 0,
     receipts: [{
       kind: "schedule_cancel",
+      cancelledScheduleIds: scheduleIds,
       cancelledNames,
     }],
   }

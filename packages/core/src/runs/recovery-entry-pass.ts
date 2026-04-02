@@ -3,6 +3,7 @@ import {
   runExternalRecoverySequence,
   type ExternalRecoverySequenceResult,
 } from "./external-recovery-sequence.js"
+import { enqueueRunRecovery } from "./recovery-queue.js"
 import type { ExternalRecoveryPayload, ExternalRecoveryState } from "./external-recovery.js"
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
 import type { TaskProfile } from "./types.js"
@@ -24,11 +25,13 @@ interface RecoveryEntryPassDependencies {
 interface RecoveryEntryPassModuleDependencies {
   applyTerminalApplication: typeof applyTerminalApplication
   runExternalRecoverySequence: typeof runExternalRecoverySequence
+  enqueueRunRecovery: typeof enqueueRunRecovery
 }
 
 const defaultModuleDependencies: RecoveryEntryPassModuleDependencies = {
   applyTerminalApplication,
   runExternalRecoverySequence,
+  enqueueRunRecovery,
 }
 
 export async function runRecoveryEntryPass(
@@ -64,75 +67,80 @@ export async function runRecoveryEntryPass(
   dependencies: RecoveryEntryPassDependencies,
   moduleDependencies: RecoveryEntryPassModuleDependencies = defaultModuleDependencies,
 ): Promise<RecoveryEntryPassResult> {
-  if (params.executionRecoveryLimitStop) {
-    await moduleDependencies.applyTerminalApplication({
-      runId: params.runId,
-      sessionId: params.sessionId,
-      source: params.source,
-      onChunk: params.onChunk,
-      application: {
-        kind: "stop",
-        preview: params.preview,
-        summary: params.executionRecoveryLimitStop.summary,
-        reason: params.executionRecoveryLimitStop.reason,
-        remainingItems: params.executionRecoveryLimitStop.remainingItems,
-      },
-      dependencies: params.finalizationDependencies,
-    })
-    return { kind: "break" }
-  }
-
-  if (params.llmRecoveryLimitStop) {
-    await moduleDependencies.applyTerminalApplication({
-      runId: params.runId,
-      sessionId: params.sessionId,
-      source: params.source,
-      onChunk: params.onChunk,
-      application: {
-        kind: "stop",
-        preview: params.preview,
-        summary: params.llmRecoveryLimitStop.summary,
-        reason: params.llmRecoveryLimitStop.reason,
-        remainingItems: params.llmRecoveryLimitStop.remainingItems,
-      },
-      dependencies: params.finalizationDependencies,
-    })
-    return { kind: "break" }
-  }
-
-  const externalRecoverySequence: ExternalRecoverySequenceResult = await moduleDependencies.runExternalRecoverySequence({
-    recoveries: params.recoveries,
-    aborted: params.aborted,
-    taskProfile: params.taskProfile,
-    current: params.current,
-    seenKeys: params.seenKeys,
-    originalRequest: params.originalRequest,
-    previousResult: params.previousResult,
+  return moduleDependencies.enqueueRunRecovery({
     runId: params.runId,
-    sessionId: params.sessionId,
-    source: params.source,
-    onChunk: params.onChunk,
-    preview: params.preview,
-    finalizationDependencies: params.finalizationDependencies,
-  }, {
-    appendRunEvent: dependencies.appendRunEvent,
+    task: async () => {
+      if (params.executionRecoveryLimitStop) {
+        await moduleDependencies.applyTerminalApplication({
+          runId: params.runId,
+          sessionId: params.sessionId,
+          source: params.source,
+          onChunk: params.onChunk,
+          application: {
+            kind: "stop",
+            preview: params.preview,
+            summary: params.executionRecoveryLimitStop.summary,
+            reason: params.executionRecoveryLimitStop.reason,
+            remainingItems: params.executionRecoveryLimitStop.remainingItems,
+          },
+          dependencies: params.finalizationDependencies,
+        })
+        return { kind: "break" }
+      }
+
+      if (params.llmRecoveryLimitStop) {
+        await moduleDependencies.applyTerminalApplication({
+          runId: params.runId,
+          sessionId: params.sessionId,
+          source: params.source,
+          onChunk: params.onChunk,
+          application: {
+            kind: "stop",
+            preview: params.preview,
+            summary: params.llmRecoveryLimitStop.summary,
+            reason: params.llmRecoveryLimitStop.reason,
+            remainingItems: params.llmRecoveryLimitStop.remainingItems,
+          },
+          dependencies: params.finalizationDependencies,
+        })
+        return { kind: "break" }
+      }
+
+      const externalRecoverySequence: ExternalRecoverySequenceResult = await moduleDependencies.runExternalRecoverySequence({
+        recoveries: params.recoveries,
+        aborted: params.aborted,
+        taskProfile: params.taskProfile,
+        current: params.current,
+        seenKeys: params.seenKeys,
+        originalRequest: params.originalRequest,
+        previousResult: params.previousResult,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        source: params.source,
+        onChunk: params.onChunk,
+        preview: params.preview,
+        finalizationDependencies: params.finalizationDependencies,
+      }, {
+        appendRunEvent: dependencies.appendRunEvent,
+      })
+
+      if (externalRecoverySequence.kind === "stop") {
+        return { kind: "break" }
+      }
+
+      if (externalRecoverySequence.kind === "retry") {
+        return {
+          kind: "retry",
+          nextState: externalRecoverySequence.nextState,
+          nextMessage: externalRecoverySequence.nextMessage,
+        }
+      }
+
+      if (params.aborted || params.failed) {
+        return { kind: "break" }
+      }
+
+      return { kind: "continue" }
+    },
   })
-
-  if (externalRecoverySequence.kind === "stop") {
-    return { kind: "break" }
-  }
-
-  if (externalRecoverySequence.kind === "retry") {
-    return {
-      kind: "retry",
-      nextState: externalRecoverySequence.nextState,
-      nextMessage: externalRecoverySequence.nextMessage,
-    }
-  }
-
-  if (params.aborted || params.failed) {
-    return { kind: "break" }
-  }
-
-  return { kind: "continue" }
 }

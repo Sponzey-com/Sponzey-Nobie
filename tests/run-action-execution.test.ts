@@ -85,7 +85,7 @@ function buildIntake(overrides: Partial<TaskIntakeResult> = {}): TaskIntakeResul
 function buildDependencies(overrides: Partial<ScheduleActionDependencies> = {}): ScheduleActionDependencies {
   return {
     scheduleDelayedRun: vi.fn(),
-    createRecurringSchedule: vi.fn(() => ({ driver: "internal" as const })),
+    createRecurringSchedule: vi.fn(() => ({ scheduleId: "schedule-default", driver: "internal" as const })),
     cancelSchedules: vi.fn(() => []),
     ...overrides,
   }
@@ -204,6 +204,7 @@ describe("run action execution helpers", () => {
       [action],
       intake,
       {
+        runId: "run-1",
         message: "30초 뒤 안녕이라고 해줘",
         originalRequest: "30초 뒤 안녕이라고 해줘",
         sessionId: "telegram-session",
@@ -232,12 +233,18 @@ describe("run action execution helpers", () => {
     }])
     expect(scheduleDelayedRun).toHaveBeenCalledTimes(1)
     const delayedRun = scheduleDelayedRun.mock.calls[0]?.[0]
+    expect(delayedRun?.originRunId).toBe("run-1")
     expect(delayedRun?.immediateCompletionText).toBe("안녕")
+    expect(delayedRun?.originRequestGroupId).toBe("rg-1")
     expect(delayedRun?.message).toContain("telegram chat 42120565, main thread")
   })
 
   it("creates a recurring schedule via execution dependency and reports the driver", () => {
-    const createRecurringSchedule = vi.fn(() => ({ driver: "system" as const }))
+    const createRecurringSchedule = vi.fn(() => ({
+      scheduleId: "schedule-1",
+      targetSessionId: "telegram-session",
+      driver: "system" as const,
+    }))
     const dependencies = buildDependencies({ createRecurringSchedule })
     const intake = buildIntake({
       intent: {
@@ -270,6 +277,7 @@ describe("run action execution helpers", () => {
       [action],
       intake,
       {
+        runId: "run-2",
         message: "매 분 안녕이라고 해줘",
         originalRequest: "매 분 안녕이라고 해줘",
         sessionId: "telegram-session",
@@ -283,14 +291,28 @@ describe("run action execution helpers", () => {
 
     expect(result.ok).toBe(true)
     expect(createRecurringSchedule).toHaveBeenCalledTimes(1)
+    expect(createRecurringSchedule).toHaveBeenCalledWith({
+      title: "매 분 안녕",
+      task: "안녕이라고 해줘",
+      cron: "* * * * *",
+      source: "telegram",
+      sessionId: "telegram-session",
+      originRunId: "run-2",
+      originRequestGroupId: "rg-2",
+      model: "gpt-test",
+    })
     expect(result.message).toContain("실행 방식: 시스템 스케줄러")
     expect(result.receipts).toEqual([{
       kind: "schedule_create_recurring",
+      scheduleId: "schedule-1",
       title: "매 분 안녕",
       task: "안녕이라고 해줘",
       cron: "* * * * *",
       scheduleText: "* * * * *",
       source: "telegram",
+      targetSessionId: "telegram-session",
+      originRunId: "run-2",
+      originRequestGroupId: "rg-2",
       driver: "system",
       driverReason: undefined,
     }])
@@ -314,6 +336,7 @@ describe("run action execution helpers", () => {
       [action],
       buildIntake(),
       {
+        runId: "run-3",
         message: "예약 모두 취소해줘",
         originalRequest: "예약 모두 취소해줘",
         sessionId: "telegram-session",
@@ -330,6 +353,7 @@ describe("run action execution helpers", () => {
     expect(result.message).toContain("2개의 예약 알림을 취소했습니다.")
     expect(result.receipts).toEqual([{
       kind: "schedule_cancel",
+      cancelledScheduleIds: ["sch-1", "sch-2"],
       cancelledNames: ["매 1분 알림", "아침 보고"],
     }])
   })
@@ -384,6 +408,7 @@ describe("run action execution helpers", () => {
         },
       }),
       {
+        runId: "run-4",
         message: "잘못된 예약",
         originalRequest: "잘못된 예약",
         sessionId: "telegram-session",

@@ -225,9 +225,17 @@ flowchart TD
 
 1. 메인 루프 밖에서 완료하지 않는다.
 2. 하위 보조 run은 분석만 하고 완료를 확정하지 않는다.
-3. 전달이 필요한 요청은 전달이 끝나기 전까지 완료가 아니다.
-4. 파일 생성만으로는 충분하지 않다. 사용자가 파일 자체를 원했으면 실제 전달까지 가야 한다.
-5. 승인 필요 상태, 추가 입력 필요 상태, 검증 미완료 상태를 완료로 보지 않는다.
+3. 완료 판단은 최소한 `해석 / 실행 / 전달 / 복구 종료` 4축으로 본다.
+4. completion review가 `complete`를 반환해도, receipt 기준 4축 상태가 부족하면 완료로 닫지 않는다.
+5. 전달이 필요한 요청은 전달이 끝나기 전까지 완료가 아니다.
+6. 파일 생성만으로는 충분하지 않다. 사용자가 파일 자체를 원했으면 실제 전달까지 가야 한다.
+7. 승인 필요 상태, 추가 입력 필요 상태, 검증 미완료 상태를 완료로 보지 않는다.
+8. direct artifact delivery가 이미 성공했고 4축 상태가 settled면 불필요한 completion review는 생략할 수 있다.
+9. terminal 상태 의미는 구분해야 한다.
+10. `completed`는 4축 상태가 만족될 때만 사용한다.
+11. `failed`는 abort가 아닌 fatal failure일 때만 사용한다.
+12. `cancelled`는 explicit stop 또는 abort일 때만 사용한다.
+13. `awaiting_user`는 추가 입력 대기 상태로 별도 유지한다.
 
 즉 `실행했다`와 `완료했다`는 다르다.  
 완료는 오직 메인 루프가 `complete-condition 충족`을 확인했을 때만 선언할 수 있다.
@@ -263,6 +271,19 @@ flowchart TD
 4. intake 결과는 `intent envelope`로 고정한다.
 5. 이후의 판단은 가능하면 이 envelope 기준으로 처리한다.
 6. 완료 여부는 메인 루프의 `complete-condition 충족 여부`로만 결정한다.
+
+### 8.3 문서 동기화와 소멸 정책
+
+1. `Task / Attempt / Recovery / Delivery`, queue 단위, completion 규칙이 바뀌면 같은 턴에 `process.md`, `process-to.md`, `analyse.md`, `result.md`를 함께 갱신한다.
+2. 구현이 먼저 바뀌고 프로세스 문서가 아직 따라오지 못한 경우에는, 그 차이를 먼저 현재 `.design/task00x.md` 진행 메모에 기록한다.
+3. 차이가 안정화되면 `.design/task00x.md`의 메모를 기준으로 `process.md`와 `process-to.md`를 승격 갱신한다.
+4. 관련 구현 폴더의 `source.md`도 같은 턴에 갱신한다. 최소 범위는 `core/src`, `core/src/runs`, `core/src/api`, `webui/src`, `tests`다.
+5. 구형 경로는 아래 기준이면 소멸 대상으로 본다.
+   - 새 projection을 두고도 raw run/request group을 다시 heuristic으로 재구성하는 경로
+   - explicit queue helper가 있는데 같은 목적의 set/map/직렬화 로직을 다시 들고 있는 경로
+   - execution, delivery, completion을 한 함수에서 다시 뒤섞는 보조 경로
+   - 새 `/api/runs`, `/api/tasks` 표면이 있는데 과거 surface를 맞추기 위해 남겨둔 임시 compat 경로
+6. 삭제 시점은 replacement 경로가 준비되고, dead-path 검색 기준과 회귀 테스트가 추가되고, 관련 build/test가 통과한 이후다.
 
 ```mermaid
 sequenceDiagram

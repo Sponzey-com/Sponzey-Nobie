@@ -21,9 +21,9 @@ import {
   getRootRun,
 } from "./store.js"
 import {
-  enqueueRequestGroupRun,
-  hasRequestGroupQueue,
-} from "./run-queueing.js"
+  enqueueRequestGroupExecution,
+  hasRequestGroupExecutionQueue,
+} from "./execution-queue.js"
 import {
   buildStartRootRunDriverDependencies,
 } from "./start-driver-dependencies.js"
@@ -36,6 +36,8 @@ export interface StartRootRunParams {
   message: string
   sessionId: string | undefined
   requestGroupId?: string | undefined
+  originRunId?: string | undefined
+  originRequestGroupId?: string | undefined
   forceRequestGroupReuse?: boolean | undefined
   model: string | undefined
   providerId?: string | undefined
@@ -81,6 +83,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     now,
     maxDelegationTurns,
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    ...(params.originRunId ? { originRunId: params.originRunId } : {}),
+    ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
     ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
     ...(params.contextMode ? { contextMode: params.contextMode } : {}),
     ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
@@ -88,7 +92,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
     ...(params.model ? { model: params.model } : {}),
     ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
-    hasRequestGroupQueue,
+    hasRequestGroupExecutionQueue,
   })
   const { startPlan } = startLaunch
   const {
@@ -124,9 +128,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     syntheticApprovalScopes,
     logInfo: (message, payload) => log.info(message, payload),
     logWarn: (message) => log.warn(message),
+    logError: (message, payload) => log.error(message, payload),
   })
 
-  const finished = enqueueRequestGroupRun({
+  const finished = enqueueRequestGroupExecution({
     requestGroupId,
     runId,
     task: async () => {

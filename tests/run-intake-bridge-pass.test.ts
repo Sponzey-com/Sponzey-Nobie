@@ -6,6 +6,8 @@ function createDependencies() {
     appendRunEvent: vi.fn(),
     updateRunSummary: vi.fn(),
     incrementDelegationTurnCount: vi.fn(),
+    emitScheduleCreated: vi.fn(),
+    emitScheduleCancelled: vi.fn(),
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile) => taskProfile ?? "general_chat"),
@@ -247,6 +249,77 @@ describe("run intake bridge pass", () => {
     expect(result).toEqual({
       kind: "complete",
       text: "후속 실행을 시작합니다.",
+      eventLabel: "intake 처리 결과 전달",
+    })
+  })
+
+  it("emits schedule created event for recurring schedule receipts", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = {
+      analyzeTaskIntake: vi.fn().mockResolvedValue({
+        ...createBaseIntakeResult(),
+        intent: {
+          category: "schedule_request" as const,
+          summary: "반복 예약",
+          confidence: 0.9,
+        },
+      }),
+      resolveRunRoute: vi.fn(),
+      executeScheduleActions: vi.fn().mockReturnValue({
+        ok: true,
+        message: "스케줄이 저장되었습니다.",
+        detail: "매 분: 안녕이라고 해줘",
+        successCount: 1,
+        failureCount: 0,
+        receipts: [{
+          kind: "schedule_create_recurring" as const,
+          scheduleId: "schedule-1",
+          title: "매 분 안녕",
+          task: "안녕이라고 해줘",
+          cron: "* * * * *",
+          scheduleText: "매 분",
+          source: "telegram" as const,
+          targetSessionId: "telegram-session-1",
+          originRunId: "run-4",
+          originRequestGroupId: "group-4",
+          driver: "internal" as const,
+        }],
+      }),
+      createDefaultScheduleActionDependencies: vi.fn().mockReturnValue({}),
+      buildDelegatedReceipt: vi.fn(),
+      inferDelegatedTaskProfile: vi.fn(),
+      buildFollowupPrompt: vi.fn(),
+    }
+
+    const result = await runIntakeBridgePass({
+      message: "매 분 안녕이라고 해줘",
+      originalRequest: "매 분 안녕이라고 해줘",
+      sessionId: "session-4",
+      requestGroupId: "group-4",
+      model: "gpt-test",
+      workDir: "/tmp",
+      source: "telegram",
+      runId: "run-4",
+      onChunk: undefined,
+      reuseConversationContext: false,
+    }, dependencies, moduleDependencies)
+
+    expect(dependencies.emitScheduleCreated).toHaveBeenCalledWith({
+      runId: "run-4",
+      requestGroupId: "group-4",
+      registrationKind: "recurring",
+      title: "매 분 안녕",
+      task: "안녕이라고 해줘",
+      source: "telegram",
+      scheduleText: "매 분",
+      scheduleId: "schedule-1",
+      cron: "* * * * *",
+      targetSessionId: "telegram-session-1",
+      driver: "internal",
+    })
+    expect(result).toEqual({
+      kind: "complete",
+      text: "스케줄이 저장되었습니다.",
       eventLabel: "intake 처리 결과 전달",
     })
   })

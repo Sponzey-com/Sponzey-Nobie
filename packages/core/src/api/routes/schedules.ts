@@ -41,6 +41,8 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       target_channel: "agent",
       target_session_id: null,
       execution_driver: "internal",
+      origin_run_id: null,
+      origin_request_group_id: null,
       model: model ?? null,
       max_retries: 3,
       timeout_sec: 300,

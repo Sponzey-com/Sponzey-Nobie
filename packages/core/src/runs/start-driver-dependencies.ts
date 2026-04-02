@@ -37,6 +37,7 @@ import {
   executeStartLoopDirective,
   runStartIntakeBridge,
 } from "./start-bridges.js"
+import { enqueueSessionIntake } from "./intake-queue.js"
 import { scheduleDelayedRootRun } from "./run-queueing.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -56,6 +57,8 @@ export function buildStartRootRunDriverDependencies(params: {
     message: string
     sessionId: string
     requestGroupId?: string | undefined
+    originRunId?: string | undefined
+    originRequestGroupId?: string | undefined
     model: string | undefined
     providerId?: string | undefined
     provider?: LLMProvider | undefined
@@ -78,6 +81,7 @@ export function buildStartRootRunDriverDependencies(params: {
   syntheticApprovalScopes: Set<string>
   logInfo: (message: string, payload?: Record<string, unknown>) => void
   logWarn: (message: string) => void
+  logError: (message: string, payload?: Record<string, unknown>) => void
 }): {
   finalizationDependencies: FinalizationDependencies
   syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
@@ -161,37 +165,48 @@ export function buildStartRootRunDriverDependencies(params: {
       message: params.message,
       mode: params.activeQueueCancellationMode,
     }),
-    tryHandleIntakeBridge: ({ currentMessage, originalRequest }) => runStartIntakeBridge({
-      message: currentMessage,
-      originalRequest,
+    tryHandleIntakeBridge: ({ currentMessage, originalRequest }) => enqueueSessionIntake({
       sessionId: params.sessionId,
-      requestGroupId: params.requestGroupId,
-      model: params.model,
-      workDir: params.workDir,
-      source: params.source,
       runId: params.runId,
-      onChunk: params.onChunk,
-      reuseConversationContext: params.reuseConversationContext,
-      scheduleDelayedRun: (delayedParams) => scheduleDelayedRootRun(delayedParams, {
-        startRootRun: params.startNestedRootRun,
-        logInfo: params.logInfo,
-        logWarn: params.logWarn,
-        logError: (message, payload) => params.logInfo(message, payload),
+      requestGroupId: params.requestGroupId,
+      task: () => runStartIntakeBridge({
+        message: currentMessage,
+        originalRequest,
+        sessionId: params.sessionId,
+        requestGroupId: params.requestGroupId,
+        model: params.model,
+        workDir: params.workDir,
+        source: params.source,
+        runId: params.runId,
+        onChunk: params.onChunk,
+        reuseConversationContext: params.reuseConversationContext,
+        scheduleDelayedRun: (delayedParams) => scheduleDelayedRootRun(delayedParams, {
+          startRootRun: params.startNestedRootRun,
+          logInfo: params.logInfo,
+          logWarn: params.logWarn,
+          logError: params.logError,
+        }),
+        startDelegatedRun: (startParams) => {
+          params.startNestedRootRun({
+            ...startParams,
+            model: startParams.model,
+          })
+        },
+      }, {
+        appendRunEvent,
+        updateRunSummary,
+        incrementDelegationTurnCount,
+        emitScheduleCreated: (payload) => eventBus.emit("schedule.created", payload),
+        emitScheduleCancelled: (payload) => eventBus.emit("schedule.cancelled", payload),
+        normalizeTaskProfile,
+        logInfo: (message, payload) => {
+          params.logInfo(message, payload)
+        },
       }),
-      startDelegatedRun: (startParams) => {
-        params.startNestedRootRun({
-          ...startParams,
-          model: startParams.model,
-        })
-      },
     }, {
-      appendRunEvent,
-      updateRunSummary,
-      incrementDelegationTurnCount,
-      normalizeTaskProfile,
-      logInfo: (message, payload) => {
-        params.logInfo(message, payload)
-      },
+      logInfo: params.logInfo,
+      logWarn: params.logWarn,
+      logError: params.logError,
     }),
     getSyntheticApprovalAlreadyApproved: () => params.syntheticApprovalScopes.has(params.runId),
     onBootstrapInfo: (message, payload) => {
