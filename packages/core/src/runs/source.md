@@ -7,31 +7,195 @@
 ## 주요 파일
 
 - `start.ts`: root run 생성, request-group 큐 등록, intake/취소/clarification 분배, 승인, 복구, 완료 처리, 후속 오케스트레이션
+- `ingress.ts`: 채널 진입점에서 공통으로 쓰는 즉시 접수 receipt, resolved ingress params, ingress 시작 helper
+- `entry-semantics.ts`: request-group 재사용, 활성 실행 취소 같은 진입 단계 해석
+- `loop-directive.ts`: 루프 안에서 쓰는 `complete/retry_intake/awaiting_user` directive 계약
+- `loop-bootstrap.ts`: initial pending directive, queued run 재시작, worker runtime bypass bootstrap helper
+- `root-loop.ts`: bootstrap, loop-entry, execution-cycle을 묶는 root loop orchestration helper
+- `root-loop-bootstrap-state.ts`: bootstrap 결과와 초기 execution state 조립 helper
+- `root-loop-pass-launch.ts`: `loop-entry`, `execution-cycle` 호출용 params/dependencies 조립 helper
+- `root-loop-turn.ts`: root loop의 한 번의 turn(`loop-entry -> execution-cycle`) 실행 helper
+- `start-plan.ts`: request-group 재사용, reconnect selection, context mode, worker session 계산 helper
+- `start-launch.ts`: start-plan, session ensure, run 생성, start initialization helper
+- `start-support.ts`: worker session id, active queue 취소, session ensure, journal, filesystem verification wrapper helper
+- `run-queueing.ts`: request-group queue, delayed session queue, delayed run arm/fire helper
+- `start-bridges.ts`: finalization dependency 조립, loop directive apply, intake bridge wrapper helper
+- `start-driver-dependencies.ts`: finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립 helper
+- `start-initialization.ts`: instruction journal, active controller binding, 초기 step/status/event 적용 helper
+- `execution-profile.ts`: fallback structured request/intent envelope, execution loop runtime state 초기화 helper
+- `root-loop-launch.ts`: execution loop runtime state를 `runRootLoop` 호출용 params/dependencies로 바꾸는 bridge helper, 죽은 `originalUserRequest` 중간 반환값 없이 root loop 입력만 조립
+- `root-run-driver-failure.ts`: root run driver의 fatal failure 종료와 error chunk 전달 helper
+- `root-run-driver.ts`: execution profile 초기화, root loop 실행, fatal failure 처리, cleanup helper
+- `loop-directive-application.ts`: `complete/awaiting_user` directive 적용 helper
+- `loop-entry-pass.ts`: pending directive, retry_intake, cancellation/intake bridge를 묶는 loop-entry helper
+- `loop-pass-application.ts`: loop-entry/recovery-entry/post-execution/review-cycle 결과를 다음 loop 상태로 적용하는 helper
+- `intake-bridge-pass.ts`: intake 결과의 즉시 응답, 일정 재분석 directive, delegated follow-up 생성 helper
+- `action-execution.ts`: intake action 실행 경계, 예약 등록/취소 실행, delegated follow-up prompt/receipt 조립
+- `action-execution.ts`: intake action 실행 경계, 예약 등록/취소 실행, delegated follow-up prompt/receipt 조립, `ScheduleActionReceipt`
+- `execution.ts`: 파일 변경 감지, 변경 경로 수집, 암묵적 실행 요약, 완료 근거 판단 helper, `ToolExecutionReceipt.executor`
+- `execution-attempt-pass.ts`: execution stream 생성, chunk loop, error chunk 처리, tracked delivery 적용을 묶는 execution attempt helper
+- `execution-cycle-pass.ts`: execution attempt, recovery entry, post-execution, review cycle 전체를 묶는 execution cycle helper
+- `execution-chunk-pass.ts`: `text / execution_recovery / tool_start / tool_end / llm_recovery` chunk 처리 helper
+- `tool-chunk-application.ts`: `tool_start/tool_end`의 pending params, receipt 적용, event/summary 반영 helper
+- `error-chunk-pass.ts`: error chunk의 worker runtime 복구, fatal failure 적용, error chunk 전달 helper
+- `failure-application.ts`: 실행 chunk failure와 unexpected error의 failed/cancelled 종료 적용 helper
+- `execution-retry-application.ts`: `execution_recovery`의 실패 기록, execution budget 사용, retry/stop 적용 helper
+- `execution-postpass.ts`: command failure와 generic execution recovery를 묶는 post-pass decision helper
+- `execution-postpass-application.ts`: execution post-pass의 `retry/stop/continue` 적용 helper
+- `execution-runtime.ts`: `runAgent` / `runWorkerRuntime` 선택, worker prompt 조립, execution chunk stream 생성
+- `filesystem-verification.ts`: 파일 생성 결과 검증 prompt, 검증 대상 추론, 실제 파일/폴더 존재 확인 helper
+- `analysis-subrun.ts`: 결과 검증 하위 run 생성과 analysis-only subrun 종료 정리 helper
+- `external-recovery.ts`: LLM/worker runtime 외부 실행 복구 재라우팅, duplicate-stop, recovery prompt 조립 helper
+- `external-recovery-application.ts`: external recovery plan의 duplicate-stop 적용, recovery key 기록, route event 반영, next state 적용 helper
+- `external-recovery-pass.ts`: external recovery의 `plan -> apply -> next state` pass helper
+- `external-recovery-sequence.ts`: `llm -> worker_runtime` 외부 복구 순회와 next state 적용 helper
+- `external-retry-application.ts`: external recovery의 실패 기록, external budget 소모, retry/stop 적용 helper
+- `recovery-entry-pass.ts`: 실행 복구 한도 중단, external recovery sequence, failed/aborted 종료를 묶는 복구 진입 helper
+- `filesystem-recovery.ts`: 실제 파일 변경 없음/검증 실패에 대한 `initial_retry/retry/stop/verified` decision helper
+- `filesystem-postpass.ts`: 파일 변경 없음/검증 subrun/verification decision을 묶는 filesystem post-pass helper
+- `filesystem-postpass-application.ts`: filesystem post-pass의 `stop/initial_retry/retry/verified` 적용 helper
+- `post-execution-pass.ts`: execution post-pass, delivery pass, filesystem post-pass, review-entry를 한 번에 묶는 post-execution helper
+- `delivery-postpass.ts`: preview 보정, 직접 결과 전달 완료, direct artifact delivery post-pass decision helper
+- `delivery-pass.ts`: delivery outcome, preview 보정, direct delivery application을 묶는 delivery pass helper
+- `delivery-application.ts`: direct artifact 전달의 `complete/retry/stop` 적용 helper
+ - `terminal-application.ts`: `stop/awaiting_user` terminal 상태 적용 helper
+- `review-transition.ts`: 실행 종료 직후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입 helper
+- `review-entry-pass.ts`: review 준비와 direct delivery complete/stop/retry 적용을 묶는 helper
 - `store.ts`: 메모리/DB 기반 run 상태 업데이트
 - `routing.ts`: 대상 선택과 복구 시 재라우팅
 - `worker-runtime.ts`: CLI/worker 실행 연동
 - `scheduled.ts`: 예약 후속 실행 프롬프트 생성
+- `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper
+- `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계
+- `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계, tracked chunk 전달/receipt 적용 helper
+- `completion-flow.ts`: completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 결정 helper
+- `completion-pass.ts`: completion review 결과를 flow decision과 application decision으로 묶는 completion pass helper
+- `completion-application-pass.ts`: completion application의 `complete/stop/retry/awaiting_user` 적용 helper
+- `intake-retry-application.ts`: `retry_intake`의 failure journal, interpretation budget, retry/stop 적용 helper
+- `running-application.ts`: retry/continuation 공통의 running 상태/event/summary 적용 helper
+- `retry-application.ts`: recovery retry 공통의 실패 기록, budget 소모, recovery event, running 전환 helper
+- `completion-application.ts`: completion decision 적용, 빈 결과 복구/후속 처리/중간 절단 복구/ask_user/stop 후처리 helper
+- `review-pass.ts`: completion review 호출과 synthetic approval 감지 묶음 helper
+- `review-cycle-pass.ts`: review pass와 review outcome pass를 한 번에 묶는 review tail helper
+- `review-outcome-pass.ts`: review 이후 synthetic approval/ completion retry·stop 적용을 묶는 helper
+- `finalization.ts`: assistant 응답 송신, awaiting_user 전환, cancelled-after-stop 전환, completed 전환 helper, `markRunCompleted`
+- `journaling.ts`: instruction/success/failure 메모리 기록 입력 조립과 안전한 journal insert helper
+- `recovery.ts`: 실패 유형 분류, 복구 key, 대안 프롬프트, 중간 절단/빈 결과 복구 helper
+- `recovery-budget.ts`: failure kind별 recovery budget 계산 helper
+- `approval.ts`: synthetic approval 필요 여부 판단, 승인 안내 요약, 승인 후 continuation prompt helper
+- `approval.ts`: synthetic approval 필요 여부 판단, 승인 안내 요약, 승인 후 continuation prompt helper, 승인 요청 타임아웃/허용/거부 orchestration
+- `approval-application.ts`: synthetic approval 승인 후 continuation 결정과 `scope grant -> running 전환 -> next message` 적용 helper
+- `approval-pass.ts`: 기승인 scope 재사용, 승인 요청, continuation 적용을 묶는 synthetic approval pass helper
 - `types.ts`: run과 task profile 계약
 
 ## 메모
 
 - request-group 동작, 재질의 예산, “멈추지 말고 계속 진행” 정책이 주로 여기 있습니다.
+- ingress 1차 분리로 채널은 이제 공통 `ingress.ts` receipt를 먼저 사용자에게 전달하고, `startIngressRun()`을 통해 무거운 intake/실행은 뒤에서 계속 진행합니다.
+- `ingress.ts`는 이제 `sessionId`, `runId(requestId)`, `source`를 먼저 고정한 뒤 `startRootRun()`으로 넘깁니다. 채널/API 진입점은 이 resolved ingress 정보를 기준으로 접수 응답을 만들고, 실제 실행은 같은 식별자를 유지한 채 뒤에서 계속 진행합니다.
+- `entry-semantics.ts`는 intake 전에 필요한 진입 의도만 따로 계산합니다. 그래서 `request_group` 재사용, 활성 실행 취소 같은 판단은 `agent/intake`가 아니라 `runs` 계층 책임으로 정리됩니다.
+- `loop-entry-pass.ts`는 메인 loop 진입 경계입니다. pending directive 적용, interpretation retry, active queue cancellation, intake bridge를 한 helper로 묶어 `start.ts`가 상단 분기 전체를 직접 들고 있지 않게 정리합니다.
+- `loop-pass-application.ts`는 pass 결과 적용 경계입니다. loop-entry/recovery-entry/post-execution/review-cycle helper가 만든 결과를 다음 loop 상태로 바꾸는 공통 apply 로직을 `start.ts` 밖으로 옮깁니다.
+- `loop-directive-application.ts`는 pending directive의 실제 apply 경계입니다. `complete`와 `awaiting_user`를 `start.ts` 밖 helper로 묶어 directive apply 세부를 메인 루프 밖으로 옮깁니다.
+- `loop-bootstrap.ts`는 loop 시작 전 bootstrap 경계입니다. initial pending directive 구성, queued run 재시작 표시, worker runtime bypass를 `start.ts` 밖 helper로 묶어 상단 preflight glue를 줄입니다.
+- `root-loop.ts`는 root loop orchestration 경계입니다. bootstrap, loop-entry, execution-cycle 전체를 한 helper로 묶어 `start.ts`가 while-loop 자체를 직접 들고 있지 않게 정리합니다.
+- `start-plan.ts`는 loop 시작 전 request-group/reconnect 계산 경계입니다. request-group 재사용, reconnect candidate 선택, clarification 필요 여부, context mode와 worker session 계산을 `start.ts` 밖 helper로 묶어 상단 초기 계산 glue를 줄입니다.
+- `start-launch.ts`는 root run 시작 준비 경계입니다. start-plan, session ensure, run 생성, start initialization을 `start.ts` 밖 helper로 묶어 최상단 launch glue를 줄입니다.
+- `start-support.ts`는 시작 공통 보조 경계입니다. worker session id 계산, active queue 취소, session ensure, journal, filesystem verification wrapper를 `start.ts` 밖 helper로 묶어 중복 선언을 줄입니다.
+- `run-queueing.ts`는 큐/지연 실행 경계입니다. request-group queue, delayed session queue, delayed run arm/fire를 `start.ts` 밖 helper로 묶어 메인 진입점이 큐 map과 타이머 관리 세부를 직접 들고 있지 않게 정리합니다.
+- `start-bridges.ts`는 시작 bridge 경계입니다. finalization dependency 조립, loop directive apply, intake bridge wrapper를 `start.ts` 밖 helper로 묶어 메인 진입점이 로컬 wrapper 함수 없이 orchestration에 집중하게 정리합니다.
+- `start-driver-dependencies.ts`는 driver wiring 경계입니다. finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립을 `start.ts` 밖 helper로 묶어 메인 진입점이 runtime wiring 세부를 직접 들고 있지 않게 정리합니다.
+- `start-initialization.ts`는 run 생성 직후 초기화 경계입니다. instruction journal, active controller binding, orphan worker 정리, 초기 step/status/event 적용을 `start.ts` 밖 helper로 묶어 상단 초기화 glue를 줄입니다.
+- `execution-profile.ts`는 execution profile 초기화 경계입니다. fallback structured request/intent envelope 계산과 recovery/delivery 추적 set 초기화를 `start.ts` 밖 helper로 묶어 상단 setup glue를 줄입니다.
+- `root-run-driver.ts`는 request-group queue 내부 실행 경계입니다. execution profile 초기화, root loop 실행, fatal failure 처리, cleanup을 `start.ts` 밖 helper로 묶어 queue callback glue를 줄입니다.
+- `intake-bridge-pass.ts`는 intake bridge apply 경계입니다. intake 결과에서 즉시 응답, schedule retry_intake, delegated follow-up run 생성을 `start.ts` 밖 helper로 묶어 상단 intake orchestration을 더 줄입니다.
+- `action-execution.ts`는 intake 결과에서 나온 `create_schedule`, `cancel_schedule`, delegated follow-up prompt/receipt 조립을 `start.ts` 밖으로 뺀 경계입니다. 이 분리로 예약 등록/취소와 후속 실행 브리지 구성은 루프 제어가 아니라 실행 계층 책임으로 옮겨가기 시작했습니다.
+- 예약 등록/취소 결과도 이제 `ScheduleActionReceipt`로 구조화되어, 일회성 예약/반복 예약/취소가 각각 어떤 실행 결과였는지 completion과 recovery가 문자열 재해석 없이 알 수 있게 정리하고 있습니다.
+- 일회성 예약 receipt는 destination을 항상 명시적인 문자열로 정규화하고, recurring receipt는 optional reason을 undefined 속성으로 남기지 않도록 정리해 타입 경계를 안정화합니다.
+- `execution-runtime.ts`는 실제 실행 엔진 선택 경계입니다. `start.ts`는 더 이상 `runAgent`와 `runWorkerRuntime`를 직접 고르지 않고, 구조화된 실행 파라미터를 이 helper에 넘겨 chunk stream만 소비하는 방향으로 정리하고 있습니다.
 - 현재 메인 원칙은 `분석 -> 처리 분배 -> 검토 -> 재분석` 루프이며, 취소 응답이나 intake 즉답도 가능하면 루프 안의 directive로 처리합니다.
-- 메인 루프 안에서는 원문 문자열을 다시 직접 해석하지 않고, intake가 넘긴 `structured_request`와 `execution_semantics`를 우선 사용합니다.
+- 메인 루프 안에서는 원문 문자열을 다시 직접 해석하지 않고, intake가 넘긴 `intent_envelope`를 우선 사용합니다. `structured_request`와 `execution_semantics`는 이 envelope에서 파생된 하위 구조로 취급합니다.
+- intake는 envelope를 만들기 전에 `target`, `destination`, `context`, `complete_condition`, `normalized_english`를 검증·보정하고, 그 결과를 `notes`에 남깁니다. `runs`는 이 검증이 끝난 envelope만 받는 전제를 가집니다.
+- 파일 변경 감지, 변경 경로 수집, 암묵적 실행 요약, 완료 근거 판단은 `execution.ts`로 분리해, 이 부분이 자연어 원문 대신 `toolName`, `tool params`, `execution_semantics`만 보도록 정리하기 시작했습니다.
+- `ToolExecutionReceipt`는 이제 `tool_end.details.via`와 파일 도구 종류를 이용해 `yeonjang/local/file_tool/core` 실행 경계를 구조화합니다. 그래서 Yeonjang 호출, 로컬 도구 실행, 파일 도구 실행이 recovery/completion에서 문자열 재해석 없이 구분됩니다.
+- `execution-chunk-pass.ts`는 일반 execution chunk apply 경계입니다. `text / execution_recovery / tool_start / tool_end / llm_recovery` 처리에서 공통으로 쓰이던 usedTurns/maxTurns 계산과 상태 반영을 `start.ts` 밖 helper로 묶습니다.
+- `execution-attempt-pass.ts`는 execution 시도 전체 경계입니다. stream 생성, chunk loop, error chunk 처리, tracked delivery 적용을 한 번에 묶어 `start.ts`가 실행 시도 세부를 직접 들고 있지 않게 정리합니다.
+- `execution-cycle-pass.ts`는 while-loop 본문 경계입니다. execution attempt, recovery entry, post-execution, review cycle 전체를 한 helper로 묶어 `start.ts`가 loop 내부 orchestration보다 상태 반영에 더 집중하게 정리합니다.
+- `tool-chunk-application.ts`는 `tool_start/tool_end` apply 경계입니다. pending tool params 관리와 tool receipt 적용 뒤 event/summary 반영을 `start.ts` 밖으로 공통화합니다.
+- `error-chunk-pass.ts`는 error chunk apply 경계입니다. worker runtime 복구 시도, fatal failure 적용, error chunk 전달을 `start.ts` 밖 helper로 공통화합니다.
+- `tool_end` chunk는 이제 바로 루프 상태를 뒤섞지 않고, 먼저 `execution.ts`의 `ToolExecutionReceipt`로 구조화된 뒤 메인 루프가 그 receipt를 적용합니다.
+- `tool_end` 이후 성공 도구 누적, 파일 변경 경로 누적, 명령 실패 누적도 `execution.ts` helper가 맡기 시작했고, `start.ts`는 적용 결과만 반영하는 방향으로 정리하고 있습니다.
+- `execution-retry-application.ts`는 `execution_recovery` 청크 적용 경계입니다. 실패 기록, execution budget 확인, retry/stop 상태 전환을 `start.ts` 밖 helper로 공통화합니다.
+- `execution-postpass.ts`는 command failure와 generic execution recovery를 하나의 post-pass decision으로 묶는 경계입니다. `start.ts`는 더 이상 두 분기를 따로 풀지 않고 helper 결과를 적용합니다.
+- `execution-postpass-application.ts`는 execution post-pass 적용 경계입니다. `retry / stop / continue`의 실제 적용을 `start.ts` 밖 helper로 공통화하고, 메인 루프는 seen key 등록과 next message 전환만 반영합니다.
+- 파일 생성 결과 검증 규칙도 `filesystem-verification.ts`로 분리해, `start.ts`는 검증 하위 run 생성과 상태 반영만 맡고 검증 대상 추론/실제 존재 확인은 별도 execution 보조 모듈이 담당합니다.
+- synthetic approval 대상 여부와 승인 안내 요약/continuation prompt도 `approval.ts`로 분리해, 메인 루프는 승인 이벤트를 열고 결과를 반영하는 역할에 더 가깝게 정리하고 있습니다.
+- synthetic approval 요청 자체의 타임아웃, 이벤트 발행, 거부/허용 반영도 `approval.ts`로 옮겨, `start.ts`는 승인 필요 여부를 감지하고 helper 결과를 적용하는 orchestration 쪽으로 더 좁혀졌습니다.
+- synthetic approval 승인 후 continuation 적용도 `approval-application.ts`로 분리해, `start.ts`는 scope grant와 continuation 전환만 반영하는 쪽으로 더 좁혀졌습니다.
+- synthetic approval 승인 후 `scope grant -> running 전환 -> next message` 적용도 `approval-application.ts`에서 같이 묶기 시작해, `start.ts`는 approval pass 결과를 받고 상태 반영만 하도록 더 좁혀졌습니다.
+- synthetic approval의 `기승인 scope 재사용 -> 승인 요청 -> continuation 결정` 전체 패스도 `approval-pass.ts`로 묶어, `start.ts`는 grant 반영과 다음 message 전환만 맡는 방향으로 더 좁혀졌습니다.
+- completion review 호출과 synthetic approval 감지 묶음도 `review-pass.ts`로 분리해, `start.ts`는 review 결과와 approval request를 소비하는 orchestration 쪽으로 더 좁혀졌습니다.
+- review 이후의 synthetic approval retry와 completion retry/stop 적용 묶음도 `review-outcome-pass.ts`로 분리해, `start.ts`는 review 결과 뒤의 next message와 flag 반영만 맡도록 더 좁아졌습니다.
+- `review-cycle-pass.ts`는 review 이후의 `review pass -> review outcome pass` 연쇄를 한 번에 처리해, `start.ts`가 review tail에서 retry 결과와 flag만 반영하도록 더 줄입니다.
+- 실행 종료 직후 `worker runtime 종료 이벤트`, runtime preview 저장, reply log 기록, reviewing step 진입도 `review-transition.ts`로 분리해, `start.ts`는 review 전환 세부보다 post-pass orchestration에 더 집중하게 정리했습니다.
+- completion review 이후의 `flow decision -> application decision` 조합 계산도 `completion-pass.ts`로 묶어, `start.ts`는 completion apply 결과를 소비하는 orchestration 쪽으로 더 좁혀졌습니다.
+- completion application의 `complete / stop / retry / awaiting_user` 실제 적용도 `completion-application-pass.ts`로 묶어, `start.ts`는 completion apply 결과를 받고 flag와 next message만 반영하도록 더 좁아졌습니다.
+- `retry_intake`의 실패 기록, interpretation budget 확인, retry/stop 적용도 `intake-retry-application.ts`로 묶어, `start.ts`는 일정 해석 복구 적용 세부를 직접 들고 있지 않도록 더 좁아졌습니다.
+- 실행 중 `chunk failure`와 `unexpected error`의 `event/status/journal/cancelled` 적용도 `failure-application.ts`로 분리해, `start.ts`가 fatal failure 종료 세부를 직접 들고 있지 않도록 더 좁아졌습니다.
+- review 진입 직전의 `prepare review + direct delivery complete/stop/retry` glue도 `review-entry-pass.ts`로 묶어, `start.ts`는 delivery/review 경계의 다음 상태 반영에 더 집중하게 정리했습니다.
+- `post-execution-pass.ts`는 execution 이후 `retry/break/continue`와 preview, delivery outcome, seen recovery key를 한 번에 계산해 `start.ts`의 post-pass glue를 더 줄입니다.
+- filesystem post-pass의 `stop / initial_retry / retry / verified` 적용도 `filesystem-postpass-application.ts`로 묶어, `start.ts`는 filesystem decision의 다음 상태 반영에 더 집중하게 정리했습니다.
+- direct delivery retry, synthetic approval continuation, completion retry에 공통으로 쓰이는 running 상태/event/summary 적용도 `running-application.ts`로 분리해, `start.ts`는 message 전환과 clear flag 반영만 맡는 방향으로 더 좁혀졌습니다.
+- command failure, generic execution failure, filesystem mutation/verification retry, direct delivery retry, completion retry에 공통으로 쓰이는 실패 기록, budget 소모, recovery event, running 전환도 `retry-application.ts`로 분리하기 시작했고, `start.ts`는 retry별 고유한 next message와 clear flag 반영에 더 집중합니다.
+- direct delivery 완료와 일반 completion 완료에 공통으로 쓰이는 success/status 업데이트도 `finalization.ts`의 `markRunCompleted`로 공통화해, `start.ts`는 완료 결과 선택과 event label 결정에 더 집중하는 방향으로 더 좁혀졌습니다.
+- `stop / awaiting_user` terminal 상태 적용도 `terminal-application.ts`로 분리해, direct delivery stop, completion stop, completion awaiting_user, loop directive awaiting_user가 같은 helper를 타도록 정리했습니다.
+- Telegram 채널의 chunk 텍스트 누적과 파일/tool status 전달은 `channels/telegram/chunk-delivery.ts`로 이동하기 시작했고, `runs`는 그 결과 receipt만 적용하는 쪽으로 더 밀어내고 있습니다.
 - 후속 실행 프롬프트와 예약 실행 프롬프트는 intake가 만든 `structured_request`를 기준으로 `[target]`, `[to]`, `[context]`, `[complete-condition]`, `[normalized-english]` 블록을 포함해 내려보냅니다.
+- `startRootRun()`도 이제 `intentEnvelope`를 1급 입력으로 받아, follow-up run과 delayed run이 같은 intent 계약을 그대로 이어받을 수 있게 정리하고 있습니다.
 - 예약 후속 실행 프롬프트의 `[to]`는 가능하면 Telegram chat/thread 같은 실제 전달 대상을 그대로 써서, `current channel` 같은 모호한 목적지 문구를 줄입니다.
 - `안녕이라고 해줘`처럼 채널 표기가 없는 예약 발화도 literal text 전달 요청으로 해석해서, `[target]`은 문구 자체, `[to]`는 실제 전달 대상, `[complete-condition]`은 해당 문구의 1회 전달로 구체화합니다.
 - 특히 예약 발화 분류는 `말해줘/알려줘/보내줘`뿐 아니라 `해줘/해 주세요`까지 포함해야 합니다. 이 분류가 실패하면 delayed run 등록 시 `directDelivery=false`가 되어 예약 실행이 불필요하게 LLM 경로로 들어갑니다.
 - 일정 생성 시 direct delivery 여부와 예약 전달 대상은 `followup_run_payload.literal_text`와 `followup_run_payload.destination`을 우선 사용해서, 등록 시점과 실행 시점 모두 같은 구조화 정보로 direct completion을 판단합니다.
+- 예약 등록/취소와 delegated follow-up prompt/receipt 조립은 이제 `action-execution.ts`에서 테스트 가능한 helper로 다루고, `start.ts`는 그 결과를 받아 루프에 반영하는 쪽으로 더 얇아졌습니다.
 - intake 단계의 일정 action이 전부 실패하면 그 실패 receipt를 바로 `completed`로 닫지 않고, 메인 루프 안에서 `retry_intake` directive로 다시 intake 재분석을 시도합니다.
 - 이때 재질의 예산도 함께 사용하며, 한도에 닿으면 `일정 해석 복구 재시도 한도`로 취소 상태에 정리합니다.
 - schedule recovery용 intake 재분석은 현재 루프의 `currentMessage`를 사용하되, 후속 실행과 예약 등록에 남는 `originalRequest`는 계속 원래 사용자 요청을 유지합니다.
+- 실패 유형 분류, route change 판정, LLM/worker/command recovery prompt 조립, 중간 절단 복구 판정은 `recovery.ts`로 분리해 `start.ts`에서 떼어내기 시작했습니다.
+- 이 분리 덕분에 `start.ts`는 메인 루프 상태 전환과 receipt 반영에 더 집중하고, recovery key/프롬프트/동일 실패 회피 규칙은 별도 테스트 대상으로 유지합니다.
+- direct artifact 전달 실패도 `recovery.ts`의 delivery recovery candidate로 분리해, 메신저 결과물 전달 재시도 요약/사유/remaining items를 메인 루프가 직접 만들지 않도록 정리하고 있습니다.
+- 최종 텍스트 전달 실패도 `recovery.ts`에서 채널/실패 단계별 설명으로 정리해, Telegram/WebUI/CLI의 delivery failure event를 같은 기준으로 남기는 방향으로 정리하고 있습니다.
+- recovery candidate는 이제 `alternatives`를 포함해 `다른 도구 / 다른 연장 / 다른 채널 / 다른 일정 / 같은 채널 재전송` 후보를 구조화합니다. 메인 루프는 이 구조를 event와 recovery prompt에 그대로 반영합니다.
+- recovery retry는 이제 전역 delegation count만 보지 않고 `interpretation / execution / delivery / external`별 budget도 따로 확인합니다. 전달 실패가 execution 복구 예산을 모두 소모하지 않도록 정리하기 시작했습니다.
 - 메인 루프의 완료/승인/직접 전달/절단 복구 판단은 이제 `request-semantics.ts`의 원문 해석보다 intake가 넘긴 `execution_semantics`와 `structured_request`를 우선 사용합니다.
-- request-group 재연결과 활성 실행 취소 같은 진입 해석도 `runs` 밖에서 하도록 옮겨, `start.ts`는 intake가 넘긴 구조화된 entry semantics를 사용합니다.
+- request-group 재연결과 활성 실행 취소 같은 진입 해석은 `runs/entry-semantics.ts`에서 처리하고, `start.ts`는 그 결과만 사용합니다.
 - 일부 파일 검증 대상 추론은 아직 원 요청 문자열을 참고하지만, `Task Intake Bridge` 문구를 다시 파싱하는 방식은 제거했습니다.
 - 예약된 직접 메신저 전달도 더 이상 지연 타이머에서 채널로 바로 보내지 않고, 예약 run을 만든 뒤 메인 루프 안의 completion directive로 처리합니다.
 - 최종 완료 의미는 `start.ts` 메인 루프가 결정하고, `store.ts`는 그 상태를 저장하고 방송합니다.
 - 메신저 파일 전달 완료는 `FILE_SEND:` 같은 출력 문자열이 아니라, 채널 계층이 실제 전송을 마친 뒤 넘겨주는 구조화된 receipt를 기준으로 판단합니다.
+- 전달 receipt 처리와 파일 전달 요약, 청크 전달 에러 흡수는 이제 `delivery.ts`로 분리해 `start.ts`의 전달 책임을 줄이기 시작했습니다.
+- assistant 텍스트 응답 송신도 `delivery.ts`의 `emitAssistantTextDelivery()`로 옮기기 시작했습니다. `start.ts`는 완료/대기/중단 상태 전환에 더 집중하고, 실제 assistant 메시지 저장·stream event·chunk 송신은 전달 계층이 맡습니다.
+- 이 helper는 실행 성공과 전달 성공을 같은 의미로 뭉개지 않도록, 텍스트 chunk 실패와 done chunk 실패를 별도 outcome으로 분리합니다. 그래서 `실행은 성공했지만 응답 전달이 실패한 경우`도 이벤트와 테스트에서 따로 드러납니다.
+- Telegram 채널이 최종 텍스트를 실제로 전송하면 `textDeliveries` receipt를 반환하도록 정리하기 시작했습니다. 이제 파일 전달만이 아니라 텍스트 전달도 delivery 계층에서 구조화된 성공 신호로 다룹니다.
+- direct artifact delivery와 일반 실행 결과 전달의 경계도 `delivery.ts`의 `resolveDeliveryOutcome()`로 분리해, 전달 성공 여부가 completion 판단에 독립적으로 반영되도록 정리하고 있습니다.
+- completion review 이후의 `완료 / 후속 처리 / 빈 결과 복구 / ask_user / 중간 절단 복구` 분기도 `completion-flow.ts`에서 결정하기 시작해, `start.ts`는 decision 적용과 상태 전환에 더 집중하는 방향으로 정리하고 있습니다.
+- completion decision을 실제 retry/stop/awaiting_user/complete로 적용하는 후처리도 `completion-application.ts`로 분리해, `start.ts`는 budget 소비와 상태 반영만 남기는 방향으로 더 좁혀졌습니다.
+- 완료/대기/중단 상태 전환과 assistant 응답 송신 경계도 `finalization.ts`로 분리하기 시작해, `start.ts`는 finalization orchestration과 메인 루프 제어에 더 집중하는 방향으로 정리하고 있습니다.
+- `finalization.ts`는 전달 helper 의존성을 주입받도록 정리되어, 상태 전환과 assistant 송신을 실제 DB/eventBus 없이도 테스트할 수 있는 경계를 가집니다.
+- `journaling.ts`는 실행 결과 메모리 기록 경계입니다. `instruction/success/failure` 요약 생성과 focused error 추출, journal insert 예외 흡수를 `start.ts` 밖에서 공통화합니다.
+- `analysis-subrun.ts`는 결과 검증용 보조 run orchestration 경계입니다. 하위 run 생성, parent event 기록, `interrupted` 정리를 `start.ts` 밖에서 테스트 가능한 helper로 유지합니다.
+- `external-recovery.ts`는 외부 실행 복구 경계입니다. LLM/worker runtime 오류 뒤 reroute 여부, duplicate-stop, worker fallback, recovery prompt 조립을 `start.ts` 밖으로 공통화합니다.
+- `external-recovery-application.ts`는 external recovery plan 적용 경계입니다. duplicate-stop terminal 적용, recovery key 기록, route event 반영, next state/next message 전환을 `start.ts` 밖으로 공통화합니다.
+- `external-recovery-pass.ts`는 LLM/worker runtime 외부 복구의 `plan -> apply -> next state` 패스를 묶는 경계입니다. `start.ts`는 외부 복구 종류별로 거의 같은 블록을 두 번 들고 있지 않고 helper 결과만 반영합니다.
+- `external-recovery-sequence.ts`는 `llm -> worker_runtime` 외부 복구 순회 경계입니다. `start.ts`는 더 이상 recovery 종류 배열을 직접 순회하며 stop/retry를 수동으로 접지 않고, 전체 시퀀스 결과만 반영합니다.
+- `recovery-entry-pass.ts`는 chunk loop 직후 복구 진입 경계입니다. execution/LLM 복구 한도 중단, external recovery sequence, failed/aborted 종료를 한 패스로 묶어 `start.ts`가 직접 큰 분기 블록을 들고 있지 않도록 정리합니다.
+- `external-retry-application.ts`는 external recovery 재시도 적용 경계입니다. LLM/worker runtime 복구 실패 기록, external budget 사용, retry/stop 상태 전환을 `start.ts` 밖으로 공통화합니다.
+- `filesystem-recovery.ts`는 파일 작업 복구 경계입니다. 실제 파일 변경이 없는 경우와 검증 실패 경우를 `initial_retry/retry/stop/verified` decision으로 구조화해, `start.ts`가 직접 문자열과 분기를 오래 들고 있지 않게 정리합니다.
+- `filesystem-postpass.ts`는 파일 변경/검증 post-pass orchestration 경계입니다. missing mutation decision, verification subrun 호출, verification decision 적용을 하나의 helper 결과로 묶어 `start.ts`가 큰 두 블록을 직접 들고 있지 않게 정리합니다.
+- `delivery-postpass.ts`는 전달 후처리 경계입니다. preview 보정, 직접 결과 전달 완료, direct artifact delivery 복구 재시도/중단 결정을 메인 루프 밖 helper로 공통화합니다.
+- `delivery-pass.ts`는 전달 후처리 계산 경계입니다. delivery outcome, preview 보정, direct delivery application을 한 번에 계산해 `start.ts`가 전달 후처리 계산을 흩어 들고 있지 않도록 정리합니다.
+- `delivery-application.ts`는 direct artifact 전달 decision의 실제 적용 경계입니다. `start.ts`는 성공/중단/재시도 상태 반영만 하고, 전달 복구의 title/detail/step summary는 helper가 구조화합니다.
+- `delivery.ts`의 `deliverTrackedChunk()`는 실행 루프가 `deliverChunk + applyChunkDeliveryReceipt`를 직접 묶지 않도록, chunk 전달과 receipt 적용을 delivery 계층에서 한 번에 처리합니다.
+- `root-loop-launch.ts`는 이제 `originalUserRequest`를 별도 중간 값으로 다시 노출하지 않고, `rootLoopParams.originalRequest`와 verification/intake bridge wrapper 안에서만 유지합니다.
 - 도구가 실제로 실행된 태스크는 가능하면 `preview` 문구보다 구조화된 액션 결과와 delivery receipt를 완료 근거로 우선 사용합니다.
 - 권한이 필요한 작업에서 worker나 LLM이 설명문으로만 `허용/승인 필요`를 말하면, 그 문구를 그냥 완료로 닫지 않고 메인 루프에서 synthetic approval 요청으로 승격해 다시 진행합니다.
 - completion review가 실패해도 권한 안내 문구만으로는 완료 근거로 보지 않고, 승인 요청이나 다른 복구 경로를 우선 탑니다.

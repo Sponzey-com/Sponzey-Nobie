@@ -12,7 +12,7 @@ interface RunsState {
   ensureInitialized: (force?: boolean) => Promise<void>
   refresh: () => Promise<void>
   selectRun: (runId: string) => void
-  createRun: (message: string, sessionId?: string) => Promise<{ runId: string; sessionId: string; status: string }>
+  createRun: (message: string, sessionId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
   cancelRun: (runId: string) => Promise<void>
   upsertRun: (run: RootRun) => void
   replaceRun: (run: RootRun) => void

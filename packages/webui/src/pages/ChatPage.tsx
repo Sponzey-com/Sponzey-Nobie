@@ -190,6 +190,7 @@ export function ChatPage() {
     pendingApproval,
     inputError,
     addUserMessage,
+    addAssistantMessage,
     clearMessages,
     setSessionId,
     clearInputError,
@@ -268,11 +269,17 @@ export function ChatPage() {
     try {
       const response = await createRun(messageText, sessionId ?? undefined)
       setSessionId(response.sessionId)
+      if (response.receipt?.trim()) {
+        addAssistantMessage(response.receipt.trim())
+      }
       return
     } catch (createRunError) {
       try {
         const response = await api.sendMessage(messageText, sessionId ?? undefined)
         setSessionId(response.sessionId)
+        if (response.receipt?.trim()) {
+          addAssistantMessage(response.receipt.trim())
+        }
         return
       } catch (legacyError) {
         const message =

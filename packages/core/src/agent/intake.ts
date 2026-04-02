@@ -44,13 +44,6 @@ export interface TaskStructuredRequest {
   complete_condition: string[]
 }
 
-export type ActiveQueueCancellationMode = "latest" | "all"
-
-export interface RequestEntrySemantics {
-  reuse_conversation_context: boolean
-  active_queue_cancellation_mode: ActiveQueueCancellationMode | null
-}
-
 interface StructuredRequestEnvironment {
   destination: string
   contextLines: string[]
@@ -76,29 +69,52 @@ export interface TaskIntakeActionItem {
   payload: Record<string, unknown>
 }
 
+export interface TaskSchedulingSpec {
+  detected: boolean
+  kind: "one_time" | "recurring" | "none"
+  status: "accepted" | "failed" | "needs_clarification" | "not_applicable"
+  schedule_text: string
+  cron?: string
+  run_at?: string
+  failure_reason?: string
+}
+
+export interface TaskExecutionPlan {
+  requires_run: boolean
+  requires_delegation: boolean
+  suggested_target: string
+  max_delegation_turns: number
+  needs_tools: boolean
+  needs_web: boolean
+  execution_semantics: TaskExecutionSemantics
+}
+
+export interface TaskIntentEnvelope {
+  intent_type: TaskIntakeIntent["category"]
+  source_language: TaskStructuredRequestLanguage
+  normalized_english: string
+  target: string
+  destination: string
+  context: string[]
+  complete_condition: string[]
+  schedule_spec: TaskSchedulingSpec
+  execution_semantics: TaskExecutionSemantics
+  delivery_mode: TaskExecutionSemantics["artifactDelivery"]
+  requires_approval: boolean
+  approval_tool: TaskApprovalToolName
+  preferred_target: string
+  needs_tools: boolean
+  needs_web: boolean
+}
+
 export interface TaskIntakeResult {
   intent: TaskIntakeIntent
   user_message: TaskIntakeUserMessage
   action_items: TaskIntakeActionItem[]
   structured_request: TaskStructuredRequest
-  scheduling: {
-    detected: boolean
-    kind: "one_time" | "recurring" | "none"
-    status: "accepted" | "failed" | "needs_clarification" | "not_applicable"
-    schedule_text: string
-    cron?: string
-    run_at?: string
-    failure_reason?: string
-  }
-  execution: {
-    requires_run: boolean
-    requires_delegation: boolean
-    suggested_target: string
-    max_delegation_turns: number
-    needs_tools: boolean
-    needs_web: boolean
-    execution_semantics: TaskExecutionSemantics
-  }
+  intent_envelope: TaskIntentEnvelope
+  scheduling: TaskSchedulingSpec
+  execution: TaskExecutionPlan
   notes: string[]
 }
 
@@ -121,47 +137,6 @@ export function defaultTaskStructuredRequest(): TaskStructuredRequest {
     context: [],
     complete_condition: [],
   }
-}
-
-export function analyzeRequestEntrySemantics(message: string): RequestEntrySemantics {
-  return {
-    reuse_conversation_context: detectReuseConversationContext(message),
-    active_queue_cancellation_mode: detectActiveQueueCancellationMode(message),
-  }
-}
-
-export function buildActiveQueueCancellationMessage(params: {
-  originalMessage: string
-  mode: ActiveQueueCancellationMode
-  cancelledTitles: string[]
-  remainingCount: number
-  hadTargets: boolean
-}): string {
-  const english = isEnglishCancellationRequest(params.originalMessage)
-  if (!params.hadTargets) {
-    return english
-      ? "There is no active task in this conversation to cancel."
-      : "현재 이 대화에서 취소할 실행 중 작업이 없습니다."
-  }
-
-  const titleLines = params.cancelledTitles.map((title) => `- ${title}`).join("\n")
-  if (english) {
-    const heading = params.mode === "all"
-      ? `Cancelled ${params.cancelledTitles.length} active task(s) in this conversation.`
-      : "Cancelled the most recent active task in this conversation."
-    const tail = params.remainingCount > 0
-      ? `\n\n${params.remainingCount} other active task(s) are still running.`
-      : ""
-    return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
-  }
-
-  const heading = params.mode === "all"
-    ? `현재 대화의 활성 작업 ${params.cancelledTitles.length}건을 취소했습니다.`
-    : "현재 대화에서 가장 최근 활성 작업 1건을 취소했습니다."
-  const tail = params.remainingCount > 0
-    ? `\n\n아직 ${params.remainingCount}건의 다른 활성 작업은 계속 진행 중입니다.`
-    : ""
-  return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
 }
 
 export function parseTaskExecutionSemantics(value: unknown): TaskExecutionSemantics {
@@ -187,63 +162,6 @@ function inferStructuredRequestLanguage(text: string): TaskStructuredRequestLang
   return "unknown"
 }
 
-function detectReuseConversationContext(message: string): boolean {
-  const trimmed = message.trim()
-  if (!trimmed) return false
-
-  const koreanReferencePatterns = [
-    /(?:아까|방금|이전|전에|앞에서|위에서)\b/u,
-    /(?:기존(?:에)?|만들었던|만든|작성한|열었던|하던)\s*(?:것|거|파일|폴더|프로그램|화면|페이지)?/u,
-    /(?:그|저)\s*(?:것|거|파일|폴더|프로그램|화면|페이지|코드|달력|계산기)/u,
-    /(?:수정|고쳐|바꿔|이어(?:서)?|계속(?:해서)?|추가(?:해)?|보완(?:해)?|업데이트(?:해)?|리팩터링(?:해)?)/u,
-  ]
-  if (koreanReferencePatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  const koreanContinuationPatterns = [
-    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|아직|왜\s*안|안\s*돼|안돼|결과|오류|에러|실패)/u,
-    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
-  ]
-  if (koreanContinuationPatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  const englishReferencePatterns = [
-    /\b(?:previous|earlier|before|existing)\b/i,
-    /\b(?:that|it|those)\s+(?:file|folder|program|page|screen|code|calendar|calculator)\b/i,
-    /\b(?:modify|edit|fix|change|continue|resume|update|extend|improve|refactor)\b/i,
-    /\b(?:the file|the folder|the program|the page|the code)\b/i,
-    /\b(?:and|also|then|next|again|now|here|this|that|it|why|result|error|failed)\b/i,
-    /\b(?:show|send|fix|change|update|continue|resume|again)\b/i,
-  ]
-  if (englishReferencePatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  return trimmed.length <= 64 && tokenCount <= 8
-}
-
-function detectActiveQueueCancellationMode(message: string): ActiveQueueCancellationMode | null {
-  const trimmed = message.trim()
-  if (!trimmed) return null
-  if (/(일정|예약|알림|스케줄|schedule|reminder|notification|alarm)/iu.test(trimmed)) return null
-  if (!/(취소|중단|멈춰|그만|cancel|abort|stop)/iu.test(trimmed)) return null
-
-  const directPatterns = [
-    /^(지금|현재|방금)?\s*(진행\s*중인|하고\s*있는|돌고\s*있는)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(이|그)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(cancel|stop|abort)(\s+the)?(\s+(current|active|running|latest|queued))?(\s+(task|run|request|job|queue))?[.!?]*$/i,
-  ]
-
-  const looksDirect = directPatterns.some((pattern) => pattern.test(trimmed))
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  if (!looksDirect && tokenCount > 8) return null
-
-  if (/(모두|전부|다\s*(취소|중단)?|all|everything|every\s*(task|run|request|job)?)/iu.test(trimmed)) {
-    return "all"
-  }
-  return "latest"
-}
-
-function isEnglishCancellationRequest(message: string): boolean {
-  return !/[가-힣]/.test(message) && /[a-z]/i.test(message)
-}
 
 function normalizeStructuredText(value: string): string {
   return value.trim().replace(/\s+/gu, " ")
@@ -390,8 +308,8 @@ function inferStructuredRequestTarget(
 
 function inferStructuredRequestTo(
   actionItems: TaskIntakeActionItem[],
-  scheduling: TaskIntakeResult["scheduling"],
-  execution: TaskIntakeResult["execution"],
+  scheduling: TaskSchedulingSpec,
+  execution: TaskExecutionPlan,
   environment: StructuredRequestEnvironment,
 ): string {
   const replyAction = actionItems.find((action) => action.type === "reply")
@@ -433,7 +351,7 @@ function inferStructuredRequestTo(
 function inferStructuredRequestContext(
   userMessage: string,
   actionItems: TaskIntakeActionItem[],
-  scheduling: TaskIntakeResult["scheduling"],
+  scheduling: TaskSchedulingSpec,
   environment: StructuredRequestEnvironment,
 ): string[] {
   const contexts: string[] = [...environment.contextLines]
@@ -470,7 +388,7 @@ function inferStructuredRequestContext(
 function inferStructuredRequestCompleteCondition(
   intent: TaskIntakeIntent,
   actionItems: TaskIntakeActionItem[],
-  scheduling: TaskIntakeResult["scheduling"],
+  scheduling: TaskSchedulingSpec,
   environment: StructuredRequestEnvironment,
 ): string[] {
   for (const action of actionItems) {
@@ -510,9 +428,107 @@ function inferStructuredRequestCompleteCondition(
   return [`The requested work is executed and the result is delivered in ${environment.destination}.`]
 }
 
+type TaskIntakeCoreResult = Omit<TaskIntakeResult, "structured_request" | "intent_envelope">
+
+function finalizeStructuredArtifacts(params: {
+  userMessage: string
+  result: TaskIntakeCoreResult
+  environment: StructuredRequestEnvironment
+  structuredRequest: TaskStructuredRequest
+  normalized?: IntakeNormalizedRequest
+}): {
+  structuredRequest: TaskStructuredRequest
+  intentEnvelope: TaskIntentEnvelope
+  notes: string[]
+} {
+  const notes = [...params.result.notes]
+  const repairedFields: string[] = []
+  const normalizedEnglish =
+    normalizeStructuredText(params.structuredRequest.normalized_english)
+    || params.normalized?.normalizedEnglish
+    || buildNormalizedEnglishSummary(params.structuredRequest)
+  if (!normalizeStructuredText(params.structuredRequest.normalized_english)) {
+    repairedFields.push("normalized_english")
+  }
+
+  const target =
+    normalizeStructuredText(params.structuredRequest.target)
+    || inferStructuredRequestTarget(params.userMessage, params.result.intent.summary, params.result.action_items)
+  if (!normalizeStructuredText(params.structuredRequest.target)) {
+    repairedFields.push("target")
+  }
+
+  const destination =
+    normalizeStructuredText(params.structuredRequest.to)
+    || inferStructuredRequestTo(params.result.action_items, params.result.scheduling, params.result.execution, params.environment)
+  if (!normalizeStructuredText(params.structuredRequest.to)) {
+    repairedFields.push("destination")
+  }
+
+  const context =
+    params.structuredRequest.context.length > 0
+      ? params.structuredRequest.context
+      : inferStructuredRequestContext(params.userMessage, params.result.action_items, params.result.scheduling, params.environment)
+  if (params.structuredRequest.context.length === 0) {
+    repairedFields.push("context")
+  }
+
+  const completeCondition =
+    params.structuredRequest.complete_condition.length > 0
+      ? params.structuredRequest.complete_condition
+      : inferStructuredRequestCompleteCondition(params.result.intent, params.result.action_items, params.result.scheduling, params.environment)
+  if (params.structuredRequest.complete_condition.length === 0) {
+    repairedFields.push("complete_condition")
+  }
+
+  const structuredRequest: TaskStructuredRequest = {
+    source_language: params.structuredRequest.source_language,
+    normalized_english: normalizedEnglish,
+    target,
+    to: destination,
+    context,
+    complete_condition: completeCondition,
+  }
+  const intentEnvelope = buildTaskIntentEnvelope(params.result, structuredRequest)
+
+  if (repairedFields.length > 0) {
+    notes.push(`intent-envelope-repaired:${repairedFields.join(",")}`)
+  }
+  notes.push("intent-envelope-validated")
+
+  return {
+    structuredRequest,
+    intentEnvelope,
+    notes: Array.from(new Set(notes)),
+  }
+}
+
+function buildTaskIntentEnvelope(
+  result: TaskIntakeCoreResult,
+  structuredRequest: TaskStructuredRequest,
+): TaskIntentEnvelope {
+  return {
+    intent_type: result.intent.category,
+    source_language: structuredRequest.source_language,
+    normalized_english: structuredRequest.normalized_english,
+    target: structuredRequest.target,
+    destination: structuredRequest.to,
+    context: structuredRequest.context,
+    complete_condition: structuredRequest.complete_condition,
+    schedule_spec: result.scheduling,
+    execution_semantics: result.execution.execution_semantics,
+    delivery_mode: result.execution.execution_semantics.artifactDelivery,
+    requires_approval: result.execution.execution_semantics.approvalRequired,
+    approval_tool: result.execution.execution_semantics.approvalTool,
+    preferred_target: result.execution.suggested_target,
+    needs_tools: result.execution.needs_tools,
+    needs_web: result.execution.needs_web,
+  }
+}
+
 function synthesizeStructuredRequest(
   userMessage: string,
-  result: Omit<TaskIntakeResult, "structured_request">,
+  result: TaskIntakeCoreResult,
   environment: StructuredRequestEnvironment,
   normalized?: IntakeNormalizedRequest,
 ): TaskStructuredRequest {
@@ -533,7 +549,7 @@ function synthesizeStructuredRequest(
 function parseTaskStructuredRequest(
   value: unknown,
   fallbackUserMessage: string,
-  fallbackResult: Omit<TaskIntakeResult, "structured_request">,
+  fallbackResult: TaskIntakeCoreResult,
   environment: StructuredRequestEnvironment,
   normalized?: IntakeNormalizedRequest,
 ): TaskStructuredRequest {
@@ -573,13 +589,22 @@ function parseTaskStructuredRequest(
 
 function withStructuredRequest(
   userMessage: string,
-  result: Omit<TaskIntakeResult, "structured_request">,
+  result: TaskIntakeCoreResult,
   environment: StructuredRequestEnvironment,
   normalized?: IntakeNormalizedRequest,
 ): TaskIntakeResult {
+  const artifacts = finalizeStructuredArtifacts({
+    userMessage,
+    result,
+    environment,
+    structuredRequest: synthesizeStructuredRequest(userMessage, result, environment, normalized),
+    ...(normalized ? { normalized } : {}),
+  })
   return {
     ...result,
-    structured_request: synthesizeStructuredRequest(userMessage, result, environment, normalized),
+    notes: artifacts.notes,
+    structured_request: artifacts.structuredRequest,
+    intent_envelope: artifacts.intentEnvelope,
   }
 }
 
@@ -1206,7 +1231,7 @@ function parseTaskIntakeResult(
     if (typeof parsed.intent.summary !== "string" || typeof parsed.user_message.text !== "string") {
       return null
     }
-    const resultWithoutStructuredRequest: Omit<TaskIntakeResult, "structured_request"> = {
+    const resultWithoutStructuredArtifacts: TaskIntakeCoreResult = {
       intent: {
         category: isIntentCategory(parsed.intent.category) ? parsed.intent.category : "clarification",
         summary: parsed.intent.summary,
@@ -1252,9 +1277,24 @@ function parseTaskIntakeResult(
       notes: Array.isArray(parsed.notes) ? parsed.notes.filter((item): item is string => typeof item === "string") : [],
     }
 
+    const artifacts = finalizeStructuredArtifacts({
+      userMessage: latestUserMessage,
+      result: resultWithoutStructuredArtifacts,
+      environment,
+      structuredRequest: parseTaskStructuredRequest(
+        parsed.structured_request,
+        latestUserMessage,
+        resultWithoutStructuredArtifacts,
+        environment,
+        normalized,
+      ),
+      ...(normalized ? { normalized } : {}),
+    })
     return {
-      ...resultWithoutStructuredRequest,
-      structured_request: parseTaskStructuredRequest(parsed.structured_request, latestUserMessage, resultWithoutStructuredRequest, environment, normalized),
+      ...resultWithoutStructuredArtifacts,
+      notes: artifacts.notes,
+      structured_request: artifacts.structuredRequest,
+      intent_envelope: artifacts.intentEnvelope,
     }
   } catch {
     return null

@@ -7,8 +7,92 @@
 ## 주된 검증 범위
 
 - intake 휴리스틱과 intake 프롬프트 동작
+- ingress receipt와 intent envelope 회귀 동작
+- delivery receipt와 파일 전달 요약 동작
+- assistant 텍스트 송신 경계와 done chunk 전달 동작
+- tracked chunk helper의 chunk 전달과 receipt 적용 공통화 동작
+- 실행 성공과 전달 실패를 분리하는 assistant text delivery outcome 동작
+- Telegram 최종 텍스트 응답의 text delivery receipt 기록 동작
+- Telegram text/file primitive helper와 전달 순서 보장 동작
+- Telegram chunk helper의 텍스트 누적, tool status, 파일 전달 receipt 동작
+- CLI chunk helper의 텍스트, tool 상태, 오류 출력 동작
+- WebUI chat delivery helper의 assistant text/tool call 누적과 flush 동작
+- schedule action 실행, 예약 등록/취소, delegated follow-up prompt/receipt 조립 동작
+- loop pass application helper의 loop-entry / recovery-entry / post-execution / review-cycle 결과 적용 동작
+- execution cycle helper의 execution attempt / recovery entry / post-execution / review cycle 통합 동작
+- recovery key, route change, command/tool failure recovery 동작
+- recovery alternative 후보(`other_tool`, `other_extension`, `other_channel`, `other_schedule`) 동작
+- recovery budget helper의 failure kind별 사용량/한도 동작
+- direct artifact 전달 실패 recovery candidate와 채널별 텍스트 전달 실패 설명 동작
+- delivery outcome, preview 보정, direct delivery application을 묶는 delivery pass helper 동작
+- execution evidence, filesystem mutation detection, completion evidence, `ToolExecutionReceipt.executor` 분류 동작
+- `tool_start/tool_end` chunk apply helper 동작
+- error chunk helper의 worker runtime recovery / fatal failure / 전달 동작
+- execution attempt helper의 stream 생성 / chunk loop / error chunk / tracked delivery 통합 동작
+- intake bridge helper의 즉시 응답 / schedule retry_intake / delegated follow-up 생성 동작
+- loop directive helper의 complete / awaiting_user / retry_intake guard 동작
+- loop bootstrap helper의 initial directive / queued restart / worker runtime bypass 동작
+- start plan helper의 request-group / reconnect / context mode / worker session 계산 동작
+- start initialization helper의 journal / queue 상태 / reconnect 이벤트 / worker session 이벤트 동작
+- start launch helper의 start-plan / session ensure / run 생성 / start initialization 통합 동작
+- run queueing helper의 request-group 직렬화, delayed run arm/fire 동작
+- start bridges helper의 finalization dependency 조립, loop directive apply, intake bridge 위임 동작
+- start driver dependencies helper의 finalization/runtime/driver wiring 조립 동작
+- execution profile helper의 fallback structured request / intent envelope / loop runtime state 초기화 동작
+- root loop launch helper의 runtime state -> root loop params/dependencies bridge 동작
+- root run driver failure helper의 fatal failure 종료와 error chunk 전달 동작
+- root run driver helper의 execution profile 초기화 / root loop 실행 / fatal failure / cleanup 동작
+- root loop helper의 bootstrap / loop-entry / execution-cycle 통합 동작
+- root loop bootstrap state helper의 bootstrap 결과와 초기 execution state 조립 동작
+- root loop pass launch helper의 `loop-entry` / `execution-cycle` wiring 동작
+- root loop turn helper의 `loop-entry -> execution-cycle` turn과 next state 계산 동작
+- execution chunk helper의 text / execution_recovery / tool_start / tool_end / llm_recovery 처리 동작
+- `execution_recovery` helper의 failure journal, execution budget, retry/stop 적용 동작
+- execution post-pass helper의 command failure / generic execution recovery decision 동작
+- execution post-pass application helper의 retry/stop/continue 적용 동작
+- tool execution receipt의 성공 도구 누적, 파일 변경 경로 누적, 명령 실패 누적 적용 동작
+- filesystem verification prompt, 검증 대상 추론, 실제 파일/폴더 존재 확인 동작
+- filesystem post-pass helper의 missing mutation / verification retry / verified 동작
+- execution runtime helper의 worker runtime/agent 경로 선택 동작
+- structured tool execution receipt 동작
+- structured schedule action receipt 동작
+- synthetic approval detection 동작
+- synthetic approval 요청의 timeout / allow_run / deny orchestration 동작
+- synthetic approval 승인 후 continuation 결정과 `scope grant -> running 전환 -> next message` apply helper 동작
+- synthetic approval scope 재사용 / 승인 요청 / continuation pass helper 동작
+- completion review 호출과 synthetic approval 감지 묶음 helper 동작
+- review pass와 review outcome pass를 묶는 review cycle helper 동작
+- review outcome helper의 synthetic approval retry / completion retry·break 동작
+- 실행 종료 후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입 helper 동작
+- completion review 이후 flow decision과 application decision 조합 helper 동작
+- completion application의 `complete/stop/retry/awaiting_user` pass helper 동작
+- `retry_intake`의 failure journal, interpretation budget, retry/stop apply helper 동작
+- execution chunk failure와 unexpected error의 failed/cancelled apply helper 동작
+- review 준비와 direct delivery complete/stop/retry pass helper 동작
+- execution post-pass, delivery pass, filesystem post-pass, review-entry를 묶는 post-execution helper 동작
+- filesystem post-pass의 stop/initial_retry/retry/verified apply helper 동작
+- retry/continuation 공통 running 상태 적용 helper 동작
+- recovery retry 공통의 실패 기록, budget 소모, recovery event, running 전환 helper 동작
+- direct delivery 완료와 일반 completion 완료의 공통 success/status 업데이트 helper 동작
+- stop/awaiting_user terminal 상태 공통 적용 helper 동작
+- direct delivery outcome과 일반 전달 outcome 구분 동작
 - run 라우팅과 scheduled-run 정책
 - completion review와 instruction merge 동작
+- completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 분기 동작
+- completion decision의 retry/stop/awaiting_user/complete 적용 helper 동작
+- assistant 응답 송신, awaiting_user 전환, cancelled/completed finalization 동작
+- finalization helper가 전달 계층 의존성을 주입받아 DB/eventBus 없이도 검증되는지 확인하는 동작
+- instruction/success/failure journal 입력 조립과 안전한 insert 예외 흡수 동작
+- analysis-only subrun 생성, parent event 기록, interrupted 종료 정리 동작
+- external recovery reroute, duplicate-stop, worker fallback 동작
+- external recovery plan 적용 helper의 duplicate-stop/route event/state transition 동작
+- external recovery의 plan/apply/next state pass helper 동작
+- external recovery의 `llm -> worker_runtime` sequence helper 동작
+- recovery entry helper의 stop/retry/failed-continue 분기 동작
+- external recovery retry helper의 failure journal, external budget, retry/stop 적용 동작
+- filesystem mutation/verification recovery decision 동작
+- delivery post-pass preview 보정과 direct artifact delivery decision 동작
+- direct artifact delivery decision의 complete/retry/stop 적용 helper 동작
 - MCP와 provider 관련 예외 케이스
 
 ## 메모

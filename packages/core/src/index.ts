@@ -84,6 +84,8 @@ export { startChannels, TelegramChannel } from "./channels/index.js"
 // Runs
 export { startRootRun } from "./runs/start.js"
 export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
+export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js"
+export type { IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
 
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"

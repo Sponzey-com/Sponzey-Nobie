@@ -83,7 +83,7 @@ export const api = {
     ),
 
   sendMessage: (message: string, sessionId?: string) =>
-    request<{ sessionId: string; status: string; }>("/api/agent/run", {
+    request<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>("/api/agent/run", {
       method: "POST",
       body: JSON.stringify({ message, sessionId }),
     }),
@@ -97,7 +97,7 @@ export const api = {
   runTimeline: (runId: string) => request<{ events: RunEvent[] }>(`/api/runs/${runId}/timeline`),
 
   createRun: (message: string, sessionId?: string) =>
-    request<{ runId: string; sessionId: string; status: string }>("/api/runs", {
+    request<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>("/api/runs", {
       method: "POST",
       body: JSON.stringify({ message, sessionId }),
     }),

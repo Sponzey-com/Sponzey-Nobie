@@ -1,11 +1,10 @@
-import { bootstrapRuntime, startRootRun } from "@nobie/core"
+import { bootstrapRuntime, startIngressRun } from "@nobie/core"
 import type { AgentChunk } from "@nobie/core"
+import { createCliChunkDeliveryHandler } from "../chunk-delivery.js"
 
 const RESET = "\x1b[0m"
 const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
-const GREEN = "\x1b[32m"
-const RED = "\x1b[31m"
 const DIM = "\x1b[2m"
 const BOLD = "\x1b[1m"
 
@@ -64,9 +63,11 @@ export async function runCommand(message: string, options: {
   }
 
   process.stdout.write("\n")
-
-  const startMs = Date.now()
-  const started = startRootRun({
+  const handleChunk = createCliChunkDeliveryHandler({
+    stdout: process.stdout,
+    stderr: process.stderr,
+  })
+  const { started, receipt } = startIngressRun({
     message,
     sessionId: options.session,
     model: options.model,
@@ -76,41 +77,15 @@ export async function runCommand(message: string, options: {
       handleChunk(chunk)
     },
   })
+  if (receipt.text.trim()) {
+    process.stderr.write(c(DIM, `${receipt.text}\n\n`))
+  }
 
+  const startMs = Date.now()
   await started.finished
 
   const durationSec = ((Date.now() - startMs) / 1000).toFixed(1)
   process.stdout.write("\n" + c(DIM, `\n⏱  Done in ${durationSec}s\n`))
-}
-
-function handleChunk(chunk: AgentChunk) {
-  switch (chunk.type) {
-    case "text":
-      process.stdout.write(chunk.delta)
-      break
-
-    case "tool_start":
-      process.stderr.write(
-        "\n" + c(CYAN, `🔧 ${chunk.toolName}`) + " " +
-        c(DIM, JSON.stringify(chunk.params)) + "\n",
-      )
-      break
-
-    case "tool_end":
-      process.stderr.write(
-        chunk.success
-          ? c(GREEN, `   ✓ ${chunk.toolName}\n`)
-          : c(RED, `   ✗ ${chunk.toolName}: ${chunk.output}\n`),
-      )
-      break
-
-    case "error":
-      process.stderr.write("\n" + c(RED, `Error: ${chunk.message}`) + "\n")
-      break
-
-    case "done":
-      break
-  }
 }
 
 function readLine(): Promise<string> {
