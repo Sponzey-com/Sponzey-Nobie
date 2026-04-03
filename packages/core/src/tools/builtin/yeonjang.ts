@@ -1,6 +1,6 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import type { AgentTool, ToolContext, ToolResult } from "../types.js"
+import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult } from "../types.js"
 import { invokeYeonjangMethod, DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js"
 import { PATHS } from "../../config/index.js"
 
@@ -144,6 +144,7 @@ export const yeonjangCameraListTool: AgentTool<YeonjangCameraListParams> = {
         success: true,
         output: formatCameraList(extensionId, devices),
         details: {
+          via: "yeonjang",
           extensionId,
           devices,
         },
@@ -215,19 +216,31 @@ export const yeonjangCameraCaptureTool: AgentTool<YeonjangCameraCaptureParams> =
 
       validateYeonjangBinaryCaptureResult(result)
       const localSavedPath = saveInlineCapture(extensionId, result)
+      let artifactDetails: ArtifactDeliveryResultDetails | undefined
       if (localSavedPath) {
+        const localFileSize = statSync(localSavedPath).size
         details.localSavedPath = localSavedPath
-        try {
-          details.localFileSize = statSync(localSavedPath).size
-        } catch {
-          // ignore local stat failure
+        details.localFileSize = localFileSize
+        if (ctx.source === "webui") {
+          artifactDetails = {
+            kind: "artifact_delivery",
+            channel: "webui",
+            filePath: localSavedPath,
+            size: localFileSize,
+            source: ctx.source,
+            ...(result.mime_type ? { mimeType: result.mime_type } : {}),
+          }
         }
       }
 
       return {
         success: true,
         output: `${formatCaptureOutput(extensionId, result)}${localSavedPath ? `\n로컬 저장: ${localSavedPath}` : ""}`,
-        details,
+        details: {
+          via: "yeonjang",
+          ...details,
+          ...(artifactDetails ?? {}),
+        },
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

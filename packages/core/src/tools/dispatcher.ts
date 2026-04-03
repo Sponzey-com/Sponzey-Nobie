@@ -418,10 +418,14 @@ function describeApprovalAction(toolName: string, params: Record<string, unknown
       return "마우스 포인터를 이동하려고 합니다."
     case "mouse_click":
       return "마우스 클릭을 실행하려고 합니다."
+    case "mouse_action":
+      return "마우스 액션을 자동으로 실행하려고 합니다."
     case "keyboard_type":
       return "키보드 입력을 자동으로 실행하려고 합니다."
     case "keyboard_shortcut":
       return "키보드 단축키를 자동으로 실행하려고 합니다."
+    case "keyboard_action":
+      return "키보드 액션을 자동으로 실행하려고 합니다."
     case "window_focus":
       return "특정 창으로 포커스를 이동하려고 합니다."
     case "file_delete":
@@ -456,8 +460,10 @@ const SCREEN_INTERACTION_TOOL_NAMES = new Set([
   "window_focus",
   "mouse_move",
   "mouse_click",
+  "mouse_action",
   "keyboard_type",
   "keyboard_shortcut",
+  "keyboard_action",
 ])
 
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./types.js"

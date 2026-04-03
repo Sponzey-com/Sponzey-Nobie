@@ -5,16 +5,26 @@ export interface ToolCall {
   success?: boolean
 }
 
+export interface ArtifactAttachment {
+  url: string
+  fileName: string
+  filePath?: string
+  mimeType?: string
+  caption?: string
+}
+
 interface PendingAssistantRunState {
   sessionId: string
   content: string
   toolCalls: ToolCall[]
+  artifacts: ArtifactAttachment[]
 }
 
 export interface FlushedAssistantRun {
   runId: string
   content: string
   toolCalls?: ToolCall[]
+  artifacts?: ArtifactAttachment[]
 }
 
 export function createPendingAssistantTracker() {
@@ -26,10 +36,12 @@ export function createPendingAssistantTracker() {
     },
 
     start(runId: string, sessionId: string) {
+      if (pendingAssistantByRun.has(runId)) return
       pendingAssistantByRun.set(runId, {
         sessionId,
         content: "",
         toolCalls: [],
+        artifacts: [],
       })
     },
 
@@ -55,6 +67,18 @@ export function createPendingAssistantTracker() {
       )
     },
 
+    addArtifact(runId: string, artifact: ArtifactAttachment) {
+      const current = pendingAssistantByRun.get(runId)
+      if (!current) return
+      const alreadyPresent = current.artifacts.some((item) =>
+        item.url === artifact.url
+        && item.fileName === artifact.fileName
+        && item.caption === artifact.caption,
+      )
+      if (alreadyPresent) return
+      current.artifacts.push(artifact)
+    },
+
     flush(runId: string): FlushedAssistantRun | null {
       const current = pendingAssistantByRun.get(runId)
       if (!current) return null
@@ -62,12 +86,14 @@ export function createPendingAssistantTracker() {
 
       const content = current.content.trim()
       const hasToolCalls = current.toolCalls.length > 0
-      if (!content && !hasToolCalls) return null
+      const hasArtifacts = current.artifacts.length > 0
+      if (!content && !hasToolCalls && !hasArtifacts) return null
 
       return {
         runId,
         content,
         ...(hasToolCalls ? { toolCalls: current.toolCalls } : {}),
+        ...(hasArtifacts ? { artifacts: current.artifacts } : {}),
       }
     },
   }

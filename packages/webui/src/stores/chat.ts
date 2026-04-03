@@ -4,8 +4,8 @@ import { isAiRelatedError, mapChatErrorMessage } from "../lib/chat-errors"
 import { getCurrentUiLanguage } from "./uiLanguage"
 import { useRunsStore } from "./runs"
 import { createPendingAssistantTracker } from "./chat-delivery"
-export type { ToolCall } from "./chat-delivery"
-import type { ToolCall } from "./chat-delivery"
+export type { ArtifactAttachment, ToolCall } from "./chat-delivery"
+import type { ArtifactAttachment, ToolCall } from "./chat-delivery"
 
 export interface Message {
   id: string
@@ -15,6 +15,7 @@ export interface Message {
   streaming?: boolean
   pendingContent?: string
   toolCalls?: ToolCall[]
+  artifacts?: ArtifactAttachment[]
 }
 
 export interface ApprovalRequest {
@@ -123,24 +124,40 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
     case "agent.stream":
       if (!incomingSessionId || !runId) break
       if (activeSessionId && incomingSessionId !== activeSessionId) break
+      pendingAssistantTracker.start(runId, incomingSessionId)
       appendPendingDelta(runId, data.delta as string)
       break
 
     case "tool.before":
       if (!incomingSessionId || !runId) break
       if (activeSessionId && incomingSessionId !== activeSessionId) break
+      pendingAssistantTracker.start(runId, incomingSessionId)
       addPendingToolCall(runId, { name: data.toolName as string, params: data.params })
       break
 
     case "tool.after":
       if (!incomingSessionId || !runId) break
       if (activeSessionId && incomingSessionId !== activeSessionId) break
+      pendingAssistantTracker.start(runId, incomingSessionId)
       updatePendingToolCall(
         runId,
         data.toolName as string,
         String(data.output ?? ""),
         data.success as boolean,
       )
+      break
+
+    case "agent.artifact":
+      if (!incomingSessionId || !runId) break
+      if (activeSessionId && incomingSessionId !== activeSessionId) break
+      pendingAssistantTracker.start(runId, incomingSessionId)
+      addPendingArtifact(runId, {
+        url: String(data.url ?? ""),
+        fileName: String(data.fileName ?? ""),
+        ...(typeof data.filePath === "string" ? { filePath: data.filePath } : {}),
+        ...(typeof data.mimeType === "string" ? { mimeType: data.mimeType } : {}),
+        ...(typeof data.caption === "string" ? { caption: data.caption } : {}),
+      })
       break
 
     case "agent.end":
@@ -222,6 +239,11 @@ function updatePendingToolCall(runId: string, name: string, result: string, succ
   pendingAssistantTracker.updateToolCall(runId, name, result, success)
 }
 
+function addPendingArtifact(runId: string, artifact: ArtifactAttachment): void {
+  if (!artifact.url || !artifact.fileName) return
+  pendingAssistantTracker.addArtifact(runId, artifact)
+}
+
 function flushPendingAssistantRun(runId: string): void {
   const flushed = pendingAssistantTracker.flush(runId)
   if (!flushed) return
@@ -235,6 +257,7 @@ function flushPendingAssistantRun(runId: string): void {
         role: "assistant",
         content: flushed.content,
         ...(flushed.toolCalls ? { toolCalls: flushed.toolCalls } : {}),
+        ...(flushed.artifacts ? { artifacts: flushed.artifacts } : {}),
       },
     ],
   }))

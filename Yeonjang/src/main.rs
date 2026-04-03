@@ -39,7 +39,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("Usage: nobie-yeonjang [--gui | --stdio | --exec <command> | --exec-bin <program> [args...]]");
+    eprintln!(
+        "Usage: nobie-yeonjang [--gui | --stdio | --exec <command> | --exec-bin <program> [args...]]"
+    );
     std::process::exit(2);
 }
 
@@ -56,9 +58,9 @@ fn run_stdio() -> Result<()> {
         }
 
         let response = match serde_json::from_str::<Request>(trimmed) {
-            Ok(request) => spawn_request_task(request)
-                .join()
-                .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked")),
+            Ok(request) => spawn_request_task(request).join().unwrap_or_else(|_| {
+                Response::error(None, "request_failed", "request thread panicked")
+            }),
             Err(error) => Response::error(None, "invalid_request", error.to_string()),
         };
 

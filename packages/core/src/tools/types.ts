@@ -13,9 +13,10 @@ export interface ToolContext {
 
 export interface ArtifactDeliveryResultDetails {
   kind: "artifact_delivery"
-  channel: "telegram"
+  channel: "telegram" | "webui"
   filePath: string
   caption?: string
+  mimeType?: string
   size: number
   source: ToolContext["source"]
 }
@@ -25,7 +26,7 @@ export function isArtifactDeliveryResultDetails(value: unknown): value is Artifa
 
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
   return candidate.kind === "artifact_delivery"
-    && candidate.channel === "telegram"
+    && (candidate.channel === "telegram" || candidate.channel === "webui")
     && typeof candidate.filePath === "string"
     && typeof candidate.size === "number"
     && typeof candidate.source === "string"

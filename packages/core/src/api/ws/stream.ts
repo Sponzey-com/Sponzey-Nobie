@@ -24,6 +24,7 @@ function broadcast(data: unknown): void {
 function setupEventForwarding(): void {
   eventBus.on("agent.start", (e) => broadcast({ type: "agent.start", ...e }))
   eventBus.on("agent.stream", (e) => broadcast({ type: "agent.stream", ...e }))
+  eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }))
   eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }))
   eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }))
   eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }))

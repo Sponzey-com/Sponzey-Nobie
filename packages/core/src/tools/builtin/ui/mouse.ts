@@ -32,6 +32,15 @@ interface MouseClickParams {
   double?: boolean
 }
 
+interface MouseActionParams {
+  action: "move" | "click" | "double_click" | "button_down" | "button_up" | "scroll"
+  x?: number
+  y?: number
+  button?: "left" | "right" | "middle"
+  deltaX?: number
+  deltaY?: number
+}
+
 interface YeonjangMouseMoveResult {
   moved: boolean
   x: number
@@ -45,6 +54,17 @@ interface YeonjangMouseClickResult {
   y: number
   button: string
   double: boolean
+  message: string
+}
+
+interface YeonjangMouseActionResult {
+  accepted: boolean
+  action: string
+  x?: number
+  y?: number
+  button?: string
+  delta_x?: number
+  delta_y?: number
   message: string
 }
 
@@ -136,5 +156,73 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
       }
     }
     return yeonjangRequiredFailure("mouse.click")
+  },
+}
+
+export const mouseActionTool: AgentTool<MouseActionParams> = {
+  name: "mouse_action",
+  description: "마우스 액션을 실행합니다. move, click, double_click, button_down, button_up, scroll을 지원합니다.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["move", "click", "double_click", "button_down", "button_up", "scroll"],
+        description: "실행할 마우스 액션",
+      },
+      x: { type: "number", description: "X 좌표 (선택)" },
+      y: { type: "number", description: "Y 좌표 (선택)" },
+      button: {
+        type: "string",
+        enum: ["left", "right", "middle"],
+        description: "대상 버튼 (기본: left)",
+      },
+      deltaX: { type: "number", description: "가로 스크롤 값" },
+      deltaY: { type: "number", description: "세로 스크롤 값" },
+    },
+    required: ["action"],
+  },
+  riskLevel: "moderate",
+  requiresApproval: true,
+  execute: async (params: MouseActionParams, _ctx: ToolContext): Promise<ToolResult> => {
+    await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
+
+    try {
+      if (await canYeonjangHandleMethod("mouse.action")) {
+        const remote = await invokeYeonjangMethod<YeonjangMouseActionResult>(
+          "mouse.action",
+          {
+            action: params.action,
+            ...(typeof params.x === "number" ? { x: params.x } : {}),
+            ...(typeof params.y === "number" ? { y: params.y } : {}),
+            ...(params.button ? { button: params.button } : {}),
+            ...(typeof params.deltaX === "number" ? { delta_x: params.deltaX } : {}),
+            ...(typeof params.deltaY === "number" ? { delta_y: params.deltaY } : {}),
+          },
+          { timeoutMs: 15_000 },
+        )
+        return {
+          success: remote.accepted,
+          output: remote.message || `마우스 액션 실행: ${params.action}`,
+          details: {
+            via: "yeonjang",
+            action: remote.action,
+            x: remote.x,
+            y: remote.y,
+            button: remote.button,
+            deltaX: remote.delta_x,
+            deltaY: remote.delta_y,
+          },
+          ...(remote.accepted ? {} : { error: "remote_mouse_action_failed" }),
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 마우스 액션 실패: ${message}`, error: message }
+      }
+    }
+
+    return yeonjangRequiredFailure("mouse.action")
   },
 }

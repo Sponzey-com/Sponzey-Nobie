@@ -10,11 +10,12 @@ use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
-    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest, CommandExecutionResult,
-    KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult, KeyboardTypeRequest,
-    KeyboardTypeResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
-    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest, SystemControlResult,
-    SystemSnapshot,
+    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
+    CommandExecutionResult, KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult,
+    KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind, MouseActionRequest,
+    MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
+    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
+    SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -33,7 +34,7 @@ impl AutomationBackend for PlatformBackend {
             command_execution: true,
             application_launch: true,
             screen_capture: true,
-            mouse_control: false,
+            mouse_control: true,
             keyboard_control: true,
             system_control: false,
         }
@@ -109,8 +110,8 @@ impl AutomationBackend for PlatformBackend {
             );
         }
 
-        let payload: Value =
-            serde_json::from_slice(&output.stdout).context("failed to parse system_profiler output")?;
+        let payload: Value = serde_json::from_slice(&output.stdout)
+            .context("failed to parse system_profiler output")?;
         let items = payload
             .get("SPCameraDataType")
             .and_then(Value::as_array)
@@ -164,9 +165,12 @@ impl AutomationBackend for PlatformBackend {
         }
         command.arg("--inline-base64");
 
-        let output = command
-            .output()
-            .with_context(|| format!("failed to execute camera capture helper: {}", script_path.display()))?;
+        let output = command.output().with_context(|| {
+            format!(
+                "failed to execute camera capture helper: {}",
+                script_path.display()
+            )
+        })?;
 
         let _ = fs::remove_file(&script_path);
 
@@ -223,7 +227,8 @@ impl AutomationBackend for PlatformBackend {
     fn capture_screen(&self, request: ScreenCaptureRequest) -> Result<ScreenCaptureResult> {
         shared::validate_screen_request(&request)?;
         let inline_base64 = true;
-        let (output_path, _explicit_output_path) = resolve_screen_output_path(request.output_path.as_deref())?;
+        let (output_path, _explicit_output_path) =
+            resolve_screen_output_path(request.output_path.as_deref())?;
         let script_path = write_swift_screen_script()?;
 
         let mut command = Command::new("xcrun");
@@ -290,12 +295,132 @@ impl AutomationBackend for PlatformBackend {
 
     fn move_mouse(&self, request: MouseMoveRequest) -> Result<MouseMoveResult> {
         shared::validate_mouse_move(&request)?;
-        bail!("{}", shared::not_implemented("mouse.move", self.platform_kind()))
+        move_mouse_via_core_graphics(request.x, request.y)?;
+        Ok(MouseMoveResult {
+            moved: true,
+            x: request.x,
+            y: request.y,
+            message: "Mouse move completed.".to_string(),
+        })
     }
 
     fn click_mouse(&self, request: MouseClickRequest) -> Result<MouseClickResult> {
         shared::validate_mouse_click(&request)?;
-        bail!("{}", shared::not_implemented("mouse.click", self.platform_kind()))
+        let button = normalize_mouse_button_name(&request.button)?;
+        click_mouse_via_core_graphics(request.x, request.y, button, request.double)?;
+        Ok(MouseClickResult {
+            clicked: true,
+            x: request.x,
+            y: request.y,
+            button: button.to_string(),
+            double: request.double,
+            message: if request.double {
+                "Mouse double click completed.".to_string()
+            } else {
+                "Mouse click completed.".to_string()
+            },
+        })
+    }
+
+    fn perform_mouse_action(&self, request: MouseActionRequest) -> Result<MouseActionResult> {
+        match request.action {
+            MouseActionKind::Move => {
+                let x = request
+                    .x
+                    .ok_or_else(|| anyhow::anyhow!("mouse.action `move` requires `x`"))?;
+                let y = request
+                    .y
+                    .ok_or_else(|| anyhow::anyhow!("mouse.action `move` requires `y`"))?;
+                let result = self.move_mouse(MouseMoveRequest { x, y })?;
+                Ok(MouseActionResult {
+                    accepted: result.moved,
+                    action: MouseActionKind::Move,
+                    x: Some(result.x),
+                    y: Some(result.y),
+                    button: None,
+                    delta_x: None,
+                    delta_y: None,
+                    message: result.message,
+                })
+            }
+            MouseActionKind::Click | MouseActionKind::DoubleClick => {
+                let x = request.x.ok_or_else(|| {
+                    anyhow::anyhow!("mouse.action `{}` requires `x`", request.action.as_str())
+                })?;
+                let y = request.y.ok_or_else(|| {
+                    anyhow::anyhow!("mouse.action `{}` requires `y`", request.action.as_str())
+                })?;
+                let double = matches!(request.action, MouseActionKind::DoubleClick);
+                let result = self.click_mouse(MouseClickRequest {
+                    x,
+                    y,
+                    button: request.button,
+                    double,
+                })?;
+                Ok(MouseActionResult {
+                    accepted: result.clicked,
+                    action: if result.double {
+                        MouseActionKind::DoubleClick
+                    } else {
+                        MouseActionKind::Click
+                    },
+                    x: Some(result.x),
+                    y: Some(result.y),
+                    button: Some(result.button),
+                    delta_x: None,
+                    delta_y: None,
+                    message: result.message,
+                })
+            }
+            MouseActionKind::ButtonDown | MouseActionKind::ButtonUp => {
+                let point =
+                    resolve_optional_mouse_point(request.x, request.y, request.action.as_str())?;
+                let button = normalize_mouse_button_name(&request.button)?;
+                run_mouse_action_helper(build_mouse_action_helper_args(
+                    request.action,
+                    point,
+                    button,
+                    None,
+                    None,
+                ))?;
+                Ok(MouseActionResult {
+                    accepted: true,
+                    action: request.action,
+                    x: point.map(|(x, _)| x),
+                    y: point.map(|(_, y)| y),
+                    button: Some(button.to_string()),
+                    delta_x: None,
+                    delta_y: None,
+                    message: format!("Mouse {} completed.", request.action.as_str()),
+                })
+            }
+            MouseActionKind::Scroll => {
+                let point =
+                    resolve_optional_mouse_point(request.x, request.y, request.action.as_str())?;
+                let delta_x = request.delta_x.unwrap_or(0);
+                let delta_y = request.delta_y.unwrap_or(0);
+                if delta_x == 0 && delta_y == 0 {
+                    bail!("mouse.action `scroll` requires non-zero `delta_x` or `delta_y`");
+                }
+                run_mouse_action_helper(build_mouse_action_helper_args(
+                    request.action,
+                    point,
+                    "left",
+                    Some(delta_x),
+                    Some(delta_y),
+                ))?;
+                Ok(MouseActionResult {
+                    accepted: true,
+                    action: MouseActionKind::Scroll,
+                    x: point.map(|(x, _)| x),
+                    y: point.map(|(_, y)| y),
+                    button: None,
+                    delta_x: Some(delta_x),
+                    delta_y: Some(delta_y),
+                    message: "Mouse scroll completed.".to_string(),
+                })
+            }
+        }
     }
 
     fn type_text(&self, request: KeyboardTypeRequest) -> Result<KeyboardTypeResult> {
@@ -344,10 +469,28 @@ impl AutomationBackend for PlatformBackend {
             }
             KeyboardActionKind::KeyPress
             | KeyboardActionKind::KeyDown
-            | KeyboardActionKind::KeyUp => bail!(
-                "keyboard.action `{}` is scaffolded but not implemented yet",
-                request.action.as_str()
-            ),
+            | KeyboardActionKind::KeyUp => {
+                let key = request.key.unwrap_or_default();
+                if key.trim().is_empty() {
+                    bail!(
+                        "keyboard.action `{}` requires non-empty `key`",
+                        request.action.as_str()
+                    );
+                }
+                perform_keyboard_key_action_via_core_graphics(
+                    request.action,
+                    &key,
+                    &request.modifiers,
+                )?;
+                Ok(KeyboardActionResult {
+                    accepted: true,
+                    action: request.action,
+                    text_len: None,
+                    key: Some(key),
+                    modifiers: request.modifiers,
+                    message: format!("Keyboard {} completed.", request.action.as_str()),
+                })
+            }
         }
     }
 }
@@ -411,6 +554,175 @@ fn trigger_shortcut_via_system_events(key: &str, modifiers: &[String]) -> Result
     run_osascript(&script)
 }
 
+fn move_mouse_via_core_graphics(x: i32, y: i32) -> Result<()> {
+    run_mouse_action_helper(build_mouse_action_helper_args(
+        MouseActionKind::Move,
+        Some((x, y)),
+        "left",
+        None,
+        None,
+    ))
+}
+
+fn click_mouse_via_core_graphics(x: i32, y: i32, button: &str, double: bool) -> Result<()> {
+    run_mouse_action_helper(build_mouse_action_helper_args(
+        if double {
+            MouseActionKind::DoubleClick
+        } else {
+            MouseActionKind::Click
+        },
+        Some((x, y)),
+        button,
+        None,
+        None,
+    ))
+}
+
+fn perform_keyboard_key_action_via_core_graphics(
+    action: KeyboardActionKind,
+    key: &str,
+    modifiers: &[String],
+) -> Result<()> {
+    let key_code = resolve_macos_keyboard_key_code(key)?;
+    let modifier_codes = build_modifier_key_codes(modifiers)?;
+    let mut args = vec![
+        action.as_str().to_string(),
+        "--keycode".to_string(),
+        key_code.to_string(),
+    ];
+    for modifier_code in modifier_codes {
+        args.push("--modifier".to_string());
+        args.push(modifier_code.to_string());
+    }
+    run_keyboard_action_helper(args)
+}
+
+fn run_mouse_action_helper(args: Vec<String>) -> Result<()> {
+    let script_path = write_swift_mouse_action_script()?;
+    let output = Command::new("xcrun")
+        .arg("swift")
+        .arg(&script_path)
+        .args(&args)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to execute mouse automation helper: {}",
+                script_path.display()
+            )
+        })?;
+
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "mouse automation failed: {}{}{}",
+            stderr.trim(),
+            if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                " | "
+            } else {
+                ""
+            },
+            stdout.trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn run_keyboard_action_helper(args: Vec<String>) -> Result<()> {
+    let script_path = write_swift_keyboard_action_script()?;
+    let output = Command::new("xcrun")
+        .arg("swift")
+        .arg(&script_path)
+        .args(&args)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to execute keyboard automation helper: {}",
+                script_path.display()
+            )
+        })?;
+
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "keyboard automation failed: {}{}{}",
+            stderr.trim(),
+            if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                " | "
+            } else {
+                ""
+            },
+            stdout.trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn build_mouse_action_helper_args(
+    action: MouseActionKind,
+    point: Option<(i32, i32)>,
+    button: &str,
+    delta_x: Option<i32>,
+    delta_y: Option<i32>,
+) -> Vec<String> {
+    let mut args = vec![action.as_str().to_string()];
+    if let Some((x, y)) = point {
+        args.push("--x".to_string());
+        args.push(x.to_string());
+        args.push("--y".to_string());
+        args.push(y.to_string());
+    }
+    if matches!(
+        action,
+        MouseActionKind::Click
+            | MouseActionKind::DoubleClick
+            | MouseActionKind::ButtonDown
+            | MouseActionKind::ButtonUp
+    ) {
+        args.push("--button".to_string());
+        args.push(button.to_string());
+    }
+    if let Some(delta_x) = delta_x {
+        args.push("--delta-x".to_string());
+        args.push(delta_x.to_string());
+    }
+    if let Some(delta_y) = delta_y {
+        args.push("--delta-y".to_string());
+        args.push(delta_y.to_string());
+    }
+    args
+}
+
+fn resolve_optional_mouse_point(
+    x: Option<i32>,
+    y: Option<i32>,
+    action: &str,
+) -> Result<Option<(i32, i32)>> {
+    match (x, y) {
+        (Some(x), Some(y)) => Ok(Some((x, y))),
+        (None, None) => Ok(None),
+        _ => {
+            bail!("mouse.action `{action}` requires both `x` and `y` when coordinates are provided")
+        }
+    }
+}
+
+fn normalize_mouse_button_name(button: &str) -> Result<&'static str> {
+    match button.trim().to_lowercase().as_str() {
+        "" | "left" => Ok("left"),
+        "right" => Ok("right"),
+        "middle" | "center" => Ok("middle"),
+        other => bail!("unsupported mouse button for macOS: {other}"),
+    }
+}
+
 fn apple_script_string_literal(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -427,8 +739,8 @@ fn build_modifier_clause(modifiers: &[String]) -> Result<Vec<&'static str>> {
             "alt" | "option" | "leftalt" | "rightalt" | "leftoption" | "rightoption" => {
                 "option down"
             }
-            "meta" | "super" | "cmd" | "command" | "leftcommand" | "rightcommand"
-            | "leftsuper" | "rightsuper" | "win" | "windows" => "command down",
+            "meta" | "super" | "cmd" | "command" | "leftcommand" | "rightcommand" | "leftsuper"
+            | "rightsuper" | "win" | "windows" => "command down",
             other => bail!("unsupported keyboard modifier for macOS shortcut: {other}"),
         };
         if !clauses.contains(&clause) {
@@ -489,6 +801,147 @@ fn resolve_macos_keyboard_target(key: &str) -> Result<MacosKeyboardTarget> {
     } else {
         bail!("unsupported keyboard shortcut key for macOS: {trimmed}")
     }
+}
+
+fn build_modifier_key_codes(modifiers: &[String]) -> Result<Vec<u16>> {
+    let mut codes = Vec::new();
+    for modifier in modifiers {
+        let code = resolve_macos_modifier_key_code(modifier)?;
+        if !codes.contains(&code) {
+            codes.push(code);
+        }
+    }
+    Ok(codes)
+}
+
+fn resolve_macos_modifier_key_code(modifier: &str) -> Result<u16> {
+    let normalized = modifier.trim().to_lowercase();
+    match normalized.as_str() {
+        "control" | "ctrl" | "leftcontrol" | "leftctrl" => Ok(59),
+        "rightcontrol" | "rightctrl" => Ok(62),
+        "shift" | "leftshift" => Ok(56),
+        "rightshift" => Ok(60),
+        "alt" | "option" | "leftalt" | "leftoption" => Ok(58),
+        "rightalt" | "rightoption" => Ok(61),
+        "meta" | "super" | "cmd" | "command" | "leftcommand" | "leftsuper" | "win" | "windows" => {
+            Ok(55)
+        }
+        "rightcommand" | "rightsuper" => Ok(54),
+        other => bail!("unsupported keyboard modifier for macOS: {other}"),
+    }
+}
+
+fn resolve_macos_keyboard_key_code(key: &str) -> Result<u16> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        bail!("keyboard key must not be empty");
+    }
+
+    let normalized = trimmed
+        .to_lowercase()
+        .replace('_', "")
+        .replace('-', "")
+        .replace(' ', "");
+
+    let code = match normalized.as_str() {
+        "a" => Some(0),
+        "s" => Some(1),
+        "d" => Some(2),
+        "f" => Some(3),
+        "h" => Some(4),
+        "g" => Some(5),
+        "z" => Some(6),
+        "x" => Some(7),
+        "c" => Some(8),
+        "v" => Some(9),
+        "b" => Some(11),
+        "q" => Some(12),
+        "w" => Some(13),
+        "e" => Some(14),
+        "r" => Some(15),
+        "y" => Some(16),
+        "t" => Some(17),
+        "1" => Some(18),
+        "2" => Some(19),
+        "3" => Some(20),
+        "4" => Some(21),
+        "6" => Some(22),
+        "5" => Some(23),
+        "=" | "equal" => Some(24),
+        "9" => Some(25),
+        "7" => Some(26),
+        "-" | "minus" => Some(27),
+        "8" => Some(28),
+        "0" => Some(29),
+        "]" | "rightbracket" => Some(30),
+        "o" => Some(31),
+        "u" => Some(32),
+        "[" | "leftbracket" => Some(33),
+        "i" => Some(34),
+        "p" => Some(35),
+        "enter" | "return" => Some(36),
+        "l" => Some(37),
+        "j" => Some(38),
+        "'" | "quote" | "apostrophe" => Some(39),
+        "k" => Some(40),
+        ";" | "semicolon" => Some(41),
+        "\\" | "backslash" => Some(42),
+        "," | "comma" => Some(43),
+        "/" | "slash" => Some(44),
+        "n" => Some(45),
+        "m" => Some(46),
+        "." | "period" | "dot" => Some(47),
+        "tab" => Some(48),
+        "space" | "spacebar" => Some(49),
+        "`" | "grave" | "backtick" => Some(50),
+        "delete" | "backspace" => Some(51),
+        "escape" | "esc" => Some(53),
+        "command" | "cmd" | "leftcommand" | "meta" | "super" => Some(55),
+        "shift" | "leftshift" => Some(56),
+        "capslock" => Some(57),
+        "option" | "alt" | "leftoption" | "leftalt" => Some(58),
+        "control" | "ctrl" | "leftcontrol" | "leftctrl" => Some(59),
+        "rightshift" => Some(60),
+        "rightoption" | "rightalt" => Some(61),
+        "rightcontrol" | "rightctrl" => Some(62),
+        "function" | "fn" => Some(63),
+        "f17" => Some(64),
+        "volumeup" => Some(72),
+        "volumedown" => Some(73),
+        "mute" => Some(74),
+        "f18" => Some(79),
+        "f19" => Some(80),
+        "f20" => Some(90),
+        "f5" => Some(96),
+        "f6" => Some(97),
+        "f7" => Some(98),
+        "f3" => Some(99),
+        "f8" => Some(100),
+        "f9" => Some(101),
+        "f11" => Some(103),
+        "f13" => Some(105),
+        "f16" => Some(106),
+        "f14" => Some(107),
+        "f10" => Some(109),
+        "f12" => Some(111),
+        "f15" => Some(113),
+        "help" => Some(114),
+        "home" => Some(115),
+        "pageup" => Some(116),
+        "forwarddelete" => Some(117),
+        "f4" => Some(118),
+        "end" => Some(119),
+        "f2" => Some(120),
+        "pagedown" => Some(121),
+        "f1" => Some(122),
+        "left" | "leftarrow" => Some(123),
+        "right" | "rightarrow" => Some(124),
+        "down" | "downarrow" => Some(125),
+        "up" | "uparrow" => Some(126),
+        _ => None,
+    };
+
+    code.ok_or_else(|| anyhow::anyhow!("unsupported keyboard key for macOS: {trimmed}"))
 }
 
 fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
@@ -572,6 +1025,26 @@ fn write_swift_screen_script() -> Result<PathBuf> {
         std::process::id()
     ));
     fs::write(&script_path, SWIFT_SCREEN_CAPTURE)
+        .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
+    Ok(script_path)
+}
+
+fn write_swift_mouse_action_script() -> Result<PathBuf> {
+    let script_path = env::temp_dir().join(format!(
+        "yeonjang-mouse-action-{}.swift",
+        std::process::id()
+    ));
+    fs::write(&script_path, SWIFT_MOUSE_ACTION)
+        .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
+    Ok(script_path)
+}
+
+fn write_swift_keyboard_action_script() -> Result<PathBuf> {
+    let script_path = env::temp_dir().join(format!(
+        "yeonjang-keyboard-action-{}.swift",
+        std::process::id()
+    ));
+    fs::write(&script_path, SWIFT_KEYBOARD_ACTION)
         .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
     Ok(script_path)
 }
@@ -794,9 +1267,295 @@ let data = try JSONSerialization.data(withJSONObject: payload, options: [])
 FileHandle.standardOutput.write(data)
 "#;
 
+const SWIFT_MOUSE_ACTION: &str = r#"
+import Foundation
+import ApplicationServices
+
+enum MouseAction: String {
+    case move
+    case click
+    case doubleClick = "double_click"
+    case buttonDown = "button_down"
+    case buttonUp = "button_up"
+    case scroll
+}
+
+guard AXIsProcessTrusted() else {
+    fputs("Accessibility permission was not granted\n", stderr)
+    exit(20)
+}
+
+let args = Array(CommandLine.arguments.dropFirst())
+guard let actionArg = args.first, let action = MouseAction(rawValue: actionArg) else {
+    fputs("mouse action argument is required\n", stderr)
+    exit(21)
+}
+
+var x: Double?
+var y: Double?
+var buttonName = "left"
+var deltaX: Int32 = 0
+var deltaY: Int32 = 0
+
+var index = 1
+while index < args.count {
+    switch args[index] {
+    case "--x":
+        guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+            fputs("invalid --x argument\n", stderr)
+            exit(22)
+        }
+        x = value
+        index += 2
+    case "--y":
+        guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+            fputs("invalid --y argument\n", stderr)
+            exit(23)
+        }
+        y = value
+        index += 2
+    case "--button":
+        guard index + 1 < args.count else {
+            fputs("invalid --button argument\n", stderr)
+            exit(24)
+        }
+        buttonName = args[index + 1]
+        index += 2
+    case "--delta-x":
+        guard index + 1 < args.count, let value = Int32(args[index + 1]) else {
+            fputs("invalid --delta-x argument\n", stderr)
+            exit(25)
+        }
+        deltaX = value
+        index += 2
+    case "--delta-y":
+        guard index + 1 < args.count, let value = Int32(args[index + 1]) else {
+            fputs("invalid --delta-y argument\n", stderr)
+            exit(26)
+        }
+        deltaY = value
+        index += 2
+    default:
+        fputs("unknown mouse action argument: \(args[index])\n", stderr)
+        exit(27)
+    }
+}
+
+func resolvePoint(required: Bool) -> CGPoint? {
+    if let x, let y {
+        return CGPoint(x: x, y: y)
+    }
+    if required {
+        fputs("mouse action requires both x and y\n", stderr)
+        exit(28)
+    }
+    return nil
+}
+
+func resolveButton(_ name: String) -> CGMouseButton {
+    switch name.lowercased() {
+    case "right":
+        return .right
+    case "middle", "center":
+        return .center
+    default:
+        return .left
+    }
+}
+
+func mouseDownType(_ button: CGMouseButton) -> CGEventType {
+    switch button {
+    case .right:
+        return .rightMouseDown
+    case .center:
+        return .otherMouseDown
+    default:
+        return .leftMouseDown
+    }
+}
+
+func mouseUpType(_ button: CGMouseButton) -> CGEventType {
+    switch button {
+    case .right:
+        return .rightMouseUp
+    case .center:
+        return .otherMouseUp
+    default:
+        return .leftMouseUp
+    }
+}
+
+func moveType(_ button: CGMouseButton) -> CGEventType {
+    switch button {
+    case .right:
+        return .rightMouseDragged
+    case .center:
+        return .otherMouseDragged
+    default:
+        return .leftMouseDragged
+    }
+}
+
+func moveCursor(to point: CGPoint) throws {
+    guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
+        throw NSError(domain: "YeonjangMouse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to build mouse move event"])
+    }
+    event.post(tap: .cghidEventTap)
+    usleep(10_000)
+}
+
+func postMouseEvent(_ type: CGEventType, at point: CGPoint, button: CGMouseButton, clickState: Int64? = nil) throws {
+    guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
+        throw NSError(domain: "YeonjangMouse", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to build mouse event"])
+    }
+    if let clickState {
+        event.setIntegerValueField(.mouseEventClickState, value: clickState)
+    }
+    event.post(tap: .cghidEventTap)
+    usleep(10_000)
+}
+
+let button = resolveButton(buttonName)
+
+do {
+    switch action {
+    case .move:
+        guard let point = resolvePoint(required: true) else {
+            exit(28)
+        }
+        try moveCursor(to: point)
+    case .click, .doubleClick:
+        guard let point = resolvePoint(required: true) else {
+            exit(28)
+        }
+        try moveCursor(to: point)
+        let repetitions = action == .doubleClick ? 2 : 1
+        for clickIndex in 0..<repetitions {
+            let state = Int64(clickIndex + 1)
+            try postMouseEvent(mouseDownType(button), at: point, button: button, clickState: state)
+            try postMouseEvent(mouseUpType(button), at: point, button: button, clickState: state)
+        }
+    case .buttonDown:
+        let point = resolvePoint(required: false) ?? CGEvent(source: nil)?.location ?? CGPoint.zero
+        if x != nil || y != nil {
+            try moveCursor(to: point)
+        }
+        try postMouseEvent(mouseDownType(button), at: point, button: button)
+    case .buttonUp:
+        let point = resolvePoint(required: false) ?? CGEvent(source: nil)?.location ?? CGPoint.zero
+        if x != nil || y != nil {
+            try moveCursor(to: point)
+        }
+        try postMouseEvent(mouseUpType(button), at: point, button: button)
+    case .scroll:
+        if let point = resolvePoint(required: false) {
+            try moveCursor(to: point)
+        }
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: deltaY, wheel2: deltaX, wheel3: 0) else {
+            throw NSError(domain: "YeonjangMouse", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to build scroll event"])
+        }
+        event.post(tap: .cghidEventTap)
+    }
+} catch {
+    fputs("mouse action failed: \(error)\n", stderr)
+    exit(29)
+}
+"#;
+
+const SWIFT_KEYBOARD_ACTION: &str = r#"
+import Foundation
+import ApplicationServices
+
+enum KeyboardAction: String {
+    case keyPress = "key_press"
+    case keyDown = "key_down"
+    case keyUp = "key_up"
+}
+
+guard AXIsProcessTrusted() else {
+    fputs("Accessibility permission was not granted\n", stderr)
+    exit(40)
+}
+
+let args = Array(CommandLine.arguments.dropFirst())
+guard let actionArg = args.first, let action = KeyboardAction(rawValue: actionArg) else {
+    fputs("keyboard action argument is required\n", stderr)
+    exit(41)
+}
+
+var keyCode: CGKeyCode?
+var modifierCodes: [CGKeyCode] = []
+
+var index = 1
+while index < args.count {
+    switch args[index] {
+    case "--keycode":
+        guard index + 1 < args.count, let value = UInt16(args[index + 1]) else {
+            fputs("invalid --keycode argument\n", stderr)
+            exit(42)
+        }
+        keyCode = CGKeyCode(value)
+        index += 2
+    case "--modifier":
+        guard index + 1 < args.count, let value = UInt16(args[index + 1]) else {
+            fputs("invalid --modifier argument\n", stderr)
+            exit(43)
+        }
+        modifierCodes.append(CGKeyCode(value))
+        index += 2
+    default:
+        fputs("unknown keyboard action argument: \(args[index])\n", stderr)
+        exit(44)
+    }
+}
+
+guard let keyCode else {
+    fputs("keyboard action requires --keycode\n", stderr)
+    exit(45)
+}
+
+func postKey(_ code: CGKeyCode, down: Bool) throws {
+    guard let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else {
+        throw NSError(domain: "YeonjangKeyboard", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to build keyboard event"])
+    }
+    event.post(tap: .cghidEventTap)
+    usleep(8_000)
+}
+
+func postModifierSequence(_ codes: [CGKeyCode], down: Bool) throws {
+    let ordered = down ? codes : codes.reversed()
+    for code in ordered {
+        try postKey(code, down: down)
+    }
+}
+
+do {
+    switch action {
+    case .keyPress:
+        try postModifierSequence(modifierCodes, down: true)
+        try postKey(keyCode, down: true)
+        try postKey(keyCode, down: false)
+        try postModifierSequence(modifierCodes, down: false)
+    case .keyDown:
+        try postModifierSequence(modifierCodes, down: true)
+        try postKey(keyCode, down: true)
+    case .keyUp:
+        try postKey(keyCode, down: false)
+        try postModifierSequence(modifierCodes, down: false)
+    }
+} catch {
+    fputs("keyboard action failed: \(error)\n", stderr)
+    exit(46)
+}
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{MacosKeyboardTarget, build_modifier_clause, resolve_macos_keyboard_target};
+    use super::{
+        MacosKeyboardTarget, build_modifier_clause, build_modifier_key_codes,
+        normalize_mouse_button_name, resolve_macos_keyboard_key_code,
+        resolve_macos_keyboard_target, resolve_optional_mouse_point,
+    };
 
     #[test]
     fn resolves_letter_shortcut_to_keystroke() {
@@ -820,5 +1579,53 @@ mod tests {
         .expect("modifier clause should resolve");
 
         assert_eq!(clause, vec!["command down", "control down"]);
+    }
+
+    #[test]
+    fn resolves_letter_key_to_keycode() {
+        let result = resolve_macos_keyboard_key_code("c").expect("letter key should resolve");
+        assert_eq!(result, 8);
+    }
+
+    #[test]
+    fn resolves_named_key_to_keycode() {
+        let result =
+            resolve_macos_keyboard_key_code("RightArrow").expect("arrow key should resolve");
+        assert_eq!(result, 124);
+    }
+
+    #[test]
+    fn builds_deduplicated_modifier_key_codes() {
+        let codes = build_modifier_key_codes(&[
+            "Command".to_string(),
+            "LeftControl".to_string(),
+            "cmd".to_string(),
+        ])
+        .expect("modifier key codes should resolve");
+
+        assert_eq!(codes, vec![55, 59]);
+    }
+
+    #[test]
+    fn normalizes_mouse_button_aliases() {
+        assert_eq!(
+            normalize_mouse_button_name("center").expect("center button"),
+            "middle"
+        );
+        assert_eq!(
+            normalize_mouse_button_name("left").expect("left button"),
+            "left"
+        );
+    }
+
+    #[test]
+    fn optional_mouse_point_requires_both_coordinates() {
+        let error = resolve_optional_mouse_point(Some(10), None, "button_down")
+            .expect_err("partial point should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("requires both `x` and `y` when coordinates are provided")
+        );
     }
 }

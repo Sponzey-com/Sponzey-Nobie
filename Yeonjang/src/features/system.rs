@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::automation::{
     ApplicationLaunchRequest, AutomationBackend, CommandExecutionRequest, SystemControlRequest,
@@ -16,6 +17,10 @@ pub struct ExecParams {
     pub cwd: Option<String>,
     #[serde(default)]
     pub shell: bool,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, alias = "timeoutSec")]
+    pub timeout_sec: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +54,9 @@ pub fn control(params: ControlParams) -> Result<Value> {
         action: params.action,
         target: params.target,
     };
-    Ok(serde_json::to_value(current_backend().control_system(request)?)?)
+    Ok(serde_json::to_value(
+        current_backend().control_system(request)?,
+    )?)
 }
 
 pub fn exec(params: ExecParams) -> Result<Value> {
@@ -58,8 +65,12 @@ pub fn exec(params: ExecParams) -> Result<Value> {
         args: params.args,
         cwd: params.cwd,
         shell: params.shell,
+        env: params.env,
+        timeout_sec: params.timeout_sec,
     };
-    Ok(serde_json::to_value(current_backend().execute_command(request)?)?)
+    Ok(serde_json::to_value(
+        current_backend().execute_command(request)?,
+    )?)
 }
 
 pub fn launch_application(params: LaunchAppParams) -> Result<Value> {

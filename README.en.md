@@ -6,6 +6,15 @@
   <img src="./resource/nobie-1-512.png" alt="Nobie" width="220" />
 </p>
 
+## Name Notes
+
+- `Nobie`
+
+  The name is meant to feel like a small work companion that stays beside the user. Not too heavy, not too cold. The tone is closer to “the helper that catches what you need and moves first” than to a generic bot label.
+- `Yeonjang`
+
+  The name comes from the Korean word `연장`, which can mean a tool or an extension. If Nobie is the part that thinks and orchestrates, Yeonjang is the part that reaches out to the actual device, screen, keyboard, and mouse. In short: `Nobie thinks`, `Yeonjang extends the hands`.
+
 `Sponzey Nobie` is an orchestration-first personal AI that runs on the user's computer. The actual assistant name used inside the product is `Nobie`.
 
 The goal of Nobie is not just to answer like a chat bot, but to understand requests, choose an execution path, continue through local work and external integrations, deliver results, and decide completion correctly.
@@ -20,6 +29,8 @@ Important:
 - Nobie uses the `AI connected in Settings` for natural-language interpretation, request structuring, and completion review.
 - There is no separate hidden external LLM actor in the process.
 - The internal `packages/core/src/ai` layer is an adapter for configured AI backends.
+- The current officially supported operating system is `macOS`.
+- Nobie's current command-style local execution, app launch, screen capture, and keyboard or mouse control require the `Yeonjang` extension to be running.
 
 The detailed process source of truth is [process.md](./process.md).
 
@@ -28,12 +39,16 @@ The detailed process source of truth is [process.md](./process.md).
 Nobie is best understood as:
 
 - `Personal assistant AI`
+
   It works against the user's computer, files, screen, apps, channels, and connected extensions.
 - `Orchestration-first AI`
+
   It does not just respond. It coordinates which tool and execution route should do the work.
 - `Ready after install`
+
   It is designed so users can configure it step by step in the WebUI and start using it quickly.
 - `Extensible work platform`
+
   AI backends, MCP servers, Skills, channels, and extensions can be combined to expand what Nobie can do.
 
 ## Who It Is For
@@ -104,7 +119,13 @@ MQTT-connected extensions can be used for device-side execution.
 - Inspect connected extension state
 - Select execution targets by extension id
 - Camera capture
-- Extension-first attempt on some privileged execution paths
+- Execute command, app launch, screen capture, and keyboard or mouse control through the extension path
+
+Important:
+
+- Local device control and command execution are currently restricted to the `Yeonjang` path.
+- In practice, this means `Yeonjang` must be running if you want these features to work.
+- This path is currently implemented for `macOS`.
 
 ### 6. Local Work Execution `(Implemented)`
 
@@ -178,18 +199,23 @@ Current status:
 This repository is mainly divided into:
 
 - `packages/core`
+
   Agent execution, routing, work queue, recovery, delivery, setup logic, channel integration, MCP, and tool system
 - `packages/cli`
+
   Daemon execution and local command entry points
 - `packages/webui`
+
   Setup UI, chat UI, task monitor, and approval/cancel/review screens
 
 ## Quick Start
 
 ### Requirements
 
+- `macOS` `(currently the only officially supported OS)`
 - Node.js `22+`
 - `pnpm`
+- Rust / Cargo `(required when running Yeonjang from source)`
 
 ### Install
 
@@ -220,6 +246,50 @@ Stop:
 bash scripts/stop-local.sh
 ```
 
+### Run Yeonjang Extension `(Required)`
+
+Starting Nobie alone is not enough for local control features. At the moment, the following capabilities require `Yeonjang` to be running:
+
+- command execution
+- app launch
+- screen capture
+- camera capture
+- keyboard input, shortcut, and key actions
+- mouse move, click, scroll, and button actions
+
+Recommended startup order:
+
+1. Start the Nobie Gateway and WebUI.
+
+```bash
+bash scripts/start-local.sh
+```
+
+2. In another terminal, start the Yeonjang GUI.
+
+```bash
+cargo run --manifest-path Yeonjang/Cargo.toml
+```
+
+3. In Yeonjang, verify the default broker values.
+
+- Host: `127.0.0.1`
+- Port: `1883`
+- Default Node ID: `yeonjang-main`
+
+4. Enable the MQTT connection in the Yeonjang GUI.
+
+With the default settings, auto-connect is enabled, and Nobie should detect the extension once the connection succeeds.
+
+5. Check the extension connection state from Nobie's Settings screen or runtime status panel.
+
+Until this connection is established, Nobie's local control features will not complete successfully. In the current architecture, those operations fail if `Yeonjang` is not running.
+
+Notes:
+
+- `cargo run --manifest-path Yeonjang/Cargo.toml -- --stdio` is for standalone node testing.
+- For normal Nobie usage, the expected path is the MQTT-connected Yeonjang GUI/runtime.
+
 ## State Directory and Config Files
 
 The default state directory follows this priority:
@@ -240,8 +310,8 @@ It stores:
 The following items should still be treated as `not yet implemented` or `partially implemented`:
 
 - Slack channel integration
-- stronger Windows-specific installation and operations support
-- broader validation of UI automation outside macOS
+- stronger Windows-specific installation and operations support `(currently unsupported)`
+- broader validation of UI automation outside macOS `(currently unsupported)`
 - further setup UX simplification and onboarding improvements
 - expanded operations and user-help documentation
 
