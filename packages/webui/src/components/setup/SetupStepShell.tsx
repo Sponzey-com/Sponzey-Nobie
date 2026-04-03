@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom"
 import type { CapabilityStatus } from "../../contracts/capabilities"
 import type { SetupStepMeta } from "../../contracts/setup"
 import { UiLanguageSwitcher } from "../UiLanguageSwitcher"
@@ -43,7 +44,15 @@ export function SetupStepShell({
               </div>
               <h1 className="mt-2 text-2xl font-semibold leading-tight">{title}</h1>
             </div>
-            <UiLanguageSwitcher className="shrink-0 border-white/10 bg-white/5" />
+            <div className="flex shrink-0 items-center gap-2">
+              <Link
+                to="/settings"
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-200 transition hover:bg-white/10"
+              >
+                {pickUiText(language, "설정 화면 열기", "Open settings")}
+              </Link>
+              <UiLanguageSwitcher className="shrink-0 border-white/10 bg-white/5" />
+            </div>
           </div>
           {description.trim() ? <p className="mt-3 text-sm leading-6 text-stone-400">{description}</p> : null}
 

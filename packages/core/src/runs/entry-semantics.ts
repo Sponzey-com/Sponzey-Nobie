@@ -74,8 +74,7 @@ function detectReuseConversationContext(message: string): boolean {
   ]
   if (englishReferencePatterns.some((pattern) => pattern.test(trimmed))) return true
 
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  return trimmed.length <= 64 && tokenCount <= 8
+  return false
 }
 
 function detectActiveQueueCancellationMode(message: string): ActiveQueueCancellationMode | null {

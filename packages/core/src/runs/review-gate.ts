@@ -37,7 +37,7 @@ export function decideReviewGate(params: {
     return {
       kind: "skip",
       state,
-      reason: "직접 결과 전달과 receipt 기준 완료 근거가 이미 충족되어 completion review를 생략합니다.",
+      reason: "직접 결과 전달과 checklist 기준 완료 항목이 이미 모두 충족되어 completion review를 생략합니다.",
     }
   }
 

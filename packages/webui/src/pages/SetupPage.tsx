@@ -21,7 +21,7 @@ import { SetupStepShell } from "../components/setup/SetupStepShell"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
-import { BUILTIN_BACKEND_IDS, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
+import { type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { SetupDraft, SetupState, SetupStepMeta } from "../contracts/setup"
 import {
@@ -218,31 +218,6 @@ export function SetupPage() {
             return { ...profile, targets: profile.targets.filter((target) => target !== backendId) }
           }
           return profile
-        }),
-      }
-    })
-  }
-
-  function syncPrimaryBackendToBuiltinBackends() {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      const source = base.aiBackends.find((backend) => backend.id === "provider:openai")
-      if (!source) return base
-      return {
-        ...base,
-        aiBackends: base.aiBackends.map((backend) => {
-          if (backend.id === source.id) return backend
-          if (!(BUILTIN_BACKEND_IDS as readonly string[]).includes(backend.id)) return backend
-          return {
-            ...backend,
-            providerType: source.providerType,
-            authMode: source.authMode,
-            credentials: { ...source.credentials },
-            local: source.local,
-            endpoint: source.endpoint,
-            availableModels: [...source.availableModels],
-            defaultModel: source.defaultModel,
-          }
         }),
       }
     })
@@ -565,7 +540,6 @@ export function SetupPage() {
                   onToggle={(backendId, enabled) => updateBackend(backendId, { enabled })}
                   onRemove={removeBackend}
                   onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-                  onSyncBuiltinBackends={syncPrimaryBackendToBuiltinBackends}
                   errors={shouldShowValidation ? currentValidation.backendErrors[backend.id] : undefined}
                 />
               ))}

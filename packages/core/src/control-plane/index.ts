@@ -21,6 +21,7 @@ import {
   OPENAI_CODEX_RESPONSES_PATH,
   OPENAI_CODEX_USER_AGENT,
   readOpenAICodexAccessToken,
+  resolveOpenAICodexAuthFilePath,
   resolveOpenAICodexBaseUrl,
 } from "../auth/openai-codex-oauth.js"
 
@@ -47,8 +48,8 @@ export interface CapabilityCounts {
 export interface AIBackendCard {
   id: string
   label: string
-  kind: "provider" | "worker"
-  providerType: "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom"
+  kind: "provider"
+  providerType: "openai" | "ollama" | "llama" | "anthropic" | "gemini" | "custom"
   authMode: "api_key" | "chatgpt_oauth"
   credentials: {
     apiKey?: string
@@ -161,29 +162,25 @@ type JsonObject = Record<string, unknown>
 
 const KNOWN_BACKENDS = [
   "provider:openai",
+  "provider:anthropic",
   "provider:gemini",
   "provider:ollama",
   "provider:llama_cpp",
-  "worker:claude_code",
-  "worker:codex_cli",
 ] as const
 
 const GENERIC_BACKEND_REASONS = new Set([
   "계획·리서치 특화 provider runtime은 아직 gateway에 연결되지 않았습니다.",
   "엔드포인트와 모델 조회는 가능하지만 실제 라우팅 런타임은 아직 연결되지 않았습니다.",
   "로컬 경량 추론 provider runtime은 후속 Phase에서 연결합니다.",
-  "코드 작업 세션 worker는 아직 gateway 실행 경로에 연결되지 않았습니다.",
-  "코드 작업 보조 세션 worker는 후속 Phase에서 연결합니다.",
   "사용자 추가 backend이며 실제 연결 테스트는 setup에서 확인합니다.",
 ])
 
 const GENERIC_BACKEND_SUMMARIES = new Set([
   "일반 대화, 검토, 도구 호출에 두루 쓰는 원격 추론 기본값",
+  "Anthropic 계열 원격 추론 후보",
   "계획, 리서치, 긴 문맥 처리를 위한 후보",
   "로컬 모델 우선 후보",
   "로컬 대체 추론 서버",
-  "코드 작업과 장기 작업용 세션 워커",
-  "코드 작업용 보조 세션 워커",
   "사용자 추가 backend",
 ])
 
@@ -307,32 +304,59 @@ function createDefaultRoutingProfiles(): RoutingProfile[] {
   return [
     { id: "default", label: "기본", targets: ["provider:openai", "provider:gemini", "provider:ollama"] },
     { id: "general_chat", label: "일반 대화", targets: ["provider:openai", "provider:gemini", "provider:ollama"] },
-    { id: "planning", label: "계획/설계", targets: ["provider:gemini", "provider:openai", "worker:claude_code"] },
-    { id: "coding", label: "코딩", targets: ["worker:claude_code", "worker:codex_cli", "provider:openai"] },
-    { id: "review", label: "리뷰", targets: ["worker:claude_code", "provider:openai", "provider:gemini"] },
-    { id: "research", label: "리서치", targets: ["provider:gemini", "provider:openai", "worker:claude_code"] },
+    { id: "planning", label: "계획/설계", targets: ["provider:gemini", "provider:openai", "provider:anthropic"] },
+    { id: "coding", label: "코딩", targets: ["provider:anthropic", "provider:openai", "provider:gemini"] },
+    { id: "review", label: "리뷰", targets: ["provider:anthropic", "provider:openai", "provider:gemini"] },
+    { id: "research", label: "리서치", targets: ["provider:gemini", "provider:openai", "provider:anthropic"] },
     { id: "private_local", label: "로컬 우선", targets: ["provider:ollama", "provider:llama_cpp"] },
     { id: "summarization", label: "요약", targets: ["provider:ollama", "provider:openai", "provider:gemini"] },
-    { id: "operations", label: "운영", targets: ["worker:claude_code", "provider:openai", "provider:ollama"] },
+    { id: "operations", label: "운영", targets: ["provider:anthropic", "provider:openai", "provider:ollama"] },
   ]
 }
 
+function hasConfiguredAnthropicConnection(config: NobieConfig): boolean {
+  return Boolean(config.ai.providers.anthropic?.apiKeys?.some((key) => key.trim().length > 0))
+}
+
+function hasConfiguredOpenAIConnection(config: NobieConfig): boolean {
+  const openai = config.ai.providers.openai
+  const authMode = openai?.auth?.mode ?? "api_key"
+  if (authMode === "chatgpt_oauth") {
+    return existsSync(resolveOpenAICodexAuthFilePath({
+      authFilePath: openai?.auth?.codexAuthFilePath,
+      clientId: openai?.auth?.clientId,
+    }))
+  }
+  return Boolean(
+    openai?.apiKeys?.some((key) => key.trim().length > 0)
+    || openai?.baseUrl?.trim(),
+  )
+}
+
+function hasConfiguredGeminiConnection(config: NobieConfig): boolean {
+  return Boolean(
+    config.ai.providers.gemini?.apiKeys?.some((key) => key.trim().length > 0)
+    || config.ai.providers.gemini?.baseUrl?.trim(),
+  )
+}
+
 function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
-  const openaiApiKey = config.llm.providers.openai?.apiKeys?.[0] ?? ""
-  const openaiAuthMode = config.llm.providers.openai?.auth?.mode ?? "api_key"
-  const openaiOauthAuthFilePath = config.llm.providers.openai?.auth?.codexAuthFilePath ?? ""
-  const geminiApiKey = config.llm.providers.gemini?.apiKeys?.[0] ?? ""
-  const anthropicApiKey = config.llm.providers.anthropic?.apiKeys?.[0] ?? ""
+  const openaiApiKey = config.ai.providers.openai?.apiKeys?.[0] ?? ""
+  const openaiAuthMode = config.ai.providers.openai?.auth?.mode ?? "api_key"
+  const openaiOauthAuthFilePath = config.ai.providers.openai?.auth?.codexAuthFilePath ?? ""
+  const geminiApiKey = config.ai.providers.gemini?.apiKeys?.[0] ?? ""
+  const anthropicApiKey = config.ai.providers.anthropic?.apiKeys?.[0] ?? ""
+  const hasOpenAIConnection = hasConfiguredOpenAIConnection(config)
+  const hasGeminiConnection = hasConfiguredGeminiConnection(config)
+  const hasAnthropicConnection = hasConfiguredAnthropicConnection(config)
   const openaiEndpoint = openaiAuthMode === "chatgpt_oauth"
-    ? resolveOpenAICodexBaseUrl(config.llm.providers.openai?.baseUrl?.trim())
-    : (config.llm.providers.openai?.baseUrl?.trim() || undefined)
-  const geminiEndpoint = config.llm.providers.gemini?.baseUrl?.trim() || undefined
-  const ollamaEndpoint = config.llm.providers.ollama?.baseUrl?.trim() || undefined
-  const openaiModel = config.llm.defaultProvider === "openai"
-    ? (config.llm.defaultModel || (openaiAuthMode === "chatgpt_oauth" ? OPENAI_CODEX_KNOWN_MODELS[0] : ""))
-    : ""
-  const geminiModel = config.llm.defaultProvider === "gemini" ? config.llm.defaultModel : ""
-  const anthropicModel = config.llm.defaultProvider === "anthropic" ? config.llm.defaultModel : ""
+    ? resolveOpenAICodexBaseUrl(config.ai.providers.openai?.baseUrl?.trim())
+    : (config.ai.providers.openai?.baseUrl?.trim() || undefined)
+  const geminiEndpoint = config.ai.providers.gemini?.baseUrl?.trim() || undefined
+  const ollamaEndpoint = config.ai.providers.ollama?.baseUrl?.trim() || undefined
+  const openaiModel = config.ai.defaultProvider === "openai" ? config.ai.defaultModel : ""
+  const geminiModel = config.ai.defaultProvider === "gemini" ? config.ai.defaultModel : ""
+  const anthropicModel = config.ai.defaultProvider === "anthropic" ? config.ai.defaultModel : ""
 
   return [
     {
@@ -346,10 +370,10 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
         oauthAuthFilePath: openaiOauthAuthFilePath,
       },
       local: false,
-      enabled: Boolean(openaiApiKey || openaiEndpoint || openaiModel || openaiAuthMode === "chatgpt_oauth"),
+      enabled: hasOpenAIConnection,
       availableModels: [],
       defaultModel: openaiModel,
-      status: "ready",
+      status: hasOpenAIConnection ? "ready" : "planned",
       summary: "",
       tags: ["general", "review", "tool_use"],
       ...(openaiEndpoint ? { endpoint: openaiEndpoint } : {}),
@@ -364,10 +388,10 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
         apiKey: geminiApiKey,
       },
       local: false,
-      enabled: Boolean(geminiApiKey || geminiEndpoint || geminiModel),
+      enabled: hasGeminiConnection,
       availableModels: [],
       defaultModel: geminiModel,
-      status: geminiApiKey || geminiEndpoint || geminiModel ? "ready" : "planned",
+      status: hasGeminiConnection ? "ready" : "planned",
       summary: "",
       tags: ["planning", "research", "long_context"],
       ...(geminiEndpoint ? { endpoint: geminiEndpoint } : {}),
@@ -404,38 +428,29 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       tags: ["local", "private_local"],
     },
     {
-      id: "worker:claude_code",
-      label: "코드 작업 세션",
-      kind: "worker",
-      providerType: "claude",
+      id: "provider:anthropic",
+      label: "Anthropic 추론",
+      kind: "provider",
+      providerType: "anthropic",
       authMode: "api_key",
       credentials: {
         apiKey: anthropicApiKey,
       },
       local: false,
-      enabled: Boolean(anthropicApiKey || anthropicModel),
+      enabled: hasAnthropicConnection,
       availableModels: [],
       defaultModel: anthropicModel,
-      status: "planned",
+      status: hasAnthropicConnection ? "ready" : "planned",
       summary: "",
-      tags: ["coding", "operations", "review"],
-    },
-    {
-      id: "worker:codex_cli",
-      label: "코드 작업 보조 세션",
-      kind: "worker",
-      providerType: "openai",
-      authMode: "api_key",
-      credentials: {},
-      local: false,
-      enabled: false,
-      availableModels: [],
-      defaultModel: "",
-      status: "planned",
-      summary: "",
-      tags: ["coding"],
+      tags: ["coding", "operations", "review", "general"],
     },
   ]
+}
+
+function normalizeBackendProviderType(value: unknown): AIBackendCard["providerType"] | undefined {
+  return ["openai", "ollama", "llama", "anthropic", "gemini", "custom"].includes(String(value))
+    ? (value as AIBackendCard["providerType"])
+    : undefined
 }
 
 function mergeBackend(base: AIBackendCard, value: unknown): AIBackendCard {
@@ -452,9 +467,7 @@ function mergeBackend(base: AIBackendCard, value: unknown): AIBackendCard {
     ...base,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
     local: typeof raw.local === "boolean" ? raw.local : base.local,
-    providerType: ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(raw.providerType))
-      ? (raw.providerType as AIBackendCard["providerType"])
-      : base.providerType,
+    providerType: normalizeBackendProviderType(raw.providerType) ?? base.providerType,
     authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
       ? (raw.authMode as AIBackendCard["authMode"])
       : base.authMode,
@@ -473,16 +486,36 @@ function mergeBackend(base: AIBackendCard, value: unknown): AIBackendCard {
   return merged
 }
 
+function mergeBuiltinBackendState(base: AIBackendCard, value: unknown): AIBackendCard {
+  if (value === undefined) {
+    return {
+      ...base,
+      credentials: { ...base.credentials },
+      availableModels: [],
+    }
+  }
+
+  const raw = toObject(value)
+  return {
+    ...base,
+    enabled: raw.enabled === false ? false : base.enabled,
+    credentials: { ...base.credentials },
+    availableModels: [],
+  }
+}
+
 function sanitizeRoutingProfiles(value: unknown): RoutingProfile[] {
   if (!Array.isArray(value)) return createDefaultRoutingProfiles()
   const parsed = value
     .map((entry) => {
       const row = toObject(entry)
       if (typeof row.id !== "string" || typeof row.label !== "string") return null
+      const targets = toStringArray(row.targets)
+        .filter((target) => !target.startsWith("worker:"))
       return {
         id: row.id as RoutingProfile["id"],
         label: row.label,
-        targets: toStringArray(row.targets),
+        targets: [...new Set(targets)],
       }
     })
     .filter((entry): entry is RoutingProfile => entry !== null && entry.targets.length > 0)
@@ -495,15 +528,14 @@ function sanitizeCustomBackends(value: unknown): AIBackendCard[] {
     .map((entry) => {
       const raw = toObject(entry)
       if (typeof raw.id !== "string" || typeof raw.label !== "string") return null
-      const kind = raw.kind === "worker" ? "worker" : "provider"
+      if (raw.id.startsWith("worker:") || raw.kind === "worker") return null
+      const kind = "provider"
       const reason = sanitizeBackendReason(raw.reason)
       const backend: AIBackendCard = {
         id: raw.id,
         label: raw.label,
         kind,
-        providerType: ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(raw.providerType))
-          ? (raw.providerType as AIBackendCard["providerType"])
-          : "custom",
+        providerType: normalizeBackendProviderType(raw.providerType) ?? "custom",
         authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
           ? (raw.authMode as AIBackendCard["authMode"])
           : "api_key",
@@ -533,7 +565,11 @@ export function buildSetupDraft(): SetupDraft {
 
   const defaults = createDefaultAiBackends(config).map((backend) => {
     const key = backend.id.split(":")[1] ?? backend.id
-    return mergeBackend(backend, rawBackends[key] ?? rawBackends[backend.id])
+    return mergeBuiltinBackendState(
+      backend,
+      rawBackends[key]
+      ?? rawBackends[backend.id],
+    )
   })
 
   const customBackends = sanitizeCustomBackends(ai.customBackends)
@@ -587,23 +623,23 @@ function persistBackends(raw: JsonObject, draft: SetupDraft): void {
   for (const backend of draft.aiBackends) {
     const persisted: JsonObject = {
       enabled: backend.enabled,
-      kind: backend.kind,
-      local: backend.local,
-      defaultModel: backend.defaultModel,
-      providerType: backend.providerType,
-      authMode: backend.authMode ?? "api_key",
-      credentials: backend.credentials,
-      tags: backend.tags,
-      status: backend.status,
     }
-    if (backend.summary.trim()) persisted.summary = backend.summary.trim()
-    if (backend.endpoint?.trim()) persisted.endpoint = backend.endpoint.trim()
-    if (backend.reason?.trim()) persisted.reason = backend.reason.trim()
 
     if ((KNOWN_BACKENDS as readonly string[]).includes(backend.id)) {
       const key = backend.id.split(":")[1] ?? backend.id
       backends[key] = persisted
     } else {
+      persisted.kind = backend.kind
+      persisted.local = backend.local
+      persisted.defaultModel = backend.defaultModel
+      persisted.providerType = backend.providerType
+      persisted.authMode = backend.authMode ?? "api_key"
+      persisted.credentials = backend.credentials
+      persisted.tags = backend.tags
+      persisted.status = backend.status
+      if (backend.summary.trim()) persisted.summary = backend.summary.trim()
+      if (backend.endpoint?.trim()) persisted.endpoint = backend.endpoint.trim()
+      if (backend.reason?.trim()) persisted.reason = backend.reason.trim()
       customBackends.push({
         id: backend.id,
         label: backend.label,
@@ -680,15 +716,17 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
     },
   }
 
-  const rawLlm = toObject(raw.llm)
-  const rawProviders = toObject(rawLlm.providers)
+  if (!raw.ai) raw.ai = {}
+  const rawAi = toObject(raw.ai)
+  const rawProviders = toObject(rawAi.providers)
+  const providerSelections: Array<{ providerId: "openai" | "gemini" | "anthropic"; model: string }> = []
 
   const openai = draft.aiBackends.find((backend) => backend.id === "provider:openai")
   if (openai) {
     const normalizedOpenAIEndpoint = openai.authMode === "chatgpt_oauth"
       ? resolveOpenAICodexBaseUrl(openai.endpoint)
       : openai.endpoint
-    const normalizedOpenAIDefaultModel = openai.defaultModel || (openai.authMode === "chatgpt_oauth" ? OPENAI_CODEX_KNOWN_MODELS[0] : "")
+    const normalizedOpenAIDefaultModel = openai.defaultModel.trim()
     rawProviders.openai = {
       ...toObject(rawProviders.openai),
       baseUrl: normalizedOpenAIEndpoint,
@@ -702,9 +740,8 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
           : undefined,
       },
     }
-    if (!rawLlm.defaultProvider || rawLlm.defaultProvider === "openai") {
-      rawLlm.defaultProvider = "openai"
-      rawLlm.defaultModel = normalizedOpenAIDefaultModel
+    if (openai.enabled && normalizedOpenAIDefaultModel) {
+      providerSelections.push({ providerId: "openai", model: normalizedOpenAIDefaultModel })
     }
   }
 
@@ -715,21 +752,19 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
       baseUrl: gemini.endpoint,
       apiKeys: gemini.credentials.apiKey?.trim() ? [gemini.credentials.apiKey.trim()] : [],
     }
-    if (!rawLlm.defaultProvider || rawLlm.defaultProvider === "gemini") {
-      rawLlm.defaultProvider = "gemini"
-      rawLlm.defaultModel = gemini.defaultModel
+    if (gemini.enabled && gemini.defaultModel.trim()) {
+      providerSelections.push({ providerId: "gemini", model: gemini.defaultModel.trim() })
     }
   }
 
-  const claude = draft.aiBackends.find((backend) => backend.providerType === "claude")
-  if (claude) {
+  const anthropic = draft.aiBackends.find((backend) => backend.id === "provider:anthropic")
+  if (anthropic) {
     rawProviders.anthropic = {
       ...toObject(rawProviders.anthropic),
-      apiKeys: claude.credentials.apiKey?.trim() ? [claude.credentials.apiKey.trim()] : [],
+      apiKeys: anthropic.credentials.apiKey?.trim() ? [anthropic.credentials.apiKey.trim()] : [],
     }
-    if (!rawLlm.defaultProvider || rawLlm.defaultProvider === "anthropic") {
-      rawLlm.defaultProvider = "anthropic"
-      rawLlm.defaultModel = claude.defaultModel
+    if (anthropic.enabled && anthropic.defaultModel.trim()) {
+      providerSelections.push({ providerId: "anthropic", model: anthropic.defaultModel.trim() })
     }
   }
 
@@ -741,8 +776,16 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
     }
   }
 
-  rawLlm.providers = rawProviders
-  raw.llm = rawLlm
+  rawAi.providers = rawProviders
+  const defaultTargets = draft.routingProfiles.find((profile) => profile.id === "default")?.targets ?? []
+  const routedSelection = defaultTargets
+    .map((target) => providerSelections.find((selection) => `provider:${selection.providerId}` === target))
+    .find((selection): selection is { providerId: "openai" | "gemini" | "anthropic"; model: string } => Boolean(selection))
+  const selectedProvider = routedSelection ?? providerSelections[0]
+  rawAi.defaultProvider = selectedProvider?.providerId ?? ""
+  rawAi.defaultModel = selectedProvider?.model ?? ""
+  raw.ai = rawAi
+  delete raw.llm
 
   persistBackends(raw, draft)
   persistMcpSetupDraft(raw, draft.mcp)
@@ -1032,7 +1075,7 @@ function candidatePaths(providerType: AIBackendCard["providerType"]): string[] {
       return ["/api/tags"]
     case "gemini":
       return ["/v1beta/models", "/v1/models", "/models"]
-    case "claude":
+    case "anthropic":
       return ["/v1/models", "/models"]
     case "openai":
       return ["/v1/models", "/models"]
@@ -1079,7 +1122,7 @@ function createDiscoveryHeaders(
   if (!apiKey) return headers
 
   switch (providerType) {
-    case "claude":
+    case "anthropic":
       headers["x-api-key"] = apiKey
       headers["anthropic-version"] = "2023-06-01"
       return headers

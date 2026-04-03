@@ -7,13 +7,12 @@ import { runAgent } from "../agent/index.js";
 import { eventBus } from "../events/index.js";
 import { getDb, getSession, insertMessage, insertSchedule, insertSession } from "../db/index.js";
 import { getConfig } from "../config/index.js";
-import { inferProviderId } from "../llm/index.js";
+import { inferProviderId } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { loadNobieMd } from "../memory/nobie-md.js";
 import { resolveRunRoute } from "./routing.js";
 import { isValidCron } from "../scheduler/cron.js";
-import { runWorkerRuntime } from "./worker-runtime.js";
 import { buildScheduledFollowupPrompt, getScheduledRunExecutionOptions } from "./scheduled.js";
 import { grantRunApprovalScope, grantRunSingleApproval } from "../tools/dispatcher.js";
 import { appendRunEvent, bindActiveRunController, clearActiveRunController, createRootRun, cancelRootRun, getRootRun, findLatestWorkerSessionRun, findReconnectRequestGroupSelection, incrementDelegationTurnCount, interruptOrphanWorkerSessionRuns, setRunStepStatus, updateRunStatus, updateRunSummary, } from "./store.js";
@@ -283,28 +282,20 @@ export function startRootRun(params) {
                     appendRunEvent(runId, `${workerSessionId} 실행 시작`);
                     updateRunSummary(runId, `${activeWorkerRuntime.label}에서 작업을 실행 중입니다.`);
                 }
-                const chunkStream = activeWorkerRuntime
-                    ? runWorkerRuntime({
-                        runtime: activeWorkerRuntime,
-                        prompt: buildWorkerRuntimePrompt(currentMessage, workDir),
-                        sessionId,
-                        runId,
-                        signal: controller.signal,
-                    })
-                    : runAgent({
-                        userMessage: currentMessage,
-                        sessionId,
-                        runId,
-                        model: params.model,
-                        ...(params.providerId ? { providerId: params.providerId } : {}),
-                        ...(params.provider ? { provider: params.provider } : {}),
-                        workDir,
-                        source: params.source,
-                        signal: controller.signal,
-                        ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
-                        ...(isRootRequest ? {} : { requestGroupId }),
-                        contextMode: effectiveContextMode,
-                    });
+                const chunkStream = runAgent({
+                    userMessage: currentMessage,
+                    sessionId,
+                    runId,
+                    model: params.model,
+                    ...(params.providerId ? { providerId: params.providerId } : {}),
+                    ...(params.provider ? { provider: params.provider } : {}),
+                    workDir,
+                    source: params.source,
+                    signal: controller.signal,
+                    ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
+                    ...(isRootRequest ? {} : { requestGroupId }),
+                    contextMode: effectiveContextMode,
+                });
                 for await (const chunk of chunkStream) {
                     if (chunk.type === "text") {
                         preview = `${preview}${chunk.delta}`.trim();

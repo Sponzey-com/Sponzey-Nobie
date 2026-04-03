@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import JSON5 from "json5";
 import { getConfig, reloadConfig } from "../../config/index.js";
-import { getProvider, getDefaultModel } from "../../llm/index.js";
+import { getProvider, getDefaultModel } from "../../ai/index.js";
 import { PATHS } from "../../config/paths.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
@@ -11,15 +11,15 @@ function buildLegacySettingsSnapshot() {
     const cfg = getConfig();
     const telegramChannel = getActiveTelegramChannel();
     return {
-        llm: {
-            defaultProvider: cfg.llm.defaultProvider,
-            defaultModel: cfg.llm.defaultModel,
-            hasAnthropicKey: (cfg.llm.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
-            hasOpenAIKey: (cfg.llm.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
-            hasGeminiKey: (cfg.llm.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
-            ollamaBaseUrl: cfg.llm.providers.ollama?.baseUrl ?? "",
-            openAIBaseUrl: cfg.llm.providers.openai?.baseUrl ?? "",
-            geminiBaseUrl: cfg.llm.providers.gemini?.baseUrl ?? "",
+        ai: {
+            defaultProvider: cfg.ai.defaultProvider,
+            defaultModel: cfg.ai.defaultModel,
+            hasAnthropicKey: (cfg.ai.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
+            hasOpenAIKey: (cfg.ai.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
+            hasGeminiKey: (cfg.ai.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
+            ollamaBaseUrl: cfg.ai.providers.ollama?.baseUrl ?? "",
+            openAIBaseUrl: cfg.ai.providers.openai?.baseUrl ?? "",
+            geminiBaseUrl: cfg.ai.providers.gemini?.baseUrl ?? "",
         },
         security: {
             approvalMode: cfg.security.approvalMode,
@@ -88,38 +88,38 @@ export function registerSettingsRoute(app) {
                 // start from an empty object when the file is unreadable
             }
         }
-        if (body.llm && typeof body.llm === "object") {
-            const llm = body.llm;
-            if (!raw.llm)
-                raw.llm = {};
-            const rawLlm = raw.llm;
-            if (typeof llm.defaultProvider === "string")
-                rawLlm.defaultProvider = llm.defaultProvider;
-            if (typeof llm.defaultModel === "string")
-                rawLlm.defaultModel = llm.defaultModel;
-            if (typeof llm.ollamaBaseUrl === "string") {
-                if (!rawLlm.providers)
-                    rawLlm.providers = {};
-                const p = rawLlm.providers;
+        if (body.ai && typeof body.ai === "object") {
+            const ai = body.ai;
+            if (!raw.ai)
+                raw.ai = {};
+            const rawAi = raw.ai;
+            if (typeof ai.defaultProvider === "string")
+                rawAi.defaultProvider = ai.defaultProvider;
+            if (typeof ai.defaultModel === "string")
+                rawAi.defaultModel = ai.defaultModel;
+            if (typeof ai.ollamaBaseUrl === "string") {
+                if (!rawAi.providers)
+                    rawAi.providers = {};
+                const p = rawAi.providers;
                 if (!p.ollama)
                     p.ollama = {};
-                p.ollama.baseUrl = llm.ollamaBaseUrl;
+                p.ollama.baseUrl = ai.ollamaBaseUrl;
             }
-            if (typeof llm.openAIBaseUrl === "string") {
-                if (!rawLlm.providers)
-                    rawLlm.providers = {};
-                const p = rawLlm.providers;
+            if (typeof ai.openAIBaseUrl === "string") {
+                if (!rawAi.providers)
+                    rawAi.providers = {};
+                const p = rawAi.providers;
                 if (!p.openai)
                     p.openai = {};
-                p.openai.baseUrl = llm.openAIBaseUrl;
+                p.openai.baseUrl = ai.openAIBaseUrl;
             }
-            if (typeof llm.geminiBaseUrl === "string") {
-                if (!rawLlm.providers)
-                    rawLlm.providers = {};
-                const p = rawLlm.providers;
+            if (typeof ai.geminiBaseUrl === "string") {
+                if (!rawAi.providers)
+                    rawAi.providers = {};
+                const p = rawAi.providers;
                 if (!p.gemini)
                     p.gemini = {};
-                p.gemini.baseUrl = llm.geminiBaseUrl;
+                p.gemini.baseUrl = ai.geminiBaseUrl;
             }
         }
         if (body.security && typeof body.security === "object") {
@@ -221,8 +221,8 @@ export function registerSettingsRoute(app) {
             return reply.status(500).send({ ok: false, error: message });
         }
     });
-    // POST /api/settings/test-llm
-    app.post("/api/settings/test-llm", { preHandler: authMiddleware }, async (_req, reply) => {
+    // POST /api/settings/test-ai
+    app.post("/api/settings/test-ai", { preHandler: authMiddleware }, async (_req, reply) => {
         try {
             const model = getDefaultModel();
             const provider = getProvider();

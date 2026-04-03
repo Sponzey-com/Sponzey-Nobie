@@ -19,5 +19,7 @@
 - WebUI의 run 생성 응답에는 이제 `requestId(runId)`, `sessionId`, `source`, `receipt`가 함께 내려와, 접수 단계 식별 정보와 UI 표시를 ingress 기준으로 맞춥니다.
 - `ChatPage`와 `RunsPage`는 더 이상 raw run을 각자 ad-hoc group하지 않고, store가 유지하는 `/api/tasks` projection을 `lib/task-monitor.ts` adapter로 공통 소비합니다.
 - 이 adapter는 이제 `TaskModel.runIds`와 `latestAttemptId`를 기준으로 raw run detail을 붙여, 같은 `requestGroupId`라는 이유만으로 unrelated run을 다시 섞지 않도록 정리 중입니다.
+- `ChatPage`와 `RunsPage`는 task projection의 `failure`를 그대로 보여주며, 실행 실패와 전달 실패를 구분한 마지막 실패 요약과 detail lines를 별도 블록으로 노출합니다.
+- `ChatPage`와 `RunsPage`는 task projection의 checklist state도 그대로 보여주며, 카드에서는 진행 비율을, 상세 패널에서는 `request / execution / delivery / completion` 단계 상태를 체크박스처럼 노출합니다.
 - `ChatPage`의 새 run 시작도 이제 `createRun -> /api/runs`만 쓰고, 화면 안에서 과거 `api/agent/run` fallback을 다시 두지 않는 방향으로 정리 중입니다.
 - `RunsPage`는 request-group 단위 대표 run만 보여주더라도, 요청 영역에는 내부 보조 run 프롬프트가 아니라 그룹 내 마지막 사용자성 요청을 우선 표시해 취소·정리 상태에서도 원래 요청을 잃지 않도록 유지합니다.

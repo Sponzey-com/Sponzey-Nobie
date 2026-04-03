@@ -1,10 +1,37 @@
 import { existsSync, statSync } from "node:fs"
-import { resolve } from "node:path"
+import { extname, resolve } from "node:path"
 import { homedir } from "node:os"
 import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult } from "../types.js"
 import { getConfig } from "../../config/index.js"
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
+const DOCUMENT_LIKE_EXTENSIONS = new Set([
+  ".txt",
+  ".text",
+  ".md",
+  ".markdown",
+  ".json",
+  ".jsonl",
+  ".csv",
+  ".tsv",
+  ".log",
+  ".yaml",
+  ".yml",
+  ".xml",
+  ".html",
+  ".htm",
+  ".rtf",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+])
+const EXPLICIT_FILE_DELIVERY_PATTERNS = [
+  /\b(file|document|attachment|attach|download|export|report file)\b/i,
+  /\b(txt|text|markdown|md|json|csv|tsv|log|yaml|yml|xml|html|pdf|doc|docx|xls|xlsx)\b/i,
+  /(?:파일|문서|첨부|첨부파일|다운로드|내보내|내보내기|보고서\s*파일|텍스트\s*파일|로그\s*파일|파일로)/u,
+]
 
 function assertAllowedPath(filePath: string): void {
   const resolved = resolve(filePath)
@@ -32,6 +59,14 @@ function assertAllowedPath(filePath: string): void {
 interface TelegramSendFileParams {
   filePath: string
   caption?: string | undefined
+}
+
+function isDocumentLikeAttachment(filePath: string): boolean {
+  return DOCUMENT_LIKE_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+function wantsExplicitFileDelivery(userMessage: string): boolean {
+  return EXPLICIT_FILE_DELIVERY_PATTERNS.some((pattern) => pattern.test(userMessage))
 }
 
 export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
@@ -94,6 +129,14 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
           success: false,
           output: `File is too large: ${stat.size} bytes (max 50MB)`,
           error: "FILE_TOO_LARGE",
+        }
+      }
+
+      if (isDocumentLikeAttachment(filePath) && !wantsExplicitFileDelivery(ctx.userMessage)) {
+        return {
+          success: false,
+          output: "단순 확인/요약/상태 결과는 파일 첨부가 아니라 일반 메시지로 전달해야 합니다. 파일 또는 문서 첨부를 명시적으로 요청한 경우에만 telegram_send_file을 사용하세요.",
+          error: "DOCUMENT_ATTACHMENT_NOT_REQUESTED",
         }
       }
 

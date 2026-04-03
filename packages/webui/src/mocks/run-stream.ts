@@ -91,7 +91,7 @@ export function createHistoricalRuns(): RootRun[] {
       source: "webui",
       status: "cancelled",
       taskProfile: "operations",
-      targetId: "worker:claude_code",
+      targetId: "provider:anthropic",
       delegationTurnCount: 1,
       maxDelegationTurns: 5,
       currentStepKey: "executing",
@@ -103,7 +103,7 @@ export function createHistoricalRuns(): RootRun[] {
       updatedAt: finishedAt + 5000,
       steps: cancelledSteps,
       recentEvents: [
-        newEvent("Claude Code 대상 선택"),
+        newEvent("Anthropic 대상 선택"),
         newEvent("실행 단계 진입"),
         newEvent("사용자 취소 요청"),
       ],
@@ -113,7 +113,7 @@ export function createHistoricalRuns(): RootRun[] {
 
 export function createDemoRun(scenario: DemoRunScenario, prompt?: string): RootRun {
   const taskProfile: TaskProfile = scenario === "failure" ? "review" : "coding"
-  const targetId = scenario === "failure" ? "provider:openai" : "worker:claude_code"
+  const targetId = scenario === "failure" ? "provider:openai" : "provider:anthropic"
   return {
     id: crypto.randomUUID(),
     title:

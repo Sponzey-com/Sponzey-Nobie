@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 
-export interface LLMProviderConfig {
+export interface AIProviderConfig {
   anthropic?: {
     apiKeys: string[]
   }
@@ -136,10 +136,10 @@ export interface SkillsConfig {
 
 export interface NobieConfig {
   profile: ProfileConfig
-  llm: {
+  ai: {
     defaultProvider: string
     defaultModel: string
-    providers: LLMProviderConfig
+    providers: AIProviderConfig
   }
   security: SecurityConfig
   telegram?: TelegramConfig
@@ -164,9 +164,9 @@ export const DEFAULT_CONFIG: NobieConfig = {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     workspace: homedir(),
   },
-  llm: {
-    defaultProvider: "anthropic",
-    defaultModel: "claude-3-5-haiku-20241022",
+  ai: {
+    defaultProvider: "",
+    defaultModel: "",
     providers: {},
   },
   security: {

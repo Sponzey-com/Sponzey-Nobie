@@ -12,6 +12,7 @@ export interface AwaitingUserParams {
   preview: string
   summary: string
   reason?: string
+  rawMessage?: string
   userMessage?: string
   remainingItems?: string[]
 }
@@ -234,11 +235,12 @@ export function buildAwaitingUserMessage(params: AwaitingUserParams): string {
     params.preview.trim() ? `현재까지 결과:\n${params.preview.trim()}` : "",
     remainingItems.length > 0 ? `남은 항목:\n- ${remainingItems.join("\n- ")}` : "",
     params.reason?.trim() ? `중단 사유: ${params.reason.trim()}` : "",
+    params.rawMessage?.trim() ? `원본 오류:\n${params.rawMessage.trim()}` : "",
   ].filter(Boolean)
 
   return lines.join("\n\n")
 }
 
 function buildCancelledAfterStopDetail(params: AwaitingUserParams): string {
-  return [params.reason, params.userMessage, params.preview, params.remainingItems?.join("\n")].filter(Boolean).join("\n")
+  return [params.reason, params.rawMessage, params.userMessage, params.preview, params.remainingItems?.join("\n")].filter(Boolean).join("\n")
 }

@@ -32,10 +32,6 @@ export {
   insertAuditLog,
 } from "./db/index.js"
 
-// LLM
-export { getProvider, getDefaultModel } from "./llm/index.js"
-export type { LLMProvider, LLMChunk, Message, ToolDefinition, ChatParams } from "./llm/index.js"
-
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js"
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./tools/index.js"

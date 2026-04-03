@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
-  buildLlmRecoveryKey,
+  buildAiRecoveryKey,
   describeAssistantTextDeliveryFailure,
   describeRecoveryAlternatives,
   hasMeaningfulRouteChange,
@@ -11,8 +11,8 @@ import {
 } from "../packages/core/src/runs/recovery.ts"
 
 describe("run recovery helpers", () => {
-  it("classifies auth-like LLM recovery failures into a stable key", () => {
-    const key = buildLlmRecoveryKey({
+  it("classifies auth-like AI recovery failures into a stable key", () => {
+    const key = buildAiRecoveryKey({
       targetId: "provider:openai",
       workerRuntimeKind: undefined,
       providerId: "openai",
@@ -117,10 +117,10 @@ describe("run recovery helpers", () => {
     })).toBe(false)
 
     expect(hasMeaningfulRouteChange({
-      currentTargetId: "worker:claude_code",
-      currentModel: "claude-3-5-haiku-20241022",
-      currentProviderId: "anthropic",
-      currentWorkerRuntimeKind: "claude_code",
+      currentTargetId: "worker:internal_ai",
+      currentModel: "gpt-4.1",
+      currentProviderId: "openai",
+      currentWorkerRuntimeKind: "internal_ai",
       nextTargetId: "provider:openai",
       nextModel: "gpt-4.1",
       nextProviderId: "openai",

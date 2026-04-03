@@ -13,6 +13,9 @@ export type TaskAttemptKind =
 export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic"
 
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed"
+export type TaskFailureKind = "execution" | "recovery" | "delivery"
+export type TaskChecklistItemKey = "request" | "execution" | "delivery" | "completion"
+export type TaskChecklistItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "not_required"
 
 export type TaskActivityKind =
   | "attempt.started"
@@ -65,6 +68,15 @@ export interface TaskDeliveryModel {
   summary?: string
 }
 
+export interface TaskFailureModel {
+  kind: TaskFailureKind
+  status: Extract<RunStatus, "failed" | "cancelled" | "interrupted">
+  title: string
+  summary: string
+  detailLines: string[]
+  sourceAttemptId?: string
+}
+
 export interface TaskActivityModel {
   id: string
   taskId: string
@@ -75,6 +87,19 @@ export interface TaskActivityModel {
   attemptKind?: TaskAttemptKind
   recoveryKind?: TaskRecoveryKind
   runStatus?: RunStatus
+}
+
+export interface TaskChecklistItemModel {
+  key: TaskChecklistItemKey
+  status: TaskChecklistItemStatus
+  summary?: string
+}
+
+export interface TaskChecklistModel {
+  items: TaskChecklistItemModel[]
+  completedCount: number
+  actionableCount: number
+  failedCount: number
 }
 
 export interface TaskMonitorModel {
@@ -109,6 +134,8 @@ export interface TaskModel {
   attempts: TaskAttemptModel[]
   recoveryAttempts: TaskRecoveryAttemptModel[]
   delivery: TaskDeliveryModel
+  failure?: TaskFailureModel
+  checklist: TaskChecklistModel
   monitor: TaskMonitorModel
   activities: TaskActivityModel[]
 }
@@ -161,17 +188,35 @@ function mapRecoveryKind(kind: TaskAttemptKind): TaskRecoveryKind {
   }
 }
 
-function computeTaskStatus(groupRuns: RootRun[]): RunStatus {
-  const statuses = groupRuns.map((run) => run.status)
-  if (statuses.includes("awaiting_approval")) return "awaiting_approval"
-  if (statuses.includes("awaiting_user")) return "awaiting_user"
-  if (statuses.includes("running")) return "running"
-  if (statuses.includes("queued")) return "queued"
+function computeTaskStatus(params: {
+  groupRuns: RootRun[]
+  attempts: TaskAttemptModel[]
+  delivery: TaskDeliveryModel
+}): RunStatus {
+  const statuses = params.groupRuns.map((run) => run.status)
+  const activeVisibleAttempts = params.attempts.filter((attempt) =>
+    attempt.userVisible && ACTIVE_RUN_STATUSES.includes(attempt.status),
+  )
+  const activeAttempts = params.attempts.filter((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status))
+
+  if (activeVisibleAttempts.some((attempt) => attempt.status === "awaiting_approval")) return "awaiting_approval"
+  if (activeVisibleAttempts.some((attempt) => attempt.status === "awaiting_user")) return "awaiting_user"
+  if (activeVisibleAttempts.some((attempt) => attempt.status === "running")) return "running"
+  if (activeVisibleAttempts.some((attempt) => attempt.status === "queued")) return "queued"
+  if (params.delivery.status === "delivered" && activeVisibleAttempts.length === 0) return "completed"
+  if (activeAttempts.some((attempt) => attempt.status === "awaiting_approval")) return "awaiting_approval"
+  if (activeAttempts.some((attempt) => attempt.status === "awaiting_user")) return "awaiting_user"
+  if (activeAttempts.some((attempt) => attempt.status === "running")) return "running"
+  if (activeAttempts.some((attempt) => attempt.status === "queued")) return "queued"
   if (statuses.includes("failed")) return "failed"
   if (statuses.every((status) => status === "completed")) return "completed"
   if (statuses.includes("interrupted")) return "interrupted"
   if (statuses.includes("cancelled")) return "cancelled"
-  return groupRuns[0]?.status ?? "queued"
+  if (statuses.includes("awaiting_approval")) return "awaiting_approval"
+  if (statuses.includes("awaiting_user")) return "awaiting_user"
+  if (statuses.includes("running")) return "running"
+  if (statuses.includes("queued")) return "queued"
+  return params.groupRuns[0]?.status ?? "queued"
 }
 
 function computeTaskSummary(groupRuns: RootRun[]): string {
@@ -200,6 +245,40 @@ function detectDeliveryChannel(label: string): "telegram" | "webui" | "cli" | "u
   if (normalized.includes("webui")) return "webui"
   if (normalized.includes("cli")) return "cli"
   return "unknown"
+}
+
+function mapRunStatusToChecklistStatus(status: RunStatus): TaskChecklistItemStatus {
+  switch (status) {
+    case "queued":
+      return "pending"
+    case "running":
+    case "awaiting_approval":
+    case "awaiting_user":
+      return "running"
+    case "completed":
+      return "completed"
+    case "cancelled":
+    case "interrupted":
+      return "cancelled"
+    default:
+      return "failed"
+  }
+}
+
+function isExecutionAttemptKind(kind: TaskAttemptKind): boolean {
+  switch (kind) {
+    case "primary":
+    case "followup":
+    case "approval_continuation":
+    case "scheduled_execution":
+      return true
+    default:
+      return false
+  }
+}
+
+function mapTerminalFailureStatus(status: TaskFailureModel["status"]): Extract<TaskChecklistItemStatus, "failed" | "cancelled"> {
+  return status === "cancelled" || status === "interrupted" ? "cancelled" : "failed"
 }
 
 interface TaskDeliverySignal {
@@ -380,6 +459,258 @@ function buildTaskMonitor(
   }
 }
 
+function getFailureDetailLines(run: RootRun, summary: string): string[] {
+  const detailLines = [...run.recentEvents]
+    .sort((a, b) => b.at - a.at)
+    .map((event) => event.label.trim())
+    .filter((label) => label.length > 0 && label !== summary)
+
+  return [...new Set(detailLines)].slice(0, 3)
+}
+
+function describeFailureOutcome(status: Extract<RunStatus, "failed" | "cancelled" | "interrupted">): string {
+  switch (status) {
+    case "cancelled":
+      return "취소"
+    case "interrupted":
+      return "중단"
+    default:
+      return "실패"
+  }
+}
+
+function describeAttemptFailureTitle(
+  kind: TaskAttemptKind,
+  status: Extract<RunStatus, "failed" | "cancelled" | "interrupted">,
+): string {
+  const outcome = describeFailureOutcome(status)
+
+  switch (kind) {
+    case "intake_bridge":
+      return `요청 해석 ${outcome}`
+    case "verification":
+      return `결과 검증 ${outcome}`
+    case "filesystem_retry":
+      return `파일 작업 재시도 ${outcome}`
+    case "truncated_recovery":
+      return `중간 절단 복구 ${outcome}`
+    case "scheduled_execution":
+      return `예약 실행 ${outcome}`
+    default:
+      return `실행 ${outcome}`
+  }
+}
+
+function deriveTaskFailure(
+  orderedRuns: RootRun[],
+  attempts: TaskAttemptModel[],
+  delivery: TaskDeliveryModel,
+): TaskFailureModel | undefined {
+  if (delivery.status === "failed") {
+    const sourceRun = delivery.sourceAttemptId
+      ? orderedRuns.find((run) => run.id === delivery.sourceAttemptId)
+      : undefined
+    const summary =
+      delivery.summary?.trim()
+      || [...(sourceRun?.recentEvents ?? [])].sort((a, b) => b.at - a.at)[0]?.label?.trim()
+      || sourceRun?.summary?.trim()
+      || "결과 전달 중 오류가 발생했습니다."
+
+    return {
+      kind: "delivery",
+      status: "failed",
+      title: "전달 실패",
+      summary,
+      detailLines: sourceRun ? getFailureDetailLines(sourceRun, summary) : [],
+      ...(delivery.sourceAttemptId ? { sourceAttemptId: delivery.sourceAttemptId } : {}),
+    }
+  }
+
+  const failedRun = [...orderedRuns]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .find((run): run is RootRun & { status: Extract<RunStatus, "failed" | "cancelled" | "interrupted"> } =>
+      run.status === "failed" || run.status === "cancelled" || run.status === "interrupted",
+    )
+  if (!failedRun) return undefined
+
+  const failedAttempt = attempts.find((attempt) => attempt.id === failedRun.id)
+  const summary =
+    [...failedRun.recentEvents].sort((a, b) => b.at - a.at)[0]?.label?.trim()
+    || failedRun.summary.trim()
+    || failedAttempt?.summary?.trim()
+    || describeAttemptFailureTitle(failedAttempt?.kind ?? "followup", failedRun.status)
+
+  return {
+    kind: failedAttempt && isRecoveryAttemptKind(failedAttempt.kind) ? "recovery" : "execution",
+    status: failedRun.status,
+    title: describeAttemptFailureTitle(failedAttempt?.kind ?? "followup", failedRun.status),
+    summary,
+    detailLines: getFailureDetailLines(failedRun, summary),
+    sourceAttemptId: failedRun.id,
+  }
+}
+
+function buildTaskChecklist(params: {
+  attempts: TaskAttemptModel[]
+  delivery: TaskDeliveryModel
+  failure?: TaskFailureModel
+  status: RunStatus
+  summary: string
+}): TaskChecklistModel {
+  const terminalFailure = params.failure && !ACTIVE_RUN_STATUSES.includes(params.status) ? params.failure : undefined
+  const intakeAttempt = [...params.attempts].reverse().find((attempt) => attempt.kind === "intake_bridge")
+  const executionAttempts = params.attempts.filter((attempt) => isExecutionAttemptKind(attempt.kind))
+  const latestExecutionAttempt = executionAttempts.at(-1)
+  const activeExecutionAttempt = [...executionAttempts].reverse().find((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status))
+  const completedExecutionAttempt = [...executionAttempts].reverse().find((attempt) => attempt.status === "completed")
+
+  const requestItem: TaskChecklistItemModel = (() => {
+    if (!intakeAttempt) {
+      return {
+        key: "request",
+        status: "completed",
+        ...(params.attempts[0]?.summary ? { summary: params.attempts[0].summary } : {}),
+      }
+    }
+
+    if (executionAttempts.length > 0) {
+      return {
+        key: "request",
+        status: "completed",
+        ...(intakeAttempt.summary ? { summary: intakeAttempt.summary } : {}),
+      }
+    }
+
+    return {
+      key: "request",
+      status: mapRunStatusToChecklistStatus(intakeAttempt.status),
+      ...(intakeAttempt.summary ? { summary: intakeAttempt.summary } : {}),
+    }
+  })()
+
+  const executionItem: TaskChecklistItemModel = (() => {
+    if (terminalFailure && terminalFailure.kind !== "delivery") {
+      return {
+        key: "execution",
+        status: mapTerminalFailureStatus(terminalFailure.status),
+        summary: terminalFailure.summary,
+      }
+    }
+
+    if (activeExecutionAttempt) {
+      return {
+        key: "execution",
+        status: "running",
+        ...(activeExecutionAttempt.summary ? { summary: activeExecutionAttempt.summary } : {}),
+      }
+    }
+
+    if (completedExecutionAttempt || params.delivery.status === "delivered" || params.delivery.status === "failed" || params.status === "completed") {
+      const summary = completedExecutionAttempt?.summary || latestExecutionAttempt?.summary || params.summary
+      return {
+        key: "execution",
+        status: "completed",
+        ...(summary ? { summary } : {}),
+      }
+    }
+
+    if (latestExecutionAttempt) {
+      return {
+        key: "execution",
+        status: mapRunStatusToChecklistStatus(latestExecutionAttempt.status),
+        ...(latestExecutionAttempt.summary ? { summary: latestExecutionAttempt.summary } : {}),
+      }
+    }
+
+    return {
+      key: "execution",
+      status: "pending",
+    }
+  })()
+
+  const deliveryItem: TaskChecklistItemModel = (() => {
+    switch (params.delivery.status) {
+      case "delivered":
+        return {
+          key: "delivery",
+          status: "completed",
+          ...(params.delivery.summary ? { summary: params.delivery.summary } : {}),
+        }
+      case "failed":
+        return {
+          key: "delivery",
+          status: "failed",
+          ...(params.delivery.summary ? { summary: params.delivery.summary } : {}),
+        }
+      case "pending":
+        return {
+          key: "delivery",
+          status: "running",
+          ...(params.delivery.summary ? { summary: params.delivery.summary } : {}),
+        }
+      default:
+        return {
+          key: "delivery",
+          status: "not_required",
+        }
+    }
+  })()
+
+  const completionItem: TaskChecklistItemModel = (() => {
+    if (terminalFailure) {
+      return {
+        key: "completion",
+        status: mapTerminalFailureStatus(terminalFailure.status),
+        summary: terminalFailure.summary,
+      }
+    }
+
+    switch (params.status) {
+      case "completed":
+        return {
+          key: "completion",
+          status: "completed",
+          ...(params.summary ? { summary: params.summary } : {}),
+        }
+      case "queued":
+        return {
+          key: "completion",
+          status: "pending",
+          ...(params.summary ? { summary: params.summary } : {}),
+        }
+      case "cancelled":
+      case "interrupted":
+        return {
+          key: "completion",
+          status: "cancelled",
+          ...(params.summary ? { summary: params.summary } : {}),
+        }
+      case "failed":
+        return {
+          key: "completion",
+          status: "failed",
+          ...(params.summary ? { summary: params.summary } : {}),
+        }
+      default:
+        return {
+          key: "completion",
+          status: "running",
+          ...(params.summary ? { summary: params.summary } : {}),
+        }
+    }
+  })()
+
+  const items = [requestItem, executionItem, deliveryItem, completionItem]
+  const actionableItems = items.filter((item) => item.status !== "not_required")
+
+  return {
+    items,
+    completedCount: actionableItems.filter((item) => item.status === "completed").length,
+    actionableCount: actionableItems.length,
+    failedCount: actionableItems.filter((item) => item.status === "failed" || item.status === "cancelled").length,
+  }
+}
+
 export function buildTaskModels(runs: RootRun[]): TaskModel[] {
   const grouped = new Map<string, RootRun[]>()
   for (const run of runs) {
@@ -397,6 +728,7 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
     const anchorRun = orderedRuns[0]
     if (!anchorRun || !latestRun) continue
     const taskId = anchorRun.requestGroupId || anchorRun.id
+    const summary = computeTaskSummary(groupRuns)
 
     const attempts: TaskAttemptModel[] = orderedRuns.map((run, index) => {
       const kind = classifyAttemptKind(run, index)
@@ -439,7 +771,16 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
       })
 
     const delivery = deriveTaskDelivery(taskId, orderedRuns, attempts)
+    const status = computeTaskStatus({ groupRuns, attempts, delivery })
+    const failure = deriveTaskFailure(orderedRuns, attempts, delivery)
     const activities = buildTaskActivities(taskId, attempts, orderedRuns)
+    const checklist = buildTaskChecklist({
+      attempts,
+      delivery,
+      ...(failure ? { failure } : {}),
+      status,
+      summary,
+    })
 
     tasks.push({
       id: taskId,
@@ -451,14 +792,17 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
       runIds: orderedRuns.map((run) => run.id),
       title: anchorRun.title,
       requestText: computeTaskRequest(groupRuns),
-      summary: computeTaskSummary(groupRuns),
-      status: computeTaskStatus(groupRuns),
-      canCancel: groupRuns.some((run) => run.canCancel && ACTIVE_RUN_STATUSES.includes(run.status)),
+      summary,
+      status,
+      canCancel: ACTIVE_RUN_STATUSES.includes(status)
+        && attempts.some((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status)),
       createdAt: anchorRun.createdAt,
       updatedAt: latestRun.updatedAt,
       attempts,
       recoveryAttempts,
       delivery,
+      ...(failure ? { failure } : {}),
+      checklist,
       monitor: buildTaskMonitor(attempts, recoveryAttempts, delivery),
       activities,
     })

@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { eventBus } from "../events/index.js"
-import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode, type LLMProvider } from "../llm/index.js"
-import type { Message, ToolDefinition, LLMChunk } from "../llm/types.js"
+import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode, type AIProvider } from "../ai/index.js"
+import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
@@ -72,20 +72,24 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Decide for yourself which tool, AI, or execution route is best for the task.",
   "If another AI or execution path is better than handling it directly, route the work there.",
   "After delegation or routing, review the result and continue follow-up execution when needed.",
-  "For tasks that require system privileges, system control, or local device control, prefer Yeonjang first.",
-  "Use Nobie core local tools only as a fallback when Yeonjang is unavailable or cannot perform the task.",
+  "For tasks that require system privileges, system control, local device control, command execution, app launch, screen capture, keyboard input, or mouse control, use Yeonjang only.",
+  "Do not fall back to Nobie core local execution for those tasks.",
+  "If Yeonjang is unavailable or the connected extension does not support the required method, stop clearly and report that the extension path is required.",
   "Prefer local environment, local files, local tools, memory, and instruction chain context.",
   "If a task can be solved without the web, solve it locally first.",
   "If the user asks in Korean, answer in Korean.",
   "If the user asks in English, answer in English.",
   "Do not switch languages unless the user explicitly asks for translation.",
+  "For simple checks, confirmations, counts, summaries, and status reports, deliver the result as normal text in the current channel.",
+  "Do not create temporary text or document files just to send a plain answer.",
+  "Use file delivery only when the result is inherently a file artifact such as a screenshot, camera photo, generated document explicitly requested by the user, or an existing file the user explicitly asked to send.",
   "",
   "[Failure Handling Rules]",
   "If a tool fails, read the reason.",
   "Do not repeat the same failed method blindly.",
   "Re-check path, permissions, input format, execution order, and available alternative tools.",
   "Try another workable method when possible.",
-  "If an LLM call fails, do not stop immediately.",
+  "If an AI call fails, do not stop immediately.",
   "Analyze the reason for failure.",
   "If needed, change the target, the model, or the execution route.",
   "Do not simply retry the exact same request in the exact same way.",
@@ -115,7 +119,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Interpret the request literally first.",
   "Also infer normal common-sense intent.",
   "Execute before over-explaining.",
-  "Prefer Yeonjang for privileged system work.",
+  "Use Yeonjang only for privileged system work and local device control.",
   "If something fails, analyze the cause and try another method.",
   "Do not loop forever.",
   "Preserve the user's language.",
@@ -127,7 +131,7 @@ export type AgentChunk =
   | { type: "tool_start"; toolName: string; params: unknown }
   | { type: "tool_end"; toolName: string; success: boolean; output: string; details?: unknown }
   | { type: "execution_recovery"; toolNames: string[]; summary: string; reason: string }
-  | { type: "llm_recovery"; summary: string; reason: string; message: string }
+  | { type: "ai_recovery"; summary: string; reason: string; message: string }
   | { type: "done"; totalTokens: number }
   | { type: "error"; message: string }
 
@@ -141,7 +145,7 @@ export interface RunAgentParams {
   runId?: string | undefined
   model?: string | undefined
   providerId?: string | undefined
-  provider?: LLMProvider | undefined
+  provider?: AIProvider | undefined
   systemPrompt?: string | undefined
   workDir?: string | undefined
   source?: "webui" | "cli" | "telegram" | undefined
@@ -352,8 +356,6 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
 
         if (chunk.type === "text_delta") {
           textBuffer += chunk.delta
-          yield { type: "text", delta: chunk.delta }
-          eventBus.emit("agent.stream", { sessionId, runId, delta: chunk.delta })
         } else if (chunk.type === "tool_use") {
           pendingToolUses.push({ id: chunk.id, name: chunk.name, input: chunk.input })
         } else if (chunk.type === "message_stop") {
@@ -366,11 +368,12 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         return
       }
       const msg = err instanceof Error ? err.message : String(err)
-      log.error(`LLM error: ${msg}`)
+      log.error(`AI error: ${msg}`)
+      textBuffer = ""
       yield {
-        type: "llm_recovery",
-        summary: "LLM 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
-        reason: describeLlmErrorReason(msg),
+        type: "ai_recovery",
+        summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
+        reason: describeAiErrorReason(msg),
         message: msg,
       }
       return
@@ -379,16 +382,20 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     // No tool calls → final response
     if (pendingToolUses.length === 0) {
       if (textBuffer) {
+        const deliveredText = textBuffer
+        yield { type: "text", delta: deliveredText }
+        eventBus.emit("agent.stream", { sessionId, runId, delta: deliveredText })
         insertMessage({
           id: crypto.randomUUID(),
           session_id: sessionId,
           root_run_id: runId,
           role: "assistant",
-          content: textBuffer,
+          content: deliveredText,
           tool_calls: null,
           tool_call_id: null,
           created_at: Date.now(),
         })
+        textBuffer = ""
       }
       break
     }
@@ -533,7 +540,7 @@ function buildExecutionRecoveryReason(failures: ExecutionRecoveryFailure[]): str
   return latest?.error?.trim() || "작업 실행이 실패해 다른 방법 검토가 필요합니다."
 }
 
-function describeLlmErrorReason(message: string): string {
+function describeAiErrorReason(message: string): string {
   const normalized = message.toLowerCase()
   if (/(timeout|timed out|time-out|시간 초과)/i.test(message)) {
     return "모델 응답 생성 중 시간 초과가 발생했습니다."

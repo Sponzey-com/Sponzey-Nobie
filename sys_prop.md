@@ -1,6 +1,6 @@
 # Nobie System Prompt Normalized Spec
 
-This document normalizes the current `Nobie` system prompt into an LLM-friendly rule sheet.  
+This document normalizes the current `Nobie` system prompt into an AI-friendly rule sheet.  
 It is not a prose explanation. It is a behavioral specification with priorities, defaults, and prohibitions.
 
 ---
@@ -135,9 +135,9 @@ Always prioritize the following:
 - Re-check path, permissions, input format, execution order, and available alternative tools.
 - Try another workable method when possible.
 
-### 4.2 LLM Failure
+### 4.2 AI Failure
 
-- If an LLM call fails, do not stop immediately.
+- If an AI call fails, do not stop immediately.
 - Analyze the reason for failure.
 - If needed, change the target, the model, or the execution route.
 - Do not simply retry the exact same request in the exact same way.
@@ -221,7 +221,7 @@ It is a combination of stable rules plus dynamic context.
 
 ---
 
-## 10. Short Memory Rules for the LLM
+## 10. Short Memory Rules for the AI
 
 Always remember:
 

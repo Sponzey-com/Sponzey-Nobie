@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import JSON5 from "json5"
 import { getConfig, reloadConfig } from "../../config/index.js"
-import { getProvider, getDefaultModel } from "../../llm/index.js"
+import { getProvider, getDefaultModel } from "../../ai/index.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
@@ -14,15 +14,15 @@ function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
   const telegramChannel = getActiveTelegramChannel()
   return {
-    llm: {
-      defaultProvider: cfg.llm.defaultProvider,
-      defaultModel: cfg.llm.defaultModel,
-      hasAnthropicKey: (cfg.llm.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
-      hasOpenAIKey: (cfg.llm.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
-      hasGeminiKey: (cfg.llm.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
-      ollamaBaseUrl: cfg.llm.providers.ollama?.baseUrl ?? "",
-      openAIBaseUrl: cfg.llm.providers.openai?.baseUrl ?? "",
-      geminiBaseUrl: cfg.llm.providers.gemini?.baseUrl ?? "",
+    ai: {
+      defaultProvider: cfg.ai.defaultProvider,
+      defaultModel: cfg.ai.defaultModel,
+      hasAnthropicKey: (cfg.ai.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
+      hasOpenAIKey: (cfg.ai.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
+      hasGeminiKey: (cfg.ai.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
+      ollamaBaseUrl: cfg.ai.providers.ollama?.baseUrl ?? "",
+      openAIBaseUrl: cfg.ai.providers.openai?.baseUrl ?? "",
+      geminiBaseUrl: cfg.ai.providers.gemini?.baseUrl ?? "",
     },
     security: {
       approvalMode: cfg.security.approvalMode,
@@ -128,29 +128,32 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         }
       }
 
-      if (body.llm && typeof body.llm === "object") {
-        const llm = body.llm as Record<string, unknown>
-        if (!raw.llm) raw.llm = {}
-        const rawLlm = raw.llm as Record<string, unknown>
-        if (typeof llm.defaultProvider === "string") rawLlm.defaultProvider = llm.defaultProvider
-        if (typeof llm.defaultModel === "string") rawLlm.defaultModel = llm.defaultModel
-        if (typeof llm.ollamaBaseUrl === "string") {
-          if (!rawLlm.providers) rawLlm.providers = {}
-          const p = rawLlm.providers as Record<string, unknown>
+      const aiBody = body.ai && typeof body.ai === "object"
+        ? body.ai as Record<string, unknown>
+        : null
+
+      if (aiBody) {
+        if (!raw.ai) raw.ai = {}
+        const rawAi = raw.ai as Record<string, unknown>
+        if (typeof aiBody.defaultProvider === "string") rawAi.defaultProvider = aiBody.defaultProvider
+        if (typeof aiBody.defaultModel === "string") rawAi.defaultModel = aiBody.defaultModel
+        if (typeof aiBody.ollamaBaseUrl === "string") {
+          if (!rawAi.providers) rawAi.providers = {}
+          const p = rawAi.providers as Record<string, unknown>
           if (!p.ollama) p.ollama = {}
-          ;(p.ollama as Record<string, unknown>).baseUrl = llm.ollamaBaseUrl
+          ;(p.ollama as Record<string, unknown>).baseUrl = aiBody.ollamaBaseUrl
         }
-        if (typeof llm.openAIBaseUrl === "string") {
-          if (!rawLlm.providers) rawLlm.providers = {}
-          const p = rawLlm.providers as Record<string, unknown>
+        if (typeof aiBody.openAIBaseUrl === "string") {
+          if (!rawAi.providers) rawAi.providers = {}
+          const p = rawAi.providers as Record<string, unknown>
           if (!p.openai) p.openai = {}
-          ;(p.openai as Record<string, unknown>).baseUrl = llm.openAIBaseUrl
+          ;(p.openai as Record<string, unknown>).baseUrl = aiBody.openAIBaseUrl
         }
-        if (typeof llm.geminiBaseUrl === "string") {
-          if (!rawLlm.providers) rawLlm.providers = {}
-          const p = rawLlm.providers as Record<string, unknown>
+        if (typeof aiBody.geminiBaseUrl === "string") {
+          if (!rawAi.providers) rawAi.providers = {}
+          const p = rawAi.providers as Record<string, unknown>
           if (!p.gemini) p.gemini = {}
-          ;(p.gemini as Record<string, unknown>).baseUrl = llm.geminiBaseUrl
+          ;(p.gemini as Record<string, unknown>).baseUrl = aiBody.geminiBaseUrl
         }
       }
 
@@ -274,8 +277,8 @@ export function registerSettingsRoute(app: FastifyInstance): void {
     }
   })
 
-  // POST /api/settings/test-llm
-  app.post("/api/settings/test-llm", { preHandler: authMiddleware }, async (_req, reply) => {
+  // POST /api/settings/test-ai
+  app.post("/api/settings/test-ai", { preHandler: authMiddleware }, async (_req, reply) => {
     try {
       const model = getDefaultModel()
       const provider = getProvider()

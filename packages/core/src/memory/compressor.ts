@@ -1,4 +1,4 @@
-import type { Message, LLMProvider } from "../llm/types.js"
+import type { Message, AIProvider } from "../ai/types.js"
 import type { DbMessage } from "../db/index.js"
 
 export const COMPRESS_THRESHOLD = 120_000   // tokens
@@ -23,7 +23,7 @@ export function needsCompression(messages: Message[], totalTokens: number): bool
 export async function compressContext(
   messages: Message[],
   dbMessages: DbMessage[],
-  provider: LLMProvider,
+  provider: AIProvider,
   model: string,
 ): Promise<{ messages: Message[]; summary: string; compressedIds: string[] }> {
   const tail = messages.slice(-TAIL_SIZE)
@@ -39,7 +39,7 @@ export async function compressContext(
     return `${role}: ${content.slice(0, 500)}`
   }).join("\n\n")
 
-  // Call LLM to summarize
+  // Call the configured AI backend to summarize
   let summary = ""
   for await (const chunk of provider.chat({
     model,

@@ -1,7 +1,7 @@
 import type { AgentContextMode } from "../agent/index.js"
 import type { TaskExecutionSemantics, TaskIntentEnvelope, TaskStructuredRequest } from "../agent/intake.js"
 import type { insertMessage } from "../db/index.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import type { RunChunkDeliveryHandler, logAssistantReply } from "./delivery.js"
 import { createExecutionLoopRuntimeState } from "./execution-profile.js"
@@ -94,7 +94,7 @@ export async function executeRootRunDriver(
     intentEnvelope?: TaskIntentEnvelope
     currentModel: string | undefined
     currentProviderId: string | undefined
-    currentProvider: LLMProvider | undefined
+    currentProvider: AIProvider | undefined
     currentTargetId: string | undefined
     currentTargetLabel: string | undefined
     workDir: string

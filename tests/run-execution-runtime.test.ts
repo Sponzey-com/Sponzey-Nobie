@@ -2,21 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 import { createExecutionChunkStream } from "../packages/core/src/runs/execution-runtime.ts"
 
 describe("execution runtime helper", () => {
-  it("routes worker runtime execution through runWorkerRuntime", async () => {
-    const runWorkerRuntime = vi.fn(async function* () {
-      yield { type: "text", delta: "worker" } as const
-    })
+  it("always routes execution through the configured AI agent runtime", async () => {
     const runAgent = vi.fn(async function* () {
       yield { type: "text", delta: "agent" } as const
     })
 
     const stream = createExecutionChunkStream({
-      workerRuntime: {
-        kind: "claude_code",
-        targetId: "worker:claude_code",
-        label: "코드 작업 세션",
-        command: "claude",
-      },
       userMessage: "do work",
       memorySearchQuery: "original request",
       sessionId: "session-1",
@@ -29,7 +20,6 @@ describe("execution runtime helper", () => {
       contextMode: "full",
     }, {
       runAgent,
-      runWorkerRuntime,
     })
 
     const chunks = []
@@ -37,16 +27,12 @@ describe("execution runtime helper", () => {
       chunks.push(chunk)
     }
 
-    expect(runWorkerRuntime).toHaveBeenCalledOnce()
-    expect(runAgent).not.toHaveBeenCalled()
-    expect(runWorkerRuntime.mock.calls[0]?.[0].prompt).toContain("do work")
-    expect(chunks).toEqual([{ type: "text", delta: "worker" }])
+    expect(runAgent).toHaveBeenCalledOnce()
+    expect(runAgent.mock.calls[0]?.[0].userMessage).toBe("do work")
+    expect(chunks).toEqual([{ type: "text", delta: "agent" }])
   })
 
   it("routes normal execution through runAgent and preserves request group for followups", async () => {
-    const runWorkerRuntime = vi.fn(async function* () {
-      yield { type: "text", delta: "worker" } as const
-    })
     const runAgent = vi.fn(async function* () {
       yield { type: "text", delta: "agent" } as const
     })
@@ -65,7 +51,6 @@ describe("execution runtime helper", () => {
       contextMode: "summary",
     }, {
       runAgent,
-      runWorkerRuntime,
     })
 
     const chunks = []
@@ -74,7 +59,6 @@ describe("execution runtime helper", () => {
     }
 
     expect(runAgent).toHaveBeenCalledOnce()
-    expect(runWorkerRuntime).not.toHaveBeenCalled()
     expect(runAgent.mock.calls[0]?.[0].requestGroupId).toBe("group-2")
     expect(runAgent.mock.calls[0]?.[0].memorySearchQuery).toBe("original request")
     expect(chunks).toEqual([{ type: "text", delta: "agent" }])

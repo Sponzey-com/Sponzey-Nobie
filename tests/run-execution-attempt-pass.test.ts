@@ -35,10 +35,10 @@ function createParams() {
     contextMode: "full" as const,
     preview: "",
     activeWorkerRuntime: {
-      kind: "claude_code" as const,
-      targetId: "worker:claude_code",
-      label: "코드 작업 세션",
-      command: "claude",
+      kind: "internal_ai" as const,
+      targetId: "worker:internal_ai",
+      label: "코드 작업 보조 세션",
+      command: "disabled",
     },
     workerSessionId: "worker-1",
     pendingToolParams: new Map<string, unknown>(),
@@ -55,6 +55,7 @@ function createParams() {
       external: 0,
     },
     executionRecoveryLimitStop: null,
+    stopAfterDirectArtifactDeliverySuccess: false,
     abortExecutionStream: vi.fn(),
   }
 }
@@ -84,7 +85,7 @@ describe("run execution attempt pass", () => {
     expect(result.preview).toBe("hello")
     expect(result.failed).toBe(false)
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "worker-1 실행 시작")
-    expect(dependencies.updateRunSummary).toHaveBeenCalledWith("run-1", "코드 작업 세션에서 작업을 실행 중입니다.")
+    expect(dependencies.updateRunSummary).toHaveBeenCalledWith("run-1", "코드 작업 보조 세션에서 작업을 실행 중입니다.")
     expect(moduleDependencies.deliverTrackedChunk).toHaveBeenCalledTimes(2)
   })
 
@@ -153,5 +154,48 @@ describe("run execution attempt pass", () => {
       reason: "reason",
       remainingItems: ["item"],
     })
+  })
+
+  it("stops consuming further chunks after direct artifact delivery succeeds", async () => {
+    const dependencies = createDependencies()
+    const params = createParams()
+    params.stopAfterDirectArtifactDeliverySuccess = true
+    const moduleDependencies = {
+      createExecutionChunkStream: vi.fn(() => toAsyncGenerator([
+        {
+          type: "tool_end",
+          toolName: "telegram_send_file",
+          success: true,
+          output: "sent",
+          details: {
+            kind: "artifact_delivery",
+            channel: "telegram",
+            filePath: "/tmp/result.png",
+          },
+        },
+        { type: "text", delta: "this should not be emitted" },
+        { type: "done", totalTokens: 1 },
+      ])),
+      applyExecutionChunkPass: vi.fn(() => ({ handled: true })),
+      applyErrorChunkPass: vi.fn(),
+      deliverTrackedChunk: vi.fn().mockResolvedValue({
+        artifactDeliveries: [{
+          toolName: "telegram_send_file",
+          channel: "telegram",
+          filePath: "/tmp/result.png",
+        }],
+      }),
+      getRootRun: vi.fn(() => ({
+        delegationTurnCount: 0,
+        maxDelegationTurns: 3,
+      })),
+    }
+
+    const result = await runExecutionAttemptPass(params, dependencies, moduleDependencies)
+
+    expect(result.failed).toBe(false)
+    expect(moduleDependencies.applyExecutionChunkPass).toHaveBeenCalledTimes(1)
+    expect(moduleDependencies.deliverTrackedChunk).toHaveBeenCalledTimes(1)
+    expect(params.abortExecutionStream).toHaveBeenCalledTimes(1)
   })
 })

@@ -4,6 +4,93 @@ import JSON5 from "json5"
 import { DEFAULT_CONFIG, type NobieConfig } from "./types.js"
 import { PATHS } from "./paths.js"
 
+function toObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {}
+}
+
+function toString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    : []
+}
+
+function normalizeLegacyAiConfig(parsed: Partial<NobieConfig>): Partial<NobieConfig> {
+  const root = toObject(parsed)
+  const rawAi = toObject(root.ai)
+  const rawAiProviders = toObject(rawAi.providers)
+  const rawAiBackends = toObject(rawAi.backends)
+
+  const providers = toObject(rawAi.providers)
+
+  if (Object.keys(providers).length === 0) {
+    const openai = toObject(rawAiBackends.openai)
+    const anthropic = toObject(rawAiBackends.anthropic)
+    const gemini = toObject(rawAiBackends.gemini)
+    const ollama = toObject(rawAiBackends.ollama)
+    const inferredProviders: Record<string, unknown> = {}
+
+    if (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth") {
+      inferredProviders.openai = {
+        baseUrl: toString(openai.endpoint),
+        apiKeys: toStringArray(toObject(openai.credentials).apiKey ? [toObject(openai.credentials).apiKey] : []),
+        auth: {
+          mode: toString(openai.authMode) || "api_key",
+          codexAuthFilePath: toString(toObject(openai.credentials).oauthAuthFilePath) || undefined,
+        },
+      }
+    }
+
+    if (toString(anthropic.providerType) === "anthropic") {
+      inferredProviders.anthropic = {
+        apiKeys: toStringArray(toObject(anthropic.credentials).apiKey ? [toObject(anthropic.credentials).apiKey] : []),
+      }
+    }
+
+    if (toString(gemini.providerType) === "gemini") {
+      inferredProviders.gemini = {
+        baseUrl: toString(gemini.endpoint) || undefined,
+        apiKeys: toStringArray(toObject(gemini.credentials).apiKey ? [toObject(gemini.credentials).apiKey] : []),
+      }
+    }
+
+    if (toString(ollama.providerType) === "ollama" && toString(ollama.endpoint)) {
+      inferredProviders.ollama = {
+        baseUrl: toString(ollama.endpoint),
+      }
+    }
+
+    if (Object.keys(inferredProviders).length > 0) {
+      rawAi.providers = inferredProviders
+    }
+  }
+
+  if (!toString(rawAi.defaultProvider)) {
+    const openai = toObject(rawAiBackends.openai)
+    const anthropic = toObject(rawAiBackends.anthropic)
+    const gemini = toObject(rawAiBackends.gemini)
+
+    if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
+      rawAi.defaultProvider = "openai"
+      if (!toString(rawAi.defaultModel) && toString(openai.defaultModel)) rawAi.defaultModel = toString(openai.defaultModel)
+    } else if (anthropic.enabled === true && toString(anthropic.providerType) === "anthropic") {
+      rawAi.defaultProvider = "anthropic"
+      if (!toString(rawAi.defaultModel) && toString(anthropic.defaultModel)) rawAi.defaultModel = toString(anthropic.defaultModel)
+    } else if (gemini.enabled === true && toString(gemini.providerType) === "gemini") {
+      rawAi.defaultProvider = "gemini"
+      if (!toString(rawAi.defaultModel) && toString(gemini.defaultModel)) rawAi.defaultModel = toString(gemini.defaultModel)
+    }
+  }
+
+  root.ai = rawAi
+  return root as Partial<NobieConfig>
+}
+
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value == null) return undefined
   switch (value.trim().toLowerCase()) {
@@ -149,7 +236,8 @@ export function loadConfig(): NobieConfig {
 
   const raw = readFileSync(configPath, "utf-8")
   const parsed = JSON5.parse(raw) as Partial<NobieConfig>
-  const substituted = substituteDeep(parsed) as Partial<NobieConfig>
+  const normalized = normalizeLegacyAiConfig(parsed)
+  const substituted = substituteDeep(normalized) as Partial<NobieConfig>
   _config = deepMerge(deepMerge(DEFAULT_CONFIG, substituted), envOverrides)
   return _config
 }

@@ -102,17 +102,17 @@ export default function App() {
     <BrowserRouter>
       <Layout>
         <Routes>
-          <Route path="/" element={<Navigate to={setupCompleted ? "/chat" : "/setup"} replace />} />
+          <Route path="/" element={<Navigate to={setupCompleted ? "/chat" : "/settings"} replace />} />
           <Route path="/setup" element={<SetupPage />} />
-          <Route path="/chat" element={setupCompleted ? <ChatPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/runs" element={setupCompleted ? <RunsPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/dashboard" element={setupCompleted ? <DashboardPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/audit" element={setupCompleted ? <AuditPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/schedules" element={setupCompleted ? <SchedulePage /> : <Navigate to="/setup" replace />} />
-          <Route path="/plugins" element={setupCompleted ? <PluginsPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/settings" element={setupCompleted ? <SettingsPage /> : <Navigate to="/setup" replace />} />
+          <Route path="/chat" element={setupCompleted ? <ChatPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/runs" element={setupCompleted ? <RunsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/dashboard" element={setupCompleted ? <DashboardPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/audit" element={setupCompleted ? <AuditPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/schedules" element={setupCompleted ? <SchedulePage /> : <Navigate to="/settings" replace />} />
+          <Route path="/plugins" element={setupCompleted ? <PluginsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
-          <Route path="*" element={<Navigate to={setupCompleted ? "/chat" : "/setup"} replace />} />
+          <Route path="*" element={<Navigate to={setupCompleted ? "/chat" : "/settings"} replace />} />
         </Routes>
       </Layout>
     </BrowserRouter>

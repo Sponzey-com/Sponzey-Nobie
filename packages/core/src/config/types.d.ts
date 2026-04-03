@@ -1,4 +1,4 @@
-export interface LLMProviderConfig {
+export interface AIProviderConfig {
     anthropic?: {
         apiKeys: string[];
     };
@@ -107,10 +107,10 @@ export interface SkillsConfig {
 }
 export interface NobieConfig {
     profile: ProfileConfig;
-    llm: {
+    ai: {
         defaultProvider: string;
         defaultModel: string;
-        providers: LLMProviderConfig;
+        providers: AIProviderConfig;
     };
     security: SecurityConfig;
     telegram?: TelegramConfig;

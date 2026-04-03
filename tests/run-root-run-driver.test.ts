@@ -137,7 +137,7 @@ describe("execute root run driver", () => {
         seenCommandFailureRecoveryKeys: new Set<string>(),
         seenExecutionRecoveryKeys: new Set<string>(),
         seenDeliveryRecoveryKeys: new Set<string>(),
-        seenLlmRecoveryKeys: new Set<string>(),
+        seenAiRecoveryKeys: new Set<string>(),
         recoveryBudgetUsage: {
           interpretation: 0,
           execution: 0,
@@ -176,7 +176,7 @@ describe("execute root run driver", () => {
           currentTargetLabel: "OpenAI",
           activeWorkerRuntime: undefined,
           executionRecoveryLimitStop: null,
-          llmRecoveryLimitStop: null,
+          aiRecoveryLimitStop: null,
           sawRealFilesystemMutation: false,
           filesystemMutationRecoveryAttempted: false,
           truncatedOutputRecoveryAttempted: false,
@@ -259,7 +259,7 @@ describe("execute root run driver", () => {
         seenCommandFailureRecoveryKeys: new Set<string>(),
         seenExecutionRecoveryKeys: new Set<string>(),
         seenDeliveryRecoveryKeys: new Set<string>(),
-        seenLlmRecoveryKeys: new Set<string>(),
+        seenAiRecoveryKeys: new Set<string>(),
         recoveryBudgetUsage: {
           interpretation: 0,
           execution: 0,

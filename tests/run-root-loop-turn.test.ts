@@ -11,7 +11,7 @@ function createState() {
     currentTargetLabel: "OpenAI",
     activeWorkerRuntime: undefined,
     executionRecoveryLimitStop: null,
-    llmRecoveryLimitStop: null,
+    aiRecoveryLimitStop: null,
     sawRealFilesystemMutation: false,
     filesystemMutationRecoveryAttempted: false,
     truncatedOutputRecoveryAttempted: false,
@@ -93,7 +93,7 @@ function createParams() {
     seenCommandFailureRecoveryKeys: new Set<string>(),
     seenExecutionRecoveryKeys: new Set<string>(),
     seenDeliveryRecoveryKeys: new Set<string>(),
-    seenLlmRecoveryKeys: new Set<string>(),
+    seenAiRecoveryKeys: new Set<string>(),
     priorAssistantMessages: [] as string[],
     syntheticApprovalRuntimeDependencies: {
       timeoutSec: 30,
@@ -180,5 +180,49 @@ describe("run root loop turn", () => {
         currentMessage: "after cycle retry",
       }),
     })
+  })
+
+  it("does not execute the cycle when loop-entry sets a directive", async () => {
+    const moduleDependencies = {
+      prepareRootLoopEntryPassLaunch: vi.fn(() => ({
+        params: {},
+        dependencies: {},
+      })),
+      runLoopEntryPass: vi.fn(async () => ({
+        kind: "set_directive" as const,
+        directive: {
+          kind: "complete_silent" as const,
+          summary: "후속 실행으로 전달되었습니다.",
+        },
+        intakeProcessed: true,
+      })),
+      applyLoopEntryPassResult: vi.fn(() => ({
+        kind: "continue" as const,
+        state: {
+          pendingLoopDirective: {
+            kind: "complete_silent" as const,
+            summary: "후속 실행으로 전달되었습니다.",
+          },
+          intakeProcessed: true,
+        },
+      })),
+      prepareRootExecutionCyclePassLaunch: vi.fn(),
+      runExecutionCyclePass: vi.fn(),
+    }
+
+    const result = await runRootLoopTurn(createParams(), createDependencies() as any, moduleDependencies as any)
+
+    expect(result).toEqual({
+      kind: "continue",
+      pendingLoopDirective: {
+        kind: "complete_silent",
+        summary: "후속 실행으로 전달되었습니다.",
+      },
+      intakeProcessed: true,
+      state: expect.objectContaining({
+        currentMessage: "initial message",
+      }),
+    })
+    expect(moduleDependencies.runExecutionCyclePass).not.toHaveBeenCalled()
   })
 })

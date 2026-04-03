@@ -80,8 +80,7 @@ function looksLikeContinuationMessage(value: string): boolean {
     return true
   }
 
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  return trimmed.length <= 64 && tokenCount <= 8
+  return false
 }
 
 function extractQuotedReconnectTerms(value: string): string[] {
@@ -269,6 +268,34 @@ export function listRunsForActiveRequestGroups(limitGroups = 100, limitRuns = 30
        LIMIT ?`,
     )
     .all(...activeGroups, limitRuns)
+    .map(hydrateRun)
+}
+
+export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 1000): RootRun[] {
+  const groups = getDb()
+    .prepare<[number], { request_group_id: string | null; latest_updated: number }>(
+      `SELECT request_group_id, MAX(updated_at) AS latest_updated
+       FROM root_runs
+       GROUP BY request_group_id
+       ORDER BY latest_updated DESC
+       LIMIT ?`,
+    )
+    .all(limitGroups)
+    .map((row) => row.request_group_id)
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+
+  if (groups.length === 0) return []
+
+  const placeholders = groups.map(() => "?").join(", ")
+  return getDb()
+    .prepare<unknown[], RootRunRow>(
+      `SELECT *
+       FROM root_runs
+       WHERE request_group_id IN (${placeholders})
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+    )
+    .all(...groups, limitRuns)
     .map(hydrateRun)
 }
 

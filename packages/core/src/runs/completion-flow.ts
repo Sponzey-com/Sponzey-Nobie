@@ -70,7 +70,7 @@ export function decideCompletionFlow(params: {
       kind: "recover_empty_result",
       summary: "실행 결과가 비어 있어 다른 방법으로 다시 시도합니다.",
       reason: completionState.blockingReasons[0]
-        ?? "명확한 응답, 성공한 도구 결과, 실제 파일 변경, 전달 완료 중 어떤 근거도 확인되지 않았습니다.",
+        ?? "체크리스트 기준으로 완료 항목이 아직 모두 충족되지 않았습니다.",
       remainingItems: ["실제 실행 결과를 남기거나 다른 방법으로 다시 시도해야 합니다."],
     }
   }
@@ -80,8 +80,8 @@ export function decideCompletionFlow(params: {
       kind: "recover_empty_result",
       summary: "완료 판정 근거가 부족해 다시 확인합니다.",
       reason: completionState.blockingReasons[0]
-        ? `completion review가 complete를 반환했지만 receipt 기준 4축 상태로는 아직 완료 근거가 부족합니다: ${completionState.blockingReasons[0]}`
-        : "completion review가 complete를 반환했지만 receipt 기준 완료 근거가 부족합니다.",
+        ? `completion review가 complete를 반환했지만 checklist 기준으로는 아직 완료 항목이 남아 있습니다: ${completionState.blockingReasons[0]}`
+        : "completion review가 complete를 반환했지만 checklist 기준 완료 항목이 아직 남아 있습니다.",
       remainingItems: ["실제 실행 또는 전달 근거를 다시 확인해야 합니다."],
     }
   }
@@ -110,7 +110,7 @@ export function decideCompletionFlow(params: {
       kind: "recover_empty_result",
       summary: "완료 판단 근거가 부족해 다시 시도합니다.",
       reason: completionState.blockingReasons[0]
-        ?? "completion review 결과가 없고 receipt 기준 완료 근거도 부족합니다.",
+        ?? "completion review 결과가 없고 checklist 기준 완료 항목도 아직 남아 있습니다.",
       remainingItems: ["실제 실행 또는 전달 근거를 다시 확인해야 합니다."],
     }
   }

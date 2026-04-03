@@ -1,15 +1,11 @@
-import { buildSetupDraft, type AIBackendCard, type RoutingProfile, type SetupDraft } from "../control-plane/index.js"
+import { buildSetupDraft, type AIBackendCard, type SetupDraft } from "../control-plane/index.js"
 import { getConfig } from "../config/index.js"
-import { getDefaultModel, inferProviderId, type LLMProvider } from "../llm/index.js"
-import { AnthropicProvider } from "../llm/providers/anthropic.js"
-import { OpenAIProvider } from "../llm/providers/openai.js"
-import type { AuthProfile } from "../llm/types.js"
-import {
-  isWorkerRuntimeAvailable,
-  resolveWorkerRuntimeTarget,
-  type WorkerAvailabilityOverrides,
-  type WorkerRuntimeTarget,
-} from "./worker-runtime.js"
+import { type AIProvider } from "../ai/index.js"
+import { AnthropicProvider } from "../ai/providers/anthropic.js"
+import { GeminiProvider } from "../ai/providers/gemini.js"
+import { OpenAIProvider } from "../ai/providers/openai.js"
+import type { AuthProfile } from "../ai/types.js"
+import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
 export interface RouteActionInput {
   preferredTarget?: string | undefined
@@ -23,14 +19,12 @@ export interface ResolvedRunRoute {
   targetLabel?: string
   providerId?: string
   model?: string
-  provider?: LLMProvider
+  provider?: AIProvider
   workerRuntime?: WorkerRuntimeTarget
   reason: string
 }
 
-export interface RouteResolutionOptions {
-  workerAvailability?: WorkerAvailabilityOverrides
-}
+export interface RouteResolutionOptions {}
 
 export function resolveRunRoute(input: RouteActionInput): ResolvedRunRoute {
   return resolveRunRouteFromDraft(buildSetupDraft(), input)
@@ -41,7 +35,7 @@ export function resolveRunRouteFromDraft(
   input: RouteActionInput,
   options?: RouteResolutionOptions,
 ): ResolvedRunRoute {
-  const candidates = buildCandidateTargets(draft, input)
+  const candidates = buildConfiguredCandidateTargets(draft, input)
 
   for (const targetId of candidates) {
     const backend = draft.aiBackends.find((item) => item.id === targetId)
@@ -57,16 +51,22 @@ export function resolveRunRouteFromDraft(
     }
   }
 
-  const fallbackModel = input.fallbackModel ?? getDefaultModel()
   return {
-    providerId: inferProviderId(fallbackModel),
-    model: fallbackModel,
-    reason: "routing:fallback-default-model",
+    reason: "routing:no-configured-ai-backend",
   }
 }
 
-function buildCandidateTargets(draft: SetupDraft, input: RouteActionInput): string[] {
+function buildConfiguredCandidateTargets(draft: SetupDraft, input: RouteActionInput): string[] {
   const result: string[] = []
+  const defaultTargets = draft.routingProfiles.find((item) => item.id === "default")?.targets ?? []
+  const configuredProvider = getConfig().ai.defaultProvider.trim()
+  const configuredProviderTarget = normalizeTargetId(configuredProvider) ?? configuredProvider
+  const configuredTarget = defaultTargets.find((targetId) => {
+    const backend = draft.aiBackends.find((item) => item.id === targetId && item.enabled)
+    if (!backend) return false
+    if (!configuredProvider) return true
+    return backend.id === configuredProviderTarget || backend.providerType === configuredProvider
+  })
   const avoided = new Set(
     (input.avoidTargets ?? [])
       .flatMap((value) => expandAvoidTargetIds(normalizeTargetId(value) ?? value))
@@ -77,19 +77,8 @@ function buildCandidateTargets(draft: SetupDraft, input: RouteActionInput): stri
     result.push(value)
   }
 
-  const preferred = normalizeTargetId(input.preferredTarget)
-  if (preferred) add(preferred)
-
-  const taskProfile = isRoutingProfileId(input.taskProfile) ? input.taskProfile : "default"
-  const profile = draft.routingProfiles.find((item) => item.id === taskProfile)
-  const defaultProfile = draft.routingProfiles.find((item) => item.id === "default")
-
-  for (const target of profile?.targets ?? []) add(target)
-  for (const target of defaultProfile?.targets ?? []) add(target)
-
-  for (const backend of draft.aiBackends) {
-    if (backend.enabled) add(backend.id)
-  }
+  if (!configuredTarget) return result
+  add(configuredTarget)
 
   return result
 }
@@ -99,39 +88,30 @@ function expandAvoidTargetIds(value: string | undefined): string[] {
   const normalized = value.trim()
   if (!normalized) return []
   if (normalized.includes(":")) return [normalized]
-  return [normalized, `provider:${normalized}`, `worker:${normalized}`]
+  return [normalized, `provider:${normalized}`]
 }
 
 function resolveBackend(
   backend: AIBackendCard,
-  fallbackModel: string | undefined,
-  options?: RouteResolutionOptions,
+  _fallbackModel: string | undefined,
+  _options?: RouteResolutionOptions,
 ): Omit<ResolvedRunRoute, "targetId" | "targetLabel" | "reason"> | null {
-  const workerRuntime = resolveWorkerRuntimeForBackend(backend, options?.workerAvailability)
-  if (workerRuntime) {
-    const providerId = inferWorkerRuntimeProviderId(backend)
-    const model = backend.defaultModel.trim() || fallbackModel
-    return {
-      workerRuntime,
-      ...(providerId ? { providerId } : {}),
-      ...(model ? { model } : {}),
-    }
-  }
+  const model = resolveConfiguredModel(backend)
+  if (!model) return null
 
   switch (backend.providerType) {
-    case "claude": {
+    case "anthropic": {
       const apiKey = backend.credentials.apiKey?.trim()
       if (!apiKey) return null
       return {
         providerId: "anthropic",
-        model: backend.defaultModel.trim() || fallbackModel || getAnthropicFallbackModel(),
+        model,
         provider: new AnthropicProvider(buildProfile([apiKey])),
       }
     }
 
     case "openai": {
       const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
-      const model = backend.defaultModel.trim() || fallbackModel || getDefaultModel()
       return {
         providerId: "openai",
         model,
@@ -142,11 +122,9 @@ function resolveBackend(
     case "ollama":
     case "llama": {
       const endpoint = backend.endpoint?.trim()
-        || (backend.providerType === "ollama" ? getConfig().llm.providers.ollama?.baseUrl?.trim() : undefined)
+        || (backend.providerType === "ollama" ? getConfig().ai.providers.ollama?.baseUrl?.trim() : undefined)
       if (!endpoint) return null
       const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
-      const model = backend.defaultModel.trim() || fallbackModel
-      if (!model) return null
       return {
         providerId: "openai",
         model,
@@ -158,8 +136,6 @@ function resolveBackend(
       const endpoint = backend.endpoint?.trim()
       if (!endpoint) return null
       const apiKey = backend.credentials.apiKey?.trim() || "nobie-custom"
-      const model = backend.defaultModel.trim() || fallbackModel
-      if (!model) return null
       return {
         providerId: "openai",
         model,
@@ -167,8 +143,15 @@ function resolveBackend(
       }
     }
 
-    case "gemini":
-      return null
+    case "gemini": {
+      const apiKey = backend.credentials.apiKey?.trim()
+      if (!apiKey) return null
+      return {
+        providerId: "gemini",
+        model,
+        provider: new GeminiProvider(buildProfile([apiKey]), backend.endpoint?.trim() || undefined),
+      }
+    }
   }
 }
 
@@ -186,44 +169,17 @@ function normalizeTargetId(value: string | undefined): string | undefined {
   if (!normalized || normalized === "auto" || normalized === "embedded" || normalized === "local_reasoner") {
     return undefined
   }
+  if (normalized === "anthropic") {
+    return "provider:anthropic"
+  }
+  if (normalized === "openai") return "provider:openai"
+  if (normalized === "gemini") return "provider:gemini"
+  if (normalized === "ollama") return "provider:ollama"
+  if (normalized === "llama" || normalized === "llama_cpp") return "provider:llama_cpp"
   return normalized
 }
 
-function isRoutingProfileId(value: string | undefined): value is RoutingProfile["id"] {
-  return value === "default"
-    || value === "general_chat"
-    || value === "planning"
-    || value === "coding"
-    || value === "review"
-    || value === "research"
-    || value === "private_local"
-    || value === "summarization"
-    || value === "operations"
-}
-
-function resolveWorkerRuntimeForBackend(
-  backend: AIBackendCard,
-  overrides?: WorkerAvailabilityOverrides,
-): WorkerRuntimeTarget | undefined {
-  if (backend.id === "worker:claude_code" && isWorkerRuntimeAvailable("claude_code", overrides)) {
-    return resolveWorkerRuntimeTarget("claude_code")
-  }
-  if (backend.id === "worker:codex_cli" && isWorkerRuntimeAvailable("codex_cli", overrides)) {
-    return resolveWorkerRuntimeTarget("codex_cli")
-  }
-  return undefined
-}
-
-function inferWorkerRuntimeProviderId(backend: AIBackendCard): string | undefined {
-  if (backend.providerType === "claude") return "anthropic"
-  if (backend.providerType === "openai" || backend.providerType === "custom") return "openai"
-  return undefined
-}
-
-function getAnthropicFallbackModel(): string {
-  const config = getConfig()
-  if (config.llm.defaultProvider === "anthropic" && config.llm.defaultModel.trim()) {
-    return config.llm.defaultModel
-  }
-  return "claude-3-5-haiku-20241022"
+function resolveConfiguredModel(backend: AIBackendCard): string {
+  if (backend.defaultModel.trim()) return backend.defaultModel.trim()
+  return ""
 }

@@ -1,5 +1,5 @@
 import type { AgentChunk, AgentContextMode } from "../agent/index.js";
-import type { LLMProvider } from "../llm/index.js";
+import type { AIProvider } from "../ai/index.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface StartRootRunParams {
@@ -8,7 +8,7 @@ export interface StartRootRunParams {
     requestGroupId?: string | undefined;
     model: string | undefined;
     providerId?: string | undefined;
-    provider?: LLMProvider | undefined;
+    provider?: AIProvider | undefined;
     targetId?: string | undefined;
     targetLabel?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;

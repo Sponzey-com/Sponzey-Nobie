@@ -25,6 +25,7 @@ export interface ErrorChunkPassResult {
   limitStop?: {
     summary: string
     reason: string
+    rawMessage?: string
     remainingItems: string[]
   }
   workerRuntimeRecovery?: {

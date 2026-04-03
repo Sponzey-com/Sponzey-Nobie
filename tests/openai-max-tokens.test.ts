@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { resolveOpenAIChatMaxTokens } from "../packages/core/src/llm/providers/openai.ts"
+import { resolveOpenAIChatMaxTokens } from "../packages/core/src/ai/providers/openai.ts"
 
 describe("resolveOpenAIChatMaxTokens", () => {
   it("uses a safer default max token budget for older low-context models", () => {

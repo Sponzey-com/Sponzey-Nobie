@@ -15,6 +15,7 @@
 - Telegram 최종 텍스트 응답의 text delivery receipt 기록 동작
 - Telegram text/file primitive helper와 전달 순서 보장 동작
 - Telegram chunk helper의 텍스트 누적, tool status, 파일 전달 receipt 동작
+- Telegram file-send 도구의 문서형 첨부 정책과 `단순 확인 => 일반 메시지` guard 동작
 - CLI chunk helper의 텍스트, tool 상태, 오류 출력 동작
 - WebUI chat delivery helper의 assistant text/tool call 누적과 flush 동작
 - schedule action 실행, 예약 등록/취소, delegated follow-up prompt/receipt 조립 동작
@@ -41,8 +42,8 @@
 - start initialization helper의 journal / queue 상태 / reconnect 이벤트 / worker session 이벤트 동작
 - start launch helper의 start-plan / session ensure / run 생성 / start initialization 통합 동작
 - request-group execution queue helper의 `requestGroupId` 단위 직렬화와 queue 상태 정리 동작
-- task model helper의 `Task / Attempt / Recovery Attempt / Delivery` projection, recovery visibility, delivery 상태 분리, 표준 activity kind, monitor 관측 포인트 동작
-- webui task monitor helper의 `/api/tasks` adapter, explicit `runIds/latestAttemptId` 연결, 내부 attempt visibility, delivery 성공/실패 분리 동작
+- task model helper의 `Task / Attempt / Recovery Attempt / Delivery` projection, recovery visibility, delivery 상태 분리, structured failure summary/detail lines, 표준 activity kind, monitor 관측 포인트, checklist state 동작
+- webui task monitor helper의 `/api/tasks` adapter, explicit `runIds/latestAttemptId` 연결, 내부 attempt visibility, delivery 성공/실패 분리, checklist panel input 동작
 - task004 obsolete policy guard의 process/result 문서 동기화 키워드, `/api/tasks` 경로 유지, WebUI 구형 fallback/regroup dead path 부재 동작
 - run queueing helper의 delayed run arm/fire 동작
 - scheduler queueing helper의 `scheduleId` 단위 직렬화와 queue 상태 정리 동작
@@ -58,7 +59,7 @@
 - root loop bootstrap state helper의 bootstrap 결과와 초기 execution state 조립 동작
 - root loop pass launch helper의 `loop-entry` / `execution-cycle` wiring 동작
 - root loop turn helper의 `loop-entry -> execution-cycle` turn과 next state 계산 동작
-- execution chunk helper의 text / execution_recovery / tool_start / tool_end / llm_recovery 처리 동작
+- execution chunk helper의 text / execution_recovery / tool_start / tool_end / ai_recovery 처리 동작
 - `execution_recovery` helper의 failure journal, execution budget, retry/stop 적용 동작
 - execution post-pass helper의 command failure / generic execution recovery decision 동작
 - execution post-pass application helper의 retry/stop/continue 적용 동작
@@ -75,10 +76,11 @@
 - completion review 호출과 synthetic approval 감지 묶음 helper 동작
 - review gate helper의 direct delivery 성공 시 completion review 생략 동작
 - terminal outcome policy helper의 completed/failed/cancelled/awaiting_user 판정 동작
+- finalization/terminal helper의 `중단 사유`와 `원본 오류` 동시 노출 동작
 - review pass와 review outcome pass를 묶는 review cycle helper 동작
 - review outcome helper의 synthetic approval retry / completion retry·break 동작
 - 실행 종료 후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입 helper 동작
-- completion state helper의 `해석/실행/전달/복구 종료` 4축 분리와 receipt 우선 completion 판단 동작
+- completion state helper의 `해석/실행/전달/복구 종료` 4축 분리와 checklist 기반 completion 판단 동작
 - completion review 이후 flow decision과 application decision 조합 helper 동작
 - completion application의 `complete/stop/retry/awaiting_user` pass helper 동작
 - `retry_intake`의 failure journal, interpretation budget, retry/stop apply helper 동작
@@ -103,7 +105,7 @@
 - external recovery reroute, duplicate-stop, worker fallback 동작
 - external recovery plan 적용 helper의 duplicate-stop/route event/state transition 동작
 - external recovery의 plan/apply/next state pass helper 동작
-- external recovery의 `llm -> worker_runtime` sequence helper 동작
+- external recovery의 `ai -> worker_runtime` sequence helper 동작
 - recovery entry helper의 stop/retry/failed-continue 분기 동작
 - external recovery retry helper의 failure journal, external budget, retry/stop 적용 동작
 - filesystem mutation/verification recovery decision 동작

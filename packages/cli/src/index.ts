@@ -28,7 +28,7 @@ program
   .command("run <message>")
   .description("Send a message to the agent and get a response")
   .option("-s, --session <id>", "Session ID for conversation continuity")
-  .option("-m, --model <model>", "Override LLM model (e.g. claude-3-5-sonnet-20241022)")
+  .option("-m, --model <model>", "Override AI model (e.g. gpt-4.1-mini)")
   .option("-d, --work-dir <path>", "Set the working directory for file/shell tools")
   .option("-y, --yes", "Auto-approve all tool execution (skip confirmation prompts)")
   .action((message: string, options: {
@@ -62,8 +62,8 @@ program
     console.log(`State dir:   ${PATHS.stateDir}`)
     console.log(`Config:      ${PATHS.configFile}`)
     console.log(`DB:          ${PATHS.dbFile}`)
-    console.log(`Provider:    ${cfg.llm.defaultProvider}`)
-    console.log(`Model:       ${cfg.llm.defaultModel}`)
+    console.log(`Provider:    ${cfg.ai.defaultProvider}`)
+    console.log(`Model:       ${cfg.ai.defaultModel}`)
     console.log(`Approval:    ${cfg.security.approvalMode}`)
   })
 

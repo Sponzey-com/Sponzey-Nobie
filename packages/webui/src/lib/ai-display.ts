@@ -6,7 +6,7 @@ const PROVIDER_LABELS: Record<AIProviderType, { ko: string; en: string }> = {
   openai: { ko: "OpenAI", en: "OpenAI" },
   ollama: { ko: "Ollama", en: "Ollama" },
   llama: { ko: "Llama", en: "Llama" },
-  claude: { ko: "Claude", en: "Claude" },
+  anthropic: { ko: "Anthropic", en: "Anthropic" },
   gemini: { ko: "Gemini", en: "Gemini" },
   custom: { ko: "사용자 지정", en: "Custom" },
 }
@@ -25,11 +25,10 @@ const ROUTING_LABELS: Record<RoutingProfileId, { ko: string; en: string }> = {
 
 const BACKEND_LABELS: Record<string, { ko: string; en: string }> = {
   "provider:openai": { ko: "범용 원격 추론", en: "General Remote Reasoning" },
+  "provider:anthropic": { ko: "Anthropic 추론", en: "Anthropic Reasoning" },
   "provider:gemini": { ko: "계획·리서치 추론", en: "Planning / Research Reasoning" },
   "provider:ollama": { ko: "로컬 모델 실행", en: "Local Model Runtime" },
   "provider:llama_cpp": { ko: "로컬 추론 서버", en: "Local Inference Server" },
-  "worker:claude_code": { ko: "코드 작업 세션", en: "Code Work Session" },
-  "worker:codex_cli": { ko: "코드 실행 세션", en: "Code Execution Session" },
 }
 
 export function getAIProviderDisplayLabel(providerType: AIProviderType, language: DisplayLanguage): string {

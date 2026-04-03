@@ -7,7 +7,6 @@ import {
   getAIProviderCredentialFields,
   hasRequiredProviderCredentials,
   isLocalProviderType,
-  type AIBackendKind,
   type AIBackendCredentialKey,
   type AIAuthMode,
   type AIProviderType,
@@ -31,13 +30,9 @@ const INITIAL_FORM: NewAIBackendInput = {
   tags: [],
 }
 
-function getKindLabel(kind: AIBackendKind, text: (ko: string, en: string) => string): string {
-  return kind === "worker" ? text("작업 워커 (Worker)", "Task Worker") : text("직접 연결 (Provider)", "Direct Provider")
-}
-
 function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string) => string): string {
   return mode === "chatgpt_oauth"
-    ? text("ChatGPT OAuth (Codex)", "ChatGPT OAuth (Codex)")
+    ? text("ChatGPT OAuth", "ChatGPT OAuth")
     : text("API Key", "API Key")
 }
 
@@ -168,7 +163,7 @@ export function BackendComposer({
         <div className="mt-1 text-sm leading-6 text-stone-600">{text("이름을 정하고, AI 종류와 연결 주소를 입력한 뒤 연결 확인과 모델 조회를 진행합니다.", "Set a name, choose the AI type, enter the endpoint, then check the connection and load models.")}</div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-1">
         <div>
           <label className="mb-1 block text-sm font-medium text-stone-700">{text("보여줄 이름 (Label)", "Display Label")}</label>
           <input
@@ -177,17 +172,6 @@ export function BackendComposer({
             onChange={(event) => patch("label", event.target.value)}
             placeholder={text("예: 우리 회사 OpenAI", "Example: Company OpenAI")}
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 방식 (Runtime Type)", "Runtime Type")}</label>
-          <select
-            className="input"
-            value={form.kind}
-            onChange={(event) => patch("kind", event.target.value as AIBackendKind)}
-          >
-            <option value="provider">{getKindLabel("provider", text)}</option>
-            <option value="worker">{getKindLabel("worker", text)}</option>
-          </select>
         </div>
       </div>
 
@@ -246,11 +230,11 @@ export function BackendComposer({
 
       {form.providerType === "openai" && (form.authMode ?? "api_key") === "chatgpt_oauth" ? (
         <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-xs leading-6 text-sky-900">
-          <div className="font-semibold">{text("ChatGPT OAuth (Codex) 사용 안내", "How ChatGPT OAuth (Codex) works")}</div>
+          <div className="font-semibold">{text("ChatGPT OAuth 사용 안내", "How ChatGPT OAuth works")}</div>
           <div className="mt-2">
             {text(
-              "이 방식은 `codex login`으로 만든 `~/.codex/auth.json`을 사용하고, 기본 연결 주소는 `https://chatgpt.com/backend-api/codex`입니다. 연결 확인과 모델 조회는 Codex backend probe 방식으로 진행됩니다.",
-              "This mode uses `~/.codex/auth.json` created by `codex login`, and the default endpoint is `https://chatgpt.com/backend-api/codex`. Connection checks and model loading are handled through a Codex backend probe.",
+              "이 방식은 ChatGPT OAuth 인증 파일을 사용하고, 기본 연결 주소는 `https://chatgpt.com/backend-api/codex`입니다. 연결 확인과 모델 조회는 OpenAI 호환 probe 방식으로 진행됩니다.",
+              "This mode uses the ChatGPT OAuth auth file, and the default endpoint is `https://chatgpt.com/backend-api/codex`. Connection checks and model loading are handled through an OpenAI-compatible probe.",
             )}
           </div>
         </div>

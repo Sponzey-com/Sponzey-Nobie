@@ -1,310 +1,132 @@
-# Nobie 태스크 프로세스
+# Nobie Process
 
-이 문서는 앞으로 Nobie 태스크 프로세스를 어떤 형태로 정리하고 적용할지에 대한 기준 문서다.
+이 문서는 현재 Nobie의 확정 프로세스 기준 문서다.
 
-핵심 목표는 다음과 같다.
+## 1. 핵심 원칙
 
-- 메인 루프 밖에서 완료를 선언하지 않는다.
-- 모든 케이스 분배는 메인 루프 안에서만 한다.
-- 문자열을 여기저기서 직접 비교하는 방식 대신, 먼저 요청을 정규화한 뒤 구조화된 요청문으로 처리한다.
-- 한 번 분석하고 끝내지 않고, 성공할 때까지 `재분석 -> 다른 방안 구성 -> 실행 -> 결과 확인`을 반복한다.
+- Nobie가 자연어 해석, completion review, 요약 같은 자연어 기반 판단에 사용하는 것은 `설정에서 연결한 AI`다.
+- 프로세스 문서에는 별도 외부 자연어 엔진 행위자를 두지 않는다.
+- `packages/core/src/ai`는 설정된 AI backend를 호출하는 내부 adapter 계층이다.
+- 명령 실행, 앱 실행, 화면 캡처, 키보드 입력, 마우스 제어 같은 로컬 실행 계열 작업은 Yeonjang 연장을 통해서만 수행한다.
+- 위 로컬 실행 계열 작업에 대해 Nobie core 로컬 fallback은 두지 않는다.
+- 실행 성공과 완료 성공은 다르다. 완료는 최소한 `해석 / 실행 / 전달 / 복구 종료` 4축이 만족될 때만 선언한다.
+- 자동 재시도 한도는 별도 하드코딩 상한을 두지 않고 `orchestration.maxDelegationTurns`를 따른다.
+- 메인 루프 밖에서 최종 완료를 선언하지 않는다.
 
-여기서 태스크의 실제 실행 단위는 `RootRun`이다.  
-하나의 사용자 요청은 세션과 `request_group` 문맥 안에서 처리되며, 최종 완료 여부는 반드시 메인 루프 안에서만 결정된다.
+## 2. 계층
 
-## 1. 최상위 원칙
+1. `Ingress`
 
-이 문서는 아래 원칙을 기준으로 이해해야 한다.
+   요청 수신, 세션 확인, request group 계산, 즉시 접수 응답
+2. `Intake`
 
-1. 사용자 요청은 먼저 언어를 확인한다.
-2. 내부 처리 기준 문장은 영문으로 정규화한다.
-3. 정규화된 영문 요청은 반드시 구조화된 요청문으로 다시 만든다.
-4. 구조화된 요청문을 기준으로 방안을 구성한다.
-5. 실행 결과를 확인한 뒤, 성공하지 않았으면 다시 분석한다.
-6. 절대 루프 밖에서 최종 완료를 선언하지 않는다.
-7. 승인 대기, 추가 입력 대기, LLM 조회, 도구 실행, 오류 복구, 후속 실행 생성도 모두 루프 안에서만 배분한다.
+   자연어를 구조화된 요청으로 해석
+3. `Execution`
 
-## 2. 기본 프로세스
+   구조화된 요청을 기준으로 도구, worker, 로컬 실행 경로를 선택하고 실행
+4. `Recovery`
 
-태스크의 기본 프로세스는 아래 순서를 따른다.
+   실패 원인 분류, 다른 실행 경로 탐색, 재시도 또는 중단 결정
+5. `Delivery`
 
-1. 사용자 요청 수신
-2. 언어 확인
-3. 요청 영문 정규화
-4. 구조화된 요청문 생성
-5. 구조화된 요청문 재분석
-6. 현재 사용 가능한 도구와 수행 가능한 기능 전수 확인
-7. 기존 방안과 다른 방안 구성
-8. 방안 실행
-9. 결과 확인
-10. 성공 여부 판단
-11. 성공할 때까지 다시 5번으로 회귀
+   결과를 필요한 채널로 전달
+6. `Completion / Review`
 
-즉, Nobie는 단순히 `요청 -> 실행 -> 끝` 구조가 아니라 아래 루프를 기본으로 해야 한다.
+   receipt 기준으로 완료 여부를 판정하고 필요한 follow-up을 결정
 
-```mermaid
-flowchart TD
-    A["1. 사용자 요청 수신"] --> B["2. 언어 확인"]
-    B --> C["3. 요청 영문 정규화"]
-    C --> D["4. 구조화된 요청문 생성"]
-    D --> E["5. 구조화된 요청문 재분석"]
-    E --> F["6. 현재 사용 가능한 도구와 수행 가능한 기능 전수 확인"]
-    F --> G["7. 기존 방안과 다른 방안 구성"]
-    G --> H["8. 방안 실행"]
-    H --> I["9. 결과 확인"]
-    I --> J{"10. 성공했는가?"}
-    J -->|아니오| E
-    J -->|예| K["메인 루프 안에서만 완료 지정"]
-```
+## 3. AI 경계
 
-## 3. 구조화된 요청문
+- `agent/intake.ts`
 
-사용자 요청을 영문으로 정규화한 뒤에는, 반드시 아래 형태의 요청문으로 다시 만든다.
+  설정된 AI를 사용해 자연어 요청을 구조화한다.
+- `agent/index.ts`
 
-```text
-[target]
-...
+  설정된 AI를 사용해 일반 실행 대화를 진행한다.
+- `agent/completion-review.ts`
 
-[to]
-...
+  설정된 AI를 사용해 completion review를 수행한다.
+- `memory/compressor.ts`
 
-[context]
-...
+  설정된 AI를 사용해 오래된 대화 문맥을 요약한다.
 
-[complete-condition]
-...
-```
+즉 자연어 해석은 계속 AI가 맡지만, 실행 루프는 자연어를 다시 붙들고 있지 않고 구조화 결과와 receipt를 중심으로 움직인다.
 
-각 필드의 의미는 다음과 같다.
+## 4. 내부 `ai` 계층의 역할
 
-### 3.1 [target]
+`packages/core/src/ai`의 책임은 아래로 제한한다.
 
-실제로 수행해야 하는 직접 목표를 적는다.
+- backend 선택
+- 모델 선택
+- 메시지/도구 포맷 변환
+- vendor SDK 또는 HTTP 호출
+- 인증 정보와 key cooldown 관리
+- 공통 chunk 계약 제공
 
-예시:
+이 계층은 오케스트레이션을 하지 않는다.
 
-- capture the full main display
-- send the screenshot to the same Telegram conversation
-- cancel every active recurring reminder in this conversation
+- 요청 해석 정책
+- 복구 판단
+- completion 판단
+- queue 관리
+- delivery 상태 판단
 
-### 3.2 [to]
+이런 정책은 `agent`, `runs`, `scheduler` 계층이 맡는다.
 
-결과가 어디에, 누구에게, 어떤 대상으로 전달되거나 적용되어야 하는지를 적는다. 가능하면 `current channel` 같은 모호한 표현 대신 실제 채널명, 세션, 확장 ID, 위치를 적는다.
+## 5. Queue 단위
 
-예시:
+- Intake Queue: `sessionId`
+- Execution Queue: `requestGroupId`
+- Recovery Queue: `runId`
+- Delivery Queue: `targetChannel + targetSessionId`
+- Schedule Queue: `scheduleId`
 
-- the current Telegram conversation
-- the current channel
-- the connected Yeonjang extension on the current machine
+각 queue는 목적별 직렬화 단위이며, 서로 다른 queue의 병렬도는 독립적으로 본다.
 
-### 3.3 [context]
+## 6. Schedule 원칙
 
-현재 세션, 채널, 연결된 연장, 이전 메시지, 대상 제약 등 실행에 필요한 문맥을 적는다.
+- 예약 등록 task와 예약 실행 task는 분리한다.
+- 예약 실행은 새 task instance와 새 run으로 시작한다.
+- 원 등록 task와의 연결은 `originRunId`, `originRequestGroupId`, `scheduleId`, `scheduleRunId`로 남긴다.
+- 예약 실행 실패는 원 등록 task를 오염시키지 않는다.
 
-예시:
+## 7. Completion / Terminal 규칙
 
-- source channel is telegram
-- there is exactly one connected Yeonjang extension
-- the user asked for the result to be shown in messenger, not just saved locally
+- `completed`
 
-### 3.4 [complete-condition]
+  receipt 기준 completion state가 만족될 때만 사용
+- `failed`
 
-무엇을 만족해야 이 태스크를 성공으로 볼지 적는다.
+  abort가 아닌 fatal failure일 때만 사용
+- `cancelled`
 
-예시:
+  explicit stop 또는 abort일 때만 사용
+- `awaiting_user`
 
-- the screenshot file is captured
-- the binary is delivered back to Nobie
-- the image is sent to the same Telegram conversation
-- do not stop at local file creation only
+  추가 입력 또는 승인 대기 상태
 
-## 4. 메인 루프가 해야 하는 일
+review가 `complete`를 반환해도 receipt 기준 상태가 부족하면 완료로 닫지 않는다.
 
-메인 루프는 단순 실행기가 아니라, 아래 역할을 모두 가진 오케스트레이션 루프다.
+## 8. Recovery / Retry 규칙
 
-### 4.1 요청 정규화
+- 같은 실패를 같은 경로로 무한 반복하지 않는다.
+- 새 recovery key나 구조화된 대안이 있으면 retry를 검토한다.
+- 새 대안이 없으면 stop 한다.
+- 외부 AI 복구, execution 복구, delivery 복구 모두 동일하게 `orchestration.maxDelegationTurns` 예산 안에서만 돈다.
 
-- 사용자 원문 언어 확인
-- 내부 기준 영문 변환
-- 구조화된 요청문 생성
+## 9. Direct Delivery 규칙
 
-### 4.2 분석
+- 단순 전달만 필요한 요청은 가능하면 AI 실행 없이 direct delivery를 우선 시도한다.
+- direct delivery가 이미 성공했고 completion state가 settled면 불필요한 review는 생략할 수 있다.
 
-- 목표가 무엇인지 분석
-- 현재 방안이 무엇인지 분석
-- 기존 방안의 한계를 분석
-- 다른 방안이 있는지 분석
+## 10. 문서 동기화 규칙
 
-### 4.3 도구와 기능 확인
+아래가 바뀌면 이 문서를 같은 턴에 같이 갱신한다.
 
-구조화된 요청문을 다시 분석한 뒤에는, 바로 방안을 고르지 말고 현재 사용할 수 있는 도구와 실제 수행 가능한 기능을 먼저 전수 확인해야 한다.
+- queue 단위
+- schedule lineage
+- completion state 정의
+- terminal 상태 의미
+- AI 호출 경계
+- obsolete path 제거 기준
 
-확인 대상:
-
-- 현재 세션에서 사용 가능한 본체 도구
-- 현재 연결된 Yeonjang 도구
-- 각 도구가 실제로 지원하는 기능 범위
-- 현재 채널에서 결과 전달이 가능한지
-- 승인 없이 가능한지, 승인 필요한지
-- 현재 실행 환경에서 막혀 있거나 불가능한 기능이 있는지
-
-즉 이 단계에서는 아래 순서를 먼저 거친다.
-
-1. 구조화된 요청문 재분석
-2. 현재 사용 가능한 도구 목록 확인
-3. 각 도구의 실제 기능 확인
-4. 가능한 방안과 불가능한 방안 분리
-5. 그 뒤에 기존 방안과 다른 방안 구성
-
-### 4.4 분배
-
-모든 분기는 메인 루프 안에서만 처리한다.
-
-분배 대상:
-
-- 즉시 응답
-- 도구 실행
-- 연장 실행
-- 승인 요청
-- 사용자 추가 입력 요청
-- LLM 조회
-- 오류 복구
-- 일정 생성
-- 일정 취소
-- 후속 실행 생성
-
-### 4.5 실행
-
-방안을 하나 고른 뒤 실행한다.
-
-우선순위 예시:
-
-1. 적절한 Yeonjang 도구
-2. 적절한 본체 도구
-3. worker/runtime 경로
-4. 다른 대안 경로
-
-### 4.6 결과 확인
-
-실행 후에는 반드시 결과를 확인한다.
-
-확인 대상:
-
-- 실제 결과물이 생성되었는가
-- 사용자 요구한 채널로 결과가 전달되었는가
-- complete-condition을 만족했는가
-- 실패 원인이 무엇인가
-- 다른 방안이 남아 있는가
-
-## 5. 성공할 때까지 회귀
-
-실패나 미완료가 나오면, 메인 루프는 종료하지 않고 다시 아래 절차로 돌아간다.
-
-1. 실패 원인 요약
-2. 구조화된 요청문 재분석
-3. 기존 방안과 다른 방안 구성
-4. 새 방안 실행
-5. 결과 확인
-
-즉 회귀 기준은 `단순 오류 발생`이 아니라, `complete-condition 미충족`이다.
-
-```mermaid
-flowchart TD
-    A["실행 결과"] --> B{"complete-condition 충족?"}
-    B -->|예| C["메인 루프 안에서 완료"]
-    B -->|아니오| D["실패 원인 요약"]
-    D --> E["구조화된 요청문 재분석"]
-    E --> F["기존 방안과 다른 방안 구성"]
-    F --> G["재실행"]
-    G --> A
-```
-
-## 6. 완료 규칙
-
-완료 규칙은 매우 엄격해야 한다.
-
-1. 메인 루프 밖에서 완료하지 않는다.
-2. 하위 보조 run은 분석만 하고 완료를 확정하지 않는다.
-3. 완료 판단은 최소한 `해석 / 실행 / 전달 / 복구 종료` 4축으로 본다.
-4. completion review가 `complete`를 반환해도, receipt 기준 4축 상태가 부족하면 완료로 닫지 않는다.
-5. 전달이 필요한 요청은 전달이 끝나기 전까지 완료가 아니다.
-6. 파일 생성만으로는 충분하지 않다. 사용자가 파일 자체를 원했으면 실제 전달까지 가야 한다.
-7. 승인 필요 상태, 추가 입력 필요 상태, 검증 미완료 상태를 완료로 보지 않는다.
-8. direct artifact delivery가 이미 성공했고 4축 상태가 settled면 불필요한 completion review는 생략할 수 있다.
-9. terminal 상태 의미는 구분해야 한다.
-10. `completed`는 4축 상태가 만족될 때만 사용한다.
-11. `failed`는 abort가 아닌 fatal failure일 때만 사용한다.
-12. `cancelled`는 explicit stop 또는 abort일 때만 사용한다.
-13. `awaiting_user`는 추가 입력 대기 상태로 별도 유지한다.
-
-즉 `실행했다`와 `완료했다`는 다르다.  
-완료는 오직 메인 루프가 `complete-condition 충족`을 확인했을 때만 선언할 수 있다.
-
-## 7. 이 구조를 쓰는 이유
-
-이 구조를 쓰는 목적은 다음과 같다.
-
-- 메인 루프에서 문자열 비교를 최대한 줄이기 위해
-- 사용자 원문 언어와 내부 실행 기준 문장을 분리하기 위해
-- `target / context / complete-condition`을 명시적으로 만들기 위해
-- 기존 방안이 실패했을 때 다른 방안으로 자연스럽게 회귀하기 위해
-- 완료 조건을 명확히 해서 너무 이른 완료를 막기 위해
-
-## 8. 현재 코드 적용 방향
-
-이 문서는 앞으로의 메인 루프 정리 기준이다.  
-코드는 이 문서 기준으로 다음 방향으로 정리되어야 한다.
-
-### 8.1 Ingress 경계
-
-1. 채널/API/CLI 진입점은 먼저 `Ingress`를 지난다.
-2. `Ingress`는 `sessionId`, `runId(requestId)`, `source`를 먼저 고정한다.
-3. `Ingress`는 즉시 접수 응답만 반환한다.
-4. 무거운 intake 분석과 실제 실행은 `Ingress` 밖에서 계속 진행한다.
-5. `request_group` 재사용 여부와 활성 실행 취소 같은 진입 해석은 intake가 아니라 별도 entry-semantics 계층에서 결정한다.
-
-### 8.2 Intake 산출물
-
-1. intake 또는 메인 루프 초입에서 사용자 요청 언어를 식별한다.
-2. 내부 처리용 영문 정규화 요청문을 만든다.
-3. `target / context / complete-condition` 구조를 명시적으로 생성한다.
-4. intake 결과는 `intent envelope`로 고정한다.
-5. 이후의 판단은 가능하면 이 envelope 기준으로 처리한다.
-6. 완료 여부는 메인 루프의 `complete-condition 충족 여부`로만 결정한다.
-
-### 8.3 문서 동기화와 소멸 정책
-
-1. `Task / Attempt / Recovery / Delivery`, queue 단위, completion 규칙이 바뀌면 같은 턴에 `process.md`, `process-to.md`, `analyse.md`, `result.md`를 함께 갱신한다.
-2. 구현이 먼저 바뀌고 프로세스 문서가 아직 따라오지 못한 경우에는, 그 차이를 먼저 현재 `.design/task00x.md` 진행 메모에 기록한다.
-3. 차이가 안정화되면 `.design/task00x.md`의 메모를 기준으로 `process.md`와 `process-to.md`를 승격 갱신한다.
-4. 관련 구현 폴더의 `source.md`도 같은 턴에 갱신한다. 최소 범위는 `core/src`, `core/src/runs`, `core/src/api`, `webui/src`, `tests`다.
-5. 구형 경로는 아래 기준이면 소멸 대상으로 본다.
-   - 새 projection을 두고도 raw run/request group을 다시 heuristic으로 재구성하는 경로
-   - explicit queue helper가 있는데 같은 목적의 set/map/직렬화 로직을 다시 들고 있는 경로
-   - execution, delivery, completion을 한 함수에서 다시 뒤섞는 보조 경로
-   - 새 `/api/runs`, `/api/tasks` 표면이 있는데 과거 surface를 맞추기 위해 남겨둔 임시 compat 경로
-6. 삭제 시점은 replacement 경로가 준비되고, dead-path 검색 기준과 회귀 테스트가 추가되고, 관련 build/test가 통과한 이후다.
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant R as RootRun Main Loop
-    participant N as Normalizer
-    participant P as Structured Prompt
-    participant X as Executor
-
-    U->>R: request
-    R->>N: detect language and normalize to English
-    N-->>R: normalized English request
-    R->>P: build [target][context][complete-condition]
-    P-->>R: structured request
-    R->>R: analyze current plan and alternative plan
-    R->>X: execute selected plan
-    X-->>R: result
-    R->>R: verify complete-condition
-    alt not complete
-        R->>R: analyze again and build different plan
-    else complete
-        R->>R: mark completed inside main loop only
-    end
-```
+확정 프로세스 문서는 `process.md` 하나를 기준으로 유지한다.

@@ -31,8 +31,11 @@ describe("scheduled run policy", () => {
       toolsEnabled: false,
     })
 
-    expect(prompt).toContain("Task: 안녕")
+    expect(prompt).toContain("[target]")
+    expect(prompt).toContain("안녕이라고 말하기")
     expect(prompt).not.toContain("Original user request")
-    expect(prompt).toContain("Do not use tools")
+    expect(prompt).toContain("[checklist]")
+    expect(prompt).toContain("- [ ] 목표 확인:")
+    expect(prompt).toContain("도구를 사용하지 말고")
   })
 })

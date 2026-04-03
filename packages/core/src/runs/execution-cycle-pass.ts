@@ -1,7 +1,7 @@
 import type { AgentContextMode } from "../agent/index.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
 import { insertMessage } from "../db/index.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import { applyPostExecutionPassResult, applyRecoveryEntryPassResult, applyReviewCyclePassResult } from "./loop-pass-application.js"
 import {
   runExecutionAttemptPass,
@@ -42,12 +42,12 @@ export interface ExecutionCycleState {
   currentMessage: string
   currentModel: string | undefined
   currentProviderId: string | undefined
-  currentProvider: LLMProvider | undefined
+  currentProvider: AIProvider | undefined
   currentTargetId: string | undefined
   currentTargetLabel: string | undefined
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
   executionRecoveryLimitStop: RecoveryLimitStop
-  llmRecoveryLimitStop: RecoveryLimitStop
+  aiRecoveryLimitStop: RecoveryLimitStop
   sawRealFilesystemMutation: boolean
   filesystemMutationRecoveryAttempted: boolean
   truncatedOutputRecoveryAttempted: boolean
@@ -146,7 +146,7 @@ export async function runExecutionCyclePass(
     seenCommandFailureRecoveryKeys: Set<string>
     seenExecutionRecoveryKeys: Set<string>
     seenDeliveryRecoveryKeys: Set<string>
-    seenLlmRecoveryKeys: Set<string>
+    seenAiRecoveryKeys: Set<string>
     recoveryBudgetUsage: RecoveryBudgetUsage
     priorAssistantMessages: string[]
     syntheticApprovalAlreadyApproved: boolean
@@ -158,7 +158,7 @@ export async function runExecutionCyclePass(
 ): Promise<ExecutionCyclePassResult> {
   let preview = ""
   let failed = false
-  let llmRecovery: ExecutionAttemptPassResult["llmRecovery"] = null
+  let aiRecovery: ExecutionAttemptPassResult["aiRecovery"] = null
   let workerRuntimeRecovery: ExecutionAttemptPassResult["workerRuntimeRecovery"] = null
   let executionRecovery: ExecutionAttemptPassResult["executionRecovery"] = null
   const failedCommandTools: FailedCommandTool[] = []
@@ -196,7 +196,8 @@ export async function runExecutionCyclePass(
     commandFailureSeen,
     recoveryBudgetUsage: params.recoveryBudgetUsage,
     executionRecoveryLimitStop: params.state.executionRecoveryLimitStop,
-    abortExecutionStream: params.abortExecutionStream,
+    stopAfterDirectArtifactDeliverySuccess: params.wantsDirectArtifactDelivery,
+    abortExecutionStream: () => {},
   }, {
     rememberRunFailure: dependencies.rememberRunFailure,
     incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
@@ -209,7 +210,7 @@ export async function runExecutionCyclePass(
 
   preview = executionAttemptPass.preview
   failed = executionAttemptPass.failed
-  llmRecovery = executionAttemptPass.llmRecovery
+  aiRecovery = executionAttemptPass.aiRecovery
   workerRuntimeRecovery = executionAttemptPass.workerRuntimeRecovery
   executionRecovery = executionAttemptPass.executionRecovery
   commandFailureSeen = executionAttemptPass.commandFailureSeen
@@ -218,7 +219,7 @@ export async function runExecutionCyclePass(
   const nextStateFromAttempt: ExecutionCycleState = {
     ...params.state,
     executionRecoveryLimitStop: executionAttemptPass.executionRecoveryLimitStop,
-    llmRecoveryLimitStop: executionAttemptPass.llmRecoveryLimitStop,
+    aiRecoveryLimitStop: executionAttemptPass.aiRecoveryLimitStop,
     sawRealFilesystemMutation: params.state.sawRealFilesystemMutation || executionAttemptPass.sawRealFilesystemMutation,
   }
 
@@ -229,9 +230,9 @@ export async function runExecutionCyclePass(
     onChunk: params.onChunk,
     preview,
     executionRecoveryLimitStop: nextStateFromAttempt.executionRecoveryLimitStop,
-    llmRecoveryLimitStop: nextStateFromAttempt.llmRecoveryLimitStop,
+    aiRecoveryLimitStop: nextStateFromAttempt.aiRecoveryLimitStop,
     recoveries: [
-      { kind: "llm", payload: llmRecovery },
+      { kind: "ai", payload: aiRecovery },
       { kind: "worker_runtime", payload: workerRuntimeRecovery },
     ],
     aborted: params.signal.aborted,
@@ -245,7 +246,7 @@ export async function runExecutionCyclePass(
       targetLabel: nextStateFromAttempt.currentTargetLabel,
       workerRuntime: nextStateFromAttempt.activeWorkerRuntime,
     },
-    seenKeys: params.seenLlmRecoveryKeys,
+    seenKeys: params.seenAiRecoveryKeys,
     originalRequest: params.originalRequest,
     previousResult: preview,
     finalizationDependencies: dependencies.getFinalizationDependencies(),

@@ -5,15 +5,10 @@ import { PATHS, getConfig } from "@nobie/core"
 const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
 // Docs: see design/plan.md
 {
-  llm: {
-    defaultProvider: "anthropic",
-    defaultModel: "claude-3-5-haiku-20241022",
-    providers: {
-      anthropic: {
-        // Set via env: ANTHROPIC_API_KEY, or list keys here
-        apiKeys: ["\${ANTHROPIC_API_KEY}"],
-      },
-    },
+  ai: {
+    defaultProvider: "",
+    defaultModel: "",
+    providers: {},
   },
   security: {
     // Directories the agent is allowed to access.

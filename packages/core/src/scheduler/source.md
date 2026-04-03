@@ -20,7 +20,7 @@
 - Telegram 채널 가용성 판정은 bot polling 완료를 기다리면 안 됩니다. scheduler는 활성 Telegram 런타임이 먼저 등록된 상태를 기준으로 같은 프로세스 안에서 전달을 시도해야 합니다.
 - 반복 스케줄은 가급적 시스템 스케줄러로 내려서 관리하고, 지원되지 않거나 등록 실패 시에만 내부 scheduler로 폴백합니다.
 - Linux/macOS 계열은 crontab, Windows는 Task Scheduler를 사용합니다.
-- Telegram 대상으로 단순 전달만 필요한 반복 스케줄은 `runAgent()`를 거치지 않고 세션으로 직접 전송합니다. LLM 빈도 제한 때문에 단순 알림이 막히는 문제를 여기서 우회합니다.
+- Telegram 대상으로 단순 전달만 필요한 반복 스케줄은 `runAgent()`를 거치지 않고 세션으로 직접 전송합니다. AI 빈도 제한 때문에 단순 알림이 막히는 문제를 여기서 우회합니다.
 - one-time delayed run은 `runs/run-queueing.ts`를 통해 새 root task instance로 시작하고, 원 예약 등록 run/request-group은 `originRunId`, `originRequestGroupId`로 lineage를 남깁니다. 이 lineage는 로그뿐 아니라 시작된 run의 초기 이벤트에도 반영됩니다. 반복 스케줄도 이와 같은 독립 lifecycle 방향으로 맞춰 가는 것이 기준입니다.
 - 반복 스케줄 등록도 `runs/action-execution.ts` receipt에서 `scheduleId`, `targetSessionId`, `originRunId`, `originRequestGroupId`를 함께 남기기 시작해, 저장된 스케줄 엔티티와 등록 태스크 lineage를 나중에 다시 따라갈 수 있는 방향으로 정리 중입니다.
 - 이 registration lineage는 이제 DB `schedules` 엔티티의 `origin_run_id`, `origin_request_group_id`에도 저장됩니다.

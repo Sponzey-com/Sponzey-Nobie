@@ -8,7 +8,7 @@ import type { AnyTool } from "../tools/types.js"
 export interface PluginContext {
   /** Register additional tools at startup */
   registerTools(tools: AnyTool[]): void
-  /** Get app config value by key path (e.g. "llm.defaultModel") */
+  /** Get app config value by key path (e.g. "ai.defaultModel") */
   getConfig<T = unknown>(keyPath: string): T | undefined
   /** Write a log message */
   log(level: "info" | "warn" | "error", message: string, data?: unknown): void

@@ -1,7 +1,7 @@
 import type { CapabilityStatus } from "./capabilities"
 
-export type AIBackendKind = "provider" | "worker"
-export type AIProviderType = "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom"
+export type AIBackendKind = "provider"
+export type AIProviderType = "openai" | "ollama" | "llama" | "anthropic" | "gemini" | "custom"
 export type AIAuthMode = "api_key" | "chatgpt_oauth"
 export type AIBackendCredentialKey = "apiKey" | "username" | "password" | "oauthAuthFilePath"
 
@@ -71,11 +71,10 @@ export interface RoutingProfile {
 
 export const BUILTIN_BACKEND_IDS = [
   "provider:openai",
+  "provider:anthropic",
   "provider:gemini",
   "provider:ollama",
   "provider:llama_cpp",
-  "worker:claude_code",
-  "worker:codex_cli",
 ] as const
 
 export function isBuiltinBackendId(id: string): boolean {
@@ -86,7 +85,7 @@ export const AI_PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string }
   { value: "ollama", label: "Ollama" },
   { value: "llama", label: "llama" },
   { value: "openai", label: "OpenAI" },
-  { value: "claude", label: "Claude" },
+  { value: "anthropic", label: "Anthropic" },
   { value: "gemini", label: "Gemini" },
   { value: "custom", label: "Custom" },
 ]
@@ -107,7 +106,7 @@ export function getAIProviderEndpointPlaceholder(providerType: AIProviderType): 
       return "http://127.0.0.1:8080"
     case "openai":
       return "https://api.openai.com/v1"
-    case "claude":
+    case "anthropic":
       return "https://api.anthropic.com"
     case "gemini":
       return "https://generativelanguage.googleapis.com"
@@ -120,7 +119,7 @@ export function getAIProviderDefaultEndpoint(providerType: AIProviderType): stri
   switch (providerType) {
     case "openai":
       return "https://api.openai.com/v1"
-    case "claude":
+    case "anthropic":
       return "https://api.anthropic.com"
     case "gemini":
       return "https://generativelanguage.googleapis.com"
@@ -138,7 +137,7 @@ export function getAIProviderCredentialFields(providerType: AIProviderType, auth
         return [{ key: "oauthAuthFilePath", label: "Auth File Path", inputType: "text", placeholder: "~/.codex/auth.json", required: false }]
       }
       return [{ key: "apiKey", label: "API Key", inputType: "password", placeholder: "sk-...", required: true }]
-    case "claude":
+    case "anthropic":
       return [{ key: "apiKey", label: "API Key", inputType: "password", placeholder: "sk-ant-...", required: true }]
     case "gemini":
       return [{ key: "apiKey", label: "API Key", inputType: "password", placeholder: "AIza...", required: true }]

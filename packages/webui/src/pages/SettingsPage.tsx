@@ -19,7 +19,7 @@ import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { UpdatePanel } from "../components/UpdatePanel"
 import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
-import { BUILTIN_BACKEND_IDS, isBuiltinBackendId, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
+import { isBuiltinBackendId, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
 import type { SetupDraft } from "../contracts/setup"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
@@ -269,31 +269,6 @@ export function SettingsPage() {
     })
   }
 
-  function syncPrimaryBackendToBuiltinBackends() {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      const source = base.aiBackends.find((backend) => backend.id === "provider:openai")
-      if (!source) return base
-      return {
-        ...base,
-        aiBackends: base.aiBackends.map((backend) => {
-          if (backend.id === source.id) return backend
-          if (!(BUILTIN_BACKEND_IDS as readonly string[]).includes(backend.id)) return backend
-          return {
-            ...backend,
-            providerType: source.providerType,
-            authMode: source.authMode,
-            credentials: { ...source.credentials },
-            local: source.local,
-            endpoint: source.endpoint,
-            availableModels: [...source.availableModels],
-            defaultModel: source.defaultModel,
-          }
-        }),
-      }
-    })
-  }
-
   function renderActions() {
     if (tab === "advanced") return null
     return (
@@ -335,7 +310,6 @@ export function SettingsPage() {
                   onToggle={(backendId, enabled) => updateBackend(backendId, { enabled })}
                   onRemove={removeBackend}
                   onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-                  onSyncBuiltinBackends={syncPrimaryBackendToBuiltinBackends}
                 />
               ))}
             </div>

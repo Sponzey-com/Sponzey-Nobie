@@ -1,4 +1,4 @@
-import { type LLMProvider } from "../llm/index.js";
+import { type AIProvider } from "../ai/index.js";
 export type CompletionReviewStatus = "complete" | "followup" | "ask_user";
 export interface CompletionReviewResult {
     status: CompletionReviewStatus;
@@ -14,7 +14,7 @@ export declare function reviewTaskCompletion(params: {
     priorAssistantMessages?: string[];
     model?: string;
     providerId?: string;
-    provider?: LLMProvider;
+    provider?: AIProvider;
     workDir?: string;
 }): Promise<CompletionReviewResult | null>;
 export declare function buildCompletionReviewSystemPrompt(): string;

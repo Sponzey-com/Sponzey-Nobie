@@ -1,4 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js"
+import { analyzeRequestEntrySemantics } from "./entry-semantics.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
@@ -25,6 +26,7 @@ import {
 
 interface StartLaunchDependencies {
   buildStartPlan: typeof buildStartPlan
+  analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics
   isReusableRequestGroup: typeof isReusableRequestGroup
   findReconnectRequestGroupSelection: typeof findReconnectRequestGroupSelection
   getRequestGroupDelegationTurnCount: typeof getRequestGroupDelegationTurnCount
@@ -51,6 +53,7 @@ interface StartLaunchDependencies {
 
 const defaultDependencies: StartLaunchDependencies = {
   buildStartPlan,
+  analyzeRequestEntrySemantics,
   isReusableRequestGroup,
   findReconnectRequestGroupSelection,
   getRequestGroupDelegationTurnCount,
@@ -109,6 +112,7 @@ export function prepareStartLaunch(
     ...(params.targetId ? { targetId: params.targetId } : {}),
     ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
   }, {
+    analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
     isReusableRequestGroup: dependencies.isReusableRequestGroup,
     findReconnectRequestGroupSelection: dependencies.findReconnectRequestGroupSelection,
     getRequestGroupDelegationTurnCount: dependencies.getRequestGroupDelegationTurnCount,

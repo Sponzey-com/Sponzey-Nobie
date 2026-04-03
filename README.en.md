@@ -6,96 +6,160 @@
   <img src="./resource/nobie-1-512.png" alt="Nobie" width="220" />
 </p>
 
-`Sponzey Nobie` is an orchestration-first personal AI designed to be configured quickly after installation and used right away. The actual assistant name used inside the product is `Nobie`.
+`Sponzey Nobie` is an orchestration-first personal AI that runs on the user's computer. The actual assistant name used inside the product is `Nobie`.
 
-The goal of this project is not just to provide a chat AI, but to build a personal work hub that understands requests, selects the right execution path, and continues through real local work and external integrations.
+The goal of Nobie is not just to answer like a chat bot, but to understand requests, choose an execution path, continue through local work and external integrations, deliver results, and decide completion correctly.
+
+## Current Status Summary
+
+- `Implemented`: WebUI setup, AI connection, MCP and Skill registration, Telegram integration, task monitor, local execution tools, scheduling, and Yeonjang extension connectivity
+- `Planned`: Slack channel support, stronger Windows-specific installation and operations support, broader environment validation, and further setup UX simplification
+
+Important:
+
+- Nobie uses the `AI connected in Settings` for natural-language interpretation, request structuring, and completion review.
+- There is no separate hidden external LLM actor in the process.
+- The internal `packages/core/src/ai` layer is an adapter for configured AI backends.
+
+The detailed process source of truth is [process.md](./process.md).
 
 ## Product Interpretation
 
-Nobie is best understood in the following way.
+Nobie is best understood as:
 
-- `Personal assistant AI`: It works in the context of the user's computer and working environment.
-- `Orchestration-first AI`: It does not just answer; it decides how work should be performed and coordinates the execution flow.
-- `Ready after install`: It is being shaped so even non-technical users can configure it step by step in the WebUI and start using it quickly.
-- `Extensible work platform`: AI backends, external tools `(MCP)`, task capabilities `(Skill)`, and communication channels are being added in stages.
+- `Personal assistant AI`
+  It works against the user's computer, files, screen, apps, channels, and connected extensions.
+- `Orchestration-first AI`
+  It does not just respond. It coordinates which tool and execution route should do the work.
+- `Ready after install`
+  It is designed so users can configure it step by step in the WebUI and start using it quickly.
+- `Extensible work platform`
+  AI backends, MCP servers, Skills, channels, and extensions can be combined to expand what Nobie can do.
 
 ## Who It Is For
 
-The core target audience for Sponzey Nobie is:
+The main audience for Sponzey Nobie is:
 
 - Users who are not comfortable with computers
-- Users unfamiliar with terms like AI, MCP, Skill, or channel integration
-- Users who want a personal assistant they can use without complex developer setup
+- Users unfamiliar with terms such as AI, MCP, Skill, or channel integration
+- Users who want a personal assistant without complex developer setup
 
-That is why the UI and documentation follow these principles.
+That is why the UI and documentation follow these principles:
 
-- Show simple, approachable Korean first in the product UI.
-- Keep original terms in `()` as supporting labels.
-- Clearly mark required settings.
-- Actions such as Save, Cancel, Skip, and Next must stay simple and obvious.
+- Prefer simple wording first
+- Keep original terms in `()` as supporting labels
+- Make required settings explicit
+- Keep actions such as Save, Cancel, Skip, and Next simple and obvious
 
-## Core Features
+## Implemented
 
-### 1. AI Backends
+### 1. AI Connection `(Implemented)`
 
-Connect the AI models that Nobie uses to respond and perform tasks.
+Nobie uses AI backends connected from the Settings screen.
 
 - OpenAI
-- Claude
+- Anthropic
 - Gemini
 - Ollama
 - OpenAI-compatible endpoint
 - Local or remote inference server
 
-### 2. External Tools `(MCP)`
+Current behavior:
 
-Connect MCP servers so Nobie can extend its capabilities with external tools and services.
+- Nobie uses only configured backend and model selections.
+- Natural-language intake, execution dialogue, and completion review all use the configured AI connection.
+
+### 2. External Tools `(MCP, Implemented)`
+
+MCP servers can be connected so Nobie can extend its capabilities with external tools and services.
 
 - Register stdio-based MCP servers
 - Inspect available tools
 - Distinguish required and optional servers
 - Check connection state in Settings
 
-### 3. Skills
+### 3. Skills `(Implemented)`
 
-Attach instruction bundles and capabilities that help Nobie perform specific kinds of work better.
+Instruction bundles and capability packs can be attached for specific kinds of work.
 
 - Register local skills
-- Enable or disable skills
-- Show description and source
+- Enable and disable skills
+- Show descriptions and source
 
-### 4. Communication Channels
+### 4. Communication Channels `(Partially Implemented)`
 
-Connect the channels used to talk with Nobie.
+Currently implemented:
 
 - WebUI chat
 - Telegram
-- Slack planned
 
-### 5. Local Work Execution
+Planned:
 
-Nobie can perform the following tasks on the local computer.
+- Slack
+
+### 5. Extensions `(Yeonjang, Implemented)`
+
+MQTT-connected extensions can be used for device-side execution.
+
+- Inspect connected extension state
+- Select execution targets by extension id
+- Camera capture
+- Extension-first attempt on some privileged execution paths
+
+### 6. Local Work Execution `(Implemented)`
+
+Nobie can perform the following kinds of local work:
 
 - Read, write, search, and modify files
 - Execute shell commands
 - Launch apps
 - Capture the screen
 - Control mouse and keyboard
-- Manage work queues, approvals, cancellations, and verification flows
+- Inspect and terminate processes
+- Deliver file artifacts directly
 
-## Setup Experience Direction
+### 7. Task State Monitor `(Implemented)`
 
-The Sponzey Nobie setup experience is being organized around a `1920 x 1080` layout and is still being refined and applied.
+Nobie tracks requests as tasks rather than plain message rows.
 
-The main principles are:
+Currently implemented in the monitor:
 
-- Each step should be understandable within one screen.
-- It should not depend on long scrolling.
-- Advanced options should be separated into collapsible sections.
-- The left side shows steps, the center shows current input, and the right or bottom shows help and status.
-- The bottom action area should remain clearly visible.
+- `Task / Attempt / Recovery Attempt / Delivery` projection
+- Checklist state for `request / execution / delivery / completion`
+- Separate handling for approval, cancellation, failure, and delivery failure
+- Split between user-facing task cards and internal debug attempts
+- `/api/tasks` snapshot model and WebUI task monitoring
 
-The setup order is:
+### 8. Scheduling `(Implemented)`
+
+Schedule registration and schedule execution are tracked as separate tasks and runs.
+
+- one-time schedules
+- recurring schedules
+- schedule lifecycle events
+- lineage with `scheduleId`, `scheduleRunId`, `originRunId`, and `originRequestGroupId`
+
+## Internal Process Structure
+
+The current confirmed Nobie process is split into:
+
+1. `Ingress`
+2. `Intake`
+3. `Execution`
+4. `Recovery`
+5. `Delivery`
+6. `Completion / Review`
+
+Core principles:
+
+- Execution success and completion success are not the same.
+- Completion requires at least the four axes of `interpretation / execution / delivery / recovery settled`.
+- Current completion judgment and monitoring are aligned to checklist-based state.
+- Automatic retry limits follow `orchestration.maxDelegationTurns`.
+
+## Setup Experience
+
+The current WebUI setup flow is organized in this order:
 
 1. Personal information
 2. AI connection
@@ -104,37 +168,21 @@ The setup order is:
 5. Communication
 6. Review and finish
 
-## Internal Architecture
+Current status:
 
-Sponzey Nobie does not treat a request as just a single message.
-
-The current architectural direction is:
-
-- `A = Review AI`
-- `B-n = Worker AI or worker session`
-
-The role split is:
-
-- `A` is being shaped to review requests, identify what must be done, and decide which execution target should handle the work.
-- `B-n` is being shaped to handle actual file creation, execution, verification, and tool use.
-- The user-facing work queue is being organized around `one request = one card`, with child tasks attached as a tree.
-
-The purpose of this structure is:
-
-- Prevent multiple requests in the same chat from mixing together
-- Track approval, cancellation, follow-up, and verification by request
-- Clearly separate root requests from child tasks
+- `Implemented`: Settings screen, health/status checks, connection tests, MQTT and extension runtime panel
+- `Planned`: further simplification for non-technical users, stronger environment-specific guidance, and more diagnostics
 
 ## Project Layout
 
-This repository is mainly split into three parts.
+This repository is mainly divided into:
 
 - `packages/core`
-  - Agent execution, routing, work queue, verification, setup logic, channel integration, MCP, and tool system
+  Agent execution, routing, work queue, recovery, delivery, setup logic, channel integration, MCP, and tool system
 - `packages/cli`
-  - Daemon execution and local command entry points
+  Daemon execution and local command entry points
 - `packages/webui`
-  - Setup UI, chat UI, work queue, and approval/cancel/review screens
+  Setup UI, chat UI, task monitor, and approval/cancel/review screens
 
 ## Quick Start
 
@@ -174,31 +222,29 @@ bash scripts/stop-local.sh
 
 ## State Directory and Config Files
 
-The default state directory follows this priority.
+The default state directory follows this priority:
 
 - `NOBIE_STATE_DIR`
 - default `~/.nobie`
 
-The following information is stored there.
+It stores:
 
-- Config files
-- Setup state
-- Local database
-- Auth tokens and runtime state
+- config files
+- setup state
+- local database
+- auth tokens and runtime state
+- some local artifacts such as screenshots and extension-produced files
 
-## Current Scope and Notes
+## Planned
 
-The following points describe the current state of the codebase.
+The following items should still be treated as `not yet implemented` or `partially implemented`:
 
-- The WebUI-based setup flow and work queue structure are the main focus right now.
-- The MCP client currently supports stdio-based servers, and the operational experience is still being improved.
-- Telegram is integrated.
-- Slack is still planned.
-- Some local UI automation and operational flows are more validated on macOS, while support for other environments is still planned.
-- Windows has partial code paths, but full installation support is still planned.
-
-In short, Sponzey Nobie already has many working features, but the `task separation architecture`, `verification`, `restart recovery`, and overall `operational experience` are still being actively improved.
+- Slack channel integration
+- stronger Windows-specific installation and operations support
+- broader validation of UI automation outside macOS
+- further setup UX simplification and onboarding improvements
+- expanded operations and user-help documentation
 
 ## One-line Definition
 
-`Sponzey Nobie` is an orchestration-first personal AI platform that runs on the user's computer, understands requests, chooses the right execution target, and continues through real work and verification.
+`Sponzey Nobie` is an orchestration-first personal AI platform that runs on the user's computer and uses configured AI backends plus connected tools to understand requests, choose execution paths, perform real work, deliver results, and decide completion correctly.

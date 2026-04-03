@@ -73,10 +73,10 @@ describe("error chunk pass", () => {
       aborted: false,
       executionRecoveryLimitStop: null,
       activeWorkerRuntime: {
-        kind: "claude_code",
-        targetId: "worker:claude_code",
-        label: "코드 작업 세션",
-        command: "claude",
+        kind: "internal_ai",
+        targetId: "worker:internal_ai",
+        label: "코드 작업 보조 세션",
+        command: "disabled",
       },
       workerSessionId: "worker-123",
       recoveryBudgetUsage: {

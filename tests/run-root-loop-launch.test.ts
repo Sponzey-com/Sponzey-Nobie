@@ -97,7 +97,7 @@ function createExecutionLoopRuntime() {
     seenCommandFailureRecoveryKeys: new Set<string>(),
     seenExecutionRecoveryKeys: new Set<string>(),
     seenDeliveryRecoveryKeys: new Set<string>(),
-    seenLlmRecoveryKeys: new Set<string>(),
+    seenAiRecoveryKeys: new Set<string>(),
     recoveryBudgetUsage: {
       interpretation: 0,
       execution: 0,

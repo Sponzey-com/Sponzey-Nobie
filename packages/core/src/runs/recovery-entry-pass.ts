@@ -44,15 +44,17 @@ export async function runRecoveryEntryPass(
     executionRecoveryLimitStop: {
       summary: string
       reason: string
+      rawMessage?: string
       remainingItems: string[]
     } | null
-    llmRecoveryLimitStop: {
+    aiRecoveryLimitStop: {
       summary: string
       reason: string
+      rawMessage?: string
       remainingItems: string[]
     } | null
     recoveries: Array<{
-      kind: "llm" | "worker_runtime"
+      kind: "ai" | "worker_runtime"
       payload?: ExternalRecoveryPayload | null
     }>
     aborted: boolean
@@ -81,6 +83,7 @@ export async function runRecoveryEntryPass(
             preview: params.preview,
             summary: params.executionRecoveryLimitStop.summary,
             reason: params.executionRecoveryLimitStop.reason,
+            ...(params.executionRecoveryLimitStop.rawMessage ? { rawMessage: params.executionRecoveryLimitStop.rawMessage } : {}),
             remainingItems: params.executionRecoveryLimitStop.remainingItems,
           },
           dependencies: params.finalizationDependencies,
@@ -88,7 +91,7 @@ export async function runRecoveryEntryPass(
         return { kind: "break" }
       }
 
-      if (params.llmRecoveryLimitStop) {
+      if (params.aiRecoveryLimitStop) {
         await moduleDependencies.applyTerminalApplication({
           runId: params.runId,
           sessionId: params.sessionId,
@@ -97,9 +100,10 @@ export async function runRecoveryEntryPass(
           application: {
             kind: "stop",
             preview: params.preview,
-            summary: params.llmRecoveryLimitStop.summary,
-            reason: params.llmRecoveryLimitStop.reason,
-            remainingItems: params.llmRecoveryLimitStop.remainingItems,
+            summary: params.aiRecoveryLimitStop.summary,
+            reason: params.aiRecoveryLimitStop.reason,
+            ...(params.aiRecoveryLimitStop.rawMessage ? { rawMessage: params.aiRecoveryLimitStop.rawMessage } : {}),
+            remainingItems: params.aiRecoveryLimitStop.remainingItems,
           },
           dependencies: params.finalizationDependencies,
         })

@@ -7,8 +7,6 @@ export { createLogger, logger } from "./logger/index.js";
 export { eventBus } from "./events/index.js";
 // DB
 export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, } from "./db/index.js";
-// LLM
-export { getProvider, getDefaultModel } from "./llm/index.js";
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
 // Agent

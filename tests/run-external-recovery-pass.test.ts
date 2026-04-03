@@ -4,7 +4,7 @@ import { runExternalRecoveryPass } from "../packages/core/src/runs/external-reco
 describe("external recovery pass", () => {
   it("returns none when there is no payload", async () => {
     const result = await runExternalRecoveryPass({
-      kind: "llm",
+      kind: "ai",
       aborted: false,
       taskProfile: "general_chat",
       current: {
@@ -37,18 +37,18 @@ describe("external recovery pass", () => {
     expect(result).toEqual({ kind: "none" })
   })
 
-  it("plans and applies llm recovery when retry continues", async () => {
+  it("plans and applies ai recovery when retry continues", async () => {
     const appendRunEvent = vi.fn()
     const planExternalRecovery = vi.fn().mockReturnValue({
-      recoveryKey: "llm-1",
-      eventLabel: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+      recoveryKey: "ai-1",
+      eventLabel: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
       routeChanged: true,
       nextState: {
         model: "claude-sonnet",
         providerId: "anthropic",
         provider: undefined,
-        targetId: "worker:claude_code",
-        targetLabel: "Claude Code",
+        targetId: "provider:anthropic",
+        targetLabel: "Anthropic",
         workerRuntime: undefined,
       },
       nextMessage: "retry prompt",
@@ -59,17 +59,17 @@ describe("external recovery pass", () => {
         model: "claude-sonnet",
         providerId: "anthropic",
         provider: undefined,
-        targetId: "worker:claude_code",
-        targetLabel: "Claude Code",
+        targetId: "provider:anthropic",
+        targetLabel: "Anthropic",
         workerRuntime: undefined,
       },
       nextMessage: "retry prompt",
     })
 
     const result = await runExternalRecoveryPass({
-      kind: "llm",
+      kind: "ai",
       payload: {
-        summary: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+        summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
       },
@@ -106,9 +106,9 @@ describe("external recovery pass", () => {
     })
 
     expect(planExternalRecovery).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "llm",
+      kind: "ai",
       payload: {
-        summary: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+        summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
       },
@@ -127,8 +127,8 @@ describe("external recovery pass", () => {
         model: "claude-sonnet",
         providerId: "anthropic",
         provider: undefined,
-        targetId: "worker:claude_code",
-        targetLabel: "Claude Code",
+        targetId: "provider:anthropic",
+        targetLabel: "Anthropic",
         workerRuntime: undefined,
       },
       nextMessage: "retry prompt",

@@ -16,6 +16,7 @@ import {
 import type { AgentContextMode } from "../agent/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import { buildScheduledFollowupPrompt, extractDirectChannelDeliveryText, getScheduledRunExecutionOptions } from "./scheduled.js"
+import { buildStructuredExecutionBrief } from "./request-prompt.js"
 import type { TaskProfile } from "./types.js"
 
 export interface ScheduleActionExecutionResult {
@@ -179,27 +180,6 @@ export function inferDelegatedTaskProfile(params: {
   return normalizeTaskProfile(params.intake.intent.category === "schedule_request" ? "operations" : "general_chat")
 }
 
-export function buildDelegatedReceipt(
-  intake: TaskIntakeResult,
-  actions: TaskIntakeActionItem[],
-  appendMode: boolean,
-): string {
-  if (actions.length === 0) return ""
-
-  if (actions.length === 1) {
-    const fallback = "요청을 접수했습니다. 후속 실행을 시작합니다."
-    if (appendMode) return "추가 후속 실행을 시작합니다."
-    return intake.user_message.text.trim() || fallback
-  }
-
-  const lines = actions.map((action) => `- ${action.title}`)
-  const header = appendMode
-    ? "추가 후속 실행을 시작합니다."
-    : (intake.user_message.text.trim() || "여러 요청을 접수했고 후속 실행을 시작합니다.")
-
-  return [header, ...lines].join("\n")
-}
-
 export function buildFollowupPrompt(params: {
   originalMessage: string
   intake: TaskIntakeResult
@@ -217,21 +197,41 @@ export function buildFollowupPrompt(params: {
     || params.intake.intent_envelope.preferred_target
   const requiresFilesystemMutation = params.intake.intent_envelope.execution_semantics.filesystemEffect === "mutate"
 
-  return [
-    "[Task Intake Bridge]",
-    "이 요청은 intake router에서 접수되어 후속 실행으로 전달되었습니다.",
-    `원래 사용자 요청: ${params.originalMessage}`,
-    formatStructuredRequestBlock(params.intake, context, goal),
-    `작업 프로필: ${params.taskProfile}`,
-    preferredTarget ? `선호 대상: ${preferredTarget}` : "",
-    successCriteria.length > 0 ? ["성공 조건:", ...successCriteria.map((item) => `- ${item}`)].join("\n") : "",
-    constraints.length > 0 ? ["제약 사항:", ...constraints.map((item) => `- ${item}`)].join("\n") : "",
-    "사용자가 지정한 이름, 따옴표 안 문자열, 파일명, 폴더명, 경로, 언어를 그대로 유지하세요. 폴더명 같은 리터럴을 번역하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
-    requiresFilesystemMutation
-      ? "이 요청은 실제 로컬 파일 또는 폴더 변경이 필요합니다. 로컬 도구를 사용해 실제로 생성하거나 수정하세요. 코드 조각, 설명문, 수동 안내만 남기고 끝내지 마세요."
-      : "지금 실제 작업을 수행하세요. 다시 intake 접수 메시지를 만들지 말고, 실제 결과를 만들어 내세요.",
-  ].filter(Boolean).join("\n\n")
+  return buildStructuredExecutionBrief({
+    header: "[Task Intake Bridge]",
+    introLines: [
+      "이 요청은 intake router에서 접수되어 후속 실행으로 전달되었습니다.",
+    ],
+    originalRequest: params.originalMessage,
+    structuredRequest: {
+      ...params.intake.structured_request,
+      target: params.intake.intent_envelope.target.trim() || goal,
+      to: params.intake.intent_envelope.destination.trim() || params.intake.structured_request.to,
+      context: params.intake.intent_envelope.context.length > 0
+        ? params.intake.intent_envelope.context
+        : [context],
+      normalized_english:
+        params.intake.intent_envelope.normalized_english.trim()
+        || params.intake.structured_request.normalized_english.trim(),
+      complete_condition: params.intake.intent_envelope.complete_condition.length > 0
+        ? params.intake.intent_envelope.complete_condition
+        : params.intake.structured_request.complete_condition,
+    },
+    executionSemantics: params.intake.intent_envelope.execution_semantics,
+    extraSections: [
+      `작업 프로필: ${params.taskProfile}`,
+      preferredTarget ? `선호 대상: ${preferredTarget}` : "",
+      successCriteria.length > 0 ? ["성공 조건:", ...successCriteria.map((item) => `- ${item}`)].join("\n") : "",
+      constraints.length > 0 ? ["제약 사항:", ...constraints.map((item) => `- ${item}`)].join("\n") : "",
+    ].filter(Boolean),
+    closingLines: [
+      "사용자가 지정한 이름, 따옴표 안 문자열, 파일명, 폴더명, 경로, 언어를 그대로 유지하세요. 폴더명 같은 리터럴을 번역하지 마세요.",
+      "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
+      requiresFilesystemMutation
+        ? "이 요청은 실제 로컬 파일 또는 폴더 변경이 필요합니다. 로컬 도구를 사용해 실제로 생성하거나 수정하세요. 코드 조각, 설명문, 수동 안내만 남기고 끝내지 마세요."
+        : "지금 실제 작업을 수행하세요. 다시 intake 접수 메시지를 만들지 말고, 실제 결과를 만들어 내세요.",
+    ],
+  })
 }
 
 export function executeScheduleActions(
@@ -500,38 +500,6 @@ function executeCancelScheduleAction(
       cancelledNames,
     }],
   }
-}
-
-function formatStructuredRequestBlock(intake: TaskIntakeResult, fallbackContext: string, fallbackTarget: string): string {
-  const envelope = intake.intent_envelope
-  const normalizedEnglish = envelope.normalized_english.trim() || intake.structured_request.normalized_english.trim()
-  const target = envelope.target.trim() || fallbackTarget.trim()
-  const destination = envelope.destination.trim() || "the current execution target"
-  const contextLines = envelope.context.length > 0
-    ? envelope.context
-    : [fallbackContext.trim()].filter(Boolean)
-  const completeConditionLines = envelope.complete_condition.length > 0
-    ? envelope.complete_condition
-    : ["Produce the requested result in the current execution."]
-
-  return [
-    "[target]",
-    target,
-    "",
-    "[to]",
-    destination,
-    "",
-    "[context]",
-    ...contextLines.map((item) => `- ${item}`),
-    normalizedEnglish
-      ? ["", "[normalized-english]", normalizedEnglish].join("\n")
-      : "",
-    "",
-    "[complete-condition]",
-    ...completeConditionLines.map((item) => `- ${item}`),
-  ]
-    .filter(Boolean)
-    .join("\n")
 }
 
 function getFollowupRunPayload(action: TaskIntakeActionItem): {

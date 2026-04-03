@@ -25,7 +25,7 @@ export interface ExecutionLoopRuntimeState {
   seenCommandFailureRecoveryKeys: Set<string>
   seenExecutionRecoveryKeys: Set<string>
   seenDeliveryRecoveryKeys: Set<string>
-  seenLlmRecoveryKeys: Set<string>
+  seenAiRecoveryKeys: Set<string>
   recoveryBudgetUsage: RecoveryBudgetUsage
   requiresFilesystemMutation: boolean
   requiresPrivilegedToolExecution: boolean
@@ -40,12 +40,16 @@ export function buildResolvedExecutionProfile(params: {
   structuredRequest?: TaskStructuredRequest
   intentEnvelope?: TaskIntentEnvelope
 }): ResolvedExecutionProfile {
-  const executionSemantics = params.executionSemantics ?? buildDefaultTaskExecutionSemantics()
+  const executionSemantics = resolveExecutionSemantics(params)
   const structuredRequest =
     params.structuredRequest
     ?? (params.intentEnvelope ? buildStructuredRequestFromEnvelope(params.intentEnvelope) : undefined)
     ?? buildFallbackStructuredRequest(params.originalRequest?.trim() || params.message)
-  const intentEnvelope = params.intentEnvelope ?? buildFallbackIntentEnvelope(structuredRequest, executionSemantics)
+  const intentEnvelope = repairIntentEnvelope({
+    intentEnvelope: params.intentEnvelope,
+    structuredRequest,
+    executionSemantics,
+  })
   return {
     originalRequest: params.originalRequest?.trim() || params.message,
     structuredRequest,
@@ -75,7 +79,7 @@ export function createExecutionLoopRuntimeState(params: {
     seenCommandFailureRecoveryKeys: new Set<string>(),
     seenExecutionRecoveryKeys: new Set<string>(),
     seenDeliveryRecoveryKeys: new Set<string>(),
-    seenLlmRecoveryKeys: new Set<string>(),
+    seenAiRecoveryKeys: new Set<string>(),
     recoveryBudgetUsage: createRecoveryBudgetUsage(),
     requiresFilesystemMutation: executionProfile.requiresFilesystemMutation,
     requiresPrivilegedToolExecution: executionProfile.requiresPrivilegedToolExecution,
@@ -159,4 +163,66 @@ function buildFallbackIntentEnvelope(
     needs_tools: executionSemantics.filesystemEffect === "mutate" || executionSemantics.privilegedOperation === "required",
     needs_web: false,
   }
+}
+
+function resolveExecutionSemantics(params: {
+  message: string
+  originalRequest?: string
+  executionSemantics?: TaskExecutionSemantics
+  structuredRequest?: TaskStructuredRequest
+  intentEnvelope?: TaskIntentEnvelope
+}): TaskExecutionSemantics {
+  const base = params.executionSemantics ?? buildDefaultTaskExecutionSemantics()
+  if (base.artifactDelivery === "direct") return base
+  if (!shouldTreatAsDirectArtifactDelivery(params, base)) return base
+  return {
+    ...base,
+    artifactDelivery: "direct",
+  }
+}
+
+function repairIntentEnvelope(params: {
+  intentEnvelope: TaskIntentEnvelope | undefined
+  structuredRequest: TaskStructuredRequest
+  executionSemantics: TaskExecutionSemantics
+}): TaskIntentEnvelope {
+  if (!params.intentEnvelope) {
+    return buildFallbackIntentEnvelope(params.structuredRequest, params.executionSemantics)
+  }
+
+  return {
+    ...params.intentEnvelope,
+    execution_semantics: params.executionSemantics,
+    delivery_mode: params.executionSemantics.artifactDelivery,
+  }
+}
+
+function shouldTreatAsDirectArtifactDelivery(
+  params: {
+    message: string
+    originalRequest?: string
+    structuredRequest?: TaskStructuredRequest
+    intentEnvelope?: TaskIntentEnvelope
+  },
+  executionSemantics: TaskExecutionSemantics,
+): boolean {
+  if (executionSemantics.approvalTool === "screen_capture" || executionSemantics.approvalTool === "yeonjang_camera_capture") {
+    return true
+  }
+
+  const combined = [
+    params.message,
+    params.originalRequest,
+    params.structuredRequest?.target,
+    params.structuredRequest?.normalized_english,
+    params.intentEnvelope?.target,
+    params.intentEnvelope?.normalized_english,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n")
+
+  if (!combined) return false
+
+  return /(screen\s*capture|screenshot|screen shot|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture)/iu.test(combined)
+    || /(화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영)/u.test(combined)
 }

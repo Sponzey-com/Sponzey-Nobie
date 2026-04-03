@@ -28,16 +28,18 @@ export interface ExecutionChunkPassResult {
   executionRecoveryLimitStop?: {
     summary: string
     reason: string
+    rawMessage?: string
     remainingItems: string[]
   }
-  llmRecovery?: {
+  aiRecovery?: {
     summary: string
     reason: string
     message: string
   }
-  llmRecoveryLimitStop?: {
+  aiRecoveryLimitStop?: {
     summary: string
     reason: string
+    rawMessage?: string
     remainingItems: string[]
   }
   sawRealFilesystemMutation?: boolean
@@ -154,28 +156,28 @@ export function applyExecutionChunkPass(
     }
   }
 
-  const llmRecoveryAttempt: ExternalRecoveryAttemptResult = moduleDependencies.applyExternalRecoveryAttempt({
-    kind: "llm",
+  const aiRecoveryAttempt: ExternalRecoveryAttemptResult = moduleDependencies.applyExternalRecoveryAttempt({
+    kind: "ai",
     runId: params.runId,
     sessionId: params.sessionId,
     source: params.source,
     recoveryBudgetUsage: params.recoveryBudgetUsage,
     usedTurns: params.usedTurns,
     maxDelegationTurns: params.maxDelegationTurns,
-    failureTitle: "llm_recovery",
+    failureTitle: "ai_recovery",
     payload: params.chunk,
-    limitRemainingItems: ["모델 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+    limitRemainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
   }, dependencies)
 
-  if (llmRecoveryAttempt.kind === "stop") {
+  if (aiRecoveryAttempt.kind === "stop") {
     return {
       handled: true,
-      llmRecoveryLimitStop: llmRecoveryAttempt.stop,
+      aiRecoveryLimitStop: aiRecoveryAttempt.stop,
     }
   }
 
   return {
     handled: true,
-    llmRecovery: llmRecoveryAttempt.payload,
+    aiRecovery: aiRecoveryAttempt.payload,
   }
 }

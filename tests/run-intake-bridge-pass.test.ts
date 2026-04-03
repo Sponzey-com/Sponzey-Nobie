@@ -113,7 +113,6 @@ describe("run intake bridge pass", () => {
       resolveRunRoute: vi.fn(),
       executeScheduleActions: vi.fn(),
       createDefaultScheduleActionDependencies: vi.fn(),
-      buildDelegatedReceipt: vi.fn(),
       inferDelegatedTaskProfile: vi.fn(),
       buildFollowupPrompt: vi.fn(),
     }
@@ -161,7 +160,6 @@ describe("run intake bridge pass", () => {
         receipts: [],
       }),
       createDefaultScheduleActionDependencies: vi.fn().mockReturnValue({}),
-      buildDelegatedReceipt: vi.fn(),
       inferDelegatedTaskProfile: vi.fn(),
       buildFollowupPrompt: vi.fn(),
     }
@@ -214,7 +212,6 @@ describe("run intake bridge pass", () => {
       }),
       executeScheduleActions: vi.fn(),
       createDefaultScheduleActionDependencies: vi.fn(),
-      buildDelegatedReceipt: vi.fn().mockReturnValue("후속 실행을 시작합니다."),
       inferDelegatedTaskProfile: vi.fn().mockReturnValue("coding"),
       buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nCreate a calendar app"),
     }
@@ -247,9 +244,9 @@ describe("run intake bridge pass", () => {
       skipIntake: true,
     }))
     expect(result).toEqual({
-      kind: "complete",
-      text: "후속 실행을 시작합니다.",
-      eventLabel: "intake 처리 결과 전달",
+      kind: "complete_silent",
+      summary: "후속 실행으로 전달되었습니다.",
+      eventLabel: "intake 후속 실행 생성 완료",
     })
   })
 
@@ -286,7 +283,6 @@ describe("run intake bridge pass", () => {
         }],
       }),
       createDefaultScheduleActionDependencies: vi.fn().mockReturnValue({}),
-      buildDelegatedReceipt: vi.fn(),
       inferDelegatedTaskProfile: vi.fn(),
       buildFollowupPrompt: vi.fn(),
     }

@@ -19,15 +19,13 @@ import { useUiI18n } from "../../lib/ui-i18n"
 import type { BackendCardErrors } from "../../lib/setupFlow"
 import { CapabilityBadge } from "../CapabilityBadge"
 
-function getKindLabel(kind: AIBackendCard["kind"], text: (ko: string, en: string) => string): string {
-  return kind === "worker"
-    ? text("작업 워커 (Worker)", "Task Worker")
-    : text("직접 연결 (Provider)", "Direct Provider")
+function getKindLabel(text: (ko: string, en: string) => string): string {
+  return text("직접 연결 (Provider)", "Direct Provider")
 }
 
 function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string) => string): string {
   return mode === "chatgpt_oauth"
-    ? text("ChatGPT OAuth (Codex)", "ChatGPT OAuth (Codex)")
+    ? text("ChatGPT OAuth", "ChatGPT OAuth")
     : text("API Key", "API Key")
 }
 
@@ -38,7 +36,6 @@ export function BackendHealthCard({
   onChange,
   onRemove,
   onSetRoutingTargetEnabled,
-  onSyncBuiltinBackends,
   errors,
 }: {
   backend: AIBackendCard
@@ -47,7 +44,6 @@ export function BackendHealthCard({
   onChange: (id: string, patch: Partial<AIBackendCard>) => void
   onRemove?: (id: string) => void
   onSetRoutingTargetEnabled: (profileId: RoutingProfile["id"], backendId: string, enabled: boolean) => void
-  onSyncBuiltinBackends: () => void
   errors?: BackendCardErrors
 }) {
   const [loadingModels, setLoadingModels] = useState(false)
@@ -152,17 +148,16 @@ export function BackendHealthCard({
 
   const credentialFields = getAIProviderCredentialFields(backend.providerType, backend.authMode ?? "api_key")
   const isOpenAIOAuthMode = backend.providerType === "openai" && (backend.authMode ?? "api_key") === "chatgpt_oauth"
+  const isBuiltinBackend = isBuiltinBackendId(backend.id)
   const canLoadModels =
     Boolean(backend.endpoint?.trim()) && hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key")
-  const isPrimaryBuiltin = backend.id === "provider:openai"
-  const isBuiltinBackend = isBuiltinBackendId(backend.id)
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">{getBackendDisplayLabel(backend.id, backend.label, language)}</div>
-          <div className="mt-1 text-xs tracking-wide text-stone-500">{getKindLabel(backend.kind, text)}</div>
+          <div className="mt-1 text-xs tracking-wide text-stone-500">{getKindLabel(text)}</div>
         </div>
         <CapabilityBadge status={backend.status} />
       </div>
@@ -226,11 +221,11 @@ export function BackendHealthCard({
 
         {isOpenAIOAuthMode ? (
           <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-xs leading-6 text-sky-900">
-            <div className="font-semibold">{text("ChatGPT OAuth (Codex) 사용 안내", "How ChatGPT OAuth (Codex) works")}</div>
+            <div className="font-semibold">{text("ChatGPT OAuth 사용 안내", "How ChatGPT OAuth works")}</div>
             <div className="mt-2">
               {text(
-                "이 방식은 `codex login`으로 생성된 `~/.codex/auth.json` 토큰을 읽어 `https://chatgpt.com/backend-api/codex`에 연결합니다. OpenAI API Key가 아니라 ChatGPT Codex backend를 사용하므로, 연결 확인과 모델 조회는 Codex backend probe로 처리됩니다.",
-                "This mode reads the token saved by `codex login` in `~/.codex/auth.json` and connects to `https://chatgpt.com/backend-api/codex`. It uses the ChatGPT Codex backend instead of the OpenAI API key path, so connection checks and model loading are handled through a Codex backend probe.",
+                "이 방식은 ChatGPT OAuth 인증 파일을 읽어 `https://chatgpt.com/backend-api/codex`에 연결합니다. OpenAI API Key 대신 OAuth 인증을 사용하며, 연결 확인과 모델 조회는 OpenAI 호환 probe로 처리됩니다.",
+                "This mode reads the ChatGPT OAuth auth file and connects to `https://chatgpt.com/backend-api/codex`. It uses OAuth authentication instead of the OpenAI API key path, and connection checks and model loading are handled through an OpenAI-compatible probe.",
               )}
             </div>
           </div>
@@ -305,21 +300,6 @@ export function BackendHealthCard({
           </select>
           {errors?.defaultModel ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.defaultModel}</p> : null}
         </div>
-
-        {isPrimaryBuiltin ? (
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-            <div className="text-sm font-semibold text-stone-900">{text("기본 카드 동기화", "Sync Built-in Cards")}</div>
-            <div className="mt-2 text-xs leading-5 text-stone-600">{text("지금 카드의 AI 종류, 인증 정보, 주소, 모델 정보를 다른 기본 카드에 함께 적용합니다.", "Apply this card's AI type, credentials, endpoint, and model information to the other built-in cards.")}</div>
-            <div className="mt-4">
-              <button
-                onClick={() => onSyncBuiltinBackends()}
-                className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700"
-              >
-                {text("전체 적용", "Apply to All")}
-              </button>
-            </div>
-          </div>
-        ) : null}
 
         <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
           <div className="text-sm font-semibold text-stone-900">{text("AI 라우팅 태그", "AI Routing Tags")}</div>

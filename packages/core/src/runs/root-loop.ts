@@ -1,5 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js"
-import type { TaskExecutionSemantics } from "../agent/intake.js"
+import type { TaskExecutionSemantics, TaskStructuredRequest } from "../agent/intake.js"
 import type { LoopDirective } from "./loop-directive.js"
 import type { ExecutionCycleState } from "./execution-cycle-pass.js"
 import { prepareRootLoopBootstrapState } from "./root-loop-bootstrap-state.js"
@@ -10,7 +10,7 @@ import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { ReconnectRequestGroupSelection } from "./store.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 
 export interface RootLoopDependencies {
@@ -83,13 +83,14 @@ export interface RootLoopParams {
   currentMessage: string
   currentModel: string | undefined
   currentProviderId: string | undefined
-  currentProvider: LLMProvider | undefined
+  currentProvider: AIProvider | undefined
   currentTargetId: string | undefined
   currentTargetLabel: string | undefined
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
   workerSessionId?: string
   requestMessage: string
   originalRequest: string
+  structuredRequest?: TaskStructuredRequest
   executionSemantics: TaskExecutionSemantics
   workDir: string
   toolsEnabled?: boolean
@@ -105,7 +106,7 @@ export interface RootLoopParams {
   seenCommandFailureRecoveryKeys: Set<string>
   seenExecutionRecoveryKeys: Set<string>
   seenDeliveryRecoveryKeys: Set<string>
-  seenLlmRecoveryKeys: Set<string>
+  seenAiRecoveryKeys: Set<string>
   recoveryBudgetUsage: RecoveryBudgetUsage
   priorAssistantMessages: string[]
   syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
@@ -138,6 +139,7 @@ export async function runRootLoop(
       recoveryBudgetUsage: params.recoveryBudgetUsage,
       executionSemantics: params.executionSemantics,
       originalRequest: params.originalRequest,
+      ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
       requestMessage: params.requestMessage,
       workDir: params.workDir,
       ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
@@ -154,7 +156,7 @@ export async function runRootLoop(
       seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
       seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
       seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
-      seenLlmRecoveryKeys: params.seenLlmRecoveryKeys,
+      seenAiRecoveryKeys: params.seenAiRecoveryKeys,
       priorAssistantMessages: params.priorAssistantMessages,
       syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
       defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,

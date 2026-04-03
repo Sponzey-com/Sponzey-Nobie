@@ -17,7 +17,7 @@ export function registerSetupRoute(app) {
     });
     app.post("/api/setup/test-backend", { preHandler: authMiddleware }, async (req, reply) => {
         const endpoint = req.body?.endpoint?.trim();
-        const providerType = ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(req.body?.providerType))
+        const providerType = ["openai", "ollama", "llama", "anthropic", "gemini", "custom"].includes(String(req.body?.providerType))
             ? req.body?.providerType
             : "custom";
         const credentials = {};

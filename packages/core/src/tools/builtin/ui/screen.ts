@@ -3,16 +3,12 @@
  * Uses @nut-tree/nut-js when available, falls back to platform CLI tools.
  */
 
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import type { AgentTool, ToolResult } from "../../types.js"
 import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
 import { PATHS } from "../../../config/index.js"
-
-const execFileAsync = promisify(execFile)
 
 interface YeonjangScreenCaptureResult {
   output_path?: string
@@ -57,26 +53,31 @@ function validateYeonjangBinaryResult(remote: YeonjangScreenCaptureResult): stri
   return remote.base64_data
 }
 
-async function captureScreenToBase64(): Promise<string> {
-  const tmpPath = join(tmpdir(), `nobie-screen-${Date.now()}.png`)
-
-  const platform = process.platform
-  if (platform === "darwin") {
-    await execFileAsync("screencapture", ["-x", tmpPath])
-  } else if (platform === "linux") {
-    await execFileAsync("import", ["-window", "root", tmpPath])
-  } else if (platform === "win32") {
-    await execFileAsync("powershell", [
-      "-Command",
-      `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bmp.Size); $bmp.Save('${tmpPath}')`,
-    ])
-  } else {
-    throw new Error(`Unsupported platform: ${platform}`)
+function yeonjangRequiredFailure(method: string): ToolResult {
+  return {
+    success: false,
+    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+    error: "YEONJANG_REQUIRED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+    },
   }
+}
 
-  const data = readFileSync(tmpPath)
-  try { unlinkSync(tmpPath) } catch { /* ignore */ }
-  return data.toString("base64")
+async function captureScreenViaYeonjang(): Promise<{
+  base64: string
+  remote: YeonjangScreenCaptureResult
+}> {
+  const remote = await invokeYeonjangMethod<YeonjangScreenCaptureResult>(
+    "screen.capture",
+    { inline_base64: true },
+    { timeoutMs: 20_000 },
+  )
+  return {
+    base64: validateYeonjangBinaryResult(remote),
+    remote,
+  }
 }
 
 export const screenCaptureTool: AgentTool<Record<string, never>> = {
@@ -92,12 +93,7 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
   execute: async (): Promise<ToolResult> => {
     try {
       if (await canYeonjangHandleMethod("screen.capture")) {
-        const remote = await invokeYeonjangMethod<YeonjangScreenCaptureResult>(
-          "screen.capture",
-          { inline_base64: true },
-          { timeoutMs: 20_000 },
-        )
-        const base64 = validateYeonjangBinaryResult(remote)
+        const { base64, remote } = await captureScreenViaYeonjang()
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
         return {
           success: true,
@@ -120,23 +116,7 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
         return { success: false, output: `Yeonjang 화면 캡처 실패: ${message}`, error: message }
       }
     }
-
-    try {
-      const base64 = await captureScreenToBase64()
-      const localSavedPath = saveInlineScreenCapture(base64, "image/png")
-      return {
-        success: true,
-        output: `스크린샷 캡처 완료.\n로컬 저장: ${localSavedPath}`,
-        details: {
-          via: "local",
-          mimeType: "image/png",
-          localSavedPath,
-          localFileSize: statSync(localSavedPath).size,
-        },
-      }
-    } catch (err) {
-      return { success: false, output: `화면 캡처 실패: ${err instanceof Error ? err.message : String(err)}` }
-    }
+    return yeonjangRequiredFailure("screen.capture")
   },
 }
 
@@ -158,12 +138,18 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
   requiresApproval: false,
   execute: async (params: ScreenFindTextParams): Promise<ToolResult> => {
     try {
+      if (!await canYeonjangHandleMethod("screen.capture")) {
+        return yeonjangRequiredFailure("screen.capture")
+      }
       const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`)
       const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`)
 
-      const base64 = await captureScreenToBase64()
+      const { base64 } = await captureScreenViaYeonjang()
       writeFileSync(tmpPng, Buffer.from(base64, "base64"))
 
+      const { execFile } = await import("node:child_process")
+      const { promisify } = await import("node:util")
+      const execFileAsync = promisify(execFile)
       await execFileAsync("tesseract", [tmpPng, tmpTxt, "-l", "eng+kor"])
       const ocrText = readFileSync(`${tmpTxt}.txt`, "utf8")
 
@@ -178,6 +164,9 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
           : `"${params.text}" 텍스트를 화면에서 찾을 수 없습니다.`,
       }
     } catch (err) {
+      if (isYeonjangUnavailableError(err)) {
+        return yeonjangRequiredFailure("screen.capture")
+      }
       return { success: false, output: `텍스트 검색 실패: ${err instanceof Error ? err.message : String(err)}` }
     }
   },

@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import { getRootRun } from "./store.js"
 import { defaultReviewPassDependencies, runReviewPass } from "./review-pass.js"
 import { runReviewOutcomePass, type ReviewOutcomePassResult } from "./review-outcome-pass.js"
@@ -68,7 +68,7 @@ export async function runReviewCyclePass(
     originalRequest: string
     model?: string
     providerId?: string
-    provider?: LLMProvider
+    provider?: AIProvider
     workDir?: string
     usesWorkerRuntime: boolean
     workerRuntimeKind?: string

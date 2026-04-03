@@ -149,9 +149,9 @@ export const api = {
   restartTelegram: () =>
     request<{ ok: boolean; status?: string; error?: string }>("/api/settings/telegram/restart", { method: "POST" }),
 
-  testLlm: () =>
+  testAi: () =>
     request<{ ok: boolean; response?: string; model?: string; error?: string }>(
-      "/api/settings/test-llm", { method: "POST" },
+      "/api/settings/test-ai", { method: "POST" },
     ),
 
   schedules: () =>

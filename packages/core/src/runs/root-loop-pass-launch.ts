@@ -2,6 +2,7 @@ import { runExecutionCyclePass, type ExecutionCycleState } from "./execution-cyc
 import type { LoopDirective } from "./loop-directive.js"
 import { runLoopEntryPass } from "./loop-entry-pass.js"
 import type { RootLoopDependencies, RootLoopParams } from "./root-loop.js"
+import { buildStructuredExecutionBrief } from "./request-prompt.js"
 
 export interface RootLoopEntryPassLaunch {
   params: Parameters<typeof runLoopEntryPass>[0]
@@ -63,6 +64,7 @@ export function prepareRootExecutionCyclePassLaunch(
     state: ExecutionCycleState
     executionSemantics: RootLoopParams["executionSemantics"]
     originalRequest: string
+    structuredRequest?: RootLoopParams["structuredRequest"]
     requestMessage: string
     workDir: string
     toolsEnabled?: boolean
@@ -79,7 +81,7 @@ export function prepareRootExecutionCyclePassLaunch(
     seenCommandFailureRecoveryKeys: RootLoopParams["seenCommandFailureRecoveryKeys"]
     seenExecutionRecoveryKeys: RootLoopParams["seenExecutionRecoveryKeys"]
     seenDeliveryRecoveryKeys: RootLoopParams["seenDeliveryRecoveryKeys"]
-    seenLlmRecoveryKeys: RootLoopParams["seenLlmRecoveryKeys"]
+    seenAiRecoveryKeys: RootLoopParams["seenAiRecoveryKeys"]
     recoveryBudgetUsage: RootLoopParams["recoveryBudgetUsage"]
     priorAssistantMessages: RootLoopParams["priorAssistantMessages"]
     syntheticApprovalRuntimeDependencies: RootLoopParams["syntheticApprovalRuntimeDependencies"]
@@ -87,6 +89,22 @@ export function prepareRootExecutionCyclePassLaunch(
   },
   dependencies: RootLoopDependencies,
 ): RootExecutionCyclePassLaunch {
+  const executionMessage = params.structuredRequest && params.state.currentMessage === params.requestMessage
+    ? buildStructuredExecutionBrief({
+      header: "[Root Task Execution]",
+      introLines: [
+        "이 요청은 intake를 마치고 실제 실행 단계로 전달되었습니다.",
+      ],
+      originalRequest: params.originalRequest,
+      structuredRequest: params.structuredRequest,
+      executionSemantics: params.executionSemantics,
+      closingLines: [
+        "체크리스트 기준으로 실제 작업을 순서대로 수행하세요.",
+        "완료되지 않은 항목이 남아 있으면 종료하지 말고 계속 진행하세요.",
+      ],
+    })
+    : params.state.currentMessage
+
   return {
     params: {
       runId: params.runId,
@@ -95,7 +113,10 @@ export function prepareRootExecutionCyclePassLaunch(
       source: params.source,
       onChunk: params.onChunk,
       signal: params.signal,
-      state: params.state,
+      state: {
+        ...params.state,
+        currentMessage: executionMessage,
+      },
       executionSemantics: params.executionSemantics,
       originalRequest: params.originalRequest,
       memorySearchQuery: params.requestMessage,
@@ -118,7 +139,7 @@ export function prepareRootExecutionCyclePassLaunch(
       seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
       seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
       seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
-      seenLlmRecoveryKeys: params.seenLlmRecoveryKeys,
+      seenAiRecoveryKeys: params.seenAiRecoveryKeys,
       recoveryBudgetUsage: params.recoveryBudgetUsage,
       priorAssistantMessages: params.priorAssistantMessages,
       syntheticApprovalAlreadyApproved: dependencies.getSyntheticApprovalAlreadyApproved(),

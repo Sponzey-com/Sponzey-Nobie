@@ -14,7 +14,7 @@ describe("external recovery application", () => {
       preview: "partial",
       plan: {
         recoveryKey: "dup-1",
-        eventLabel: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+        eventLabel: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         routeChanged: false,
         nextState: {
           model: "gpt-4o-mini",
@@ -26,8 +26,9 @@ describe("external recovery application", () => {
         },
         nextMessage: "retry prompt",
         duplicateStop: {
-          summary: "같은 LLM 오류가 반복되었습니다.",
+          summary: "같은 AI 오류가 반복되었습니다.",
           reason: "403 blocked",
+          rawMessage: "forbidden",
           remainingItems: ["다른 수동 조치 필요"],
         },
       },
@@ -47,6 +48,11 @@ describe("external recovery application", () => {
 
     expect(result).toEqual({ kind: "stop" })
     expect(applyTerminalApplication).toHaveBeenCalledTimes(1)
+    expect(applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
+      application: expect.objectContaining({
+        rawMessage: "forbidden",
+      }),
+    }))
     expect(appendRunEvent).not.toHaveBeenCalled()
   })
 
@@ -61,23 +67,17 @@ describe("external recovery application", () => {
       onChunk: undefined,
       preview: "",
       plan: {
-        recoveryKey: "llm-1",
-        eventLabel: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+        recoveryKey: "ai-1",
+        eventLabel: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         routeChanged: true,
-        routeEventLabel: "LLM 복구 경로 전환: OpenAI -> Claude Code",
+        routeEventLabel: "AI 복구 경로 전환: OpenAI -> Anthropic",
         nextState: {
           model: "claude-sonnet",
           providerId: "anthropic",
           provider: undefined,
-          targetId: "worker:claude_code",
-          targetLabel: "Claude Code",
-          workerRuntime: {
-            kind: "claude_code",
-            label: "Claude Code",
-            command: "claude",
-            args: [],
-            detect: { type: "command", command: "claude", args: ["--version"] },
-          },
+          targetId: "provider:anthropic",
+          targetLabel: "Anthropic",
+          workerRuntime: undefined,
         },
         nextMessage: "retry prompt",
       },
@@ -99,20 +99,14 @@ describe("external recovery application", () => {
         model: "claude-sonnet",
         providerId: "anthropic",
         provider: undefined,
-        targetId: "worker:claude_code",
-        targetLabel: "Claude Code",
-        workerRuntime: {
-          kind: "claude_code",
-          label: "Claude Code",
-          command: "claude",
-          args: [],
-          detect: { type: "command", command: "claude", args: ["--version"] },
-        },
+        targetId: "provider:anthropic",
+        targetLabel: "Anthropic",
+        workerRuntime: undefined,
       },
       nextMessage: "retry prompt",
     })
-    expect(seenKeys.has("llm-1")).toBe(true)
-    expect(appendRunEvent).toHaveBeenNthCalledWith(1, "run-2", "LLM 오류를 분석하고 다른 방법으로 재시도합니다.")
-    expect(appendRunEvent).toHaveBeenNthCalledWith(2, "run-2", "LLM 복구 경로 전환: OpenAI -> Claude Code")
+    expect(seenKeys.has("ai-1")).toBe(true)
+    expect(appendRunEvent).toHaveBeenNthCalledWith(1, "run-2", "AI 오류를 분석하고 다른 방법으로 재시도합니다.")
+    expect(appendRunEvent).toHaveBeenNthCalledWith(2, "run-2", "AI 복구 경로 전환: OpenAI -> Anthropic")
   })
 })

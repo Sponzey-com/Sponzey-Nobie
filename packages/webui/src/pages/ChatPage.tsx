@@ -7,9 +7,11 @@ import { CancelRunButton } from "../components/runs/CancelRunButton"
 import { RunApprovalActions } from "../components/runs/RunApprovalActions"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
 import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
+import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
+import { TaskFailurePanel } from "../components/runs/TaskFailurePanel"
 import { mapChatErrorMessage } from "../lib/chat-errors"
 import { filterRunsForChatSession, resolvePendingInteractionForRun } from "../lib/pending-interactions"
-import { buildTaskMonitorCards, describeTaskDeliveryStatus, filterActiveTaskMonitorCards } from "../lib/task-monitor"
+import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliveryStatus, filterActiveTaskMonitorCards } from "../lib/task-monitor"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useChatStore } from "../stores/chat"
 import { useRunsStore } from "../stores/runs"
@@ -17,11 +19,13 @@ import { useRunsStore } from "../stores/runs"
 function TaskMonitorBadges({
   attemptCount,
   internalAttemptCount,
+  checklistLabel,
   deliveryLabel,
   text,
 }: {
   attemptCount: number
   internalAttemptCount: number
+  checklistLabel: string
   deliveryLabel: string
   text: (ko: string, en: string) => string
 }) {
@@ -35,6 +39,9 @@ function TaskMonitorBadges({
           {text("내부 시도", "Internal")} {internalAttemptCount}
         </span>
       ) : null}
+      <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
+        {text("체크", "Checklist")} {checklistLabel}
+      </span>
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("전달", "Delivery")} {deliveryLabel}
       </span>
@@ -259,6 +266,7 @@ export function ChatPage() {
                           <TaskMonitorBadges
                             attemptCount={card.attempts.length}
                             internalAttemptCount={card.internalAttempts.length}
+                            checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
                             deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
                             text={text}
                           />
@@ -286,6 +294,23 @@ export function ChatPage() {
                 run={selectedRun}
                 extraContent={(
                   <div className="space-y-4">
+                    <TaskChecklistPanel
+                      checklist={selectedCard?.checklist ?? {
+                        items: [],
+                        completedCount: 0,
+                        actionableCount: 0,
+                        failedCount: 0,
+                      }}
+                      text={text}
+                      displayText={displayText}
+                    />
+                    {selectedCard?.failure ? (
+                      <TaskFailurePanel
+                        failure={selectedCard.failure}
+                        text={text}
+                        displayText={displayText}
+                      />
+                    ) : null}
                     {selectedApproval ? <RunApprovalActions approval={selectedApproval} /> : null}
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
