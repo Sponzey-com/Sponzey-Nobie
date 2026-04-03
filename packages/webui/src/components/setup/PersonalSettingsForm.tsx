@@ -102,7 +102,7 @@ export function PersonalSettingsForm({
           className="input font-mono"
           value={value.workspace}
           onChange={(event) => onChange({ workspace: event.target.value })}
-          placeholder={text("예: /Users/you/Work or C:\\Work", "Example: /Users/you/Work or C:\\Work")}
+          placeholder={text("예: ./Work", "Example: ./Work")}
         />
         {errors?.workspace ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.workspace}</p> : null}
       </div>

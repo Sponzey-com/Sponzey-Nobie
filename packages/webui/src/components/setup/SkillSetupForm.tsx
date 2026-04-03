@@ -140,7 +140,7 @@ export function SkillSetupForm({
                     className="input font-mono"
                     value={item.path}
                     onChange={(event) => updateItem(item.id, { path: event.target.value, status: "disabled", reason: undefined })}
-                    placeholder={text("예: /Users/you/.codex/skills/my-skill", "Example: /Users/you/.codex/skills/my-skill")}
+                    placeholder={text("예: ./skills/my-skill", "Example: ./skills/my-skill")}
                   />
                   {itemErrors?.path ? <p className="mt-2 text-xs leading-5 text-red-600">{itemErrors.path}</p> : null}
                 </div>
