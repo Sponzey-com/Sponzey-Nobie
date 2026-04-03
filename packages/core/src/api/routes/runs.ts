@@ -1,3 +1,4 @@
+import crypto from "node:crypto"
 import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
 import {
@@ -8,6 +9,7 @@ import {
 } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
 import { buildTaskModels } from "../../runs/task-model.js"
+import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js"
 
 export async function startLocalRun(params: {
   message: string
@@ -15,7 +17,16 @@ export async function startLocalRun(params: {
   model: string | undefined
   source: "webui" | "cli" | "telegram"
 }) {
-  const { started, receipt, requestId, sessionId, source } = startIngressRun(params)
+  const runId = crypto.randomUUID()
+  const sessionId = params.sessionId ?? crypto.randomUUID()
+  const { started, receipt, requestId, source } = startIngressRun({
+    ...params,
+    runId,
+    sessionId,
+    ...(params.source === "webui"
+      ? { onChunk: createWebUiChunkDeliveryHandler({ sessionId, runId }) }
+      : {}),
+  })
   return {
     requestId,
     runId: started.runId,

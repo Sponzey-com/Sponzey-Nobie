@@ -28,6 +28,13 @@ interface KeyboardShortcutParams {
   keys: string[]
 }
 
+interface KeyboardActionParams {
+  action: "type_text" | "shortcut" | "key_press" | "key_down" | "key_up"
+  text?: string
+  key?: string
+  modifiers?: string[]
+}
+
 interface YeonjangKeyboardTypeResult {
   typed: boolean
   text_len: number
@@ -39,6 +46,7 @@ interface YeonjangKeyboardActionResult {
   action: string
   key?: string
   modifiers?: string[]
+  text_len?: number
   message: string
 }
 
@@ -188,6 +196,68 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
         return { success: false, output: `Yeonjang 단축키 실행 실패: ${message}`, error: message }
       }
     }
+    return yeonjangRequiredFailure("keyboard.action")
+  },
+}
+
+export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
+  name: "keyboard_action",
+  description: "키보드 액션을 실행합니다. type_text, shortcut, key_press, key_down, key_up을 지원합니다.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["type_text", "shortcut", "key_press", "key_down", "key_up"],
+        description: "실행할 키보드 액션",
+      },
+      text: { type: "string", description: "type_text에서 입력할 텍스트" },
+      key: { type: "string", description: "shortcut 또는 key_* 액션의 대상 키" },
+      modifiers: {
+        type: "array",
+        items: { type: "string" },
+        description: "함께 누를 modifier 키 목록",
+      },
+    },
+    required: ["action"],
+  },
+  riskLevel: "moderate",
+  requiresApproval: true,
+  execute: async (params: KeyboardActionParams, _ctx: ToolContext): Promise<ToolResult> => {
+    await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
+
+    try {
+      if (await canYeonjangHandleMethod("keyboard.action")) {
+        const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
+          "keyboard.action",
+          {
+            action: params.action,
+            ...(typeof params.text === "string" ? { text: params.text } : {}),
+            ...(typeof params.key === "string" ? { key: params.key } : {}),
+            ...(params.modifiers?.length ? { modifiers: params.modifiers } : {}),
+          },
+          { timeoutMs: 15_000 },
+        )
+        return {
+          success: remote.accepted,
+          output: remote.message || `키보드 액션 실행: ${params.action}`,
+          details: {
+            via: "yeonjang",
+            action: remote.action,
+            key: remote.key,
+            modifiers: remote.modifiers,
+            textLength: remote.text_len,
+          },
+          ...(remote.accepted ? {} : { error: "remote_keyboard_action_failed" }),
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 키보드 액션 실패: ${message}`, error: message }
+      }
+    }
+
     return yeonjangRequiredFailure("keyboard.action")
   },
 }

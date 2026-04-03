@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::thread::{self, JoinHandle};
 
 use crate::automation::{
@@ -63,6 +63,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             system::exec(params)
         }
         "application.launch" => {
+            ensure_permission(
+                permissions.allow_application_launch,
+                "application.launch",
+                "allow_application_launch",
+            )?;
             let params = serde_json::from_value::<system::LaunchAppParams>(request.params.clone())
                 .context("invalid params for application.launch")?;
             system::launch_application(params)
@@ -247,6 +252,7 @@ fn effective_capabilities() -> AutomationCapabilities {
     let permissions = current_permissions();
     capability_flags.system_control &= permissions.allow_system_control;
     capability_flags.command_execution &= permissions.allow_shell_exec;
+    capability_flags.application_launch &= permissions.allow_application_launch;
     capability_flags.screen_capture &= permissions.allow_screen_capture;
     capability_flags.keyboard_control &= permissions.allow_keyboard_control;
     capability_flags.mouse_control &= permissions.allow_mouse_control;

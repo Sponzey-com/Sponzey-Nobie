@@ -8,6 +8,15 @@ export interface NobieEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
   "agent.start": { sessionId: string; runId: string }
   "agent.stream": { sessionId: string; runId: string; delta: string }
+  "agent.artifact": {
+    sessionId: string
+    runId: string
+    url: string
+    filePath: string
+    fileName: string
+    mimeType?: string
+    caption?: string
+  }
   "agent.end": { sessionId: string; runId: string; durationMs: number }
   "agent.error": { sessionId: string; runId: string; error: string }
   "run.created": { run: RootRun }

@@ -113,7 +113,7 @@ describe("telegram chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
   })
 
-  it("delivers artifact first and only flushes text produced after the artifact", async () => {
+  it("delivers artifact first and suppresses later AI text for tool-owned responses", async () => {
     const order: string[] = []
     const responder = {
       sendToolStatus: vi.fn(),
@@ -154,8 +154,8 @@ describe("telegram chunk delivery helper", () => {
     await onChunk?.({ type: "text", delta: "파일 전달이 완료되었습니다." })
     await onChunk?.({ type: "done", totalTokens: 0 })
 
-    expect(order).toEqual(["file", "text"])
-    expect(responder.sendFinalResponse).toHaveBeenCalledWith("파일 전달이 완료되었습니다.")
+    expect(order).toEqual(["file"])
+    expect(responder.sendFinalResponse).not.toHaveBeenCalled()
   })
 
   it("clears buffered preamble text after artifact delivery succeeds", async () => {
@@ -194,5 +194,91 @@ describe("telegram chunk delivery helper", () => {
     expect(responder.sendFile).toHaveBeenCalledTimes(1)
     expect(responder.sendFinalResponse).not.toHaveBeenCalled()
     expect(receipt).toBeUndefined()
+  })
+
+  it("uses isolated Yeonjang tool output as the only final response", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue(1001),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue([1002]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-6",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({ type: "text", delta: "먼저 들어온 AI 안내문" })
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "yeonjang_camera_list",
+      params: {},
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "yeonjang_camera_list",
+      success: true,
+      output: "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
+      details: {
+        via: "yeonjang",
+      },
+    })
+    await onChunk?.({ type: "text", delta: "나중에 생성된 AI 요약문" })
+    await onChunk?.({ type: "error", message: "late failure" })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendError).not.toHaveBeenCalled()
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith(
+      "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
+    )
+    expect(receipt).toEqual({
+      textDeliveries: [{
+        channel: "telegram",
+        text: "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
+        messageIds: [1002],
+      }],
+    })
+  })
+
+  it("isolates generic Yeonjang-backed tool output too", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue(1101),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue([1102]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-7",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({ type: "text", delta: "AI가 먼저 만든 안내문" })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "mouse_click",
+      success: true,
+      output: "(120, 240) 클릭 완료",
+      details: {
+        via: "yeonjang",
+        x: 120,
+        y: 240,
+        button: "left",
+      },
+    })
+    await onChunk?.({ type: "text", delta: "나중에 생성된 AI 설명" })
+    await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith("(120, 240) 클릭 완료")
+    expect(responder.sendError).not.toHaveBeenCalled()
   })
 })

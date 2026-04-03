@@ -21,5 +21,7 @@ pub fn capture(params: CaptureParams) -> Result<Value> {
         output_path: params.output_path,
         inline_base64: true,
     };
-    Ok(serde_json::to_value(current_backend().capture_screen(request)?)?)
+    Ok(serde_json::to_value(
+        current_backend().capture_screen(request)?,
+    )?)
 }

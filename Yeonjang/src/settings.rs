@@ -50,6 +50,7 @@ pub struct MqttTopicSettings {
 pub struct PermissionSettings {
     pub allow_system_control: bool,
     pub allow_shell_exec: bool,
+    pub allow_application_launch: bool,
     pub allow_screen_capture: bool,
     pub allow_keyboard_control: bool,
     pub allow_mouse_control: bool,
@@ -101,6 +102,7 @@ impl Default for PermissionSettings {
         Self {
             allow_system_control: true,
             allow_shell_exec: true,
+            allow_application_launch: true,
             allow_screen_capture: true,
             allow_keyboard_control: true,
             allow_mouse_control: true,
@@ -121,7 +123,10 @@ impl YeonjangSettings {
 
 pub fn settings_path() -> PathBuf {
     if let Some(project_dirs) = ProjectDirs::from("com", "Sponzey", "Nobie") {
-        return project_dirs.config_dir().join("yeonjang").join("settings.json");
+        return project_dirs
+            .config_dir()
+            .join("yeonjang")
+            .join("settings.json");
     }
 
     PathBuf::from("Yeonjang").join("settings.json")
@@ -153,8 +158,9 @@ pub fn save_settings(settings: &YeonjangSettings) -> Result<PathBuf> {
 
 fn ensure_parent_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create settings directory: {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create settings directory: {}", parent.display())
+        })?;
     }
     Ok(())
 }

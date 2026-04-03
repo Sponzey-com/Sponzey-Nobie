@@ -20,14 +20,8 @@ pub enum RuntimeEvent {
     Connected,
     Disconnected(String),
     AuthFailed(String),
-    ResponsePublishFailed {
-        method: String,
-        message: String,
-    },
-    RequestHandled {
-        method: String,
-        ok: bool,
-    },
+    ResponsePublishFailed { method: String, message: String },
+    RequestHandled { method: String, ok: bool },
 }
 
 pub struct MqttRuntimeHandle {
@@ -45,7 +39,9 @@ impl MqttRuntimeHandle {
     }
 }
 
-pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, Receiver<RuntimeEvent>)> {
+pub fn start_runtime(
+    settings: YeonjangSettings,
+) -> Result<(MqttRuntimeHandle, Receiver<RuntimeEvent>)> {
     validate_connection_settings(&settings)?;
 
     let normalized = normalize_settings(settings);
@@ -98,9 +94,14 @@ pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, R
                         let (method, response) = match serde_json::from_slice::<Request>(&payload) {
                             Ok(request) => {
                                 let method = request.method.clone();
-                                let response = spawn_request_task(request).join().unwrap_or_else(|_| {
-                                    Response::error(None, "request_failed", "request thread panicked")
-                                });
+                                let response =
+                                    spawn_request_task(request).join().unwrap_or_else(|_| {
+                                        Response::error(
+                                            None,
+                                            "request_failed",
+                                            "request thread panicked",
+                                        )
+                                    });
                                 (method, response)
                             }
                             Err(error) => (
@@ -113,7 +114,9 @@ pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, R
                             ),
                         };
 
-                        if let Err(error) = publish_response(&response_client, &response_settings, &response) {
+                        if let Err(error) =
+                            publish_response(&response_client, &response_settings, &response)
+                        {
                             let _ = response_events.send(RuntimeEvent::ResponsePublishFailed {
                                 method,
                                 message: error.to_string(),
@@ -128,7 +131,9 @@ pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, R
                     });
                 }
                 Ok(Event::Outgoing(Outgoing::Disconnect)) => {
-                    let _ = event_tx.send(RuntimeEvent::Disconnected("requested disconnect".to_string()));
+                    let _ = event_tx.send(RuntimeEvent::Disconnected(
+                        "requested disconnect".to_string(),
+                    ));
                     break;
                 }
                 Ok(_) => {}
@@ -141,13 +146,7 @@ pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, R
         }
 
         if announced_connected {
-            let _ = publish_status(
-                &client,
-                &normalized,
-                "offline",
-                "disconnected",
-                true,
-            );
+            let _ = publish_status(&client, &normalized, "offline", "disconnected", true);
         }
     });
 
@@ -162,7 +161,11 @@ pub fn start_runtime(settings: YeonjangSettings) -> Result<(MqttRuntimeHandle, R
 
 pub fn probe_connection(settings: &YeonjangSettings) -> Result<()> {
     validate_connection_settings(settings)?;
-    let address = format!("{}:{}", settings.connection.host.trim(), settings.connection.port);
+    let address = format!(
+        "{}:{}",
+        settings.connection.host.trim(),
+        settings.connection.port
+    );
     let target = address
         .to_socket_addrs()
         .with_context(|| format!("failed to resolve broker address: {address}"))?
@@ -191,11 +194,7 @@ fn build_options(settings: &YeonjangSettings) -> Result<MqttOptions> {
     if host.is_empty() {
         anyhow::bail!("broker host is required")
     }
-    Ok(MqttOptions::new(
-        client_id,
-        host,
-        settings.connection.port,
-    ))
+    Ok(MqttOptions::new(client_id, host, settings.connection.port))
 }
 
 fn validate_connection_settings(settings: &YeonjangSettings) -> Result<()> {
@@ -218,7 +217,11 @@ fn publish_bootstrap(client: &Client, settings: &YeonjangSettings) -> Result<()>
     Ok(())
 }
 
-fn publish_response(client: &Client, settings: &YeonjangSettings, response: &Response) -> Result<()> {
+fn publish_response(
+    client: &Client,
+    settings: &YeonjangSettings,
+    response: &Response,
+) -> Result<()> {
     let payload = serde_json::to_vec(response)?;
     if payload.len() <= RESPONSE_CHUNK_BYTES || response.id.is_none() {
         client.publish(
@@ -305,7 +308,11 @@ struct StatusPayload<'a> {
     version: &'static str,
 }
 
-fn status_payload<'a>(settings: &'a YeonjangSettings, state: &'a str, message: &'a str) -> StatusPayload<'a> {
+fn status_payload<'a>(
+    settings: &'a YeonjangSettings,
+    state: &'a str,
+    message: &'a str,
+) -> StatusPayload<'a> {
     StatusPayload {
         node_id: settings.node_id.as_str(),
         display_name: settings.display_name.as_str(),
@@ -337,11 +344,16 @@ fn base64_encode(bytes: &[u8]) -> String {
         let third = bytes.get(index + 2).copied();
 
         output.push(TABLE[(first >> 2) as usize] as char);
-        output.push(TABLE[(((first & 0b0000_0011) << 4) | (second.unwrap_or(0) >> 4)) as usize] as char);
+        output.push(
+            TABLE[(((first & 0b0000_0011) << 4) | (second.unwrap_or(0) >> 4)) as usize] as char,
+        );
 
         match second {
             Some(second) => {
-                output.push(TABLE[(((second & 0b0000_1111) << 2) | (third.unwrap_or(0) >> 6)) as usize] as char);
+                output.push(
+                    TABLE[(((second & 0b0000_1111) << 2) | (third.unwrap_or(0) >> 6)) as usize]
+                        as char,
+                );
             }
             None => output.push('='),
         }

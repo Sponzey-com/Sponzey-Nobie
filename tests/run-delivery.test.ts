@@ -64,6 +64,41 @@ describe("runs delivery helpers", () => {
     expect(appendEvent).toHaveBeenCalledTimes(1)
   })
 
+  it("records webui artifact delivery receipts and labels them correctly", () => {
+    const appendEvent = vi.fn()
+    const deliveries: SuccessfulFileDelivery[] = []
+    const textDeliveries: SuccessfulTextDelivery[] = []
+    const receipt = {
+      artifactDeliveries: [
+        {
+          toolName: "screen_capture",
+          channel: "webui" as const,
+          filePath: "/tmp/result.png",
+          caption: "메인 화면 캡처",
+        },
+      ],
+    }
+
+    applyChunkDeliveryReceipt({
+      runId: "run-1",
+      receipt,
+      successfulFileDeliveries: deliveries,
+      successfulTextDeliveries: textDeliveries,
+      appendEvent,
+    })
+
+    expect(deliveries).toEqual([
+      {
+        toolName: "screen_capture",
+        channel: "webui",
+        filePath: "/tmp/result.png",
+        caption: "메인 화면 캡처",
+      },
+    ])
+    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("WebUI 파일 전달 완료: /tmp/result.png")
+    expect(appendEvent).toHaveBeenCalledWith("run-1", "WebUI 파일 전달 완료: /tmp/result.png")
+  })
+
   it("records telegram text delivery receipts separately from artifact delivery", () => {
     const appendEvent = vi.fn()
     const deliveries: SuccessfulFileDelivery[] = []

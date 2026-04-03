@@ -41,6 +41,20 @@ export function decideReviewGate(params: {
     }
   }
 
+  if (
+    !params.deliveryOutcome.directArtifactDeliveryRequested
+    && state.completionSatisfied
+    && params.successfulTools.length > 0
+    && !params.requiresFilesystemMutation
+    && !params.sawRealFilesystemMutation
+  ) {
+    return {
+      kind: "skip",
+      state,
+      reason: "read-only 실행이 성공했고 checklist 기준 완료 항목이 이미 충족되어 completion review를 생략합니다.",
+    }
+  }
+
   return {
     kind: "run",
     state,

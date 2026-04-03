@@ -1,3 +1,6 @@
+import { basename, extname, relative, resolve, sep } from "node:path"
+import { homedir } from "node:os"
+import { PATHS } from "../config/index.js"
 import type { RootRun, RunStatus } from "./types.js"
 
 export type TaskAttemptKind =
@@ -66,6 +69,14 @@ export interface TaskDeliveryModel {
   sourceAttemptId?: string
   channel?: "telegram" | "webui" | "cli" | "unknown"
   summary?: string
+  artifact?: TaskArtifactModel
+}
+
+export interface TaskArtifactModel {
+  filePath: string
+  fileName: string
+  url?: string
+  mimeType?: string
 }
 
 export interface TaskFailureModel {
@@ -286,8 +297,71 @@ interface TaskDeliverySignal {
   sourceAttemptId?: string
   channel?: "telegram" | "webui" | "cli" | "unknown"
   summary?: string
+  artifact?: TaskArtifactModel
   at?: number
   eventId?: string
+}
+
+function expandDisplayPath(value: string): string {
+  if (value.startsWith("~/")) return resolve(homedir(), value.slice(2))
+  return value
+}
+
+function guessMimeTypeFromPath(filePath: string): string | undefined {
+  switch (extname(filePath).toLowerCase()) {
+    case ".png":
+      return "image/png"
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg"
+    case ".gif":
+      return "image/gif"
+    case ".webp":
+      return "image/webp"
+    case ".bmp":
+      return "image/bmp"
+    case ".txt":
+      return "text/plain"
+    case ".md":
+      return "text/markdown"
+    case ".json":
+      return "application/json"
+    case ".pdf":
+      return "application/pdf"
+    default:
+      return undefined
+  }
+}
+
+function buildArtifactUrl(filePath: string): string | undefined {
+  const expandedPath = expandDisplayPath(filePath)
+  const artifactsRoot = resolve(PATHS.stateDir, "artifacts")
+  const candidate = resolve(expandedPath)
+  if (candidate !== artifactsRoot && !candidate.startsWith(`${artifactsRoot}${sep}`)) {
+    return undefined
+  }
+
+  const encodedPath = relative(artifactsRoot, candidate)
+    .split(sep)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
+  return `/api/artifacts/${encodedPath}`
+}
+
+function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefined {
+  const match = summary.match(/파일 전달 완료:\s*(.+)$/)
+  const rawPath = match?.[1]?.trim()
+  if (!rawPath) return undefined
+  const resolvedPath = expandDisplayPath(rawPath)
+  const artifactUrl = buildArtifactUrl(resolvedPath)
+  const mimeType = guessMimeTypeFromPath(resolvedPath)
+
+  return {
+    filePath: resolvedPath,
+    fileName: basename(resolvedPath),
+    ...(artifactUrl ? { url: artifactUrl } : {}),
+    ...(mimeType ? { mimeType } : {}),
+  }
 }
 
 function resolveTaskDeliverySignal(orderedRuns: RootRun[], attempts: TaskAttemptModel[]): TaskDeliverySignal {
@@ -300,11 +374,13 @@ function resolveTaskDeliverySignal(orderedRuns: RootRun[], attempts: TaskAttempt
     /(전달 완료|파일 전달 완료|응답 전달 완료|텍스트 전달 완료|message delivered|delivery complete)/i.test(event.label),
   )
   if (deliveredEvent) {
+    const deliveredArtifact = extractDeliveredArtifact(deliveredEvent.label)
     return {
       status: "delivered",
       ...(sourceAttemptId ? { sourceAttemptId } : {}),
       channel: detectDeliveryChannel(deliveredEvent.label),
       summary: deliveredEvent.label,
+      ...(deliveredArtifact ? { artifact: deliveredArtifact } : {}),
       at: deliveredEvent.at,
       eventId: deliveredEvent.id,
     }
@@ -355,6 +431,7 @@ function deriveTaskDelivery(taskId: string, orderedRuns: RootRun[], attempts: Ta
     ...(signal.sourceAttemptId ? { sourceAttemptId: signal.sourceAttemptId } : {}),
     ...(signal.channel ? { channel: signal.channel } : {}),
     ...(signal.summary ? { summary: signal.summary } : {}),
+    ...(signal.artifact ? { artifact: signal.artifact } : {}),
   }
 }
 

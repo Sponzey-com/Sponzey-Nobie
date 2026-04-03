@@ -1,6 +1,7 @@
 import type { AgentChunk } from "../../agent/index.js"
 import type { ChunkDeliveryReceipt, RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
+import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 
 export interface TelegramChunkResponder {
   sendToolStatus(toolName: string): Promise<number>
@@ -42,6 +43,7 @@ export function createTelegramChunkDeliveryHandler(
   context: TelegramChunkDeliveryContext,
 ): RunChunkDeliveryHandler {
   let bufferedText = ""
+  let toolOwnedResponseActive = false
   const toolMessageIds = new Map<string, number>()
 
   const recordIfRunPresent = (messageId: number, role: "assistant" | "tool") => {
@@ -59,6 +61,7 @@ export function createTelegramChunkDeliveryHandler(
 
   return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | void> => {
     if (chunk.type === "text") {
+      if (toolOwnedResponseActive) return
       bufferedText += chunk.delta
       return
     }
@@ -77,9 +80,11 @@ export function createTelegramChunkDeliveryHandler(
         toolMessageIds.delete(chunk.toolName)
       }
 
-      if (chunk.success && isArtifactDeliveryDetails(chunk.details)) {
+      const isolatedToolResponse = decideIsolatedToolResponse(chunk)
+      if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {
         try {
           const sentMessageId = await context.responder.sendFile(chunk.details.filePath, chunk.details.caption)
+          toolOwnedResponseActive = true
           bufferedText = ""
           recordIfRunPresent(sentMessageId, "assistant")
           return {
@@ -95,6 +100,11 @@ export function createTelegramChunkDeliveryHandler(
           const message = error instanceof Error ? error.message : String(error)
           context.logError(`Failed to send file: ${message}`)
         }
+      }
+
+      if (isolatedToolResponse.kind === "text" && isolatedToolResponse.text) {
+        toolOwnedResponseActive = true
+        bufferedText = isolatedToolResponse.text
       }
       return
     }
@@ -117,6 +127,9 @@ export function createTelegramChunkDeliveryHandler(
     }
 
     if (chunk.type === "error") {
+      if (toolOwnedResponseActive) {
+        return
+      }
       const errorMessageId = await context.responder.sendError(chunk.message)
       recordIfRunPresent(errorMessageId, "assistant")
       bufferedText = ""
