@@ -5,6 +5,11 @@ export type LoopDirective =
       eventLabel?: string
     }
   | {
+      kind: "complete_silent"
+      summary: string
+      eventLabel?: string
+    }
+  | {
       kind: "retry_intake"
       summary: string
       reason: string

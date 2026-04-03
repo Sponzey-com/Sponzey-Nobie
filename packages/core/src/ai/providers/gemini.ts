@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto"
-import type { AuthProfile, ChatParams, LLMChunk, LLMProvider, Message, ToolDefinition } from "../types.js"
+import type { AuthProfile, ChatParams, AIChunk, AIProvider, Message, ToolDefinition } from "../types.js"
 import { createLogger } from "../../logger/index.js"
 import { markKeyFailure, nextApiKey } from "../types.js"
 
-const log = createLogger("llm:gemini")
+const log = createLogger("ai:gemini")
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
 const CONTEXT_LIMITS: Record<string, number> = {
@@ -90,7 +90,7 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   return typeof message === "string" && message.trim() ? message.trim() : fallback
 }
 
-export class GeminiProvider implements LLMProvider {
+export class GeminiProvider implements AIProvider {
   readonly id = "gemini"
   readonly supportedModels = Object.keys(CONTEXT_LIMITS)
 
@@ -103,7 +103,7 @@ export class GeminiProvider implements LLMProvider {
     return CONTEXT_LIMITS[model] ?? 1_048_576
   }
 
-  async *chat(params: ChatParams): AsyncGenerator<LLMChunk> {
+  async *chat(params: ChatParams): AsyncGenerator<AIChunk> {
     const apiKey = nextApiKey(this.profile)
     if (!apiKey) {
       throw new Error("No available Gemini API keys (all on cooldown)")

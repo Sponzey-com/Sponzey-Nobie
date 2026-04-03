@@ -6,7 +6,7 @@ import {
   getPrimaryAiTarget,
   readSetupState,
 } from "../../control-plane/index.js"
-import { getDefaultModel, detectAvailableProvider } from "../../llm/index.js"
+import { getDefaultModel, detectAvailableProvider } from "../../ai/index.js"
 import { mcpRegistry } from "../../mcp/registry.js"
 import { getMqttBrokerSnapshot } from "../../mqtt/broker.js"
 import { toolDispatcher } from "../../tools/index.js"

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { prepareStartLaunch } from "../packages/core/src/runs/start-launch.ts"
+import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 
 describe("prepare start launch", () => {
   it("creates the run and initializes it from the computed start plan", () => {
@@ -163,5 +164,50 @@ describe("prepare start launch", () => {
       originRunId: "origin-run-1",
       originRequestGroupId: "origin-group-1",
     }), expect.any(Object))
+  })
+
+  it("passes analyzeRequestEntrySemantics through when using the real start plan helper", () => {
+    const result = prepareStartLaunch({
+      message: "continue the previous work",
+      sessionId: "session-real",
+      runId: "run-real",
+      source: "cli",
+      controller: new AbortController(),
+      now: 789,
+      maxDelegationTurns: 5,
+      hasRequestGroupExecutionQueue: () => false,
+    }, {
+      buildStartPlan,
+      analyzeRequestEntrySemantics: vi.fn((message: string) => ({
+        reuse_conversation_context: /continue/i.test(message),
+        active_queue_cancellation_mode: null,
+      })) as any,
+      isReusableRequestGroup: vi.fn(() => false),
+      findReconnectRequestGroupSelection: vi.fn(() => ({
+        best: undefined,
+        candidates: [],
+        ambiguous: false,
+      })),
+      getRequestGroupDelegationTurnCount: vi.fn(() => 0),
+      buildWorkerSessionId: vi.fn(() => undefined),
+      normalizeTaskProfile: vi.fn((taskProfile) => taskProfile ?? "general_chat"),
+      findLatestWorkerSessionRun: vi.fn(() => undefined),
+      ensureSessionExists: vi.fn(),
+      createRootRun: vi.fn(() => ({ id: "run-real" })) as any,
+      applyStartInitialization: vi.fn(() => ({
+        queuedBehindRequestGroupRun: false,
+        interruptedWorkerRunCount: 0,
+      })) as any,
+      rememberRunInstruction: vi.fn(),
+      bindActiveRunController: vi.fn(),
+      interruptOrphanWorkerSessionRuns: vi.fn(),
+      appendRunEvent: vi.fn(),
+      updateRunSummary: vi.fn(),
+      setRunStepStatus: vi.fn(),
+      updateRunStatus: vi.fn(),
+    })
+
+    expect(result.startPlan.entrySemantics.reuse_conversation_context).toBe(true)
+    expect(result.startPlan.requestGroupId).toBe("run-real")
   })
 })

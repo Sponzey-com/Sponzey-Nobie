@@ -43,13 +43,14 @@ export async function applyExternalRecoveryPlan(
       sessionId: params.sessionId,
       source: params.source,
       onChunk: params.onChunk,
-      application: {
-        kind: "stop",
-        preview: params.preview,
-        summary: params.plan.duplicateStop.summary,
-        ...(params.plan.duplicateStop.reason ? { reason: params.plan.duplicateStop.reason } : {}),
-        remainingItems: params.plan.duplicateStop.remainingItems,
-      },
+        application: {
+          kind: "stop",
+          preview: params.preview,
+          summary: params.plan.duplicateStop.summary,
+          ...(params.plan.duplicateStop.reason ? { reason: params.plan.duplicateStop.reason } : {}),
+          ...(params.plan.duplicateStop.rawMessage ? { rawMessage: params.plan.duplicateStop.rawMessage } : {}),
+          remainingItems: params.plan.duplicateStop.remainingItems,
+        },
       dependencies: params.finalizationDependencies,
     })
     return { kind: "stop" }

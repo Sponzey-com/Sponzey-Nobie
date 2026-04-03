@@ -74,7 +74,7 @@ describe("run completion flow", () => {
 
     expect(decision.kind).toBe("recover_empty_result")
     if (decision.kind === "recover_empty_result") {
-      expect(decision.reason).toContain("receipt 기준")
+      expect(decision.reason).toContain("checklist 기준")
       expect(decision.reason).toContain("직접 결과 전달")
     }
   })

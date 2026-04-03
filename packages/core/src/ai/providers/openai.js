@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { nextApiKey, markKeyFailure } from "../types.js";
 import { createLogger } from "../../logger/index.js";
-const log = createLogger("llm:openai");
+const log = createLogger("ai:openai");
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
 const TOKEN_ESTIMATE_DIVISOR = 4;
 const TOKEN_SAFETY_HEADROOM = 1_024;

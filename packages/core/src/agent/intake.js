@@ -1,6 +1,6 @@
 import { getMessages, getMessagesForRequestGroupWithRunMeta } from "../db/index.js";
 import { getConfig } from "../config/index.js";
-import { getDefaultModel, getProvider, inferProviderId } from "../llm/index.js";
+import { getDefaultModel, getProvider, inferProviderId } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { buildTaskIntakeSystemPrompt } from "./intake-prompt.js";
 import { loadMergedInstructions } from "../instructions/merge.js";

@@ -1,6 +1,7 @@
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import {
   completeRunWithAssistantMessage,
+  markRunCompleted,
   type FinalizationDependencies,
   type FinalizationSource,
 } from "./finalization.js"
@@ -9,11 +10,13 @@ import type { LoopDirective } from "./loop-directive.js"
 
 interface LoopDirectiveApplicationModuleDependencies {
   completeRunWithAssistantMessage: typeof completeRunWithAssistantMessage
+  markRunCompleted: typeof markRunCompleted
   applyTerminalApplication: typeof applyTerminalApplication
 }
 
 const defaultModuleDependencies: LoopDirectiveApplicationModuleDependencies = {
   completeRunWithAssistantMessage,
+  markRunCompleted,
   applyTerminalApplication,
 }
 
@@ -39,6 +42,20 @@ export async function applyLoopDirective(
       text: params.directive.text,
       source: params.source,
       onChunk: params.onChunk,
+      dependencies: params.finalizationDependencies,
+    })
+    return "break"
+  }
+
+  if (params.directive.kind === "complete_silent") {
+    moduleDependencies.markRunCompleted({
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      text: "",
+      summary: params.directive.summary,
+      reviewingSummary: params.directive.summary,
+      completedSummary: params.directive.summary,
       dependencies: params.finalizationDependencies,
     })
     return "break"

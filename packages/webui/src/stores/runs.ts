@@ -28,6 +28,23 @@ function sortTasks(tasks: TaskModel[]): TaskModel[] {
   return [...tasks].sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+function resolveSelectedRunId(params: {
+  currentSelectedRunId: string | null
+  tasks: TaskModel[]
+  runs: RootRun[]
+}): string | null {
+  const { currentSelectedRunId, tasks, runs } = params
+  if (!currentSelectedRunId) return tasks[0]?.id ?? runs[0]?.id ?? null
+
+  const hasMatchingTask = tasks.some((task) => task.id === currentSelectedRunId || task.latestAttemptId === currentSelectedRunId)
+  if (hasMatchingTask) return currentSelectedRunId
+
+  const hasMatchingRun = runs.some((run) => run.id === currentSelectedRunId)
+  if (hasMatchingRun) return currentSelectedRunId
+
+  return tasks[0]?.id ?? runs[0]?.id ?? null
+}
+
 export const useRunsStore = create<RunsState>((set, get) => {
   let refreshTasksTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -35,7 +52,11 @@ export const useRunsStore = create<RunsState>((set, get) => {
     const response = await api.tasks()
     set((state) => ({
       tasks: sortTasks(response.tasks),
-      selectedRunId: state.selectedRunId ?? response.tasks[0]?.id ?? state.runs[0]?.id ?? null,
+      selectedRunId: resolveSelectedRunId({
+        currentSelectedRunId: state.selectedRunId,
+        tasks: response.tasks,
+        runs: state.runs,
+      }),
     }))
   }
 
@@ -64,7 +85,11 @@ export const useRunsStore = create<RunsState>((set, get) => {
         set({
           runs: sortRuns(runsResponse.runs),
           tasks: sortTasks(tasksResponse.tasks),
-          selectedRunId: get().selectedRunId ?? tasksResponse.tasks[0]?.id ?? runsResponse.runs[0]?.id ?? null,
+          selectedRunId: resolveSelectedRunId({
+            currentSelectedRunId: get().selectedRunId,
+            tasks: tasksResponse.tasks,
+            runs: runsResponse.runs,
+          }),
           initialized: true,
           loading: false,
           lastError: "",
@@ -95,10 +120,11 @@ export const useRunsStore = create<RunsState>((set, get) => {
         const runs = exists
           ? state.runs.map((item) => (item.id === run.id ? run : item))
           : [run, ...state.runs]
+        const isNewRootTask = !exists && run.id === run.requestGroupId
         queueTasksRefresh()
         return {
           runs: sortRuns(runs),
-          selectedRunId: state.selectedRunId ?? run.id,
+          selectedRunId: isNewRootTask ? run.requestGroupId : (state.selectedRunId ?? run.id),
         }
       }),
     replaceRun: (run) =>

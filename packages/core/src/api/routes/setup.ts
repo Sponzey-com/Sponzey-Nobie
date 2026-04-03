@@ -40,8 +40,8 @@ export function registerSetupRoute(app: FastifyInstance): void {
     async (req, reply) => {
       const endpoint = req.body?.endpoint?.trim()
       const providerType =
-        ["openai", "ollama", "llama", "claude", "gemini", "custom"].includes(String(req.body?.providerType))
-          ? (req.body?.providerType as "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom")
+        ["openai", "ollama", "llama", "anthropic", "gemini", "custom"].includes(String(req.body?.providerType))
+          ? (req.body?.providerType as "openai" | "ollama" | "llama" | "anthropic" | "gemini" | "custom")
           : "custom"
       const authMode = ["api_key", "chatgpt_oauth"].includes(String(req.body?.authMode))
         ? (req.body?.authMode as "api_key" | "chatgpt_oauth")

@@ -102,6 +102,17 @@ describe("completion state", () => {
       executionStatus: "satisfied",
       deliveryStatus: "missing",
       recoveryStatus: "required",
+      checklist: {
+        items: [
+          { key: "request", status: "completed" },
+          { key: "execution", status: "completed" },
+          { key: "delivery", status: "pending", reason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다." },
+          { key: "completion", status: "pending", reason: "completion review가 추가 follow-up 작업을 요구합니다." },
+        ],
+        completedCount: 2,
+        actionableCount: 4,
+        pendingCount: 2,
+      },
       blockingReasons: [
         "completion review가 추가 follow-up 작업을 요구합니다.",
         "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",

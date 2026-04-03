@@ -22,12 +22,10 @@ export function getRecoveryBudgetLimit(kind: RecoveryBudgetKind, maxDelegationTu
   if (maxDelegationTurns <= 0) return 0
 
   switch (kind) {
-    case "delivery":
-      return Math.max(1, Math.min(maxDelegationTurns, 3))
-    case "external":
-      return Math.max(1, Math.min(maxDelegationTurns, 4))
     case "interpretation":
     case "execution":
+    case "delivery":
+    case "external":
     default:
       return maxDelegationTurns
   }

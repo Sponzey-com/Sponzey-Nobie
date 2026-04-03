@@ -25,10 +25,10 @@ describe("loop pass application helpers", () => {
 
   it("maps recovery retry state into current execution state", () => {
     const workerRuntime = {
-      kind: "codex_cli",
-      targetId: "worker:codex_cli",
+      kind: "internal_ai",
+      targetId: "worker:internal_ai",
       label: "코드 작업 보조 세션",
-      command: "codex",
+      command: "disabled",
     } as const
 
     const provider = { id: "openai" } as never
@@ -40,7 +40,7 @@ describe("loop pass application helpers", () => {
           model: "gpt-5",
           providerId: "provider:openai",
           provider,
-          targetId: "worker:codex_cli",
+          targetId: "worker:internal_ai",
           targetLabel: "코드 작업 보조 세션",
           workerRuntime,
         },
@@ -55,7 +55,7 @@ describe("loop pass application helpers", () => {
         currentModel: "gpt-5",
         currentProviderId: "provider:openai",
         currentProvider: provider,
-        currentTargetId: "worker:codex_cli",
+        currentTargetId: "worker:internal_ai",
         currentTargetLabel: "코드 작업 보조 세션",
         activeWorkerRuntime: workerRuntime,
       },
@@ -67,10 +67,10 @@ describe("loop pass application helpers", () => {
     const seenExecutionRecoveryKeys = new Set<string>()
     const seenDeliveryRecoveryKeys = new Set<string>()
     const activeWorkerRuntime = {
-      kind: "codex_cli",
-      targetId: "worker:codex_cli",
+      kind: "internal_ai",
+      targetId: "worker:internal_ai",
       label: "코드 작업 보조 세션",
-      command: "codex",
+      command: "disabled",
     } as const
 
     const result = applyPostExecutionPassResult({
@@ -107,10 +107,10 @@ describe("loop pass application helpers", () => {
   it("records normalized followup prompts and clears runtime/provider on review retry", () => {
     const seenFollowupPrompts = new Set<string>()
     const activeWorkerRuntime = {
-      kind: "codex_cli",
-      targetId: "worker:codex_cli",
+      kind: "internal_ai",
+      targetId: "worker:internal_ai",
       label: "코드 작업 보조 세션",
-      command: "codex",
+      command: "disabled",
     } as const
     const currentProvider = { id: "openai" } as never
 

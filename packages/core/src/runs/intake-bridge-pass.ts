@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import {
   buildScheduleRegistrationCancelledEvent,
   buildScheduleRegistrationCreatedEvent,
@@ -12,7 +12,6 @@ import {
 import type { AgentContextMode } from "../agent/index.js"
 import { resolveRunRoute } from "./routing.js"
 import {
-  buildDelegatedReceipt,
   buildFollowupPrompt,
   createDefaultScheduleActionDependencies,
   executeScheduleActions,
@@ -35,7 +34,7 @@ export interface DelegatedRunStartParams {
   intentEnvelope: TaskIntentEnvelope
   model?: string | undefined
   providerId?: string | undefined
-  provider?: LLMProvider | undefined
+  provider?: AIProvider | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
   targetId?: string | undefined
   targetLabel?: string | undefined
@@ -64,7 +63,6 @@ interface IntakeBridgePassModuleDependencies {
   resolveRunRoute: typeof resolveRunRoute
   executeScheduleActions: typeof executeScheduleActions
   createDefaultScheduleActionDependencies: typeof createDefaultScheduleActionDependencies
-  buildDelegatedReceipt: typeof buildDelegatedReceipt
   inferDelegatedTaskProfile: typeof inferDelegatedTaskProfile
   buildFollowupPrompt: typeof buildFollowupPrompt
 }
@@ -74,7 +72,6 @@ const defaultModuleDependencies: IntakeBridgePassModuleDependencies = {
   resolveRunRoute,
   executeScheduleActions,
   createDefaultScheduleActionDependencies,
-  buildDelegatedReceipt,
   inferDelegatedTaskProfile,
   buildFollowupPrompt,
 }
@@ -223,11 +220,6 @@ export async function runIntakeBridgePass(
       }
     }
 
-    if (delegatedActions.length > 0) {
-      const delegatedReceipt = moduleDependencies.buildDelegatedReceipt(intake, delegatedActions, responseParts.length > 0)
-      if (delegatedReceipt) responseParts.push(delegatedReceipt)
-    }
-
     for (const delegatedAction of delegatedActions) {
       const delegatedTaskProfile = moduleDependencies.inferDelegatedTaskProfile({
         intake,
@@ -300,8 +292,8 @@ export async function runIntakeBridgePass(
 
     if (delegatedActions.length > 0) {
       return {
-        kind: "complete",
-        text: "후속 실행을 시작했습니다.",
+        kind: "complete_silent",
+        summary: "후속 실행으로 전달되었습니다.",
         eventLabel: "intake 후속 실행 생성 완료",
       }
     }

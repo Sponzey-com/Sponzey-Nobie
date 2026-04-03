@@ -5,7 +5,7 @@ import type { FinalizationSource } from "./finalization.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import type { AgentContextMode } from "../agent/index.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { ReconnectRequestGroupSelection } from "./store.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -22,7 +22,7 @@ export function prepareRootLoopLaunch(
     message: string
     currentModel: string | undefined
     currentProviderId: string | undefined
-    currentProvider: LLMProvider | undefined
+    currentProvider: AIProvider | undefined
     currentTargetId: string | undefined
     currentTargetLabel: string | undefined
     workDir: string
@@ -73,6 +73,7 @@ export function prepareRootLoopLaunch(
     ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
     requestMessage: params.message,
     originalRequest: originalUserRequest,
+    structuredRequest: executionProfile.structuredRequest,
     executionSemantics: executionProfile.executionSemantics,
     workDir: params.workDir,
     ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
@@ -88,7 +89,7 @@ export function prepareRootLoopLaunch(
     seenCommandFailureRecoveryKeys: executionLoopRuntime.seenCommandFailureRecoveryKeys,
     seenExecutionRecoveryKeys: executionLoopRuntime.seenExecutionRecoveryKeys,
     seenDeliveryRecoveryKeys: executionLoopRuntime.seenDeliveryRecoveryKeys,
-    seenLlmRecoveryKeys: executionLoopRuntime.seenLlmRecoveryKeys,
+    seenAiRecoveryKeys: executionLoopRuntime.seenAiRecoveryKeys,
     recoveryBudgetUsage: executionLoopRuntime.recoveryBudgetUsage,
     priorAssistantMessages: executionLoopRuntime.priorAssistantMessages,
     syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,

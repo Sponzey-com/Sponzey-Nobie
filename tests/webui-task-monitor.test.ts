@@ -35,6 +35,28 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
 }
 
 function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "requestGroupId" | "anchorRunId">): TaskModel {
+  const deliveryChecklistStatus =
+    overrides.delivery?.status === "failed"
+      ? "failed"
+      : overrides.delivery?.status === "delivered"
+        ? "completed"
+        : "not_required"
+  const completionChecklistStatus =
+    overrides.failure?.status === "failed"
+      ? "failed"
+      : overrides.failure?.status === "cancelled" || overrides.failure?.status === "interrupted"
+        ? "cancelled"
+        : overrides.status === "completed"
+          ? "completed"
+          : "running"
+  const defaultChecklistItems = [
+    { key: "request" as const, status: "completed" as const, summary: overrides.requestText ?? "Original request" },
+    { key: "execution" as const, status: overrides.status === "completed" ? "completed" as const : "running" as const, summary: overrides.summary ?? "Task summary" },
+    { key: "delivery" as const, status: deliveryChecklistStatus },
+    { key: "completion" as const, status: completionChecklistStatus, summary: overrides.summary ?? "Task summary" },
+  ]
+  const actionableChecklistItems = defaultChecklistItems.filter((item) => item.status !== "not_required")
+
   return {
     id: overrides.id,
     requestGroupId: overrides.requestGroupId,
@@ -53,6 +75,13 @@ function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "reques
     attempts: overrides.attempts ?? [],
     recoveryAttempts: overrides.recoveryAttempts ?? [],
     delivery: overrides.delivery ?? { taskId: overrides.id, status: "not_requested" },
+    ...(overrides.failure ? { failure: overrides.failure } : {}),
+    checklist: overrides.checklist ?? {
+      items: defaultChecklistItems,
+      completedCount: actionableChecklistItems.filter((item) => item.status === "completed").length,
+      actionableCount: actionableChecklistItems.length,
+      failedCount: actionableChecklistItems.filter((item) => item.status === "failed" || item.status === "cancelled").length,
+    },
     monitor: overrides.monitor ?? {
       activeAttemptCount: 1,
       runningAttemptCount: 1,
@@ -145,6 +174,13 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.internalAttempts.map((attempt) => attempt.id)).toEqual(["run-verify"])
     expect(cards[0]?.treeNodes.map((node) => node.id)).toEqual(["run-root", "run-followup"])
     expect(cards[0]?.duplicateExecutionRisk).toBe(true)
+    expect(cards[0]?.checklist.items.map((item) => item.label)).toEqual([
+      "요청 확인",
+      "실행",
+      "전달",
+      "완료 확인",
+    ])
+    expect(cards[0]?.checklist.completedCount).toBe(1)
   })
 
   it("tracks delivery separately from task status", () => {
@@ -218,6 +254,7 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.delivery.status).toBe("delivered")
     expect(cards[0]?.timeline[0]?.runLabel).toBe("사용자 요청")
     expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 완료")
+    expect(cards[0]?.checklist.completedCount).toBe(4)
   })
 
   it("keeps recovery attempts internal while the task stays visible", () => {
@@ -300,6 +337,14 @@ describe("webui task monitor helper", () => {
         requestGroupId: "task-6",
         anchorRunId: "run-delivery-failed",
         status: "completed",
+        failure: {
+          kind: "delivery",
+          status: "failed",
+          title: "전달 실패",
+          summary: "텔레그램 응답 전달 실패: timeout",
+          detailLines: ["텔레그램 세션이 연결되어 있지 않습니다."],
+          sourceAttemptId: "run-delivery-failed",
+        },
         delivery: {
           taskId: "task-6",
           status: "failed",
@@ -362,6 +407,15 @@ describe("webui task monitor helper", () => {
 
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.delivery.status).toBe("failed")
+    expect(cards[0]?.failure).toEqual({
+      kind: "delivery",
+      status: "failed",
+      title: "전달 실패",
+      summary: "텔레그램 응답 전달 실패: timeout",
+      detailLines: ["텔레그램 세션이 연결되어 있지 않습니다."],
+      sourceAttemptId: "run-delivery-failed",
+      sourceAttemptLabel: "사용자 요청",
+    })
     expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 실패")
   })
 
@@ -465,5 +519,41 @@ describe("webui task monitor helper", () => {
 
     expect(cards[0]?.runs.map((run) => run.id)).toEqual(["run-owned"])
     expect(cards[0]?.attempts[0]?.prompt).toBe("Owned run")
+  })
+
+  it("keeps a task card visible even when the raw runs list no longer contains its representative run", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "task-8",
+        requestGroupId: "task-8",
+        anchorRunId: "run-missing",
+        latestAttemptId: "run-missing",
+        runIds: ["run-missing"],
+        status: "completed",
+        canCancel: false,
+        requestText: "오래된 태스크",
+        summary: "projection만 남은 태스크",
+        attempts: [
+          {
+            id: "run-missing",
+            taskId: "task-8",
+            requestGroupId: "task-8",
+            kind: "primary",
+            title: "오래된 태스크",
+            prompt: "오래된 태스크",
+            status: "completed",
+            summary: "projection만 남은 태스크",
+            userVisible: true,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+      }),
+    ], [], text)
+
+    expect(cards).toHaveLength(1)
+    expect(cards[0]?.representative.id).toBe("run-missing")
+    expect(cards[0]?.representative.status).toBe("completed")
+    expect(cards[0]?.representative.prompt).toBe("오래된 태스크")
   })
 })

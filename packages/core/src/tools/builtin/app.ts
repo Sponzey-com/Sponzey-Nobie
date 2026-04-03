@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
@@ -89,32 +89,16 @@ async function listApps(filter?: string): Promise<AppInfo[]> {
   }
 }
 
-// ─── App launch ───────────────────────────────────────────────────────────────
-
-async function launchApp(app: string, args: string[], background: boolean): Promise<void> {
-  const isPath = app.startsWith("/") || app.startsWith("./") || app.startsWith("~")
-
-  if (process.platform === "darwin") {
-    const openArgs = isPath ? [app, ...args] : ["-a", app, ...(args.length > 0 ? ["--args", ...args] : [])]
-    if (background) {
-      spawn("open", openArgs, { detached: true, stdio: "ignore" }).unref()
-    } else {
-      await execFileAsync("open", openArgs)
-    }
-    return
+function yeonjangRequiredFailure(method: string): ToolResult {
+  return {
+    success: false,
+    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+    error: "YEONJANG_REQUIRED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+    },
   }
-
-  if (process.platform === "linux") {
-    const cmd = isPath ? app : app
-    if (background) {
-      spawn(cmd, args, { detached: true, stdio: "ignore" }).unref()
-    } else {
-      await execFileAsync(cmd, args)
-    }
-    return
-  }
-
-  throw new Error(`지원되지 않는 플랫폼: ${process.platform}`)
 }
 
 // ─── Tools ────────────────────────────────────────────────────────────────────
@@ -177,18 +161,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
         return { success: false, output: `Yeonjang 앱 실행 실패: ${message}`, error: message }
       }
     }
-
-    try {
-      await launchApp(app, args, background)
-      return {
-        success: true,
-        output: `"${app}" 실행${background ? " (백그라운드)" : ""}`,
-        details: { via: "local" },
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return { success: false, output: `앱 실행 실패: ${msg}`, error: msg }
-    }
+    return yeonjangRequiredFailure("application.launch")
   },
 }
 

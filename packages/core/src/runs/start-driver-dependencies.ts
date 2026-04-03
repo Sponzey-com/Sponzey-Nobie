@@ -8,7 +8,7 @@ import type {
   TaskIntentEnvelope,
   TaskStructuredRequest,
 } from "../agent/intake.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import { logAssistantReply, type RunChunkDeliveryHandler } from "./delivery.js"
 import type { RootRunDriverDependencies } from "./root-run-driver.js"
@@ -61,7 +61,7 @@ export function buildStartRootRunDriverDependencies(params: {
     originRequestGroupId?: string | undefined
     model: string | undefined
     providerId?: string | undefined
-    provider?: LLMProvider | undefined
+    provider?: AIProvider | undefined
     targetId?: string | undefined
     targetLabel?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined

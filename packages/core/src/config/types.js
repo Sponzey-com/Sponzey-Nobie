@@ -7,9 +7,9 @@ export const DEFAULT_CONFIG = {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         workspace: homedir(),
     },
-    llm: {
-        defaultProvider: "anthropic",
-        defaultModel: "claude-3-5-haiku-20241022",
+    ai: {
+        defaultProvider: "",
+        defaultModel: "",
         providers: {},
     },
     security: {
@@ -23,11 +23,21 @@ export const DEFAULT_CONFIG = {
         enabled: true,
         port: 18888,
         host: "127.0.0.1",
-        auth: { enabled: false },
+        auth: {
+            enabled: false,
+        },
     },
     scheduler: {
         enabled: true,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+    mqtt: {
+        enabled: false,
+        host: "0.0.0.0",
+        port: 1883,
+        username: "",
+        password: "",
+        allowAnonymous: false,
     },
     search: {
         web: {

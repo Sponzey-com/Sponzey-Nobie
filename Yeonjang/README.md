@@ -25,13 +25,15 @@ This initial scaffold provides:
   - `system.exec`
   - `camera.list` on macOS
   - `camera.capture` on macOS
+  - `keyboard.type` on macOS
+  - `keyboard.action` shortcut on macOS
 - planned method stubs for:
   - `system.control`
   - `application.launch`
   - `screen.capture`
   - `mouse.move`
   - `mouse.click`
-  - `keyboard.type`
+  - `keyboard.action` key press / down / up
 
 ## Priority
 
@@ -105,3 +107,4 @@ Each response is emitted as a single JSON object per line.
 - macOS camera capture uses an AVFoundation-based Swift helper and expects the bundled app manifest to contain camera usage descriptions.
 - macOS permission manifests live under `Yeonjang/manifests/macos/`.
 - screen / keyboard / mouse methods remain scaffolded and can be connected to platform-specific crates next.
+- macOS keyboard input currently goes through `System Events` and supports text typing plus shortcut execution.

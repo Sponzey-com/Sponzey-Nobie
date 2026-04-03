@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../../logger/index.js";
 import { markKeyFailure, nextApiKey } from "../types.js";
-const log = createLogger("llm:gemini");
+const log = createLogger("ai:gemini");
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 const CONTEXT_LIMITS = {
     "gemini-2.5-pro": 1_048_576,

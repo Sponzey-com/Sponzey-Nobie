@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { api } from "../api/client"
 import type { SetupChecksResponse } from "../api/adapters/types"
-import { BUILTIN_BACKEND_IDS, isBuiltinBackendId, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
+import { isBuiltinBackendId, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
 import type { SetupDraft, SetupState, SetupStepId } from "../contracts/setup"
 import { useCapabilitiesStore } from "./capabilities"
 import { useConnectionStore } from "./connection"
@@ -28,7 +28,6 @@ interface SetupStore {
   updateBackend: (backendId: string, patch: Partial<AIBackendCard>) => void
   moveRoutingTarget: (profileId: RoutingProfile["id"], from: number, to: number) => void
   setRoutingTargetEnabled: (profileId: RoutingProfile["id"], backendId: string, enabled: boolean) => void
-  syncPrimaryBackendToBuiltinBackends: () => void
   patchSecurity: (patch: Partial<SetupDraft["security"]>) => void
   patchChannels: (patch: Partial<SetupDraft["channels"]>) => void
   patchRemoteAccess: (patch: Partial<SetupDraft["remoteAccess"]>) => void
@@ -384,30 +383,6 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
           return { ...profile, targets: profile.targets.filter((target) => target !== backendId) }
         }
         return profile
-      }),
-    })
-  },
-  syncPrimaryBackendToBuiltinBackends: () => {
-    const draft = get().draft
-    const source = draft.aiBackends.find((backend) => backend.id === "provider:openai")
-    if (!source) return
-
-    setDraftAndPersist({
-      ...draft,
-      aiBackends: draft.aiBackends.map((backend) => {
-        if (backend.id === source.id) return backend
-        if (!(BUILTIN_BACKEND_IDS as readonly string[]).includes(backend.id)) return backend
-
-        return {
-          ...backend,
-          providerType: source.providerType,
-          authMode: source.authMode,
-          credentials: { ...source.credentials },
-          local: source.local,
-          endpoint: source.endpoint,
-          availableModels: [...source.availableModels],
-          defaultModel: source.defaultModel,
-        }
       }),
     })
   },

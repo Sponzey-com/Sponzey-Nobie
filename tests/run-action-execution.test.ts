@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
 import {
-  buildDelegatedReceipt,
   buildFollowupPrompt,
   executeScheduleActions,
   inferDelegatedTaskProfile,
@@ -124,6 +123,8 @@ describe("run action execution helpers", () => {
     expect(prompt).toContain("[Task Intake Bridge]")
     expect(prompt).toContain("[target]")
     expect(prompt).toContain("[to]")
+    expect(prompt).toContain("[checklist]")
+    expect(prompt).toContain("- [ ] 목표 확인:")
     expect(prompt).toContain("성공 조건:")
     expect(prompt).toContain("제약 사항:")
   })
@@ -356,34 +357,6 @@ describe("run action execution helpers", () => {
       cancelledScheduleIds: ["sch-1", "sch-2"],
       cancelledNames: ["매 1분 알림", "아침 보고"],
     }])
-  })
-
-  it("builds delegated receipts without collapsing multiple follow-up items", () => {
-    const receipt = buildDelegatedReceipt(
-      buildIntake(),
-      [
-        {
-          id: "d1",
-          type: "run_task",
-          title: "첫 번째 후속 실행",
-          priority: "normal",
-          reason: "첫 번째",
-          payload: {},
-        },
-        {
-          id: "d2",
-          type: "delegate_agent",
-          title: "두 번째 후속 실행",
-          priority: "normal",
-          reason: "두 번째",
-          payload: {},
-        },
-      ],
-      false,
-    )
-
-    expect(receipt).toContain("첫 번째 후속 실행")
-    expect(receipt).toContain("두 번째 후속 실행")
   })
 
   it("returns an empty receipt list when schedule creation fails", () => {

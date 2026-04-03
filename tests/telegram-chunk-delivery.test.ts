@@ -113,7 +113,7 @@ describe("telegram chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
   })
 
-  it("delivers artifact first and final text after done in order", async () => {
+  it("delivers artifact first and only flushes text produced after the artifact", async () => {
     const order: string[] = []
     const responder = {
       sendToolStatus: vi.fn(),
@@ -137,7 +137,7 @@ describe("telegram chunk delivery helper", () => {
       logError: vi.fn(),
     })
 
-    await onChunk?.({ type: "text", delta: "결과를 보냈습니다." })
+    await onChunk?.({ type: "text", delta: "이 텍스트는 artifact 전달 시 버려집니다." })
     await onChunk?.({
       type: "tool_end",
       toolName: "telegram_send_file",
@@ -151,8 +151,48 @@ describe("telegram chunk delivery helper", () => {
         source: "telegram",
       },
     })
+    await onChunk?.({ type: "text", delta: "파일 전달이 완료되었습니다." })
     await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(order).toEqual(["file", "text"])
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith("파일 전달이 완료되었습니다.")
+  })
+
+  it("clears buffered preamble text after artifact delivery succeeds", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockResolvedValue(808),
+      sendFinalResponse: vi.fn().mockResolvedValue([909]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-5",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({ type: "text", delta: "The request to capture the main all screen has been received." })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "telegram_send_file",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery",
+        channel: "telegram",
+        filePath: "/tmp/result.png",
+        size: 123,
+        source: "telegram",
+      },
+    })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFile).toHaveBeenCalledTimes(1)
+    expect(responder.sendFinalResponse).not.toHaveBeenCalled()
+    expect(receipt).toBeUndefined()
   })
 })

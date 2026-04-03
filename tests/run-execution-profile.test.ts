@@ -35,4 +35,59 @@ describe("execution profile", () => {
     expect(runtime.filesystemMutationPaths.size).toBe(0)
     expect(runtime.priorAssistantMessages).toEqual([])
   })
+
+  it("repairs capture requests into direct artifact delivery semantics", () => {
+    const result = buildResolvedExecutionProfile({
+      message: "메인 전체 화면 캡처",
+      originalRequest: "메인 전체 화면 캡처",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "required",
+        artifactDelivery: "none",
+        approvalRequired: true,
+        approvalTool: "screen_capture",
+      },
+      structuredRequest: {
+        source_language: "ko",
+        normalized_english: "capture the main full screen",
+        target: "메인 전체 화면 캡처",
+        to: "telegram chat 1, main thread",
+        context: ["Original user request: 메인 전체 화면 캡처"],
+        complete_condition: ["캡처 결과가 텔레그램으로 전달된다."],
+      },
+      intentEnvelope: {
+        intent_type: "task_intake",
+        source_language: "ko",
+        normalized_english: "capture the main full screen",
+        target: "메인 전체 화면 캡처",
+        destination: "telegram chat 1, main thread",
+        context: ["Original user request: 메인 전체 화면 캡처"],
+        complete_condition: ["캡처 결과가 텔레그램으로 전달된다."],
+        schedule_spec: {
+          detected: false,
+          kind: "none",
+          status: "not_applicable",
+          schedule_text: "",
+        },
+        execution_semantics: {
+          filesystemEffect: "none",
+          privilegedOperation: "required",
+          artifactDelivery: "none",
+          approvalRequired: true,
+          approvalTool: "screen_capture",
+        },
+        delivery_mode: "none",
+        requires_approval: true,
+        approval_tool: "screen_capture",
+        preferred_target: "auto",
+        needs_tools: true,
+        needs_web: false,
+      },
+    })
+
+    expect(result.executionSemantics.artifactDelivery).toBe("direct")
+    expect(result.wantsDirectArtifactDelivery).toBe(true)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
+    expect(result.intentEnvelope.delivery_mode).toBe("direct")
+  })
 })

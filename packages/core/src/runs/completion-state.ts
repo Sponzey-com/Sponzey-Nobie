@@ -16,6 +16,21 @@ export type CompletionInterpretationStatus = "satisfied" | "followup_required" |
 export type CompletionExecutionStatus = "satisfied" | "missing"
 export type CompletionDeliveryStatus = "satisfied" | "missing" | "not_required"
 export type CompletionRecoveryStatus = "settled" | "required"
+export type CompletionChecklistItemKey = "request" | "execution" | "delivery" | "completion"
+export type CompletionChecklistItemStatus = "completed" | "pending" | "not_required"
+
+export interface CompletionChecklistItem {
+  key: CompletionChecklistItemKey
+  status: CompletionChecklistItemStatus
+  reason?: string
+}
+
+export interface CompletionChecklistState {
+  items: CompletionChecklistItem[]
+  completedCount: number
+  actionableCount: number
+  pendingCount: number
+}
 
 export interface CompletionStageState extends CompletionEvidenceState {
   interpretationStatus: CompletionInterpretationStatus
@@ -23,6 +38,7 @@ export interface CompletionStageState extends CompletionEvidenceState {
   deliveryStatus: CompletionDeliveryStatus
   recoveryStatus: CompletionRecoveryStatus
   blockingReasons: string[]
+  checklist?: CompletionChecklistState
 }
 
 export function deriveCompletionEvidenceState(params: {
@@ -143,11 +159,59 @@ export function deriveCompletionStageState(params: {
     blockingReasons.push("중간 절단된 출력이라 복구 재시도가 한 번 더 필요합니다.")
   }
 
-  const completionSatisfied =
-    interpretationStatus === "satisfied"
-    && executionStatus === "satisfied"
-    && deliveryStatus !== "missing"
-    && recoveryStatus === "settled"
+  const checklistItems: CompletionChecklistItem[] = [
+    {
+      key: "request",
+      status: interpretationStatus === "user_input_required" ? "pending" : "completed",
+      ...(interpretationStatus === "user_input_required"
+        ? { reason: "사용자 추가 입력이 필요해 요청 확정이 아직 끝나지 않았습니다." }
+        : {}),
+    },
+    {
+      key: "execution",
+      status: executionStatus === "satisfied" ? "completed" : "pending",
+      ...(executionStatus === "missing" ? { reason: evidenceState.conflictReason || "명확한 실행 근거가 아직 없습니다." } : {}),
+    },
+    {
+      key: "delivery",
+      status:
+        deliveryStatus === "not_required"
+          ? "not_required"
+          : deliveryStatus === "satisfied"
+            ? "completed"
+            : "pending",
+      ...(deliveryStatus === "missing" ? { reason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다." } : {}),
+    },
+    {
+      key: "completion",
+      status:
+        interpretationStatus === "satisfied"
+        && executionStatus === "satisfied"
+        && deliveryStatus !== "missing"
+        && recoveryStatus === "settled"
+          ? "completed"
+          : "pending",
+      ...(interpretationStatus === "followup_required"
+        ? { reason: "completion review가 추가 follow-up 작업을 요구합니다." }
+        : interpretationStatus === "user_input_required"
+          ? { reason: "completion review가 사용자 추가 입력을 요구합니다." }
+          : truncatedRecoveryRequired
+            ? { reason: "중간 절단된 출력이라 복구 재시도가 한 번 더 필요합니다." }
+            : recoveryStatus === "required"
+              ? { reason: blockingReasons[0] || "완료 전에 처리할 항목이 남아 있습니다." }
+              : {}),
+    },
+  ]
+
+  const actionableChecklistItems = checklistItems.filter((item) => item.status !== "not_required")
+  const checklist: CompletionChecklistState = {
+    items: checklistItems,
+    completedCount: actionableChecklistItems.filter((item) => item.status === "completed").length,
+    actionableCount: actionableChecklistItems.length,
+    pendingCount: actionableChecklistItems.filter((item) => item.status === "pending").length,
+  }
+
+  const completionSatisfied = actionableChecklistItems.every((item) => item.status === "completed")
 
   return {
     ...evidenceState,
@@ -156,6 +220,7 @@ export function deriveCompletionStageState(params: {
     deliveryStatus,
     recoveryStatus,
     completionSatisfied,
+    checklist,
     ...(blockingReasons.length > 0 ? { blockingReasons } : { blockingReasons: [] }),
     ...(blockingReasons.length > 0 ? { conflictReason: blockingReasons[0] } : {}),
   }

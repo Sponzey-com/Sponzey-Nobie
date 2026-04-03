@@ -80,6 +80,7 @@ export function createTelegramChunkDeliveryHandler(
       if (chunk.success && isArtifactDeliveryDetails(chunk.details)) {
         try {
           const sentMessageId = await context.responder.sendFile(chunk.details.filePath, chunk.details.caption)
+          bufferedText = ""
           recordIfRunPresent(sentMessageId, "assistant")
           return {
             artifactDeliveries: [{

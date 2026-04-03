@@ -66,10 +66,10 @@ describe("bootstrap loop state", () => {
       queuedBehindRequestGroupRun: true,
       aborted: false,
       activeWorkerRuntime: {
-        kind: "codex_cli",
-        targetId: "worker:codex_cli",
+        kind: "internal_ai",
+        targetId: "worker:internal_ai",
         label: "코드 작업 보조 세션",
-        command: "codex",
+        command: "disabled",
       },
       requiresFilesystemMutation: true,
       requiresPrivilegedToolExecution: false,

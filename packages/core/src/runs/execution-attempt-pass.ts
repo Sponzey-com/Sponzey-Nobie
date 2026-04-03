@@ -10,7 +10,7 @@ import {
 } from "./delivery.js"
 import { getRootRun } from "./store.js"
 import type { AgentContextMode } from "../agent/index.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
@@ -25,14 +25,16 @@ export interface ExecutionAttemptPassResult {
   executionRecoveryLimitStop: {
     summary: string
     reason: string
+    rawMessage?: string
     remainingItems: string[]
   } | null
-  llmRecoveryLimitStop: {
+  aiRecoveryLimitStop: {
     summary: string
     reason: string
+    rawMessage?: string
     remainingItems: string[]
   } | null
-  llmRecovery: {
+  aiRecovery: {
     summary: string
     reason: string
     message: string
@@ -81,7 +83,7 @@ export async function runExecutionAttemptPass(
     memorySearchQuery: string
     model?: string
     providerId?: string
-    provider?: LLMProvider
+    provider?: AIProvider
     workDir: string
     signal: AbortSignal
     toolsEnabled?: boolean
@@ -104,6 +106,7 @@ export async function runExecutionAttemptPass(
       reason: string
       remainingItems: string[]
     } | null
+    stopAfterDirectArtifactDeliverySuccess: boolean
     abortExecutionStream: () => void
   },
   dependencies: ExecutionAttemptPassDependencies,
@@ -111,138 +114,165 @@ export async function runExecutionAttemptPass(
 ): Promise<ExecutionAttemptPassResult> {
   let preview = params.preview
   let failed = false
-  let llmRecovery: ExecutionAttemptPassResult["llmRecovery"] = null
+  let aiRecovery: ExecutionAttemptPassResult["aiRecovery"] = null
   let workerRuntimeRecovery: ExecutionAttemptPassResult["workerRuntimeRecovery"] = null
   let executionRecovery: ExecutionAttemptPassResult["executionRecovery"] = null
   let executionRecoveryLimitStop = params.executionRecoveryLimitStop
-  let llmRecoveryLimitStop: ExecutionAttemptPassResult["llmRecoveryLimitStop"] = null
+  let aiRecoveryLimitStop: ExecutionAttemptPassResult["aiRecoveryLimitStop"] = null
   let sawRealFilesystemMutation = false
   let commandFailureSeen = params.commandFailureSeen
   let commandRecoveredWithinSamePass = false
+  const executionStreamController = new AbortController()
+  const handleOuterAbort = () => {
+    if (!executionStreamController.signal.aborted) {
+      executionStreamController.abort()
+    }
+  }
+
+  if (params.signal.aborted) {
+    executionStreamController.abort()
+  } else {
+    params.signal.addEventListener("abort", handleOuterAbort, { once: true })
+  }
 
   if (params.activeWorkerRuntime && params.workerSessionId) {
     dependencies.appendRunEvent(params.runId, `${params.workerSessionId} 실행 시작`)
     dependencies.updateRunSummary(params.runId, `${params.activeWorkerRuntime.label}에서 작업을 실행 중입니다.`)
   }
 
-  const chunkStream = moduleDependencies.createExecutionChunkStream({
-    ...(params.activeWorkerRuntime ? { workerRuntime: params.activeWorkerRuntime } : {}),
-    userMessage: params.currentMessage,
-    memorySearchQuery: params.memorySearchQuery,
-    sessionId: params.sessionId,
-    runId: params.runId,
-    ...(params.model ? { model: params.model } : {}),
-    ...(params.providerId ? { providerId: params.providerId } : {}),
-    ...(params.provider ? { provider: params.provider } : {}),
-    workDir: params.workDir,
-    source: params.source,
-    signal: params.signal,
-    ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
-    isRootRequest: params.isRootRequest,
-    requestGroupId: params.requestGroupId,
-    contextMode: params.contextMode,
-  })
+  const abortExecutionStream = () => {
+    if (!executionStreamController.signal.aborted) {
+      executionStreamController.abort()
+    }
+    params.abortExecutionStream()
+  }
 
-  for await (const chunk of chunkStream) {
-    if (chunk.type !== "error" && chunk.type !== "done") {
-      const currentRun = moduleDependencies.getRootRun(params.runId)
-      const usedTurns = currentRun?.delegationTurnCount ?? 0
-      const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
-      const executionChunkPass = moduleDependencies.applyExecutionChunkPass({
-        chunk,
-        runId: params.runId,
-        sessionId: params.sessionId,
-        source: params.source,
-        preview,
-        workDir: params.workDir,
-        pendingToolParams: params.pendingToolParams,
-        successfulTools: params.successfulTools,
-        filesystemMutationPaths: params.filesystemMutationPaths,
-        failedCommandTools: params.failedCommandTools,
-        commandFailureSeen,
-        recoveryBudgetUsage: params.recoveryBudgetUsage,
-        usedTurns,
-        maxDelegationTurns: maxTurns,
-      }, dependencies)
+  try {
+    const chunkStream = moduleDependencies.createExecutionChunkStream({
+      userMessage: params.currentMessage,
+      memorySearchQuery: params.memorySearchQuery,
+      sessionId: params.sessionId,
+      runId: params.runId,
+      ...(params.model ? { model: params.model } : {}),
+      ...(params.providerId ? { providerId: params.providerId } : {}),
+      ...(params.provider ? { provider: params.provider } : {}),
+      workDir: params.workDir,
+      source: params.source,
+      signal: executionStreamController.signal,
+      ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
+      isRootRequest: params.isRootRequest,
+      requestGroupId: params.requestGroupId,
+      contextMode: params.contextMode,
+    })
 
-      if (executionChunkPass.preview !== undefined) {
-        preview = executionChunkPass.preview
+    for await (const chunk of chunkStream) {
+      if (chunk.type !== "error" && chunk.type !== "done") {
+        const currentRun = moduleDependencies.getRootRun(params.runId)
+        const usedTurns = currentRun?.delegationTurnCount ?? 0
+        const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+        const executionChunkPass = moduleDependencies.applyExecutionChunkPass({
+          chunk,
+          runId: params.runId,
+          sessionId: params.sessionId,
+          source: params.source,
+          preview,
+          workDir: params.workDir,
+          pendingToolParams: params.pendingToolParams,
+          successfulTools: params.successfulTools,
+          filesystemMutationPaths: params.filesystemMutationPaths,
+          failedCommandTools: params.failedCommandTools,
+          commandFailureSeen,
+          recoveryBudgetUsage: params.recoveryBudgetUsage,
+          usedTurns,
+          maxDelegationTurns: maxTurns,
+        }, dependencies)
+
+        if (executionChunkPass.preview !== undefined) {
+          preview = executionChunkPass.preview
+        }
+        if (executionChunkPass.executionRecoveryLimitStop) {
+          executionRecoveryLimitStop = executionChunkPass.executionRecoveryLimitStop
+        }
+        if (executionChunkPass.executionRecovery) {
+          executionRecovery = executionChunkPass.executionRecovery
+        }
+        if (executionChunkPass.aiRecoveryLimitStop) {
+          aiRecoveryLimitStop = executionChunkPass.aiRecoveryLimitStop
+        }
+        if (executionChunkPass.aiRecovery) {
+          aiRecovery = executionChunkPass.aiRecovery
+        }
+        if (executionChunkPass.sawRealFilesystemMutation) {
+          sawRealFilesystemMutation = true
+        }
+        if (typeof executionChunkPass.commandFailureSeen === "boolean") {
+          commandFailureSeen = executionChunkPass.commandFailureSeen
+        }
+        if (typeof executionChunkPass.commandRecoveredWithinSamePass === "boolean") {
+          commandRecoveredWithinSamePass = executionChunkPass.commandRecoveredWithinSamePass
+        }
+        if (executionChunkPass.abortExecutionStream) {
+          abortExecutionStream()
+        }
+      } else if (chunk.type === "error") {
+        const currentRun = moduleDependencies.getRootRun(params.runId)
+        const usedTurns = currentRun?.delegationTurnCount ?? 0
+        const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
+        const errorChunkPass = await moduleDependencies.applyErrorChunkPass({
+          runId: params.runId,
+          sessionId: params.sessionId,
+          source: params.source,
+          onChunk: params.onChunk,
+          ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
+          chunk,
+          aborted: params.signal.aborted,
+          executionRecoveryLimitStop,
+          activeWorkerRuntime: params.activeWorkerRuntime,
+          ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
+          recoveryBudgetUsage: params.recoveryBudgetUsage,
+          usedTurns,
+          maxDelegationTurns: maxTurns,
+          successfulFileDeliveries: params.successfulFileDeliveries,
+          successfulTextDeliveries: params.successfulTextDeliveries,
+        }, dependencies)
+
+        if (errorChunkPass.limitStop) {
+          aiRecoveryLimitStop = errorChunkPass.limitStop
+        }
+        if (errorChunkPass.workerRuntimeRecovery) {
+          workerRuntimeRecovery = errorChunkPass.workerRuntimeRecovery
+        }
+        if (errorChunkPass.failed) {
+          failed = true
+        }
+        continue
       }
-      if (executionChunkPass.executionRecoveryLimitStop) {
-        executionRecoveryLimitStop = executionChunkPass.executionRecoveryLimitStop
-      }
-      if (executionChunkPass.executionRecovery) {
-        executionRecovery = executionChunkPass.executionRecovery
-      }
-      if (executionChunkPass.llmRecoveryLimitStop) {
-        llmRecoveryLimitStop = executionChunkPass.llmRecoveryLimitStop
-      }
-      if (executionChunkPass.llmRecovery) {
-        llmRecovery = executionChunkPass.llmRecovery
-      }
-      if (executionChunkPass.sawRealFilesystemMutation) {
-        sawRealFilesystemMutation = true
-      }
-      if (typeof executionChunkPass.commandFailureSeen === "boolean") {
-        commandFailureSeen = executionChunkPass.commandFailureSeen
-      }
-      if (typeof executionChunkPass.commandRecoveredWithinSamePass === "boolean") {
-        commandRecoveredWithinSamePass = executionChunkPass.commandRecoveredWithinSamePass
-      }
-      if (executionChunkPass.abortExecutionStream) {
-        params.abortExecutionStream()
-      }
-    } else if (chunk.type === "error") {
-      const currentRun = moduleDependencies.getRootRun(params.runId)
-      const usedTurns = currentRun?.delegationTurnCount ?? 0
-      const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns
-      const errorChunkPass = await moduleDependencies.applyErrorChunkPass({
-        runId: params.runId,
-        sessionId: params.sessionId,
-        source: params.source,
+
+      const receipt = await moduleDependencies.deliverTrackedChunk({
         onChunk: params.onChunk,
-        ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
         chunk,
-        aborted: params.signal.aborted,
-        executionRecoveryLimitStop,
-        activeWorkerRuntime: params.activeWorkerRuntime,
-        ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
-        recoveryBudgetUsage: params.recoveryBudgetUsage,
-        usedTurns,
-        maxDelegationTurns: maxTurns,
+        runId: params.runId,
+        ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
         successfulFileDeliveries: params.successfulFileDeliveries,
         successfulTextDeliveries: params.successfulTextDeliveries,
-      }, dependencies)
+        appendEvent: dependencies.appendRunEvent,
+      })
 
-      if (errorChunkPass.limitStop) {
-        llmRecoveryLimitStop = errorChunkPass.limitStop
+      if (params.stopAfterDirectArtifactDeliverySuccess && (receipt?.artifactDeliveries?.length ?? 0) > 0) {
+        abortExecutionStream()
+        break
       }
-      if (errorChunkPass.workerRuntimeRecovery) {
-        workerRuntimeRecovery = errorChunkPass.workerRuntimeRecovery
-      }
-      if (errorChunkPass.failed) {
-        failed = true
-      }
-      continue
     }
-
-    await moduleDependencies.deliverTrackedChunk({
-      onChunk: params.onChunk,
-      chunk,
-      runId: params.runId,
-      ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-      successfulFileDeliveries: params.successfulFileDeliveries,
-      successfulTextDeliveries: params.successfulTextDeliveries,
-      appendEvent: dependencies.appendRunEvent,
-    })
+  } finally {
+    params.signal.removeEventListener("abort", handleOuterAbort)
   }
 
   return {
     preview,
     failed,
     executionRecoveryLimitStop,
-    llmRecoveryLimitStop,
-    llmRecovery,
+    aiRecoveryLimitStop,
+    aiRecovery,
     workerRuntimeRecovery,
     executionRecovery,
     sawRealFilesystemMutation,

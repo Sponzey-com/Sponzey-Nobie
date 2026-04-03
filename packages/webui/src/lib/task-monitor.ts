@@ -4,7 +4,12 @@ import type {
   TaskActivityModel,
   TaskAttemptKind,
   TaskAttemptModel,
+  TaskChecklistItemKey,
+  TaskChecklistItemModel,
+  TaskChecklistItemStatus,
+  TaskChecklistModel,
   TaskDeliveryStatus,
+  TaskFailureModel,
   TaskModel,
 } from "../contracts/tasks"
 
@@ -42,6 +47,26 @@ export interface TaskMonitorDelivery {
   summary?: string
 }
 
+export interface TaskMonitorChecklistItem {
+  key: TaskChecklistItemKey
+  label: string
+  status: TaskChecklistItemStatus
+  summary?: string
+}
+
+export type { TaskChecklistItemStatus as TaskMonitorChecklistItemStatus }
+
+export interface TaskMonitorChecklist {
+  items: TaskMonitorChecklistItem[]
+  completedCount: number
+  actionableCount: number
+  failedCount: number
+}
+
+export interface TaskMonitorFailure extends TaskFailureModel {
+  sourceAttemptLabel?: string
+}
+
 export interface TaskMonitorCard {
   key: string
   representative: RootRun
@@ -52,7 +77,9 @@ export interface TaskMonitorCard {
   internalAttempts: TaskMonitorAttempt[]
   treeNodes: TaskMonitorTreeNode[]
   timeline: TaskMonitorTimelineItem[]
+  checklist: TaskMonitorChecklist
   delivery: TaskMonitorDelivery
+  failure?: TaskMonitorFailure
   duplicateExecutionRisk: boolean
 }
 
@@ -114,6 +141,33 @@ function describeActivityOwner(
   return text("태스크", "Task")
 }
 
+function describeChecklistItemLabel(key: TaskChecklistItemKey, text: TextFn): string {
+  switch (key) {
+    case "request":
+      return text("요청 확인", "Request confirmed")
+    case "execution":
+      return text("실행", "Execution")
+    case "delivery":
+      return text("전달", "Delivery")
+    case "completion":
+      return text("완료 확인", "Completion check")
+  }
+}
+
+function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMonitorChecklist {
+  return {
+    items: taskChecklist.items.map((item: TaskChecklistItemModel) => ({
+      key: item.key,
+      label: describeChecklistItemLabel(item.key, text),
+      status: item.status,
+      ...(item.summary ? { summary: item.summary } : {}),
+    })),
+    completedCount: taskChecklist.completedCount,
+    actionableCount: taskChecklist.actionableCount,
+    failedCount: taskChecklist.failedCount,
+  }
+}
+
 function buildTreeNodes(attempts: TaskMonitorAttempt[]): TaskMonitorTreeNode[] {
   const visibleAttempts = attempts.filter((attempt) => attempt.userVisible)
   const sourceAttempts = visibleAttempts.length > 0 ? visibleAttempts : attempts.slice(0, 1)
@@ -144,7 +198,34 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
   const anchorRun = runsById.get(task.anchorRunId)
   const sourceRun = latestRun ?? anchorRun
   const identityRun = anchorRun ?? latestRun
-  if (!sourceRun || !identityRun) return null
+  if (!sourceRun || !identityRun) {
+    const latestAttempt = [...task.attempts].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    const anchorAttempt = task.attempts.find((attempt) => attempt.id === task.anchorRunId) ?? task.attempts[0]
+    if (!latestAttempt && !anchorAttempt) return null
+
+    return {
+      id: task.anchorRunId,
+      sessionId: task.sessionId,
+      requestGroupId: task.requestGroupId,
+      title: task.title,
+      prompt: task.requestText || latestAttempt?.prompt || anchorAttempt?.prompt || task.title,
+      source: task.source,
+      status: task.status,
+      taskProfile: sourceRun?.taskProfile ?? identityRun?.taskProfile ?? "general_chat",
+      contextMode: sourceRun?.contextMode ?? identityRun?.contextMode ?? "full",
+      delegationTurnCount: sourceRun?.delegationTurnCount ?? identityRun?.delegationTurnCount ?? 0,
+      maxDelegationTurns: sourceRun?.maxDelegationTurns ?? identityRun?.maxDelegationTurns ?? 5,
+      currentStepKey: sourceRun?.currentStepKey ?? identityRun?.currentStepKey ?? "executing",
+      currentStepIndex: sourceRun?.currentStepIndex ?? identityRun?.currentStepIndex ?? 4,
+      totalSteps: sourceRun?.totalSteps ?? identityRun?.totalSteps ?? 9,
+      summary: task.summary,
+      canCancel: task.canCancel,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      steps: sourceRun?.steps ?? identityRun?.steps ?? [],
+      recentEvents: sourceRun?.recentEvents ?? identityRun?.recentEvents ?? [],
+    }
+  }
 
   return {
     ...sourceRun,
@@ -195,7 +276,18 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
       internalAttempts,
       treeNodes: buildTreeNodes(attempts),
       timeline: buildTimeline(task, attempts, text),
+      checklist: buildChecklist(task.checklist, text),
       delivery: task.delivery,
+      ...(task.failure
+        ? {
+            failure: {
+              ...task.failure,
+              sourceAttemptLabel: task.failure.sourceAttemptId
+                ? attempts.find((attempt) => attempt.id === task.failure?.sourceAttemptId)?.label
+                : undefined,
+            },
+          }
+        : {}),
       duplicateExecutionRisk: task.monitor.duplicateExecutionRisk,
     })
   }
@@ -218,4 +310,9 @@ export function describeTaskDeliveryStatus(status: TaskDeliveryStatus, text: Tex
     default:
       return text("전달 없음", "No delivery")
   }
+}
+
+export function describeTaskChecklistProgress(checklist: TaskMonitorChecklist, text: TextFn): string {
+  if (checklist.actionableCount === 0) return text("없음", "None")
+  return `${checklist.completedCount}/${checklist.actionableCount}`
 }

@@ -13,6 +13,9 @@ export type TaskAttemptKind =
 export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic"
 
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed"
+export type TaskFailureKind = "execution" | "recovery" | "delivery"
+export type TaskChecklistItemKey = "request" | "execution" | "delivery" | "completion"
+export type TaskChecklistItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "not_required"
 
 export type TaskActivityKind =
   | "attempt.started"
@@ -65,6 +68,15 @@ export interface TaskDeliveryModel {
   summary?: string
 }
 
+export interface TaskFailureModel {
+  kind: TaskFailureKind
+  status: Extract<RunStatus, "failed" | "cancelled" | "interrupted">
+  title: string
+  summary: string
+  detailLines: string[]
+  sourceAttemptId?: string
+}
+
 export interface TaskActivityModel {
   id: string
   taskId: string
@@ -75,6 +87,19 @@ export interface TaskActivityModel {
   attemptKind?: TaskAttemptKind
   recoveryKind?: TaskRecoveryKind
   runStatus?: RunStatus
+}
+
+export interface TaskChecklistItemModel {
+  key: TaskChecklistItemKey
+  status: TaskChecklistItemStatus
+  summary?: string
+}
+
+export interface TaskChecklistModel {
+  items: TaskChecklistItemModel[]
+  completedCount: number
+  actionableCount: number
+  failedCount: number
 }
 
 export interface TaskMonitorModel {
@@ -109,6 +134,8 @@ export interface TaskModel {
   attempts: TaskAttemptModel[]
   recoveryAttempts: TaskRecoveryAttemptModel[]
   delivery: TaskDeliveryModel
+  failure?: TaskFailureModel
+  checklist: TaskChecklistModel
   monitor: TaskMonitorModel
   activities: TaskActivityModel[]
 }

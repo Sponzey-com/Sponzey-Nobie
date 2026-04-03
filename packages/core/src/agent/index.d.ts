@@ -1,4 +1,4 @@
-import { type LLMProvider } from "../llm/index.js";
+import { type AIProvider } from "../ai/index.js";
 export type AgentChunk = {
     type: "text";
     delta: string;
@@ -26,7 +26,7 @@ export interface RunAgentParams {
     runId?: string | undefined;
     model?: string | undefined;
     providerId?: string | undefined;
-    provider?: LLMProvider | undefined;
+    provider?: AIProvider | undefined;
     systemPrompt?: string | undefined;
     workDir?: string | undefined;
     source?: "webui" | "cli" | "telegram" | undefined;

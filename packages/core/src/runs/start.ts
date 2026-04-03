@@ -5,8 +5,8 @@ import {
   type TaskStructuredRequest,
 } from "../agent/intake.js"
 import { getConfig } from "../config/index.js"
-import type { LLMProvider } from "../llm/index.js"
-import { inferProviderId } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
+import { inferProviderId } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import {
@@ -41,7 +41,7 @@ export interface StartRootRunParams {
   forceRequestGroupReuse?: boolean | undefined
   model: string | undefined
   providerId?: string | undefined
-  provider?: LLMProvider | undefined
+  provider?: AIProvider | undefined
   targetId?: string | undefined
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined

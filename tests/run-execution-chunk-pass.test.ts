@@ -117,14 +117,14 @@ describe("execution chunk pass", () => {
     })
   })
 
-  it("returns llm recovery retry payload", () => {
+  it("returns ai recovery retry payload", () => {
     const dependencies = createDependencies()
 
     const result = applyExecutionChunkPass({
       ...createBaseParams(),
       chunk: {
-        type: "llm_recovery",
-        summary: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+        type: "ai_recovery",
+        summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
       },
@@ -135,7 +135,7 @@ describe("execution chunk pass", () => {
       applyExternalRecoveryAttempt: vi.fn().mockReturnValue({
         kind: "retry",
         payload: {
-          summary: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+          summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
           reason: "403 blocked",
           message: "forbidden",
         },
@@ -144,8 +144,8 @@ describe("execution chunk pass", () => {
 
     expect(result).toEqual({
       handled: true,
-      llmRecovery: {
-        summary: "LLM 오류를 분석하고 다른 방법으로 재시도합니다.",
+      aiRecovery: {
+        summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
       },

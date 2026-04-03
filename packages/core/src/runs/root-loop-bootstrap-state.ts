@@ -46,7 +46,7 @@ export function prepareRootLoopBootstrapState(
       currentTargetLabel: params.currentTargetLabel,
       activeWorkerRuntime: loopBootstrap.activeWorkerRuntime,
       executionRecoveryLimitStop: null,
-      llmRecoveryLimitStop: null,
+      aiRecoveryLimitStop: null,
       sawRealFilesystemMutation: false,
       filesystemMutationRecoveryAttempted: false,
       truncatedOutputRecoveryAttempted: false,

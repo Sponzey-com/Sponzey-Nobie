@@ -6,8 +6,6 @@ export type { Logger } from "./logger/index.js";
 export { eventBus } from "./events/index.js";
 export type { NobieEvents, WizbyEvents, HowieEvents } from "./events/index.js";
 export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, } from "./db/index.js";
-export { getProvider, getDefaultModel } from "./llm/index.js";
-export type { LLMProvider, LLMChunk, Message, ToolDefinition, ChatParams } from "./llm/index.js";
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./tools/index.js";
 export { runAgent } from "./agent/index.js";

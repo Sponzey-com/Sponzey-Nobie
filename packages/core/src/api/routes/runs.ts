@@ -4,6 +4,7 @@ import {
   cancelRootRun,
   getRootRun,
   listRootRuns,
+  listRunsForRecentRequestGroups,
 } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
 import { buildTaskModels } from "../../runs/task-model.js"
@@ -31,7 +32,7 @@ export function registerRunsRoute(app: FastifyInstance): void {
   })
 
   app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
-    return { tasks: buildTaskModels(listRootRuns(200)) }
+    return { tasks: buildTaskModels(listRunsForRecentRequestGroups()) }
   })
 
   app.get<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {

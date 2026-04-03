@@ -219,8 +219,8 @@ export function buildCommandFailureRecoveryPrompt(params: {
     alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
     params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
     "실패 원인을 먼저 확인하고, 같은 실패 명령을 그대로 반복하지 마세요.",
-    "경로, 권한, 명령 형식, 대상 프로그램 상태를 점검한 뒤 다른 실행 방법이나 다른 로컬 도구를 선택하세요.",
-    "필요하면 shell_exec 대신 파일 도구, 앱 실행 도구, 다른 안전한 로컬 도구를 사용하세요.",
+    "경로, 권한, 명령 형식, 대상 프로그램 상태를 점검한 뒤 다른 연장 메서드, 다른 연장 대상, 파일 도구 같은 비명령 대안을 검토하세요.",
+    "로컬 명령 fallback은 허용되지 않습니다.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")
 }
@@ -248,28 +248,35 @@ export function buildExecutionRecoveryPrompt(params: {
     alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
     params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
     "도구 목록을 다시 확인하고, 같은 실패 경로를 그대로 반복하지 마세요.",
-    "가능한 경우 Yeonjang 도구를 먼저 사용하고, 불가능하면 다른 실행 도구 또는 다른 경로를 선택하세요.",
+    "Yeonjang 도구 또는 다른 연장 대상만 사용하고, 코어 로컬 fallback은 선택하지 마세요.",
     "도구의 가능 여부를 다시 확인한 뒤 남은 작업을 이어서 처리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")
 }
 
-export function buildLlmErrorRecoveryPrompt(params: {
+export function buildAiErrorRecoveryPrompt(params: {
   originalRequest: string
   previousResult: string
   summary: string
   reason: string
   message: string
+  failedRoute?: string | undefined
+  avoidTargets?: string[] | undefined
+  nextRouteHint?: string | undefined
 }): string {
+  const avoidTargetLines = dedupeNonEmptyStrings(params.avoidTargets).map((target) => `- ${target}`)
   return [
-    "[LLM Error Recovery]",
+    "[AI Error Recovery]",
     "이전 시도에서 모델 호출 중 오류가 발생했습니다.",
     `원래 사용자 요청: ${params.originalRequest}`,
     `복구 요약: ${params.summary}`,
     `오류 분석: ${params.reason}`,
     `원본 오류: ${params.message}`,
+    params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
+    avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
+    params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
     params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "방금 실패한 접근을 그대로 반복하지 말고, 오류 원인에 맞춰 다른 진행 방법을 찾으세요.",
+    "방금 실패한 접근을 그대로 반복하지 말고, 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
     "필요하면 더 짧은 응답, 더 단순한 단계 분해, 다른 도구 조합, 다른 실행 경로를 선택하세요.",
     "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
@@ -298,7 +305,11 @@ export function buildWorkerRuntimeErrorRecoveryPrompt(params: {
   summary: string
   reason: string
   message: string
+  failedRoute?: string | undefined
+  avoidTargets?: string[] | undefined
+  nextRouteHint?: string | undefined
 }): string {
+  const avoidTargetLines = dedupeNonEmptyStrings(params.avoidTargets).map((target) => `- ${target}`)
   return [
     "[Worker Runtime Error Recovery]",
     "이전 시도에서 외부 작업 세션 실행이 실패했습니다.",
@@ -306,14 +317,17 @@ export function buildWorkerRuntimeErrorRecoveryPrompt(params: {
     `복구 요약: ${params.summary}`,
     `오류 분석: ${params.reason}`,
     `원본 오류: ${params.message}`,
+    params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
+    avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
+    params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
     params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "같은 작업 세션 경로를 그대로 반복하지 말고, 다른 실행 경로, 다른 대상, 또는 기본 추론 경로를 선택하세요.",
+    "같은 작업 세션 경로를 그대로 반복하지 말고, 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
     "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")
 }
 
-export function buildLlmRecoveryAvoidTargets(
+export function buildAiRecoveryAvoidTargets(
   targetId: string | undefined,
   workerRuntimeKind: string | undefined,
 ): string[] {
@@ -321,7 +335,7 @@ export function buildLlmRecoveryAvoidTargets(
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
 }
 
-export function buildLlmRecoveryKey(params: {
+export function buildAiRecoveryKey(params: {
   targetId: string | undefined
   workerRuntimeKind: string | undefined
   providerId: string | undefined
@@ -330,7 +344,7 @@ export function buildLlmRecoveryKey(params: {
   message: string
 }): string {
   const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default"
-  const fingerprint = normalizeLlmRecoveryFingerprint(params.reason, params.message)
+  const fingerprint = normalizeAiRecoveryFingerprint(params.reason, params.message)
   return `${route}::${fingerprint}`
 }
 
@@ -343,11 +357,11 @@ export function buildWorkerRuntimeRecoveryKey(params: {
   message: string
 }): string {
   const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default"
-  const fingerprint = normalizeLlmRecoveryFingerprint(params.reason, params.message)
+  const fingerprint = normalizeAiRecoveryFingerprint(params.reason, params.message)
   return `worker::${route}::${fingerprint}`
 }
 
-function normalizeLlmRecoveryFingerprint(reason: string, message: string): string {
+function normalizeAiRecoveryFingerprint(reason: string, message: string): string {
   const combined = `${reason}\n${message}`
     .toLowerCase()
     .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, "<id>")
@@ -412,6 +426,19 @@ function dedupeRecoveryAlternatives(alternatives: RecoveryAlternative[]): Recove
     if (seen.has(key)) continue
     seen.add(key)
     result.push(alternative)
+  }
+  return result
+}
+
+function dedupeNonEmptyStrings(values: string[] | undefined): string[] {
+  if (!values) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = value.trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
   }
   return result
 }

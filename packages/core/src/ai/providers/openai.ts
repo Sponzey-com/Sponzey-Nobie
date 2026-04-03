@@ -1,5 +1,5 @@
 import OpenAI from "openai"
-import type { LLMChunk, LLMProvider, ChatParams, AuthProfile, Message, ToolDefinition } from "../types.js"
+import type { AIChunk, AIProvider, ChatParams, AuthProfile, Message, ToolDefinition } from "../types.js"
 import { nextApiKey, markKeyFailure } from "../types.js"
 import { createLogger } from "../../logger/index.js"
 import {
@@ -10,7 +10,7 @@ import {
   type OpenAICodexOAuthConfig,
 } from "../../auth/openai-codex-oauth.js"
 
-const log = createLogger("llm:openai")
+const log = createLogger("ai:openai")
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_048
 const TOKEN_ESTIMATE_DIVISOR = 4
 const TOKEN_SAFETY_HEADROOM = 1_024
@@ -320,7 +320,7 @@ function parseSseFrame(frame: string): { event?: string | undefined; data: strin
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 
-export class OpenAIProvider implements LLMProvider {
+export class OpenAIProvider implements AIProvider {
   readonly id = "openai"
   readonly supportedModels = Object.keys(CONTEXT_LIMITS)
 
@@ -334,7 +334,7 @@ export class OpenAIProvider implements LLMProvider {
     return CONTEXT_LIMITS[model] ?? 128_000
   }
 
-  private async *chatWithCodexOAuth(params: ChatParams): AsyncGenerator<LLMChunk> {
+  private async *chatWithCodexOAuth(params: ChatParams): AsyncGenerator<AIChunk> {
     const { accessToken } = await readOpenAICodexAccessToken(this.oauthConfig)
     const url = `${resolveOpenAICodexBaseUrl(this.baseUrl)}${OPENAI_CODEX_RESPONSES_PATH}`
     const input = toCodexInput(params.messages)
@@ -378,7 +378,7 @@ export class OpenAIProvider implements LLMProvider {
     let outputTokens = 0
     const functionCalls = new Map<string, CodexFunctionCallState>()
 
-    const emitFrame = async (frame: string): Promise<LLMChunk[]> => {
+    const emitFrame = async (frame: string): Promise<AIChunk[]> => {
       const parsed = parseSseFrame(frame)
       if (!parsed?.data || parsed.data === "[DONE]") return []
 
@@ -497,7 +497,7 @@ export class OpenAIProvider implements LLMProvider {
     }
   }
 
-  async *chat(params: ChatParams): AsyncGenerator<LLMChunk> {
+  async *chat(params: ChatParams): AsyncGenerator<AIChunk> {
     if (this.oauthConfig) {
       yield* this.chatWithCodexOAuth(params)
       return

@@ -1,9 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk"
-import type { LLMChunk, LLMProvider, ChatParams, AuthProfile } from "../types.js"
+import type { AIChunk, AIProvider, ChatParams, AuthProfile } from "../types.js"
 import { nextApiKey, markKeyFailure } from "../types.js"
 import { createLogger } from "../../logger/index.js"
 
-const log = createLogger("llm:anthropic")
+const log = createLogger("ai:anthropic")
 
 const CONTEXT_LIMITS: Record<string, number> = {
   "claude-opus-4-5": 200_000,
@@ -14,7 +14,7 @@ const CONTEXT_LIMITS: Record<string, number> = {
   "claude-3-opus-20240229": 200_000,
 }
 
-export class AnthropicProvider implements LLMProvider {
+export class AnthropicProvider implements AIProvider {
   readonly id = "anthropic"
   readonly supportedModels = Object.keys(CONTEXT_LIMITS)
 
@@ -24,7 +24,7 @@ export class AnthropicProvider implements LLMProvider {
     return CONTEXT_LIMITS[model] ?? 200_000
   }
 
-  async *chat(params: ChatParams): AsyncGenerator<LLMChunk> {
+  async *chat(params: ChatParams): AsyncGenerator<AIChunk> {
     const apiKey = nextApiKey(this.profile)
     if (!apiKey) {
       throw new Error("No available Anthropic API keys (all on cooldown)")

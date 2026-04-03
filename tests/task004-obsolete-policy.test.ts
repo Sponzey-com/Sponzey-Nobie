@@ -7,8 +7,7 @@ function readRepoFile(path: string): string {
 
 describe("task004 obsolete policy guard", () => {
   it("keeps process documents synced with task/delivery/completion policy", () => {
-    expect(readRepoFile("process.md")).toContain("### 8.3 문서 동기화와 소멸 정책")
-    expect(readRepoFile("process-to.md")).toContain("## 11. 문서 동기화와 구형 코드 제거 정책")
+    expect(readRepoFile("process.md")).toContain("## 10. 문서 동기화 규칙")
     expect(readRepoFile("analyse.md")).toContain("## 전환 이후 확인 규칙")
     expect(readRepoFile("result.md")).toContain("## 10. 문서 동기화와 소멸 정책")
   })

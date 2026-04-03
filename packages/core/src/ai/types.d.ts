@@ -28,7 +28,7 @@ export interface ToolDefinition {
         required?: string[];
     };
 }
-export type LLMChunk = {
+export type AIChunk = {
     type: "text_delta";
     delta: string;
 } | {
@@ -51,10 +51,10 @@ export interface ChatParams {
     maxTokens?: number;
     signal?: AbortSignal;
 }
-export interface LLMProvider {
+export interface AIProvider {
     id: string;
     supportedModels: string[];
-    chat(params: ChatParams): AsyncGenerator<LLMChunk>;
+    chat(params: ChatParams): AsyncGenerator<AIChunk>;
     maxContextTokens(model: string): number;
 }
 export interface AuthProfile {

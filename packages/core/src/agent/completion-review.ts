@@ -1,5 +1,5 @@
-import { getDefaultModel, getProvider, inferProviderId, type LLMProvider } from "../llm/index.js"
-import type { Message } from "../llm/types.js"
+import { getDefaultModel, getProvider, inferProviderId, type AIProvider } from "../ai/index.js"
+import type { Message } from "../ai/types.js"
 import { createLogger } from "../logger/index.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
@@ -23,7 +23,7 @@ export async function reviewTaskCompletion(params: {
   priorAssistantMessages?: string[]
   model?: string
   providerId?: string
-  provider?: LLMProvider
+  provider?: AIProvider
   workDir?: string
 }): Promise<CompletionReviewResult | null> {
   const originalRequest = params.originalRequest.trim()

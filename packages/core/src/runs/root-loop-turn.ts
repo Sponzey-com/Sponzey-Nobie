@@ -11,7 +11,7 @@ import type { FinalizationDependencies, FinalizationSource } from "./finalizatio
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { TaskProfile } from "./types.js"
 import type { AgentContextMode } from "../agent/index.js"
-import type { TaskExecutionSemantics } from "../agent/intake.js"
+import type { TaskExecutionSemantics, TaskStructuredRequest } from "../agent/intake.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 
 export interface RootLoopTurnDependencies {
@@ -87,6 +87,7 @@ export interface RootLoopTurnParams {
   recoveryBudgetUsage: RecoveryBudgetUsage
   executionSemantics: TaskExecutionSemantics
   originalRequest: string
+  structuredRequest?: TaskStructuredRequest
   requestMessage: string
   workDir: string
   toolsEnabled?: boolean
@@ -103,7 +104,7 @@ export interface RootLoopTurnParams {
   seenCommandFailureRecoveryKeys: Set<string>
   seenExecutionRecoveryKeys: Set<string>
   seenDeliveryRecoveryKeys: Set<string>
-  seenLlmRecoveryKeys: Set<string>
+  seenAiRecoveryKeys: Set<string>
   priorAssistantMessages: string[]
   syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
   defaultMaxDelegationTurns: number
@@ -158,6 +159,15 @@ export async function runRootLoopTurn(
     }
   }
 
+  if (nextPendingLoopDirective) {
+    return {
+      kind: "continue",
+      pendingLoopDirective: nextPendingLoopDirective,
+      intakeProcessed: nextIntakeProcessed,
+      state: params.state,
+    }
+  }
+
   const executionCycleLaunch = moduleDependencies.prepareRootExecutionCyclePassLaunch({
     runId: params.runId,
     sessionId: params.sessionId,
@@ -169,6 +179,7 @@ export async function runRootLoopTurn(
     state: params.state,
     executionSemantics: params.executionSemantics,
     originalRequest: params.originalRequest,
+    ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
     requestMessage: params.requestMessage,
     workDir: params.workDir,
     ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
@@ -185,7 +196,7 @@ export async function runRootLoopTurn(
     seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
     seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
     seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
-    seenLlmRecoveryKeys: params.seenLlmRecoveryKeys,
+    seenAiRecoveryKeys: params.seenAiRecoveryKeys,
     recoveryBudgetUsage: params.recoveryBudgetUsage,
     priorAssistantMessages: params.priorAssistantMessages,
     syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,

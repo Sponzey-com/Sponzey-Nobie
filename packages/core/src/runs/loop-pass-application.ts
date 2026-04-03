@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { DeliveryOutcome } from "./delivery.js"
 import type { LoopDirective } from "./loop-directive.js"
 import type { LoopEntryPassResult } from "./loop-entry-pass.js"
@@ -56,7 +56,7 @@ export interface RecoveryEntryApplicationState {
   currentMessage: string
   currentModel: string | undefined
   currentProviderId: string | undefined
-  currentProvider: LLMProvider | undefined
+  currentProvider: AIProvider | undefined
   currentTargetId: string | undefined
   currentTargetLabel: string | undefined
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
@@ -160,7 +160,7 @@ export interface ReviewCycleApplicationState {
   currentMessage: string
   truncatedOutputRecoveryAttempted: boolean
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
-  currentProvider: LLMProvider | undefined
+  currentProvider: AIProvider | undefined
 }
 
 export type ReviewCycleApplicationResult =
@@ -172,7 +172,7 @@ export function applyReviewCyclePassResult(params: {
   currentMessage: string
   truncatedOutputRecoveryAttempted: boolean
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
-  currentProvider: LLMProvider | undefined
+  currentProvider: AIProvider | undefined
   seenFollowupPrompts: Set<string>
 }): ReviewCycleApplicationResult {
   if (params.result.kind === "break") {

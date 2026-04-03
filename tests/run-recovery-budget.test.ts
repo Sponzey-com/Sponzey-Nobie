@@ -21,13 +21,13 @@ describe("run recovery budget helpers", () => {
       usage,
       kind: "delivery",
       maxDelegationTurns: 5,
-    }).limit).toBe(3)
+    }).limit).toBe(5)
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "external",
       maxDelegationTurns: 5,
-    }).limit).toBe(4)
+    }).limit).toBe(5)
   })
 
   it("consumes budget independently per recovery kind", () => {
@@ -49,12 +49,12 @@ describe("run recovery budget helpers", () => {
       maxDelegationTurns: 5,
     })
 
-    expect(formatRecoveryBudgetProgress(state)).toBe("3/3")
+    expect(formatRecoveryBudgetProgress(state)).toBe("3/5")
     expect(canConsumeRecoveryBudget({
       usage,
       kind: "delivery",
       maxDelegationTurns: 5,
-    })).toBe(false)
+    })).toBe(true)
     expect(canConsumeRecoveryBudget({
       usage,
       kind: "execution",

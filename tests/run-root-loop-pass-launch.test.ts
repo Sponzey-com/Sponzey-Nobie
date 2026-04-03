@@ -84,7 +84,7 @@ describe("root loop pass launch", () => {
         currentTargetLabel: "OpenAI",
         activeWorkerRuntime: undefined,
         executionRecoveryLimitStop: null,
-        llmRecoveryLimitStop: null,
+        aiRecoveryLimitStop: null,
         sawRealFilesystemMutation: false,
         filesystemMutationRecoveryAttempted: false,
         truncatedOutputRecoveryAttempted: false,
@@ -97,6 +97,14 @@ describe("root loop pass launch", () => {
         approvalTool: "approve_run",
       },
       originalRequest: "original request",
+      structuredRequest: {
+        source_language: "en",
+        normalized_english: "Do the work",
+        target: "Do the work",
+        to: "the current channel",
+        context: ["Original user request: original request"],
+        complete_condition: ["The requested work is completed."],
+      },
       requestMessage: "initial message",
       workDir: "/tmp",
       isRootRequest: true,
@@ -111,7 +119,7 @@ describe("root loop pass launch", () => {
       seenCommandFailureRecoveryKeys: new Set<string>(),
       seenExecutionRecoveryKeys: new Set<string>(),
       seenDeliveryRecoveryKeys: new Set<string>(),
-      seenLlmRecoveryKeys: new Set<string>(),
+      seenAiRecoveryKeys: new Set<string>(),
       recoveryBudgetUsage: {
         interpretation: 0,
         execution: 0,
@@ -134,6 +142,9 @@ describe("root loop pass launch", () => {
     }, dependencies as any)
 
     expect(launch.params.syntheticApprovalAlreadyApproved).toBe(false)
+    expect(launch.params.state.currentMessage).toContain("[Root Task Execution]")
+    expect(launch.params.state.currentMessage).toContain("[checklist]")
+    expect(launch.params.state.currentMessage).toContain("- [ ] 목표 확인:")
     await launch.dependencies.runVerificationSubtask()
     expect(dependencies.runVerificationSubtask).toHaveBeenCalledTimes(1)
   })

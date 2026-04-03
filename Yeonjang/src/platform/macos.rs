@@ -10,10 +10,11 @@ use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
-    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseClickRequest,
-    MouseClickResult, MouseMoveRequest, MouseMoveResult, PlatformKind, ScreenCaptureRequest,
-    ScreenCaptureResult, SystemControlRequest, SystemControlResult, SystemSnapshot,
+    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest, CommandExecutionResult,
+    KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult, KeyboardTypeRequest,
+    KeyboardTypeResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
+    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest, SystemControlResult,
+    SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -33,7 +34,7 @@ impl AutomationBackend for PlatformBackend {
             application_launch: true,
             screen_capture: true,
             mouse_control: false,
-            keyboard_control: false,
+            keyboard_control: true,
             system_control: false,
         }
     }
@@ -301,10 +302,192 @@ impl AutomationBackend for PlatformBackend {
         if request.text.is_empty() {
             bail!("keyboard input text must not be empty");
         }
+        type_text_via_system_events(&request.text)?;
+        Ok(KeyboardTypeResult {
+            typed: true,
+            text_len: request.text.chars().count(),
+            message: "Keyboard text input completed.".to_string(),
+        })
+    }
+
+    fn perform_keyboard_action(
+        &self,
+        request: KeyboardActionRequest,
+    ) -> Result<KeyboardActionResult> {
+        match request.action {
+            KeyboardActionKind::TypeText => {
+                let text = request.text.unwrap_or_default();
+                let result = self.type_text(KeyboardTypeRequest { text })?;
+                Ok(KeyboardActionResult {
+                    accepted: result.typed,
+                    action: KeyboardActionKind::TypeText,
+                    text_len: Some(result.text_len),
+                    key: None,
+                    modifiers: Vec::new(),
+                    message: result.message,
+                })
+            }
+            KeyboardActionKind::Shortcut => {
+                let key = request.key.unwrap_or_default();
+                if key.trim().is_empty() {
+                    bail!("keyboard.action `shortcut` requires non-empty `key`");
+                }
+                trigger_shortcut_via_system_events(&key, &request.modifiers)?;
+                Ok(KeyboardActionResult {
+                    accepted: true,
+                    action: KeyboardActionKind::Shortcut,
+                    text_len: None,
+                    key: Some(key),
+                    modifiers: request.modifiers,
+                    message: "Keyboard shortcut completed.".to_string(),
+                })
+            }
+            KeyboardActionKind::KeyPress
+            | KeyboardActionKind::KeyDown
+            | KeyboardActionKind::KeyUp => bail!(
+                "keyboard.action `{}` is scaffolded but not implemented yet",
+                request.action.as_str()
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MacosKeyboardTarget {
+    Keystroke(String),
+    KeyCode(u16),
+}
+
+fn run_osascript(script: &str) -> Result<()> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .with_context(|| "failed to execute osascript for keyboard control".to_string())?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         bail!(
-            "{}",
-            shared::not_implemented("keyboard.type", self.platform_kind())
+            "keyboard automation failed: {}{}{}",
+            stderr.trim(),
+            if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                " | "
+            } else {
+                ""
+            },
+            stdout.trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn type_text_via_system_events(text: &str) -> Result<()> {
+    let script = format!(
+        "tell application \"System Events\" to keystroke {}",
+        apple_script_string_literal(text)
+    );
+    run_osascript(&script)
+}
+
+fn trigger_shortcut_via_system_events(key: &str, modifiers: &[String]) -> Result<()> {
+    let target = resolve_macos_keyboard_target(key)?;
+    let using_clause = build_modifier_clause(modifiers)?;
+    let key_expr = match target {
+        MacosKeyboardTarget::Keystroke(text) => {
+            format!("keystroke {}", apple_script_string_literal(&text))
+        }
+        MacosKeyboardTarget::KeyCode(code) => format!("key code {code}"),
+    };
+    let script = if using_clause.is_empty() {
+        format!("tell application \"System Events\" to {key_expr}")
+    } else {
+        format!(
+            "tell application \"System Events\" to {key_expr} using {{{}}}",
+            using_clause.join(", ")
         )
+    };
+    run_osascript(&script)
+}
+
+fn apple_script_string_literal(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn build_modifier_clause(modifiers: &[String]) -> Result<Vec<&'static str>> {
+    let mut clauses: Vec<&'static str> = Vec::new();
+    for modifier in modifiers {
+        let normalized = modifier.trim().to_lowercase();
+        let clause = match normalized.as_str() {
+            "control" | "ctrl" | "leftcontrol" | "rightcontrol" | "leftctrl" | "rightctrl" => {
+                "control down"
+            }
+            "shift" | "leftshift" | "rightshift" => "shift down",
+            "alt" | "option" | "leftalt" | "rightalt" | "leftoption" | "rightoption" => {
+                "option down"
+            }
+            "meta" | "super" | "cmd" | "command" | "leftcommand" | "rightcommand"
+            | "leftsuper" | "rightsuper" | "win" | "windows" => "command down",
+            other => bail!("unsupported keyboard modifier for macOS shortcut: {other}"),
+        };
+        if !clauses.contains(&clause) {
+            clauses.push(clause);
+        }
+    }
+    Ok(clauses)
+}
+
+fn resolve_macos_keyboard_target(key: &str) -> Result<MacosKeyboardTarget> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        bail!("keyboard shortcut key must not be empty");
+    }
+
+    if trimmed.chars().count() == 1 {
+        return Ok(MacosKeyboardTarget::Keystroke(trimmed.to_string()));
+    }
+
+    let normalized = trimmed
+        .to_lowercase()
+        .replace('_', "")
+        .replace('-', "")
+        .replace(' ', "");
+
+    let key_code = match normalized.as_str() {
+        "enter" | "return" => Some(36),
+        "tab" => Some(48),
+        "space" | "spacebar" => Some(49),
+        "delete" | "backspace" => Some(51),
+        "esc" | "escape" => Some(53),
+        "forwarddelete" => Some(117),
+        "home" => Some(115),
+        "end" => Some(119),
+        "pageup" => Some(116),
+        "pagedown" => Some(121),
+        "left" | "leftarrow" => Some(123),
+        "right" | "rightarrow" => Some(124),
+        "down" | "downarrow" => Some(125),
+        "up" | "uparrow" => Some(126),
+        "f1" => Some(122),
+        "f2" => Some(120),
+        "f3" => Some(99),
+        "f4" => Some(118),
+        "f5" => Some(96),
+        "f6" => Some(97),
+        "f7" => Some(98),
+        "f8" => Some(100),
+        "f9" => Some(101),
+        "f10" => Some(109),
+        "f11" => Some(103),
+        "f12" => Some(111),
+        _ => None,
+    };
+
+    if let Some(code) = key_code {
+        Ok(MacosKeyboardTarget::KeyCode(code))
+    } else {
+        bail!("unsupported keyboard shortcut key for macOS: {trimmed}")
     }
 }
 
@@ -610,3 +793,32 @@ if includeBase64 {
 let data = try JSONSerialization.data(withJSONObject: payload, options: [])
 FileHandle.standardOutput.write(data)
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::{MacosKeyboardTarget, build_modifier_clause, resolve_macos_keyboard_target};
+
+    #[test]
+    fn resolves_letter_shortcut_to_keystroke() {
+        let result = resolve_macos_keyboard_target("c").expect("letter key should resolve");
+        assert_eq!(result, MacosKeyboardTarget::Keystroke("c".to_string()));
+    }
+
+    #[test]
+    fn resolves_named_shortcut_to_keycode() {
+        let result = resolve_macos_keyboard_target("Space").expect("space key should resolve");
+        assert_eq!(result, MacosKeyboardTarget::KeyCode(49));
+    }
+
+    #[test]
+    fn builds_deduplicated_modifier_clause() {
+        let clause = build_modifier_clause(&[
+            "Command".to_string(),
+            "LeftControl".to_string(),
+            "cmd".to_string(),
+        ])
+        .expect("modifier clause should resolve");
+
+        assert_eq!(clause, vec!["command down", "control down"]);
+    }
+}

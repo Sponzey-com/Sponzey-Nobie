@@ -1,4 +1,4 @@
-import { getDefaultModel, getProvider, inferProviderId } from "../llm/index.js";
+import { getDefaultModel, getProvider, inferProviderId } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { buildUserProfilePromptContext } from "./profile-context.js";

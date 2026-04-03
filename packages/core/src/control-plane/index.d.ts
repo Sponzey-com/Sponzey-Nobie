@@ -19,8 +19,8 @@ export interface CapabilityCounts {
 export interface AIBackendCard {
     id: string;
     label: string;
-    kind: "provider" | "worker";
-    providerType: "openai" | "ollama" | "llama" | "claude" | "gemini" | "custom";
+    kind: "provider";
+    providerType: "openai" | "ollama" | "llama" | "anthropic" | "gemini" | "custom";
     credentials: {
         apiKey?: string;
         username?: string;

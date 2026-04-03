@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest"
 import { planExternalRecovery } from "../packages/core/src/runs/external-recovery.ts"
 
 describe("external recovery planning", () => {
-  it("stops when the same llm recovery repeats on the same route", () => {
+  it("stops when the same ai recovery repeats on the same route", () => {
     const seenKeys = new Set<string>()
     const firstPlan = planExternalRecovery({
-      kind: "llm",
+      kind: "ai",
       taskProfile: "general_chat",
       current: {
         model: "gpt-4o-mini",
@@ -16,7 +16,7 @@ describe("external recovery planning", () => {
         workerRuntime: undefined,
       },
       payload: {
-        summary: "LLM 오류 복구",
+        summary: "AI 오류 복구",
         reason: "403 blocked",
         message: "challenge",
       },
@@ -37,7 +37,7 @@ describe("external recovery planning", () => {
     seenKeys.add(firstPlan.recoveryKey)
 
     const repeatedPlan = planExternalRecovery({
-      kind: "llm",
+      kind: "ai",
       taskProfile: "general_chat",
       current: {
         model: "gpt-4o-mini",
@@ -48,7 +48,7 @@ describe("external recovery planning", () => {
         workerRuntime: undefined,
       },
       payload: {
-        summary: "LLM 오류 복구",
+        summary: "AI 오류 복구",
         reason: "403 blocked",
         message: "challenge",
       },
@@ -66,7 +66,8 @@ describe("external recovery planning", () => {
       },
     })
 
-    expect(repeatedPlan.duplicateStop?.summary).toContain("같은 LLM 오류")
+    expect(repeatedPlan.duplicateStop?.summary).toContain("같은 AI 오류")
+    expect(repeatedPlan.duplicateStop?.rawMessage).toBe("challenge")
   })
 
   it("falls back from worker runtime to default inference path when route does not change", () => {
@@ -75,16 +76,15 @@ describe("external recovery planning", () => {
       taskProfile: "operations",
       current: {
         model: "gpt-4o-mini",
-        providerId: "anthropic",
+        providerId: "openai",
         provider: undefined,
-        targetId: "worker:claude_code",
-        targetLabel: "Claude Code",
+        targetId: "worker:internal_ai",
+        targetLabel: "외부 작업 세션",
         workerRuntime: {
-          kind: "claude_code",
-          label: "Claude Code",
-          command: "claude",
-          args: [],
-          detect: { type: "command", command: "claude", args: ["--version"] },
+          kind: "internal_ai",
+          targetId: "worker:internal_ai",
+          label: "외부 작업 세션",
+          command: "disabled",
         },
       },
       payload: {
@@ -97,16 +97,15 @@ describe("external recovery planning", () => {
       previousResult: "partial",
       dependencies: {
         resolveRoute: () => ({
-          targetId: "worker:claude_code",
-          targetLabel: "Claude Code",
-          providerId: "anthropic",
+          targetId: "worker:internal_ai",
+          targetLabel: "외부 작업 세션",
+          providerId: "openai",
           model: "gpt-4o-mini",
           workerRuntime: {
-            kind: "claude_code",
-            label: "Claude Code",
-            command: "claude",
-            args: [],
-            detect: { type: "command", command: "claude", args: ["--version"] },
+            kind: "internal_ai",
+            targetId: "worker:internal_ai",
+            label: "외부 작업 세션",
+            command: "disabled",
           },
           reason: "same",
         }),
@@ -117,11 +116,15 @@ describe("external recovery planning", () => {
     expect(plan.nextState.workerRuntime).toBeUndefined()
     expect(plan.routeEventLabel).toContain("기본 추론 경로")
     expect(plan.nextMessage).toContain("[Worker Runtime Error Recovery]")
+    expect(plan.nextMessage).toContain("실패한 접근 방식: 외부 작업 세션 / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("다시 사용 금지 대상:")
+    expect(plan.nextMessage).toContain("- worker:internal_ai")
+    expect(plan.nextMessage).toContain("우선 검토할 다른 경로: 기본 AI 추론 경로")
   })
 
   it("applies reroute when another target is available", () => {
     const plan = planExternalRecovery({
-      kind: "llm",
+      kind: "ai",
       taskProfile: "general_chat",
       current: {
         model: "gpt-4o-mini",
@@ -132,7 +135,7 @@ describe("external recovery planning", () => {
         workerRuntime: undefined,
       },
       payload: {
-        summary: "llm 복구",
+        summary: "ai 복구",
         reason: "rate limit",
         message: "too many requests",
       },
@@ -141,24 +144,22 @@ describe("external recovery planning", () => {
       previousResult: "partial",
       dependencies: {
         resolveRoute: () => ({
-          targetId: "worker:claude_code",
-          targetLabel: "Claude Code",
+          targetId: "provider:anthropic",
+          targetLabel: "Anthropic",
           providerId: "anthropic",
           model: "claude-sonnet",
-          workerRuntime: {
-            kind: "claude_code",
-            label: "Claude Code",
-            command: "claude",
-            args: [],
-            detect: { type: "command", command: "claude", args: ["--version"] },
-          },
           reason: "reroute",
         }),
       },
     })
 
     expect(plan.routeChanged).toBe(true)
-    expect(plan.nextState.targetLabel).toBe("Claude Code")
-    expect(plan.routeEventLabel).toContain("LLM 복구 경로 전환")
+    expect(plan.nextState.targetLabel).toBe("Anthropic")
+    expect(plan.routeEventLabel).toContain("AI 복구 경로 전환")
+    expect(plan.nextMessage).toContain("실패한 접근 방식: OpenAI / openai / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("다시 사용 금지 대상:")
+    expect(plan.nextMessage).toContain("- provider:openai")
+    expect(plan.nextMessage).toContain("우선 검토할 다른 경로: Anthropic")
+    expect(plan.nextMessage).toContain("금지 대상과 같은 방법은 다시 선택하지 마세요")
   })
 })

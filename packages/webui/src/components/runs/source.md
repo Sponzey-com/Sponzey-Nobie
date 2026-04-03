@@ -8,6 +8,8 @@
 
 - `RunStatusCard.tsx`: 큐 카드와 트리 구조 표시
 - `RunSummaryPanel.tsx`: 탑다운 실행 요약과 진단 정보
+- `TaskChecklistPanel.tsx`: task projection의 checklist state를 체크박스형 상태 패널로 표시
+- `TaskFailurePanel.tsx`: task projection이 계산한 실패 종류, 마지막 실패 요약, detail lines 표시
 - `RunStepTimeline.tsx`, `RunEventFeed.tsx`: 이력과 이벤트 표시
 - `RunApprovalActions.tsx`, `CancelRunButton.tsx`: 직접 제어 버튼
 - `runLabels.ts`: 상태, 프로필, 대상 라벨 매핑

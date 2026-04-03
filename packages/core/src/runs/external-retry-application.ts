@@ -8,17 +8,18 @@ import {
 import type { ExternalRecoveryPayload } from "./external-recovery.js"
 import type { FinalizationSource } from "./finalization.js"
 
-export type ExternalRetryKind = "llm" | "worker_runtime"
+export type ExternalRetryKind = "ai" | "worker_runtime"
 
 export type ExternalRecoveryAttemptResult =
   | {
-      kind: "stop"
-      stop: {
-        summary: string
-        reason: string
-        remainingItems: string[]
-      }
+    kind: "stop"
+    stop: {
+      summary: string
+      reason: string
+      rawMessage?: string
+      remainingItems: string[]
     }
+  }
   | {
       kind: "retry"
       payload: ExternalRecoveryPayload
@@ -86,13 +87,14 @@ export function applyExternalRecoveryAttempt(
   })) {
     dependencies.appendRunEvent(
       params.runId,
-      `${params.kind === "llm" ? "LLM" : "작업 세션"} 복구 한도 도달 ${formatRecoveryBudgetProgress(externalBudget)}`,
+      `${params.kind === "ai" ? "AI" : "작업 세션"} 복구 한도 도달 ${formatRecoveryBudgetProgress(externalBudget)}`,
     )
     return {
       kind: "stop",
       stop: {
-        summary: `${params.kind === "llm" ? "LLM" : "작업 세션"} 복구 재시도 한도(${externalBudget.limit > 0 ? externalBudget.limit : params.maxDelegationTurns}회)에 도달했습니다.`,
+        summary: `${params.kind === "ai" ? "AI" : "작업 세션"} 복구 재시도 한도(${externalBudget.limit > 0 ? externalBudget.limit : params.maxDelegationTurns}회)에 도달했습니다.`,
         reason: params.payload.reason,
+        ...(params.payload.message.trim() ? { rawMessage: params.payload.message } : {}),
         remainingItems: params.limitRemainingItems,
       },
     }
@@ -106,7 +108,7 @@ export function applyExternalRecoveryAttempt(
   })
   dependencies.appendRunEvent(
     params.runId,
-    `${params.kind === "llm" ? "LLM 오류" : "작업 세션"} 복구 재시도 ${formatRecoveryBudgetProgress(externalBudgetAfterUse)}`,
+    `${params.kind === "ai" ? "AI 오류" : "작업 세션"} 복구 재시도 ${formatRecoveryBudgetProgress(externalBudgetAfterUse)}`,
   )
   dependencies.setRunStepStatus(params.runId, "executing", "running", params.payload.summary)
   dependencies.updateRunStatus(params.runId, "running", params.payload.summary, true)

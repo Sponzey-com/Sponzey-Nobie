@@ -34,7 +34,7 @@ export interface ToolDefinition {
   }
 }
 
-export type LLMChunk =
+export type AIChunk =
   | { type: "text_delta"; delta: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "message_stop"; usage: { input_tokens: number; output_tokens: number } }
@@ -48,10 +48,10 @@ export interface ChatParams {
   signal?: AbortSignal
 }
 
-export interface LLMProvider {
+export interface AIProvider {
   id: string
   supportedModels: string[]
-  chat(params: ChatParams): AsyncGenerator<LLMChunk>
+  chat(params: ChatParams): AsyncGenerator<AIChunk>
   maxContextTokens(model: string): number
 }
 

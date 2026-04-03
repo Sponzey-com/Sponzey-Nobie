@@ -4,7 +4,7 @@ import { runExternalRecoverySequence } from "../packages/core/src/runs/external-
 function createBaseParams() {
   return {
     recoveries: [
-      { kind: "llm" as const, payload: { summary: "llm", reason: "a", message: "b" } },
+      { kind: "ai" as const, payload: { summary: "ai", reason: "a", message: "b" } },
       { kind: "worker_runtime" as const, payload: { summary: "worker", reason: "c", message: "d" } },
     ],
     aborted: false,
@@ -73,8 +73,8 @@ describe("external recovery sequence", () => {
           model: "claude-sonnet",
           providerId: "anthropic",
           provider: undefined,
-          targetId: "worker:claude",
-          targetLabel: "Claude",
+          targetId: "provider:anthropic",
+          targetLabel: "Anthropic",
           workerRuntime: undefined,
         },
         nextMessage: "retry prompt",
@@ -92,8 +92,8 @@ describe("external recovery sequence", () => {
         model: "claude-sonnet",
         providerId: "anthropic",
         provider: undefined,
-        targetId: "worker:claude",
-        targetLabel: "Claude",
+        targetId: "provider:anthropic",
+        targetLabel: "Anthropic",
         workerRuntime: undefined,
       },
       nextMessage: "retry prompt",

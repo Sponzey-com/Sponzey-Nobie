@@ -36,10 +36,10 @@ function createDraft(): SetupDraft {
         endpoint: "http://127.0.0.1:11434/v1",
       },
       {
-        id: "worker:claude_code",
-        label: "코드 작업 세션",
-        kind: "worker",
-        providerType: "claude",
+        id: "provider:anthropic",
+        label: "Anthropic 추론",
+        kind: "provider",
+        providerType: "anthropic",
         credentials: { apiKey: "sk-ant-test" },
         local: false,
         enabled: true,
@@ -69,12 +69,12 @@ function createDraft(): SetupDraft {
       { id: "default", label: "기본", targets: ["provider:openai"] },
       { id: "general_chat", label: "일반 대화", targets: ["provider:openai"] },
       { id: "planning", label: "계획/설계", targets: ["provider:gemini", "provider:openai"] },
-      { id: "coding", label: "코딩", targets: ["worker:claude_code", "provider:openai"] },
-      { id: "review", label: "리뷰", targets: ["worker:claude_code", "provider:openai"] },
+      { id: "coding", label: "코딩", targets: ["provider:anthropic", "provider:openai"] },
+      { id: "review", label: "리뷰", targets: ["provider:anthropic", "provider:openai"] },
       { id: "research", label: "리서치", targets: ["provider:gemini", "provider:openai"] },
       { id: "private_local", label: "로컬 우선", targets: ["provider:ollama", "provider:openai"] },
       { id: "summarization", label: "요약", targets: ["provider:ollama", "provider:openai"] },
-      { id: "operations", label: "운영", targets: ["worker:claude_code", "provider:openai"] },
+      { id: "operations", label: "운영", targets: ["provider:anthropic", "provider:openai"] },
     ],
     security: {
       approvalMode: "on-miss",
@@ -97,43 +97,64 @@ function createDraft(): SetupDraft {
 }
 
 describe("resolveRunRouteFromDraft", () => {
-  it("prefers coding worker runtime for coding tasks when available", () => {
+  it("uses the configured default routing target even for coding tasks", () => {
     const route = resolveRunRouteFromDraft(
       createDraft(),
       { taskProfile: "coding" },
-      { workerAvailability: { claude_code: true } },
     )
 
-    expect(route.targetId).toBe("worker:claude_code")
-    expect(route.workerRuntime?.kind).toBe("claude_code")
-    expect(route.providerId).toBe("anthropic")
-    expect(route.model).toBe("claude-3-5-haiku-20241022")
-  })
-
-  it("falls back to provider execution when worker runtime is unavailable", () => {
-    const route = resolveRunRouteFromDraft(
-      createDraft(),
-      { taskProfile: "coding" },
-      { workerAvailability: { claude_code: false } },
-    )
-
-    expect(route.targetId).toBe("worker:claude_code")
+    expect(route.targetId).toBe("provider:openai")
     expect(route.workerRuntime).toBeUndefined()
-    expect(route.providerId).toBe("anthropic")
-    expect(route.model).toBe("claude-3-5-haiku-20241022")
+    expect(route.providerId).toBe("openai")
+    expect(route.model).toBe("gpt-4o-mini")
   })
 
-  it("prefers local ollama route for private_local tasks", () => {
+  it("returns no configured backend when the configured default target is unavailable", () => {
+    const draft = createDraft()
+    draft.aiBackends = draft.aiBackends.map((backend) => (
+      backend.id === "provider:openai"
+        ? { ...backend, enabled: false, credentials: {}, defaultModel: "" }
+        : backend
+    ))
+
+    const route = resolveRunRouteFromDraft(
+      draft,
+      { taskProfile: "coding" },
+    )
+
+    expect(route.targetId).toBeUndefined()
+    expect(route.workerRuntime).toBeUndefined()
+    expect(route.providerId).toBeUndefined()
+    expect(route.reason).toBe("routing:no-configured-ai-backend")
+  })
+
+  it("does not invent a fallback model for the selected backend", () => {
+    const draft = createDraft()
+    draft.aiBackends = draft.aiBackends.map((backend) => (
+      backend.id === "provider:openai"
+        ? { ...backend, defaultModel: "" }
+        : backend
+    ))
+
+    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+
+    expect(route.targetId).toBeUndefined()
+    expect(route.providerId).toBeUndefined()
+    expect(route.model).toBeUndefined()
+    expect(route.reason).toBe("routing:no-configured-ai-backend")
+  })
+
+  it("does not switch to another backend only because the task profile changed", () => {
     const route = resolveRunRouteFromDraft(createDraft(), { taskProfile: "private_local" })
 
-    expect(route.targetId).toBe("provider:ollama")
+    expect(route.targetId).toBe("provider:openai")
     expect(route.providerId).toBe("openai")
-    expect(route.model).toBe("llama3.1:8b")
+    expect(route.model).toBe("gpt-4o-mini")
   })
 
-  it("uses preferred target when provided", () => {
+  it("keeps the configured default target even when another preferred target is requested", () => {
     const route = resolveRunRouteFromDraft(createDraft(), {
-      preferredTarget: "provider:openai",
+      preferredTarget: "provider:anthropic",
       taskProfile: "coding",
     })
 
@@ -142,11 +163,32 @@ describe("resolveRunRouteFromDraft", () => {
     expect(route.model).toBe("gpt-4o-mini")
   })
 
-  it("falls back past unsupported gemini target to an executable backend", () => {
+  it("uses the default target for planning tasks instead of profile-specific alternatives", () => {
     const route = resolveRunRouteFromDraft(createDraft(), { taskProfile: "planning" })
 
     expect(route.targetId).toBe("provider:openai")
     expect(route.providerId).toBe("openai")
     expect(route.model).toBe("gpt-4o-mini")
+  })
+
+  it("does not fall back to an unconfigured anthropic backend", () => {
+    const draft = createDraft()
+    draft.aiBackends = draft.aiBackends.map((backend) => ({
+      ...backend,
+      enabled: false,
+      credentials: {},
+      ...(backend.providerType === "openai" || backend.providerType === "gemini" || backend.providerType === "ollama"
+        ? { defaultModel: "", endpoint: undefined }
+        : { defaultModel: backend.defaultModel }),
+    }))
+
+    const route = resolveRunRouteFromDraft(
+      draft,
+      { taskProfile: "coding" },
+    )
+
+    expect(route.targetId).toBeUndefined()
+    expect(route.workerRuntime).toBeUndefined()
+    expect(route.providerId).toBeUndefined()
   })
 })

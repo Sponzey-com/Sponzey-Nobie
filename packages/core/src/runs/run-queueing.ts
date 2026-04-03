@@ -4,7 +4,7 @@ import type {
   TaskIntentEnvelope,
   TaskStructuredRequest,
 } from "../agent/intake.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import { resolveRunRoute } from "./routing.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { RootRun, TaskProfile } from "./types.js"
@@ -29,7 +29,7 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
     originRequestGroupId?: string | undefined
     model: string | undefined
     providerId?: string | undefined
-    provider?: LLMProvider | undefined
+    provider?: AIProvider | undefined
     targetId?: string | undefined
     targetLabel?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined

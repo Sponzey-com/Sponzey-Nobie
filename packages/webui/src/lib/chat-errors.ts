@@ -15,7 +15,7 @@ export function mapChatErrorMessage(raw: string, language: UiLanguage = "ko"): s
   }
 
   if (
-    lower.includes("unsupported llm provider")
+    lower.includes("unsupported ai backend")
     || lower.includes("no model")
     || lower.includes("model is required")
     || lower.includes("no backend")
@@ -63,8 +63,8 @@ export function mapChatErrorMessage(raw: string, language: UiLanguage = "ko"): s
     return pickUiText(language, "선택한 모델 설정에 문제가 있습니다. 기본 모델과 사용 가능한 모델 목록을 확인해 주세요.", "There is a problem with the selected model. Check the default model and the available model list.")
   }
 
-  if (lower.includes("llm error:")) {
-    return pickUiText(language, `AI 실행 오류: ${text.replace(/^llm error:\s*/i, "")}`, `AI execution error: ${text.replace(/^llm error:\s*/i, "")}`)
+  if (lower.includes("ai error:")) {
+    return pickUiText(language, `AI 실행 오류: ${text.replace(/^ai error:\s*/i, "")}`, `AI execution error: ${text.replace(/^ai error:\s*/i, "")}`)
   }
 
   if (lower.includes("500 internal server error")) {
@@ -77,13 +77,13 @@ export function mapChatErrorMessage(raw: string, language: UiLanguage = "ko"): s
 export function isAiRelatedError(raw: string): boolean {
   const text = raw.toLowerCase()
   return (
-    text.includes("llm error")
+    text.includes("ai error")
     || text.includes("openai")
     || text.includes("anthropic")
     || text.includes("api key")
     || text.includes("model")
     || text.includes("fetch failed")
-    || text.includes("unsupported llm provider")
+    || text.includes("unsupported ai backend")
     || text.includes("rate limit")
     || text.includes("unauthorized")
     || text.includes("forbidden")

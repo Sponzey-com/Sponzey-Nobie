@@ -1,6 +1,6 @@
 /**
- * Mouse control tools. Uses Yeonjang first when available,
- * then falls back to local nut-js control.
+ * Mouse control tools.
+ * Requires Yeonjang for execution.
  */
 
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
@@ -8,18 +8,16 @@ import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableErr
 
 const MOVE_DELAY_MS = 500
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getNutMouse(): Promise<{ mouse: any; Point: any; Button: any }> {
-  for (const pkg of ["@nut-tree-fork/nut-js", "@nut-tree/nut-js"]) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const mod = await import(pkg)
-      return mod as { mouse: unknown; Point: unknown; Button: unknown } as never
-    } catch {
-      // try next package
-    }
+function yeonjangRequiredFailure(method: string): ToolResult {
+  return {
+    success: false,
+    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+    error: "YEONJANG_REQUIRED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+    },
   }
-  throw new Error("@nut-tree/nut-js not installed. Run: pnpm add @nut-tree-fork/nut-js")
 }
 
 interface MouseMoveParams {
@@ -63,7 +61,7 @@ export const mouseMoveTool: AgentTool<MouseMoveParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: MouseMoveParams, ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: MouseMoveParams, _ctx: ToolContext): Promise<ToolResult> => {
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
@@ -85,18 +83,8 @@ export const mouseMoveTool: AgentTool<MouseMoveParams> = {
         const message = error instanceof Error ? error.message : String(error)
         return { success: false, output: `Yeonjang 마우스 이동 실패: ${message}`, error: message }
       }
-      ctx.onProgress("Yeonjang 연장을 찾지 못해 로컬 마우스 이동으로 전환합니다.")
     }
-
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const { mouse, Point } = await getNutMouse()
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await mouse.move([new Point(params.x, params.y)])
-      return { success: true, output: `마우스를 (${params.x}, ${params.y})로 이동했습니다.`, details: { via: "local" } }
-    } catch (err) {
-      return { success: false, output: `마우스 이동 실패: ${err instanceof Error ? err.message : String(err)}` }
-    }
+    return yeonjangRequiredFailure("mouse.move")
   },
 }
 
@@ -119,7 +107,7 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: MouseClickParams, ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: MouseClickParams, _ctx: ToolContext): Promise<ToolResult> => {
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
@@ -146,30 +134,7 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
         const message = error instanceof Error ? error.message : String(error)
         return { success: false, output: `Yeonjang 마우스 클릭 실패: ${message}`, error: message }
       }
-      ctx.onProgress("Yeonjang 연장을 찾지 못해 로컬 마우스 클릭으로 전환합니다.")
     }
-
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const { mouse, Point, Button } = await getNutMouse()
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await mouse.move([new Point(params.x, params.y)])
-
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const btn = params.button === "right" ? Button.RIGHT : params.button === "middle" ? Button.MIDDLE : Button.LEFT
-
-      if (params.double) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        await mouse.doubleClick(btn)
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        await mouse.click(btn)
-      }
-
-      const action = params.double ? "더블 클릭" : "클릭"
-      return { success: true, output: `(${params.x}, ${params.y}) ${action} 완료`, details: { via: "local" } }
-    } catch (err) {
-      return { success: false, output: `마우스 클릭 실패: ${err instanceof Error ? err.message : String(err)}` }
-    }
+    return yeonjangRequiredFailure("mouse.click")
   },
 }

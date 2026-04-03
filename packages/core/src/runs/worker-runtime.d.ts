@@ -1,14 +1,13 @@
 import type { AgentChunk } from "../agent/index.js";
-export type WorkerRuntimeKind = "claude_code" | "codex_cli";
+export type WorkerRuntimeKind = string;
 export interface WorkerRuntimeTarget {
     kind: WorkerRuntimeKind;
     targetId: string;
     label: string;
-    command: string;
+    command?: string;
 }
 export interface WorkerAvailabilityOverrides {
-    claude_code?: boolean;
-    codex_cli?: boolean;
+    [kind: string]: boolean | undefined;
 }
 export declare function resolveWorkerRuntimeTarget(kind: WorkerRuntimeKind): WorkerRuntimeTarget;
 export declare function isWorkerRuntimeAvailable(kind: WorkerRuntimeKind, overrides?: WorkerAvailabilityOverrides): boolean;

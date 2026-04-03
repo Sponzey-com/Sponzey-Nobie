@@ -1,6 +1,6 @@
 /**
- * Keyboard control tools. Uses Yeonjang first when available,
- * then falls back to local nut-js control.
+ * Keyboard control tools.
+ * Requires Yeonjang for execution.
  */
 
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
@@ -8,18 +8,16 @@ import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableErr
 
 const TYPE_DELAY_MS = 500
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getNutKeyboard(): Promise<{ keyboard: any; Key: any }> {
-  for (const pkg of ["@nut-tree-fork/nut-js", "@nut-tree/nut-js"]) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const mod = await import(pkg)
-      return mod as never
-    } catch {
-      // try next package
-    }
+function yeonjangRequiredFailure(method: string): ToolResult {
+  return {
+    success: false,
+    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+    error: "YEONJANG_REQUIRED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+    },
   }
-  throw new Error("@nut-tree/nut-js not installed. Run: pnpm add @nut-tree-fork/nut-js")
 }
 
 interface KeyboardTypeParams {
@@ -36,6 +34,71 @@ interface YeonjangKeyboardTypeResult {
   message: string
 }
 
+interface YeonjangKeyboardActionResult {
+  accepted: boolean
+  action: string
+  key?: string
+  modifiers?: string[]
+  message: string
+}
+
+const MODIFIER_KEY_ALIASES = new Map<string, string>([
+  ["leftcontrol", "control"],
+  ["rightcontrol", "control"],
+  ["control", "control"],
+  ["ctrl", "control"],
+  ["leftctrl", "control"],
+  ["rightctrl", "control"],
+  ["leftshift", "shift"],
+  ["rightshift", "shift"],
+  ["shift", "shift"],
+  ["leftalt", "alt"],
+  ["rightalt", "alt"],
+  ["alt", "alt"],
+  ["option", "alt"],
+  ["leftoption", "alt"],
+  ["rightoption", "alt"],
+  ["leftsuper", "meta"],
+  ["rightsuper", "meta"],
+  ["super", "meta"],
+  ["meta", "meta"],
+  ["cmd", "meta"],
+  ["command", "meta"],
+  ["leftcommand", "meta"],
+  ["rightcommand", "meta"],
+  ["win", "meta"],
+  ["windows", "meta"],
+])
+
+function normalizeModifierKey(key: string): string | null {
+  return MODIFIER_KEY_ALIASES.get(key.trim().toLowerCase()) ?? null
+}
+
+function splitShortcutKeys(keys: string[]): { key: string; modifiers: string[] } {
+  const trimmed = keys.map((key) => key.trim()).filter(Boolean)
+  if (trimmed.length === 0) {
+    throw new Error("단축키에는 최소 한 개 이상의 키가 필요합니다.")
+  }
+
+  const nonModifierKeys = trimmed.filter((key) => normalizeModifierKey(key) === null)
+  if (nonModifierKeys.length === 0) {
+    throw new Error("단축키에는 modifier가 아닌 일반 키가 하나 필요합니다.")
+  }
+  if (nonModifierKeys.length > 1) {
+    throw new Error(`여러 일반 키를 동시에 누르는 단축키는 지원하지 않습니다: ${nonModifierKeys.join(", ")}`)
+  }
+
+  const primaryKey = nonModifierKeys[0]!
+  const modifiers = Array.from(new Set(
+    trimmed
+      .filter((key) => key !== primaryKey)
+      .map((key) => normalizeModifierKey(key))
+      .filter((value): value is string => typeof value === "string"),
+  ))
+
+  return { key: primaryKey, modifiers }
+}
+
 export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
   name: "keyboard_type",
   description: "키보드로 텍스트를 입력합니다. 현재 포커스된 입력창에 텍스트가 입력됩니다.",
@@ -48,7 +111,7 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: KeyboardTypeParams, ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: KeyboardTypeParams, _ctx: ToolContext): Promise<ToolResult> => {
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     try {
@@ -70,22 +133,8 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
         const message = error instanceof Error ? error.message : String(error)
         return { success: false, output: `Yeonjang 키보드 입력 실패: ${message}`, error: message }
       }
-      ctx.onProgress("Yeonjang 연장을 찾지 못해 로컬 키보드 입력으로 전환합니다.")
     }
-
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const { keyboard } = await getNutKeyboard()
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await keyboard.type(params.text)
-      return {
-        success: true,
-        output: `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
-        details: { via: "local" },
-      }
-    } catch (err) {
-      return { success: false, output: `키보드 입력 실패: ${err instanceof Error ? err.message : String(err)}` }
-    }
+    return yeonjangRequiredFailure("keyboard.type")
   },
 }
 
@@ -105,28 +154,40 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: KeyboardShortcutParams): Promise<ToolResult> => {
+  execute: async (params: KeyboardShortcutParams, _ctx: ToolContext): Promise<ToolResult> => {
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
+
+    const shortcut = splitShortcutKeys(params.keys)
+
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const { keyboard, Key } = await getNutKeyboard()
-
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      const resolvedKeys: any[] = params.keys.map((k) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        const resolved = (Key as Record<string, unknown>)[k]
-        if (resolved === undefined) throw new Error(`알 수 없는 키: ${k}`)
-        return resolved
-      })
-
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await keyboard.pressKey(...resolvedKeys)
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await keyboard.releaseKey(...resolvedKeys.reverse())
-
-      return { success: true, output: `단축키 실행: ${params.keys.join("+")}`, details: { via: "local" } }
-    } catch (err) {
-      return { success: false, output: `단축키 실행 실패: ${err instanceof Error ? err.message : String(err)}` }
+      if (await canYeonjangHandleMethod("keyboard.action")) {
+        const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
+          "keyboard.action",
+          {
+            action: "shortcut",
+            key: shortcut.key,
+            modifiers: shortcut.modifiers,
+          },
+          { timeoutMs: 15_000 },
+        )
+        return {
+          success: remote.accepted,
+          output: remote.message || `단축키 실행: ${params.keys.join("+")}`,
+          details: {
+            via: "yeonjang",
+            action: remote.action,
+            key: remote.key ?? shortcut.key,
+            modifiers: remote.modifiers ?? shortcut.modifiers,
+          },
+          ...(remote.accepted ? {} : { error: "remote_keyboard_shortcut_failed" }),
+        }
+      }
+    } catch (error) {
+      if (!isYeonjangUnavailableError(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, output: `Yeonjang 단축키 실행 실패: ${message}`, error: message }
+      }
     }
+    return yeonjangRequiredFailure("keyboard.action")
   },
 }

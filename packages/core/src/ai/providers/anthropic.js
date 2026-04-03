@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nextApiKey, markKeyFailure } from "../types.js";
 import { createLogger } from "../../logger/index.js";
-const log = createLogger("llm:anthropic");
+const log = createLogger("ai:anthropic");
 const CONTEXT_LIMITS = {
     "claude-opus-4-5": 200_000,
     "claude-sonnet-4-5": 200_000,

@@ -1,6 +1,6 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js"
 import { reviewTaskCompletion } from "../agent/completion-review.js"
-import type { LLMProvider } from "../llm/index.js"
+import type { AIProvider } from "../ai/index.js"
 import type { SuccessfulFileDelivery } from "./delivery.js"
 import {
   detectSyntheticApprovalRequest,
@@ -28,7 +28,7 @@ export async function runReviewPass(params: {
   priorAssistantMessages: string[]
   model?: string
   providerId?: string
-  provider?: LLMProvider
+  provider?: AIProvider
   workDir?: string
   usesWorkerRuntime: boolean
   requiresPrivilegedToolExecution: boolean

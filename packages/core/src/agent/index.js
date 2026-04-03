@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { eventBus } from "../events/index.js";
-import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode } from "../llm/index.js";
+import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode } from "../ai/index.js";
 import { toolDispatcher } from "../tools/dispatcher.js";
 import { createLogger } from "../logger/index.js";
 import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, insertMemoryItem, markMessagesCompressed } from "../db/index.js";
@@ -202,8 +202,6 @@ export async function* runAgent(params) {
                     break;
                 if (chunk.type === "text_delta") {
                     textBuffer += chunk.delta;
-                    yield { type: "text", delta: chunk.delta };
-                    eventBus.emit("agent.stream", { sessionId, runId, delta: chunk.delta });
                 }
                 else if (chunk.type === "tool_use") {
                     pendingToolUses.push({ id: chunk.id, name: chunk.name, input: chunk.input });
@@ -219,23 +217,33 @@ export async function* runAgent(params) {
                 return;
             }
             const msg = err instanceof Error ? err.message : String(err);
-            log.error(`LLM error: ${msg}`);
-            yield { type: "error", message: `LLM error: ${msg}` };
+            log.error(`AI error: ${msg}`);
+            textBuffer = "";
+            yield {
+                type: "ai_recovery",
+                summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
+                reason: describeAiErrorReason(msg),
+                message: msg,
+            };
             return;
         }
         // No tool calls → final response
         if (pendingToolUses.length === 0) {
             if (textBuffer) {
+                const deliveredText = textBuffer;
+                yield { type: "text", delta: deliveredText };
+                eventBus.emit("agent.stream", { sessionId, runId, delta: deliveredText });
                 insertMessage({
                     id: crypto.randomUUID(),
                     session_id: sessionId,
                     root_run_id: runId,
                     role: "assistant",
-                    content: textBuffer,
+                    content: deliveredText,
                     tool_calls: null,
                     tool_call_id: null,
                     created_at: Date.now(),
                 });
+                textBuffer = "";
             }
             break;
         }

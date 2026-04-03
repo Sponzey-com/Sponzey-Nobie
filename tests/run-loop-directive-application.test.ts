@@ -17,6 +17,7 @@ describe("apply loop directive", () => {
     const finalizationDependencies = createFinalizationDependencies()
     const moduleDependencies = {
       completeRunWithAssistantMessage: vi.fn().mockResolvedValue(undefined),
+      markRunCompleted: vi.fn(),
       applyTerminalApplication: vi.fn(),
     }
 
@@ -40,6 +41,40 @@ describe("apply loop directive", () => {
       sessionId: "session-1",
       text: "done",
       source: "telegram",
+      dependencies: finalizationDependencies,
+    }))
+  })
+
+  it("completes complete_silent directives without assistant delivery", async () => {
+    const finalizationDependencies = createFinalizationDependencies()
+    const moduleDependencies = {
+      completeRunWithAssistantMessage: vi.fn(),
+      markRunCompleted: vi.fn(),
+      applyTerminalApplication: vi.fn(),
+    }
+
+    const result = await applyLoopDirective({
+      runId: "run-1b",
+      sessionId: "session-1b",
+      source: "telegram",
+      onChunk: undefined,
+      directive: {
+        kind: "complete_silent",
+        summary: "후속 실행으로 전달되었습니다.",
+        eventLabel: "handoff",
+      },
+      finalizationDependencies,
+    }, moduleDependencies)
+
+    expect(result).toBe("break")
+    expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith("run-1b", "handoff")
+    expect(moduleDependencies.completeRunWithAssistantMessage).not.toHaveBeenCalled()
+    expect(moduleDependencies.markRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-1b",
+      sessionId: "session-1b",
+      source: "telegram",
+      summary: "후속 실행으로 전달되었습니다.",
+      text: "",
       dependencies: finalizationDependencies,
     }))
   })
@@ -97,6 +132,7 @@ describe("apply loop directive", () => {
       finalizationDependencies,
     }, {
       completeRunWithAssistantMessage: vi.fn(),
+      markRunCompleted: vi.fn(),
       applyTerminalApplication: vi.fn(),
     })).rejects.toThrow("retry_intake directive must be handled inside the main loop before applyLoopDirective")
   })
