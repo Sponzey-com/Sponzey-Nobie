@@ -2,6 +2,7 @@ import type { RootRun } from "../contracts/runs"
 import type {
   TaskActivityKind,
   TaskActivityModel,
+  TaskArtifactModel,
   TaskAttemptKind,
   TaskAttemptModel,
   TaskChecklistItemKey,
@@ -45,6 +46,7 @@ export interface TaskMonitorDelivery {
   status: TaskDeliveryStatus
   channel?: "telegram" | "webui" | "cli" | "unknown"
   summary?: string
+  artifact?: TaskArtifactModel
 }
 
 export interface TaskMonitorChecklistItem {
@@ -277,7 +279,12 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
       treeNodes: buildTreeNodes(attempts),
       timeline: buildTimeline(task, attempts, text),
       checklist: buildChecklist(task.checklist, text),
-      delivery: task.delivery,
+      delivery: {
+        status: task.delivery.status,
+        ...(task.delivery.channel ? { channel: task.delivery.channel } : {}),
+        ...(task.delivery.summary ? { summary: task.delivery.summary } : {}),
+        ...(task.delivery.artifact ? { artifact: task.delivery.artifact } : {}),
+      },
       ...(task.failure
         ? {
             failure: {

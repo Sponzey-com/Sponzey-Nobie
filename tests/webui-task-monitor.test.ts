@@ -257,6 +257,75 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.checklist.completedCount).toBe(4)
   })
 
+  it("preserves delivery artifact metadata for task detail panels", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "task-artifact",
+        requestGroupId: "task-artifact",
+        anchorRunId: "run-artifact",
+        status: "completed",
+        delivery: {
+          taskId: "task-artifact",
+          status: "delivered",
+          sourceAttemptId: "run-artifact",
+          channel: "webui",
+          summary: "WebUI 파일 전달 완료: /state/artifacts/screens/screenshot.png",
+          artifact: {
+            filePath: "/state/artifacts/screens/screenshot.png",
+            fileName: "screenshot.png",
+            url: "/api/artifacts/screens/screenshot.png",
+            mimeType: "image/png",
+          },
+        },
+        attempts: [
+          {
+            id: "run-artifact",
+            taskId: "task-artifact",
+            requestGroupId: "task-artifact",
+            kind: "primary",
+            title: "Capture screen",
+            prompt: "Capture screen",
+            status: "completed",
+            summary: "캡처 완료",
+            userVisible: true,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        latestAttemptId: "run-artifact",
+        runIds: ["run-artifact"],
+        monitor: {
+          activeAttemptCount: 0,
+          runningAttemptCount: 0,
+          queuedAttemptCount: 0,
+          visibleAttemptCount: 1,
+          internalAttemptCount: 0,
+          recoveryAttemptCount: 0,
+          activeRecoveryCount: 0,
+          duplicateExecutionRisk: false,
+          awaitingApproval: false,
+          awaitingUser: false,
+          deliveryStatus: "delivered",
+        },
+      }),
+    ], [
+      makeRun({
+        id: "run-artifact",
+        requestGroupId: "task-artifact",
+        prompt: "Capture screen",
+        status: "completed",
+        summary: "캡처 완료",
+      }),
+    ], text)
+
+    expect(cards[0]?.delivery.artifact).toEqual({
+      filePath: "/state/artifacts/screens/screenshot.png",
+      fileName: "screenshot.png",
+      url: "/api/artifacts/screens/screenshot.png",
+      mimeType: "image/png",
+    })
+  })
+
   it("keeps recovery attempts internal while the task stays visible", () => {
     const cards = buildTaskMonitorCards([
       makeTask({

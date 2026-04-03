@@ -6,7 +6,7 @@
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
-import type { AgentTool, ToolResult } from "../../types.js"
+import type { AgentTool, ArtifactDeliveryResultDetails, ToolResult } from "../../types.js"
 import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
 import { PATHS } from "../../../config/index.js"
 
@@ -90,11 +90,22 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
   },
   riskLevel: "safe",
   requiresApproval: false,
-  execute: async (): Promise<ToolResult> => {
+  execute: async (_params, ctx): Promise<ToolResult> => {
     try {
       if (await canYeonjangHandleMethod("screen.capture")) {
         const { base64, remote } = await captureScreenViaYeonjang()
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
+        const localFileSize = statSync(localSavedPath).size
+        const artifactDetails: ArtifactDeliveryResultDetails | undefined = ctx.source === "webui" && localSavedPath
+          ? {
+              kind: "artifact_delivery",
+              channel: "webui",
+              filePath: localSavedPath,
+              mimeType: remote.mime_type ?? "image/png",
+              size: localFileSize,
+              source: ctx.source,
+            }
+          : undefined
         return {
           success: true,
           output: `Yeonjang 스크린샷 캡처 완료.\n로컬 저장: ${localSavedPath}`,
@@ -106,7 +117,8 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
             sizeBytes: remote.size_bytes,
             transferEncoding: "base64",
             localSavedPath,
-            localFileSize: statSync(localSavedPath).size,
+            localFileSize,
+            ...(artifactDetails ?? {}),
           },
         }
       }

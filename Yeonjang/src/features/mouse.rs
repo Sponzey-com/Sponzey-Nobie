@@ -32,7 +32,9 @@ pub fn move_cursor(params: MoveParams) -> Result<Value> {
         x: params.x,
         y: params.y,
     };
-    Ok(serde_json::to_value(current_backend().move_mouse(request)?)?)
+    Ok(serde_json::to_value(
+        current_backend().move_mouse(request)?,
+    )?)
 }
 
 pub fn click(params: ClickParams) -> Result<Value> {
@@ -42,7 +44,9 @@ pub fn click(params: ClickParams) -> Result<Value> {
         button: params.button,
         double: params.double,
     };
-    Ok(serde_json::to_value(current_backend().click_mouse(request)?)?)
+    Ok(serde_json::to_value(
+        current_backend().click_mouse(request)?,
+    )?)
 }
 
 pub fn action(params: MouseActionRequest) -> Result<Value> {

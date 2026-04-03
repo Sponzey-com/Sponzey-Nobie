@@ -49,4 +49,27 @@ describe("review gate", () => {
     expect(decision.kind).toBe("run")
     expect(decision.state.deliveryStatus).toBe("missing")
   })
+
+  it("skips completion review for read-only successful executions when checklist is already settled", () => {
+    const decision = decideReviewGate({
+      executionSemantics: {
+        ...baseExecutionSemantics,
+        artifactDelivery: "none",
+      },
+      preview: "모니터는 2개이고 메인 디스플레이 해상도는 2560x1440입니다.",
+      deliveryOutcome: {
+        directArtifactDeliveryRequested: false,
+        hasSuccessfulArtifactDelivery: false,
+        deliverySatisfied: false,
+        requiresDirectArtifactRecovery: false,
+      },
+      successfulTools: [{ toolName: "shell_exec", output: "Displays: 2\n2560x1440" }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision.kind).toBe("skip")
+    expect(decision.state.completionSatisfied).toBe(true)
+  })
 })

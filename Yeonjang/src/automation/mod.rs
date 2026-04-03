@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +61,10 @@ pub struct CommandExecutionRequest {
     pub cwd: Option<String>,
     #[serde(default)]
     pub shell: bool,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, alias = "timeoutSec")]
+    pub timeout_sec: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,9 +380,7 @@ pub trait AutomationBackend {
                     message: result.message,
                 })
             }
-            MouseActionKind::ButtonDown
-            | MouseActionKind::ButtonUp
-            | MouseActionKind::Scroll => {
+            MouseActionKind::ButtonDown | MouseActionKind::ButtonUp | MouseActionKind::Scroll => {
                 bail!(
                     "mouse.action `{}` is scaffolded but not implemented yet",
                     request.action.as_str()
@@ -417,19 +421,11 @@ pub trait AutomationBackend {
     }
 }
 
-fn required_coordinate(
-    value: Option<i32>,
-    field: &str,
-    action: &str,
-) -> anyhow::Result<i32> {
+fn required_coordinate(value: Option<i32>, field: &str, action: &str) -> anyhow::Result<i32> {
     value.ok_or_else(|| anyhow::anyhow!("mouse.action `{action}` requires `{field}`"))
 }
 
-fn required_text(
-    value: Option<String>,
-    field: &str,
-    action: &str,
-) -> anyhow::Result<String> {
+fn required_text(value: Option<String>, field: &str, action: &str) -> anyhow::Result<String> {
     let text = value.unwrap_or_default();
     if text.trim().is_empty() {
         bail!("keyboard.action `{action}` requires non-empty `{field}`");

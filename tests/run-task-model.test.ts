@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { buildTaskModels } from "../packages/core/src/runs/task-model.js"
+import { PATHS } from "../packages/core/src/config/paths.js"
 import type { RootRun } from "../packages/core/src/runs/types.js"
 
 function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGroupId" | "prompt">): RootRun {
@@ -196,6 +197,11 @@ describe("buildTaskModels", () => {
       sourceAttemptId: "run-delivered",
       channel: "telegram",
       summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png",
+      artifact: {
+        filePath: "/tmp/screenshot.png",
+        fileName: "screenshot.png",
+        mimeType: "image/png",
+      },
     })
     expect(failedTask?.delivery).toEqual({
       taskId: "task-4",
@@ -249,6 +255,27 @@ describe("buildTaskModels", () => {
       completedCount: 2,
       actionableCount: 4,
       failedCount: 2,
+    })
+  })
+
+  it("derives artifact metadata for deliveries backed by local state artifacts", () => {
+    const artifactPath = `${PATHS.stateDir}/artifacts/screens/screenshot.png`
+    const task = buildTaskModels([
+      makeRun({
+        id: "run-artifact",
+        requestGroupId: "task-artifact",
+        prompt: "메인 화면 캡처",
+        status: "completed",
+        summary: "메인 화면 캡처를 전송했습니다.",
+        recentEvents: [{ id: "evt-artifact", at: 1, label: `WebUI 파일 전달 완료: ${artifactPath}` }],
+      }),
+    ])[0]
+
+    expect(task?.delivery.artifact).toEqual({
+      filePath: artifactPath,
+      fileName: "screenshot.png",
+      url: "/api/artifacts/screens/screenshot.png",
+      mimeType: "image/png",
     })
   })
 

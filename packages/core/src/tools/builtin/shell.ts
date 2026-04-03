@@ -105,6 +105,8 @@ export const shellExecTool: AgentTool<ShellExecParams> = {
             args: [],
             cwd: workDir,
             shell: true,
+            ...(params.env ? { env: params.env } : {}),
+            timeout_sec: params.timeoutSec ?? DEFAULT_TIMEOUT_SEC,
           },
           { timeoutMs: (params.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000 },
         )

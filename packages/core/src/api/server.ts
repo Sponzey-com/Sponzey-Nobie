@@ -10,6 +10,7 @@ import { createLogger } from "../logger/index.js"
 import { registerStatusRoute } from "./routes/status.js"
 import { registerCapabilitiesRoute } from "./routes/capabilities.js"
 import { registerAgentRoutes } from "./routes/agent.js"
+import { registerArtifactsRoute } from "./routes/artifacts.js"
 import { registerToolsRoute } from "./routes/tools.js"
 import { registerAuditRoute } from "./routes/audit.js"
 import { registerSettingsRoute } from "./routes/settings.js"
@@ -59,6 +60,7 @@ export async function startServer(): Promise<void> {
 
   registerStatusRoute(server)
   registerCapabilitiesRoute(server)
+  registerArtifactsRoute(server)
   registerAgentRoutes(server)
   registerToolsRoute(server)
   registerAuditRoute(server)

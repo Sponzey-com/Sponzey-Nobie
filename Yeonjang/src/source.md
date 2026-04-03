@@ -18,4 +18,4 @@
 - `node.rs`는 transport와 feature 코드를 잇는 중심 계약 지점입니다.
 - `gui.rs`는 MQTT 연결 상태를 보고, 끊김 뒤 `다시 연결` 동작을 바로 제공해야 합니다.
 - 마우스와 키보드는 세부 메서드와 함께 `mouse.action`, `keyboard.action`을 공통 진입점으로 받습니다.
-- macOS backend는 `keyboard.type`과 `keyboard.action(shortcut)`을 `System Events` 기반으로 처리합니다.
+- macOS backend는 `screen.capture`, `mouse.move`, `mouse.click`, `mouse.action`, `keyboard.type`, `keyboard.action`을 platform helper로 처리합니다.

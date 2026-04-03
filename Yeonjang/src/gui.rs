@@ -298,7 +298,11 @@ impl YeonjangGuiApp {
                 self.set_status(
                     format!(
                         "{}: {error}",
-                        t(self.lang(), "설정 다시 불러오기 실패", "Failed to reload settings")
+                        t(
+                            self.lang(),
+                            "설정 다시 불러오기 실패",
+                            "Failed to reload settings"
+                        )
                     ),
                     color_danger_text(),
                 );
@@ -436,12 +440,19 @@ impl YeonjangGuiApp {
 
         if self.settings.connection.host.trim().is_empty() {
             self.connection_state = ConnectionState::Disconnected;
-            self.last_error = t(self.lang(), "연결 주소를 입력해야 합니다.", "Connection host is required.").to_string();
+            self.last_error = t(
+                self.lang(),
+                "연결 주소를 입력해야 합니다.",
+                "Connection host is required.",
+            )
+            .to_string();
             self.set_status(self.last_error.clone(), color_danger_text());
             return;
         }
 
-        if self.settings.connection.username.trim().is_empty() || self.settings.connection.password.trim().is_empty() {
+        if self.settings.connection.username.trim().is_empty()
+            || self.settings.connection.password.trim().is_empty()
+        {
             self.connection_state = ConnectionState::AuthFailed;
             self.last_error = t(
                 self.lang(),
@@ -474,7 +485,11 @@ impl YeonjangGuiApp {
                 self.set_status(
                     format!(
                         "{}: {error}",
-                        t(self.lang(), "연결 시작 실패", "Failed to start the connection")
+                        t(
+                            self.lang(),
+                            "연결 시작 실패",
+                            "Failed to start the connection"
+                        )
                     ),
                     color_danger_text(),
                 );
@@ -485,8 +500,7 @@ impl YeonjangGuiApp {
     fn disconnect(&mut self) {
         self.stop_runtime();
         self.connection_state = ConnectionState::Disconnected;
-        self.last_error = t(self.lang(), "연결이 끊어졌습니다.", "Disconnected.")
-            .to_string();
+        self.last_error = t(self.lang(), "연결이 끊어졌습니다.", "Disconnected.").to_string();
         self.set_status(
             t(
                 self.lang(),
@@ -534,7 +548,11 @@ impl YeonjangGuiApp {
                     self.set_status(
                         format!(
                             "{}: {message}",
-                            t(self.lang(), "브로커 연결이 종료되었습니다", "Broker connection closed")
+                            t(
+                                self.lang(),
+                                "브로커 연결이 종료되었습니다",
+                                "Broker connection closed"
+                            )
                         ),
                         color_warn_text(),
                     );
@@ -556,11 +574,7 @@ impl YeonjangGuiApp {
                     self.set_status(
                         format!(
                             "{}: {method} ({message})",
-                            t(
-                                self.lang(),
-                                "응답 전송 실패",
-                                "Response publish failed",
-                            )
+                            t(self.lang(), "응답 전송 실패", "Response publish failed",)
                         ),
                         color_danger_text(),
                     );
@@ -579,7 +593,11 @@ impl YeonjangGuiApp {
                     };
                     self.set_status(
                         message,
-                        if ok { color_success_text() } else { color_danger_text() },
+                        if ok {
+                            color_success_text()
+                        } else {
+                            color_danger_text()
+                        },
                     );
                 }
             }
@@ -676,11 +694,18 @@ impl YeonjangGuiApp {
             return t(self.lang(), "없음", "None").to_string();
         }
 
-        if self.last_error == "아직 연결하지 않았습니다." || self.last_error == "Not connected yet." {
-            return t(self.lang(), "아직 연결하지 않았습니다.", "Not connected yet.").to_string();
+        if self.last_error == "아직 연결하지 않았습니다." || self.last_error == "Not connected yet."
+        {
+            return t(
+                self.lang(),
+                "아직 연결하지 않았습니다.",
+                "Not connected yet.",
+            )
+            .to_string();
         }
 
-        if self.last_error == "연결이 끊어졌습니다." || self.last_error == "Disconnected." {
+        if self.last_error == "연결이 끊어졌습니다." || self.last_error == "Disconnected."
+        {
             return t(self.lang(), "연결이 끊어졌습니다.", "Disconnected.").to_string();
         }
 
@@ -706,7 +731,9 @@ impl YeonjangGuiApp {
             .to_string();
         }
 
-        if self.last_error == "아이디를 입력해야 합니다." || self.last_error == "Username is required." {
+        if self.last_error == "아이디를 입력해야 합니다."
+            || self.last_error == "Username is required."
+        {
             return t(
                 self.lang(),
                 "아이디를 입력해야 합니다.",
@@ -715,7 +742,9 @@ impl YeonjangGuiApp {
             .to_string();
         }
 
-        if self.last_error == "비밀번호를 입력해야 합니다." || self.last_error == "Password is required." {
+        if self.last_error == "비밀번호를 입력해야 합니다."
+            || self.last_error == "Password is required."
+        {
             return t(
                 self.lang(),
                 "비밀번호를 입력해야 합니다.",
@@ -750,6 +779,7 @@ impl YeonjangGuiApp {
         let items = [
             self.settings.permissions.allow_system_control,
             self.settings.permissions.allow_shell_exec,
+            self.settings.permissions.allow_application_launch,
             self.settings.permissions.allow_screen_capture,
             self.settings.permissions.allow_keyboard_control,
             self.settings.permissions.allow_mouse_control,
@@ -776,23 +806,23 @@ impl eframe::App for YeonjangGuiApp {
                     .inner_margin(Margin::symmetric(20, 10)),
             )
             .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Yeonjang").size(18.0).strong());
-                    ui.label(
-                        RichText::new(t(lang, "노비 연장", "Nobie Extension"))
-                            .size(11.0)
-                            .color(color_muted()),
-                    );
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    language_switcher(ui, &mut self.settings.ui_language);
-                    ui.add_space(8.0);
-                    let (label, bg, text) = self.global_badge();
-                    badge(ui, label, bg, text);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Yeonjang").size(18.0).strong());
+                        ui.label(
+                            RichText::new(t(lang, "노비 연장", "Nobie Extension"))
+                                .size(11.0)
+                                .color(color_muted()),
+                        );
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        language_switcher(ui, &mut self.settings.ui_language);
+                        ui.add_space(8.0);
+                        let (label, bg, text) = self.global_badge();
+                        badge(ui, label, bg, text);
+                    });
                 });
             });
-        });
 
         TopBottomPanel::top("yeonjang_tabs")
             .frame(
@@ -802,34 +832,34 @@ impl eframe::App for YeonjangGuiApp {
                     .inner_margin(Margin::symmetric(20, 12)),
             )
             .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                tab_button(
-                    ui,
-                    &mut self.active_tab,
-                    ActiveTab::Connection,
-                    t(lang, "노비 연결", "Connection"),
-                    if self.connection_state == ConnectionState::Connected {
-                        t(lang, "준비됨", "Ready")
-                    } else {
-                        t(lang, "문제 있음", "Issue")
-                    },
-                );
-                tab_button(
-                    ui,
-                    &mut self.active_tab,
-                    ActiveTab::ExtensionInfo,
-                    t(lang, "연장 정보", "Extension"),
-                    t(lang, "준비됨", "Ready"),
-                );
-                tab_button(
-                    ui,
-                    &mut self.active_tab,
-                    ActiveTab::Permissions,
-                    t(lang, "권한", "Permissions"),
-                    t(lang, "확인 필요", "Review"),
-                );
+                ui.horizontal(|ui| {
+                    tab_button(
+                        ui,
+                        &mut self.active_tab,
+                        ActiveTab::Connection,
+                        t(lang, "노비 연결", "Connection"),
+                        if self.connection_state == ConnectionState::Connected {
+                            t(lang, "준비됨", "Ready")
+                        } else {
+                            t(lang, "문제 있음", "Issue")
+                        },
+                    );
+                    tab_button(
+                        ui,
+                        &mut self.active_tab,
+                        ActiveTab::ExtensionInfo,
+                        t(lang, "연장 정보", "Extension"),
+                        t(lang, "준비됨", "Ready"),
+                    );
+                    tab_button(
+                        ui,
+                        &mut self.active_tab,
+                        ActiveTab::Permissions,
+                        t(lang, "권한", "Permissions"),
+                        t(lang, "확인 필요", "Review"),
+                    );
+                });
             });
-        });
 
         TopBottomPanel::bottom("yeonjang_footer")
             .frame(
@@ -839,49 +869,53 @@ impl eframe::App for YeonjangGuiApp {
                     .inner_margin(Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            ui.horizontal(|ui| {
-                let status_width = (ui.available_width() - 250.0).max(180.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(status_width, 18.0),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.add_space(2.0);
-                        ui.label(
-                            RichText::new(self.footer_text())
-                                .size(12.0)
-                                .color(color_muted())
-                                .strong(),
-                        );
-                    },
-                );
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                ui.horizontal(|ui| {
+                    let status_width = (ui.available_width() - 250.0).max(180.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(status_width, 18.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new(self.footer_text())
+                                    .size(12.0)
+                                    .color(color_muted())
+                                    .strong(),
+                            );
+                        },
+                    );
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if primary_button(ui, t(lang, "저장", "Save")).clicked() {
-                        self.save();
-                    }
-                    if secondary_button(ui, t(lang, "취소", "Cancel")).clicked() {
-                        self.cancel_changes();
-                    }
-                    if text_button(ui, t(lang, "다시 불러오기", "Reload")).clicked() {
-                        self.reload();
-                    }
-                    if text_button(ui, t(lang, "기본값 복원", "Reset")).clicked() {
-                        self.restore_defaults();
-                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if primary_button(ui, t(lang, "저장", "Save")).clicked() {
+                            self.save();
+                        }
+                        if secondary_button(ui, t(lang, "취소", "Cancel")).clicked() {
+                            self.cancel_changes();
+                        }
+                        if text_button(ui, t(lang, "다시 불러오기", "Reload")).clicked() {
+                            self.reload();
+                        }
+                        if text_button(ui, t(lang, "기본값 복원", "Reset")).clicked() {
+                            self.restore_defaults();
+                        }
+                    });
                 });
             });
-        });
 
         CentralPanel::default()
-            .frame(Frame::new().fill(color_panel()).inner_margin(Margin::symmetric(20, 20)))
+            .frame(
+                Frame::new()
+                    .fill(color_panel())
+                    .inner_margin(Margin::symmetric(20, 20)),
+            )
             .show(ctx, |ui| {
-            ScrollArea::vertical().show(ui, |ui| match self.active_tab {
-                ActiveTab::Connection => self.draw_connection_tab(ui),
-                ActiveTab::ExtensionInfo => self.draw_extension_tab(ui, ctx),
-                ActiveTab::Permissions => self.draw_permissions_tab(ui),
+                ScrollArea::vertical().show(ui, |ui| match self.active_tab {
+                    ActiveTab::Connection => self.draw_connection_tab(ui),
+                    ActiveTab::ExtensionInfo => self.draw_extension_tab(ui, ctx),
+                    ActiveTab::Permissions => self.draw_permissions_tab(ui),
+                });
             });
-        });
     }
 }
 
@@ -911,12 +945,19 @@ impl YeonjangGuiApp {
                 (
                     t(lang, "상태", "Status"),
                     match self.connection_state {
-                        ConnectionState::Disconnected => t(lang, "연결되지 않음", "Disconnected").to_string(),
+                        ConnectionState::Disconnected => {
+                            t(lang, "연결되지 않음", "Disconnected").to_string()
+                        }
                         ConnectionState::Connected => t(lang, "연결됨", "Connected").to_string(),
-                        ConnectionState::AuthFailed => t(lang, "인증 실패", "Auth Failed").to_string(),
+                        ConnectionState::AuthFailed => {
+                            t(lang, "인증 실패", "Auth Failed").to_string()
+                        }
                     },
                 ),
-                (t(lang, "마지막 오류", "Last Error"), self.display_last_error()),
+                (
+                    t(lang, "마지막 오류", "Last Error"),
+                    self.display_last_error(),
+                ),
             ],
         );
 
@@ -924,33 +965,57 @@ impl YeonjangGuiApp {
 
         card(ui, t(lang, "브로커 정보", "Broker"), |ui| {
             ui.columns(2, |columns| {
-                form_field(&mut columns[0], t(lang, "연결 주소 (Host) *", "Host *"), None, |ui| {
-                    singleline_input(ui, &mut self.settings.connection.host);
-                });
+                form_field(
+                    &mut columns[0],
+                    t(lang, "연결 주소 (Host) *", "Host *"),
+                    None,
+                    |ui| {
+                        singleline_input(ui, &mut self.settings.connection.host);
+                    },
+                );
 
                 let port_error = parse_port_input(&self.port_input, lang).err();
-                form_field(&mut columns[1], t(lang, "포트 (Port) *", "Port *"), port_error, |ui| {
-                    singleline_input(ui, &mut self.port_input);
-                });
+                form_field(
+                    &mut columns[1],
+                    t(lang, "포트 (Port) *", "Port *"),
+                    port_error,
+                    |ui| {
+                        singleline_input(ui, &mut self.port_input);
+                    },
+                );
             });
 
             ui.add_space(10.0);
 
             ui.columns(2, |columns| {
-                form_field(&mut columns[0], t(lang, "아이디 (ID)", "ID"), None, |ui| {
-                    singleline_input(ui, &mut self.settings.connection.username);
-                });
+                form_field(
+                    &mut columns[0],
+                    t(lang, "아이디 (ID)", "ID"),
+                    None,
+                    |ui| {
+                        singleline_input(ui, &mut self.settings.connection.username);
+                    },
+                );
 
                 let password_error = if !self.settings.connection.username.trim().is_empty()
                     && self.settings.connection.password.trim().is_empty()
                 {
-                    Some(t(lang, "인증 실패: 비밀번호를 다시 확인하세요.", "Authentication failed: check the password."))
+                    Some(t(
+                        lang,
+                        "인증 실패: 비밀번호를 다시 확인하세요.",
+                        "Authentication failed: check the password.",
+                    ))
                 } else {
                     None
                 };
-                form_field(&mut columns[1], t(lang, "비밀번호 (Password)", "Password"), password_error, |ui| {
-                    password_input(ui, &mut self.settings.connection.password);
-                });
+                form_field(
+                    &mut columns[1],
+                    t(lang, "비밀번호 (Password)", "Password"),
+                    password_error,
+                    |ui| {
+                        password_input(ui, &mut self.settings.connection.password);
+                    },
+                );
             });
         });
 
@@ -968,7 +1033,11 @@ impl YeonjangGuiApp {
                 ui,
                 &mut self.settings.connection.launch_on_system_start,
                 t(lang, "시스템 시작 시 실행", "Launch on Startup"),
-                t(lang, "컴퓨터 시작 시 자동 실행", "Run when the system starts"),
+                t(
+                    lang,
+                    "컴퓨터 시작 시 자동 실행",
+                    "Run when the system starts",
+                ),
             );
         });
 
@@ -993,7 +1062,11 @@ impl YeonjangGuiApp {
                 alert_box(
                     ui,
                     t(lang, "연결 실패", "Connection Failed"),
-                    t(lang, "아이디 또는 비밀번호를 다시 확인하세요.", "Check the ID or password."),
+                    t(
+                        lang,
+                        "아이디 또는 비밀번호를 다시 확인하세요.",
+                        "Check the ID or password.",
+                    ),
                     color_danger_bg(),
                     color_danger_text(),
                 );
@@ -1002,7 +1075,11 @@ impl YeonjangGuiApp {
                 alert_box(
                     ui,
                     t(lang, "연결 성공", "Connection Ready"),
-                    t(lang, "Nobie 브로커와의 연결이 준비되었습니다.", "The Nobie broker connection is ready."),
+                    t(
+                        lang,
+                        "Nobie 브로커와의 연결이 준비되었습니다.",
+                        "The Nobie broker connection is ready.",
+                    ),
                     color_success_bg(),
                     color_success_text(),
                 );
@@ -1012,7 +1089,11 @@ impl YeonjangGuiApp {
                     alert_box(
                         ui,
                         t(lang, "저장 전 변경", "Unsaved Changes"),
-                        t(lang, "설정을 저장하거나 연결 확인으로 입력값을 검사하세요.", "Save or run a connection check to validate the inputs."),
+                        t(
+                            lang,
+                            "설정을 저장하거나 연결 확인으로 입력값을 검사하세요.",
+                            "Save or run a connection check to validate the inputs.",
+                        ),
                         color_warn_bg(),
                         color_warn_text(),
                     );
@@ -1020,7 +1101,11 @@ impl YeonjangGuiApp {
                     alert_box(
                         ui,
                         t(lang, "연결이 끊어졌습니다", "Connection Lost"),
-                        t(lang, "다시 연결 버튼으로 브로커 재접속을 시도할 수 있습니다.", "You can try reconnecting to the broker with the reconnect button."),
+                        t(
+                            lang,
+                            "다시 연결 버튼으로 브로커 재접속을 시도할 수 있습니다.",
+                            "You can try reconnecting to the broker with the reconnect button.",
+                        ),
                         color_warn_bg(),
                         color_warn_text(),
                     );
@@ -1034,18 +1119,41 @@ impl YeonjangGuiApp {
         section_header(
             ui,
             t(lang, "연장 정보", "Extension"),
-            t(lang, "자동으로 감지된 정보입니다.", "Detected automatically."),
+            t(
+                lang,
+                "자동으로 감지된 정보입니다.",
+                "Detected automatically.",
+            ),
         );
 
         let host_name = detected_host_name();
-        let platform = format!("{} {}", current_platform_name(), current_platform_version_hint());
+        let platform = format!(
+            "{} {}",
+            current_platform_name(),
+            current_platform_version_hint()
+        );
 
-        summary_grid(ui, &[
-            (t(lang, "연장 ID", "Extension ID"), self.settings.node_id.clone()),
-            (t(lang, "표시 이름", "Display Name"), self.settings.display_name.clone()),
-            (t(lang, "플랫폼", "Platform"), current_platform_name().to_string()),
-            (t(lang, "상태", "Status"), t(lang, "자동 생성 · 준비됨", "Auto Generated · Ready").to_string()),
-        ]);
+        summary_grid(
+            ui,
+            &[
+                (
+                    t(lang, "연장 ID", "Extension ID"),
+                    self.settings.node_id.clone(),
+                ),
+                (
+                    t(lang, "표시 이름", "Display Name"),
+                    self.settings.display_name.clone(),
+                ),
+                (
+                    t(lang, "플랫폼", "Platform"),
+                    current_platform_name().to_string(),
+                ),
+                (
+                    t(lang, "상태", "Status"),
+                    t(lang, "자동 생성 · 준비됨", "Auto Generated · Ready").to_string(),
+                ),
+            ],
+        );
 
         ui.add_space(8.0);
 
@@ -1072,7 +1180,11 @@ impl YeonjangGuiApp {
             });
 
             ui.separator();
-            ui.label(RichText::new(t(lang, "표시 이름", "Display Name")).size(11.5).strong());
+            ui.label(
+                RichText::new(t(lang, "표시 이름", "Display Name"))
+                    .size(11.5)
+                    .strong(),
+            );
             compact_singleline_input(ui, &mut self.settings.display_name);
 
             ui.separator();
@@ -1092,11 +1204,17 @@ impl YeonjangGuiApp {
             ui.horizontal_top(|ui| {
                 if compact_secondary_button(ui, t(lang, "다시 감지", "Refresh")).clicked() {
                     self.set_status(
-                        t(lang, "자동 감지 정보를 다시 읽었습니다.", "Refreshed detected information."),
+                        t(
+                            lang,
+                            "자동 감지 정보를 다시 읽었습니다.",
+                            "Refreshed detected information.",
+                        ),
                         color_success_text(),
                     );
                 }
-                if compact_linkish_button(ui, t(lang, "연장 ID 다시 생성", "Regenerate ID")).clicked() {
+                if compact_linkish_button(ui, t(lang, "연장 ID 다시 생성", "Regenerate ID"))
+                    .clicked()
+                {
                     self.regenerate_extension_id();
                 }
             });
@@ -1108,7 +1226,11 @@ impl YeonjangGuiApp {
         section_header(
             ui,
             t(lang, "권한", "Permissions"),
-            t(lang, "필요한 항목만 켜서 사용합니다.", "Enable only what you need."),
+            t(
+                lang,
+                "필요한 항목만 켜서 사용합니다.",
+                "Enable only what you need.",
+            ),
         );
 
         let (enabled, disabled, os_required) = self.permission_counts();
@@ -1143,6 +1265,18 @@ impl YeonjangGuiApp {
         permission_card(
             ui,
             lang,
+            &mut self.settings.permissions.allow_application_launch,
+            t(lang, "앱 실행", "Application Launch"),
+            t(
+                lang,
+                "앱 열기와 전달 인수 실행",
+                "Open applications and pass launch arguments",
+            ),
+            PermissionState::Toggle,
+        );
+        permission_card(
+            ui,
+            lang,
             &mut self.settings.permissions.allow_screen_capture,
             t(lang, "화면 캡처", "Screen Capture"),
             t(lang, "화면을 캡처해 전달", "Capture and send the screen"),
@@ -1169,7 +1303,11 @@ impl YeonjangGuiApp {
         compact_warn_box(
             ui,
             t(lang, "확인 필요", "Needs Attention"),
-            t(lang, "일부 권한은 운영체제 승인 후에 동작합니다.", "Some permissions work only after OS approval."),
+            t(
+                lang,
+                "일부 권한은 운영체제 승인 후에 동작합니다.",
+                "Some permissions work only after OS approval.",
+            ),
         );
     }
 }
@@ -1194,11 +1332,7 @@ fn current_platform_name() -> &'static str {
 }
 
 fn current_platform_version_hint() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "15"
-    } else {
-        ""
-    }
+    if cfg!(target_os = "macos") { "15" } else { "" }
 }
 
 fn detected_host_name() -> String {
@@ -1359,12 +1493,7 @@ fn connection_status_card(ui: &mut Ui, title: &str, rows: &[(&str, String)]) {
         });
 }
 
-fn form_field(
-    ui: &mut Ui,
-    label: &str,
-    error: Option<&str>,
-    add_input: impl FnOnce(&mut Ui),
-) {
+fn form_field(ui: &mut Ui, label: &str, error: Option<&str>, add_input: impl FnOnce(&mut Ui)) {
     ui.vertical(|ui| {
         field_label(ui, label);
         ui.add_space(6.0);
@@ -1480,12 +1609,7 @@ fn alert_box(ui: &mut Ui, title: &str, body: &str, bg: Color32, text: Color32) {
         .inner_margin(Margin::symmetric(14, 12))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("!")
-                        .size(14.0)
-                        .strong()
-                        .color(text),
-                );
+                ui.label(RichText::new("!").size(14.0).strong().color(text));
                 ui.vertical(|ui| {
                     ui.label(RichText::new(title).size(13.0).strong().color(text));
                     ui.label(RichText::new(body).size(13.0).color(text));
@@ -1523,11 +1647,7 @@ fn compact_warn_box(ui: &mut Ui, title: &str, body: &str) {
                                 .strong()
                                 .color(color_warn_text()),
                         );
-                        ui.label(
-                            RichText::new(body)
-                                .size(12.0)
-                                .color(color_warn_text()),
-                        );
+                        ui.label(RichText::new(body).size(12.0).color(color_warn_text()));
                     });
                 });
             });
@@ -1613,16 +1733,11 @@ fn language_switcher(ui: &mut Ui, language: &mut UiLanguage) {
         if ui
             .add_sized(
                 [64.0, 28.0],
-                egui::Button::new(
-                    RichText::new(label)
-                        .size(11.0)
-                        .strong()
-                        .color(if selected {
-                            color_brand_deep()
-                        } else {
-                            color_muted()
-                        }),
-                )
+                egui::Button::new(RichText::new(label).size(11.0).strong().color(if selected {
+                    color_brand_deep()
+                } else {
+                    color_muted()
+                }))
                 .fill(fill)
                 .corner_radius(CornerRadius::same(10))
                 .stroke(stroke),
@@ -1647,11 +1762,16 @@ fn compact_badge(ui: &mut Ui, label: &str, bg: Color32, text: Color32) {
 
 fn text_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(label).size(12.0).strong().color(color_brand_deep()))
-            .min_size(egui::vec2(0.0, 26.0))
-            .fill(Color32::TRANSPARENT)
-            .corner_radius(CornerRadius::same(10))
-            .stroke(Stroke::NONE),
+        egui::Button::new(
+            RichText::new(label)
+                .size(12.0)
+                .strong()
+                .color(color_brand_deep()),
+        )
+        .min_size(egui::vec2(0.0, 26.0))
+        .fill(Color32::TRANSPARENT)
+        .corner_radius(CornerRadius::same(10))
+        .stroke(Stroke::NONE),
     )
 }
 
@@ -1678,10 +1798,15 @@ fn compact_secondary_button(ui: &mut Ui, label: &str) -> egui::Response {
 fn compact_linkish_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add_sized(
         [116.0, 28.0],
-        egui::Button::new(RichText::new(label).size(11.5).strong().color(color_brand_deep()))
-            .fill(Color32::from_rgb(248, 242, 235))
-            .corner_radius(CornerRadius::same(10))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(231, 216, 199))),
+        egui::Button::new(
+            RichText::new(label)
+                .size(11.5)
+                .strong()
+                .color(color_brand_deep()),
+        )
+        .fill(Color32::from_rgb(248, 242, 235))
+        .corner_radius(CornerRadius::same(10))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(231, 216, 199))),
     )
 }
 
@@ -1697,21 +1822,31 @@ fn compact_copy_button(ui: &mut Ui, label: &str) -> egui::Response {
 
 fn primary_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(label).size(12.0).strong().color(Color32::WHITE))
-            .min_size(egui::vec2(64.0, 32.0))
-            .fill(color_brand())
-            .corner_radius(CornerRadius::same(11))
-            .stroke(Stroke::new(1.0, color_brand())),
+        egui::Button::new(
+            RichText::new(label)
+                .size(12.0)
+                .strong()
+                .color(Color32::WHITE),
+        )
+        .min_size(egui::vec2(64.0, 32.0))
+        .fill(color_brand())
+        .corner_radius(CornerRadius::same(11))
+        .stroke(Stroke::new(1.0, color_brand())),
     )
 }
 
 fn danger_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add_sized(
         [92.0, 38.0],
-        egui::Button::new(RichText::new(label).size(13.0).strong().color(color_danger_text()))
-            .fill(Color32::from_rgb(255, 247, 247))
-            .corner_radius(CornerRadius::same(11))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(237, 200, 200))),
+        egui::Button::new(
+            RichText::new(label)
+                .size(13.0)
+                .strong()
+                .color(color_danger_text()),
+        )
+        .fill(Color32::from_rgb(255, 247, 247))
+        .corner_radius(CornerRadius::same(11))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(237, 200, 200))),
     )
 }
 
@@ -1838,15 +1973,13 @@ fn parse_port_input(value: &str, lang: UiLanguage) -> std::result::Result<u16, &
         ));
     }
 
-    let parsed = trimmed
-        .parse::<u16>()
-        .map_err(|_| {
-            t(
-                lang,
-                "포트는 1~65535 사이여야 합니다.",
-                "Port must be between 1 and 65535.",
-            )
-        })?;
+    let parsed = trimmed.parse::<u16>().map_err(|_| {
+        t(
+            lang,
+            "포트는 1~65535 사이여야 합니다.",
+            "Port must be between 1 and 65535.",
+        )
+    })?;
 
     if parsed == 0 {
         return Err(t(

@@ -66,6 +66,14 @@ export interface TaskDeliveryModel {
   sourceAttemptId?: string
   channel?: "telegram" | "webui" | "cli" | "unknown"
   summary?: string
+  artifact?: TaskArtifactModel
+}
+
+export interface TaskArtifactModel {
+  filePath: string
+  fileName: string
+  url?: string
+  mimeType?: string
 }
 
 export interface TaskFailureModel {
