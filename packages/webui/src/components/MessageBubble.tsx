@@ -2,6 +2,14 @@ import ReactMarkdown from "react-markdown"
 import { ToolCallPanel } from "./ToolCallPanel"
 import type { Message } from "../stores/chat"
 import { useUiI18n } from "../lib/ui-i18n"
+import { getStoredToken } from "../api/client"
+
+function resolveArtifactUrl(url: string): string {
+  if (!url.startsWith("/")) return url
+  const token = getStoredToken()
+  if (!token || url.includes("token=")) return url
+  return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
+}
 
 export function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === "user"
@@ -16,6 +24,47 @@ export function MessageBubble({ msg }: { msg: Message }) {
             {msg.toolCalls.map((tc, i) => (
               <ToolCallPanel key={i} call={tc} />
             ))}
+          </div>
+        )}
+        {!isUser && msg.artifacts && msg.artifacts.length > 0 && (
+          <div className="mb-2 space-y-3">
+            {msg.artifacts.map((artifact, i) => {
+              const artifactUrl = resolveArtifactUrl(artifact.url)
+              const isImage = typeof artifact.mimeType === "string" && artifact.mimeType.startsWith("image/")
+              return (
+                <div
+                  key={`${artifact.fileName}-${i}`}
+                  className="overflow-hidden rounded-2xl border border-gray-200 bg-white"
+                >
+                  {isImage ? (
+                    <a href={artifactUrl} target="_blank" rel="noreferrer">
+                      <img
+                        src={artifactUrl}
+                        alt={artifact.caption || artifact.fileName}
+                        className="block max-h-[28rem] w-full bg-stone-50 object-contain"
+                        loading="lazy"
+                      />
+                    </a>
+                  ) : (
+                    <div className="px-4 py-3 text-sm text-stone-700">
+                      <a
+                        href={artifactUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-blue-700 underline"
+                      >
+                        {artifact.fileName}
+                      </a>
+                    </div>
+                  )}
+                  {(artifact.caption || artifact.fileName) && (
+                    <div className="border-t border-gray-100 px-4 py-2 text-xs text-stone-500">
+                      {artifact.caption || artifact.fileName}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
         {renderedContent && (

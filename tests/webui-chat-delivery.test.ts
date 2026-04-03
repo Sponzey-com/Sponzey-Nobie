@@ -45,4 +45,27 @@ describe("webui chat delivery helper", () => {
     tracker.clear()
     expect(tracker.flush("run-4")).toBeNull()
   })
+
+  it("flushes artifact-only assistant messages", () => {
+    const tracker = createPendingAssistantTracker()
+
+    tracker.start("run-5", "session-5")
+    tracker.addArtifact("run-5", {
+      url: "/api/artifacts/screens/result.png",
+      fileName: "result.png",
+      mimeType: "image/png",
+      caption: "메인 화면",
+    })
+
+    expect(tracker.flush("run-5")).toEqual({
+      runId: "run-5",
+      content: "",
+      artifacts: [{
+        url: "/api/artifacts/screens/result.png",
+        fileName: "result.png",
+        mimeType: "image/png",
+        caption: "메인 화면",
+      }],
+    })
+  })
 })

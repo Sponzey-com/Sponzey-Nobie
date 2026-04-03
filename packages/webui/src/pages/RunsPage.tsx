@@ -2,6 +2,7 @@ import { useEffect } from "react"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
+import { TaskArtifactPanel } from "../components/runs/TaskArtifactPanel"
 import { RunStepTimeline } from "../components/runs/RunStepTimeline"
 import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
 import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
@@ -114,6 +115,13 @@ export function RunsPage() {
                         failure={selectedCard.failure}
                         text={text}
                         displayText={displayText}
+                      />
+                    ) : null}
+                    {selectedCard?.delivery.artifact ? (
+                      <TaskArtifactPanel
+                        artifact={selectedCard.delivery.artifact}
+                        title={text("전달 결과물", "Delivered artifact")}
+                        text={text}
                       />
                     ) : null}
                     <div className="grid gap-3 md:grid-cols-3">

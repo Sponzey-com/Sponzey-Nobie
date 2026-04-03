@@ -47,9 +47,13 @@ function resolveSelectedRunId(params: {
 
 export const useRunsStore = create<RunsState>((set, get) => {
   let refreshTasksTimer: ReturnType<typeof setTimeout> | null = null
+  let latestRunsSnapshotToken = 0
+  let latestTasksSnapshotToken = 0
 
   async function refreshTasksSnapshot(): Promise<void> {
+    const taskSnapshotToken = ++latestTasksSnapshotToken
     const response = await api.tasks()
+    if (taskSnapshotToken !== latestTasksSnapshotToken) return
     set((state) => ({
       tasks: sortTasks(response.tasks),
       selectedRunId: resolveSelectedRunId({
@@ -79,9 +83,14 @@ export const useRunsStore = create<RunsState>((set, get) => {
     selectedRunId: null,
     ensureInitialized: async (force = false) => {
       if (!force && (get().initialized || get().loading)) return
+      const runsSnapshotToken = ++latestRunsSnapshotToken
+      const tasksSnapshotToken = ++latestTasksSnapshotToken
       set({ loading: true })
       try {
         const [runsResponse, tasksResponse] = await Promise.all([api.runs(), api.tasks()])
+        if (runsSnapshotToken !== latestRunsSnapshotToken || tasksSnapshotToken !== latestTasksSnapshotToken) {
+          return
+        }
         set({
           runs: sortRuns(runsResponse.runs),
           tasks: sortTasks(tasksResponse.tasks),
@@ -95,6 +104,9 @@ export const useRunsStore = create<RunsState>((set, get) => {
           lastError: "",
         })
       } catch (error) {
+        if (runsSnapshotToken !== latestRunsSnapshotToken || tasksSnapshotToken !== latestTasksSnapshotToken) {
+          return
+        }
         const message = error instanceof Error ? error.message : String(error)
         useConnectionStore.getState().setDisconnected(message)
         set({ loading: false, initialized: true, lastError: message })

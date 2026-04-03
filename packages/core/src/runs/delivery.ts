@@ -6,7 +6,7 @@ import { eventBus } from "../events/index.js"
 
 export interface SuccessfulFileDelivery {
   toolName: string
-  channel: "telegram"
+  channel: "telegram" | "webui"
   filePath: string
   caption?: string
   messageId?: number
@@ -81,7 +81,12 @@ export function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDeliver
   if (deliveries.length === 0) return "파일 전달 완료"
   const last = deliveries[deliveries.length - 1]
   if (!last) return "파일 전달 완료"
-  return `${last.channel === "telegram" ? "텔레그램" : "채널"} 파일 전달 완료: ${displayHomePath(last.filePath)}`
+  const channelLabel = last.channel === "telegram"
+    ? "텔레그램"
+    : last.channel === "webui"
+      ? "WebUI"
+      : "채널"
+  return `${channelLabel} 파일 전달 완료: ${displayHomePath(last.filePath)}`
 }
 
 export function resolveDeliveryOutcome(params: {
@@ -265,7 +270,11 @@ export function applyChunkDeliveryReceipt(params: {
     if (alreadyRecorded) continue
 
     params.successfulFileDeliveries.push(delivery)
-    params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
+    if (delivery.channel === "telegram") {
+      params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
+    } else {
+      params.appendEvent(params.runId, `WebUI 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
+    }
   }
 
   for (const delivery of params.receipt?.textDeliveries ?? []) {

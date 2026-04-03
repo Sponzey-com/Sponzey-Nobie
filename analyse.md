@@ -9,7 +9,7 @@
 
 ## 현재 구조 요약
 
-- `core`의 메인 실행 엔진은 [packages/core/src/runs/start.ts](/Users/dongwooshin/WorkPlaces/AtomSoft/Sponzey Family/Sponzey Nobie Platform/Sponzey Nobie/packages/core/src/runs/start.ts)에 있다.
+- `core`의 메인 실행 엔진은 [packages/core/src/runs/start.ts](packages/core/src/runs/start.ts)에 있다.
 - 요청 실행은 `startRootRun()`에서 시작된다.
 - 메인 오케스트레이션은 `Node.js` 단일 이벤트 루프 기반의 비동기 처리이며, `worker_threads` 기반 멀티스레드 구조는 아니다.
 - 실제 병렬성은 외부 프로세스 실행, 비동기 I/O, 스트림 처리에 의해 만들어진다.
@@ -22,7 +22,7 @@
 
 - 사용자가 메시지를 보내면 접수 응답이 바로 나가지 않는다.
 - 먼저 `intake` 분석이 끝나야 접수/확인 응답이 생성된다.
-- `intake`는 [packages/core/src/agent/intake.ts](/Users/dongwooshin/WorkPlaces/AtomSoft/Sponzey Family/Sponzey Nobie Platform/Sponzey Nobie/packages/core/src/agent/intake.ts)에서 수행된다.
+- `intake`는 [packages/core/src/agent/intake.ts](packages/core/src/agent/intake.ts)에서 수행된다.
 - 현재는 slash command가 아니면 대부분 AI intake 분석으로 들어간다.
 
 ### 2. 메인 처리 자체는 단일 스레드형 오케스트레이션이다
@@ -30,12 +30,12 @@
 - 메인 루프는 단일 이벤트 루프에서 돈다.
 - 외부 실행은 `child_process`를 사용한다.
 - 예:
-  - worker runtime: [packages/core/src/runs/worker-runtime.ts](/Users/dongwooshin/WorkPlaces/AtomSoft/Sponzey Family/Sponzey Nobie Platform/Sponzey Nobie/packages/core/src/runs/worker-runtime.ts)
+  - worker runtime: [packages/core/src/runs/worker-runtime.ts](packages/core/src/runs/worker-runtime.ts)
   - shell/app/screen 도구도 외부 프로세스를 실행한다.
 
 ### 3. 같은 request group은 순차 실행된다
 
-- [packages/core/src/runs/start.ts](/Users/dongwooshin/WorkPlaces/AtomSoft/Sponzey Family/Sponzey Nobie Platform/Sponzey Nobie/packages/core/src/runs/start.ts)의 `requestGroupExecutionQueues`가 같은 `request_group`의 실행을 직렬화한다.
+- [packages/core/src/runs/start.ts](packages/core/src/runs/start.ts)의 `requestGroupExecutionQueues`가 같은 `request_group`의 실행을 직렬화한다.
 - 이 때문에 같은 그룹에 후속 run이 붙으면 앞 작업이 끝날 때까지 대기한다.
 
 ### 4. delayed run도 세션 단위로 순차 실행된다
@@ -74,7 +74,7 @@
 
 ### 1. 예약 실행이 원래 request group을 재사용한다
 
-- [packages/core/src/runs/start.ts](/Users/dongwooshin/WorkPlaces/AtomSoft/Sponzey Family/Sponzey Nobie Platform/Sponzey Nobie/packages/core/src/runs/start.ts)에서 delayed run 등록 시 `requestGroupId: params.requestGroupId`를 넘기고 있다.
+- [packages/core/src/runs/start.ts](packages/core/src/runs/start.ts)에서 delayed run 등록 시 `requestGroupId: params.requestGroupId`를 넘기고 있다.
 - 이후 `scheduleDelayedRootRun()`도 그 `requestGroupId`를 유지한 채 `startRootRun()`을 다시 호출한다.
 - 결과적으로 예약 실행이 원래 요청과 같은 태스크 그룹에 섞인다.
 

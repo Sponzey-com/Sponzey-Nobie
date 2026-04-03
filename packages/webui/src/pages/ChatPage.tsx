@@ -5,6 +5,7 @@ import { EmptyState } from "../components/EmptyState"
 import { MessageBubble } from "../components/MessageBubble"
 import { CancelRunButton } from "../components/runs/CancelRunButton"
 import { RunApprovalActions } from "../components/runs/RunApprovalActions"
+import { TaskArtifactPanel } from "../components/runs/TaskArtifactPanel"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
 import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
 import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
@@ -333,6 +334,13 @@ export function ChatPage() {
                           {displayText(selectedCard.delivery.summary)}
                         </div>
                       </div>
+                    ) : null}
+                    {selectedCard?.delivery.artifact ? (
+                      <TaskArtifactPanel
+                        artifact={selectedCard.delivery.artifact}
+                        title={text("전달 결과물", "Delivered artifact")}
+                        text={text}
+                      />
                     ) : null}
                     <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">{text("태스크 타임라인", "Task timeline")}</div>
