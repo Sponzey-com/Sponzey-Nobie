@@ -23,7 +23,7 @@ pub fn capture(params: CaptureParams) -> Result<Value> {
     let request = CameraCaptureRequest {
         device_id: params.device_id,
         output_path: params.output_path,
-        inline_base64: true,
+        inline_base64: params.inline_base64,
     };
     Ok(serde_json::to_value(
         current_backend().capture_camera(request)?,

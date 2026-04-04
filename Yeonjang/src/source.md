@@ -19,3 +19,4 @@
 - `gui.rs`는 MQTT 연결 상태를 보고, 끊김 뒤 `다시 연결` 동작을 바로 제공해야 합니다.
 - 마우스와 키보드는 세부 메서드와 함께 `mouse.action`, `keyboard.action`을 공통 진입점으로 받습니다.
 - macOS backend는 `screen.capture`, `mouse.move`, `mouse.click`, `mouse.action`, `keyboard.type`, `keyboard.action`을 platform helper로 처리합니다.
+- macOS `camera.capture`는 앱 번들 내부의 고정 helper executable을 사용하고, helper 소스는 `Yeonjang/helpers/macos/` 아래에 둡니다.

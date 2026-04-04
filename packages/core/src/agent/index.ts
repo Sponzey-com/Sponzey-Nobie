@@ -12,6 +12,7 @@ import { needsCompression, compressContext } from "../memory/compressor.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
+import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js"
 
 const log = createLogger("agent")
 
@@ -83,6 +84,8 @@ const DEFAULT_SYSTEM_PROMPT = [
   "For simple checks, confirmations, counts, summaries, and status reports, deliver the result as normal text in the current channel.",
   "Do not create temporary text or document files just to send a plain answer.",
   "Use file delivery only when the result is inherently a file artifact such as a screenshot, camera photo, generated document explicitly requested by the user, or an existing file the user explicitly asked to send.",
+  "If the user explicitly requires a front or rear lens on an iPhone Continuity Camera and the extension reports that lens selection is unsupported, do not capture or send a substitute image.",
+  "In that case, explain the limitation clearly and ask the user to switch the phone lens manually or choose another camera.",
   "",
   "[Failure Handling Rules]",
   "If a tool fails, read the reason.",
@@ -158,6 +161,11 @@ interface ExecutionRecoveryFailure {
   toolName: string
   output: string
   error?: string
+}
+
+interface ExecutedToolResult {
+  toolName: string
+  result: ToolResult
 }
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
@@ -431,6 +439,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       is_error?: boolean
     }> = []
     const executionRecoveryFailures: ExecutionRecoveryFailure[] = []
+    const executedToolResults: ExecutedToolResult[] = []
 
     for (const tu of pendingToolUses) {
       yield { type: "tool_start", toolName: tu.name, params: tu.input }
@@ -449,6 +458,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         output: result.output,
         ...(result.details !== undefined ? { details: result.details } : {}),
       }
+      executedToolResults.push({ toolName: tu.name, result })
 
       if (shouldSignalExecutionRecovery(tu.name, result)) {
         executionRecoveryFailures.push({
@@ -478,6 +488,13 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       created_at: Date.now(),
     })
 
+    if (shouldStopAfterToolRound({
+      source: ctx.source,
+      toolResults: executedToolResults,
+    })) {
+      break
+    }
+
     if (executionRecoveryFailures.length > 0) {
       yield {
         type: "execution_recovery",
@@ -501,6 +518,31 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   yield { type: "done", totalTokens }
 }
 
+function shouldStopAfterToolRound(params: {
+  source: ToolContext["source"]
+  toolResults: ExecutedToolResult[]
+}): boolean {
+  for (const toolResult of params.toolResults) {
+    if (shouldTerminateRunAfterSuccessfulTool({
+      type: "tool_end",
+      toolName: toolResult.toolName,
+      success: toolResult.result.success,
+      output: toolResult.result.output,
+      ...(toolResult.result.details !== undefined ? { details: toolResult.result.details } : {}),
+    })) {
+      return true
+    }
+  }
+
+  if (params.source !== "telegram") {
+    return false
+  }
+
+  return params.toolResults.some(({ toolName, result }) =>
+    toolName === "telegram_send_file" && !result.success,
+  )
+}
+
 function shouldAllowWebAccess(userMessage: string): boolean {
   const normalized = userMessage.trim()
   if (!normalized) return false
@@ -508,7 +550,13 @@ function shouldAllowWebAccess(userMessage: string): boolean {
 }
 
 function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): boolean {
-  return !result.success && EXECUTION_RECOVERY_TOOL_NAMES.has(toolName)
+  return !result.success
+    && EXECUTION_RECOVERY_TOOL_NAMES.has(toolName)
+    && !isNonRecoverableExecutionToolFailure(result)
+}
+
+function isNonRecoverableExecutionToolFailure(result: ToolResult): boolean {
+  return result.error === "CAMERA_FACING_SELECTION_UNSUPPORTED"
 }
 
 function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): string {

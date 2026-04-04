@@ -154,25 +154,25 @@ impl AutomationBackend for PlatformBackend {
 
     fn capture_camera(&self, request: CameraCaptureRequest) -> Result<CameraCaptureResult> {
         shared::validate_camera_request(&request)?;
-        let inline_base64 = true;
+        let inline_base64 = request.inline_base64;
 
         let output_path = resolve_camera_output_path(request.output_path.as_deref())?;
-        let script_path = write_swift_camera_script()?;
-        let mut command = Command::new("xcrun");
-        command.arg("swift").arg(&script_path).arg(&output_path);
+        let executable_path = resolve_camera_capture_command_path()?;
+        let mut command = Command::new(&executable_path);
+        command.arg("--camera-capture-helper").arg(&output_path);
         if let Some(device_id) = request.device_id.as_deref() {
-            command.arg(device_id);
+            command.arg("--device-id").arg(device_id);
         }
-        command.arg("--inline-base64");
+        if inline_base64 {
+            command.arg("--inline-base64");
+        }
 
         let output = command.output().with_context(|| {
             format!(
-                "failed to execute camera capture helper: {}",
-                script_path.display()
+                "failed to execute Yeonjang camera capture command: {}",
+                executable_path.display()
             )
         })?;
-
-        let _ = fs::remove_file(&script_path);
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -197,19 +197,29 @@ impl AutomationBackend for PlatformBackend {
             .map(ToOwned::to_owned)
             .or(request.device_id.clone());
         let metadata = build_file_metadata(&output_path, inline_base64, "image/jpeg");
-        let base64_data = parsed
-            .get("base64Data")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .context("camera capture must include inline base64 data")?;
-        let should_cleanup = true;
+        let base64_data = if inline_base64 {
+            Some(
+                parsed
+                    .get("base64Data")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .context("camera capture must include inline base64 data")?,
+            )
+        } else {
+            None
+        };
+        let should_cleanup = inline_base64;
         if should_cleanup {
             let _ = fs::remove_file(&output_path);
         }
 
         Ok(CameraCaptureResult {
             device_id: actual_device_id,
-            output_path: None,
+            output_path: if inline_base64 {
+                None
+            } else {
+                Some(output_path.clone())
+            },
             file_name: metadata.file_name,
             file_extension: metadata.file_extension,
             mime_type: parsed
@@ -219,14 +229,14 @@ impl AutomationBackend for PlatformBackend {
                 .or(metadata.mime_type),
             size_bytes: metadata.size_bytes,
             transfer_encoding: metadata.transfer_encoding,
-            base64_data: Some(base64_data),
+            base64_data,
             message: "Camera capture completed.".to_string(),
         })
     }
 
     fn capture_screen(&self, request: ScreenCaptureRequest) -> Result<ScreenCaptureResult> {
         shared::validate_screen_request(&request)?;
-        let inline_base64 = true;
+        let inline_base64 = request.inline_base64;
         let (output_path, _explicit_output_path) =
             resolve_screen_output_path(request.output_path.as_deref())?;
         let script_path = write_swift_screen_script()?;
@@ -236,7 +246,9 @@ impl AutomationBackend for PlatformBackend {
         if let Some(display) = request.display {
             command.arg("--display").arg(display.to_string());
         }
-        command.arg("--inline-base64");
+        if inline_base64 {
+            command.arg("--inline-base64");
+        }
 
         let output = command.output().with_context(|| {
             format!(
@@ -266,19 +278,29 @@ impl AutomationBackend for PlatformBackend {
             .context("failed to parse screen capture helper output")?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/png");
-        let base64_data = parsed
-            .get("base64Data")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .context("screen capture must include inline base64 data")?;
-        let should_cleanup = true;
+        let base64_data = if inline_base64 {
+            Some(
+                parsed
+                    .get("base64Data")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .context("screen capture must include inline base64 data")?,
+            )
+        } else {
+            None
+        };
+        let should_cleanup = inline_base64;
         if should_cleanup {
             let _ = fs::remove_file(&output_path);
         }
 
         Ok(ScreenCaptureResult {
             display: request.display,
-            output_path: None,
+            output_path: if inline_base64 {
+                None
+            } else {
+                Some(output_path.clone())
+            },
             file_name: metadata.file_name,
             file_extension: metadata.file_extension,
             mime_type: parsed
@@ -288,7 +310,7 @@ impl AutomationBackend for PlatformBackend {
                 .or(metadata.mime_type),
             size_bytes: metadata.size_bytes,
             transfer_encoding: metadata.transfer_encoding,
-            base64_data: Some(base64_data),
+            base64_data,
             message: "Screen capture completed.".to_string(),
         })
     }
@@ -946,13 +968,19 @@ fn resolve_macos_keyboard_key_code(key: &str) -> Result<u16> {
 
 fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
     match output_path {
-        Some(path) if !path.trim().is_empty() => Ok(path.to_string()),
+        Some(path) if !path.trim().is_empty() => {
+            let candidate = PathBuf::from(path);
+            if should_treat_as_output_directory(&candidate) {
+                Ok(candidate
+                    .join(build_generated_capture_name("yeonjang-camera", "jpg"))
+                    .display()
+                    .to_string())
+            } else {
+                Ok(path.to_string())
+            }
+        }
         _ => {
-            let stamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs())
-                .unwrap_or(0);
-            let path = env::temp_dir().join(format!("yeonjang-camera-{stamp}.jpg"));
+            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-camera", "jpg"));
             Ok(path.display().to_string())
         }
     }
@@ -960,16 +988,38 @@ fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
 
 fn resolve_screen_output_path(output_path: Option<&str>) -> Result<(String, bool)> {
     match output_path {
-        Some(path) if !path.trim().is_empty() => Ok((path.to_string(), true)),
+        Some(path) if !path.trim().is_empty() => {
+            let candidate = PathBuf::from(path);
+            if should_treat_as_output_directory(&candidate) {
+                Ok((
+                    candidate
+                        .join(build_generated_capture_name("yeonjang-screen", "png"))
+                        .display()
+                        .to_string(),
+                    false,
+                ))
+            } else {
+                Ok((path.to_string(), true))
+            }
+        }
         _ => {
-            let stamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs())
-                .unwrap_or(0);
-            let path = env::temp_dir().join(format!("yeonjang-screen-{stamp}.png"));
+            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-screen", "png"));
             Ok((path.display().to_string(), false))
         }
     }
+}
+
+fn build_generated_capture_name(prefix: &str, extension: &str) -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format!("{prefix}-{stamp}.{extension}")
+}
+
+fn should_treat_as_output_directory(path: &Path) -> bool {
+    let raw = path.to_string_lossy();
+    raw.ends_with(std::path::MAIN_SEPARATOR) || path.is_dir() || path.extension().is_none()
 }
 
 struct FileMetadata {
@@ -1009,14 +1059,17 @@ fn build_file_metadata(
     }
 }
 
-fn write_swift_camera_script() -> Result<PathBuf> {
-    let script_path = env::temp_dir().join(format!(
-        "yeonjang-camera-capture-{}.swift",
-        std::process::id()
-    ));
-    fs::write(&script_path, SWIFT_CAMERA_CAPTURE)
-        .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
-    Ok(script_path)
+fn resolve_camera_capture_command_path() -> Result<PathBuf> {
+    let current_executable =
+        env::current_exe().context("failed to resolve current executable for camera helper")?;
+
+    if current_executable.is_file() {
+        return Ok(current_executable);
+    }
+
+    bail!(
+        "Yeonjang executable was not found for camera helper dispatch. Build and run Yeonjang through scripts/build-yeonjang-macos.sh or scripts/start-yeonjang-macos.sh"
+    );
 }
 
 fn write_swift_screen_script() -> Result<PathBuf> {
@@ -1066,134 +1119,6 @@ fn slugify(input: &str) -> String {
     }
 }
 
-const SWIFT_CAMERA_CAPTURE: &str = r#"
-import Foundation
-import AVFoundation
-
-final class PhotoDelegate: NSObject, AVCapturePhotoCaptureDelegate {
-    let destination: URL
-    let semaphore: DispatchSemaphore
-    var captureError: Error?
-
-    init(destination: URL, semaphore: DispatchSemaphore) {
-        self.destination = destination
-        self.semaphore = semaphore
-    }
-
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        if let error = error {
-            self.captureError = error
-            return
-        }
-        guard let data = photo.fileDataRepresentation() else {
-            self.captureError = NSError(domain: "YeonjangCamera", code: 1, userInfo: [NSLocalizedDescriptionKey: "No file data representation"])
-            return
-        }
-        do {
-            try data.write(to: destination)
-        } catch {
-            self.captureError = error
-        }
-    }
-
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        if let error = error {
-            self.captureError = error
-        }
-        semaphore.signal()
-    }
-}
-
-let args = CommandLine.arguments
-guard args.count >= 2 else {
-    fputs("output path argument is required\n", stderr)
-    exit(2)
-}
-
-let outputPath = args[1]
-let extraArgs = Array(args.dropFirst(2))
-let includeBase64 = extraArgs.contains("--inline-base64")
-let requestedId = extraArgs.first(where: { $0 != "--inline-base64" })
-let discovery = AVCaptureDevice.DiscoverySession(
-    deviceTypes: [.builtInWideAngleCamera, .externalUnknown],
-    mediaType: .video,
-    position: .unspecified
-)
-
-guard !discovery.devices.isEmpty else {
-    fputs("No camera devices available\n", stderr)
-    exit(3)
-}
-
-let device: AVCaptureDevice
-if let requestedId {
-    guard let matched = discovery.devices.first(where: { $0.uniqueID == requestedId || $0.localizedName == requestedId }) else {
-        fputs("Requested camera device was not found\n", stderr)
-        exit(4)
-    }
-    device = matched
-} else {
-    device = discovery.devices[0]
-}
-
-let session = AVCaptureSession()
-session.beginConfiguration()
-session.sessionPreset = .photo
-
-let input: AVCaptureDeviceInput
-do {
-    input = try AVCaptureDeviceInput(device: device)
-} catch {
-    fputs("Failed to create camera input: \(error)\n", stderr)
-    exit(5)
-}
-
-guard session.canAddInput(input) else {
-    fputs("Camera input cannot be added to the session\n", stderr)
-    exit(6)
-}
-session.addInput(input)
-
-let photoOutput = AVCapturePhotoOutput()
-guard session.canAddOutput(photoOutput) else {
-    fputs("Camera output cannot be added to the session\n", stderr)
-    exit(7)
-}
-session.addOutput(photoOutput)
-session.commitConfiguration()
-session.startRunning()
-Thread.sleep(forTimeInterval: 0.5)
-
-let semaphore = DispatchSemaphore(value: 0)
-let delegate = PhotoDelegate(destination: URL(fileURLWithPath: outputPath), semaphore: semaphore)
-photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: delegate)
-
-if semaphore.wait(timeout: .now() + 15) == .timedOut {
-    session.stopRunning()
-    fputs("Timed out while waiting for camera capture\n", stderr)
-    exit(8)
-}
-
-session.stopRunning()
-
-if let error = delegate.captureError {
-    fputs("Camera capture failed: \(error)\n", stderr)
-    exit(9)
-}
-
-var payload: [String: Any] = [
-    "deviceId": device.uniqueID,
-    "deviceName": device.localizedName,
-    "outputPath": outputPath,
-    "mimeType": "image/jpeg"
-]
-if includeBase64 {
-    payload["base64Data"] = try Data(contentsOf: URL(fileURLWithPath: outputPath)).base64EncodedString()
-}
-let data = try JSONSerialization.data(withJSONObject: payload, options: [])
-FileHandle.standardOutput.write(data)
-"#;
-
 const SWIFT_SCREEN_CAPTURE: &str = r#"
 import Foundation
 import CoreGraphics
@@ -1205,6 +1130,11 @@ guard !args.isEmpty else {
 }
 
 let outputPath = args[0]
+let outputURL = URL(fileURLWithPath: outputPath)
+let outputDirectory = outputURL.deletingLastPathComponent()
+if !outputDirectory.path.isEmpty {
+    try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+}
 var displayId: String?
 var includeBase64 = false
 var index = 1

@@ -9,6 +9,7 @@ mod settings;
 
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::process::{Command, Stdio};
 
 use anyhow::Result;
 use serde_json::json;
@@ -18,6 +19,12 @@ use crate::protocol::{Request, Response};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+
+    if let Some(camera_helper_index) = args.iter().position(|arg| arg == "--camera-capture-helper")
+    {
+        run_camera_capture_helper(args[(camera_helper_index + 1)..].to_vec())?;
+        return Ok(());
+    }
 
     if let Some(command) = parse_flag_value(&args, "--exec") {
         run_exec_shell(command)?;
@@ -40,7 +47,7 @@ fn main() -> Result<()> {
     }
 
     eprintln!(
-        "Usage: nobie-yeonjang [--gui | --stdio | --exec <command> | --exec-bin <program> [args...]]"
+        "Usage: nobie-yeonjang [--gui | --stdio | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
     );
     std::process::exit(2);
 }
@@ -104,6 +111,35 @@ fn run_exec_binary(args: Vec<String>) -> Result<()> {
     .join()
     .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked"));
     write_response_and_exit(response)
+}
+
+fn run_camera_capture_helper(args: Vec<String>) -> Result<()> {
+    let current_exe = env::current_exe()?;
+    let helper_path = current_exe
+        .parent()
+        .map(|directory| directory.join("yeonjang-camera-helper"))
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve Yeonjang executable directory"))?;
+
+    if !helper_path.is_file() {
+        anyhow::bail!(
+            "bundled camera capture helper was not found next to the Yeonjang executable: {}",
+            helper_path.display()
+        );
+    }
+
+    let output = Command::new(&helper_path)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()?;
+
+    io::stdout().lock().write_all(&output.stdout)?;
+    io::stderr().lock().write_all(&output.stderr)?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    std::process::exit(output.status.code().unwrap_or(1));
 }
 
 fn write_response_and_exit(response: Response) -> Result<()> {

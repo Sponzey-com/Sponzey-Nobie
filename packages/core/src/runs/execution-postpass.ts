@@ -37,6 +37,7 @@ export type ExecutionPostPassDecision =
 export function decideExecutionPostPassRecovery(params: {
   originalRequest: string
   preview: string
+  directArtifactDeliverySatisfied: boolean
   failedCommandTools: FailedCommandTool[]
   commandFailureSeen: boolean
   commandRecoveredWithinSamePass: boolean
@@ -47,6 +48,10 @@ export function decideExecutionPostPassRecovery(params: {
   usedTurns: number
   maxDelegationTurns: number
 }): ExecutionPostPassDecision {
+  if (params.directArtifactDeliverySatisfied) {
+    return { kind: "none" }
+  }
+
   const commandFailureRecovery = selectCommandFailureRecovery({
     failedTools: params.failedCommandTools,
     commandFailureSeen: params.commandFailureSeen,
