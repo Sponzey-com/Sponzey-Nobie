@@ -17,4 +17,5 @@
 - capability 사용 가능 여부는 OS 지원 여부와 현재 권한 설정에 함께 의존합니다.
 - 새 장치/시스템 기능은 추상화 정의 뒤에 보통 이 폴더 구현이 따라와야 합니다.
 - macOS 카메라 캡처는 이제 임시 Swift 스크립트가 아니라 앱 번들 안의 고정 helper executable 경로를 사용합니다.
-- 현재 Windows에서 남아 있는 큰 미구현 항목은 `camera.capture`의 explicit `device_id` 선택입니다.
+- Windows 카메라 캡처도 이제 `Yeonjang --camera-capture-helper` 고정 경로를 사용합니다.
+- Windows `camera.list`는 WinRT video capture device id를 우선 노출해서 `camera.capture(device_id=...)`와 같은 id 축을 씁니다.
