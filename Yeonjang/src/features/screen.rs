@@ -19,7 +19,7 @@ pub fn capture(params: CaptureParams) -> Result<Value> {
     let request = ScreenCaptureRequest {
         display: params.display,
         output_path: params.output_path,
-        inline_base64: true,
+        inline_base64: params.inline_base64,
     };
     Ok(serde_json::to_value(
         current_backend().capture_screen(request)?,
