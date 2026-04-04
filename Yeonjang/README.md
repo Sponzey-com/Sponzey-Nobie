@@ -42,8 +42,6 @@ This initial scaffold provides:
   - `keyboard.type` on Windows
   - `keyboard.action` shortcut / key_press / key_down / key_up on Windows
   - `system.control` on Windows
-- planned method stubs for:
-  - Windows camera capture with explicit `device_id` selection
 
 ## Priority
 
@@ -122,6 +120,7 @@ Each response is emitted as a single JSON object per line.
 - macOS mouse actions use a CoreGraphics Swift helper and require Accessibility permission.
 - macOS keyboard input uses `System Events` for text typing and CoreGraphics events for key press / down / up actions.
 - Windows screen capture currently uses PowerShell with `System.Windows.Forms` and `System.Drawing`.
-- Windows camera capture currently uses the built-in Windows camera UI through PowerShell and WinRT.
+- Windows camera capture now uses the fixed `Yeonjang --camera-capture-helper` path.
+- When `device_id` is provided on Windows, Yeonjang uses WinRT `MediaCapture` for explicit device capture.
+- When `device_id` is omitted on Windows, Yeonjang falls back to the built-in Windows camera UI.
 - Windows mouse and keyboard actions currently use PowerShell with `user32.dll` calls.
-- Windows camera capture with explicit `device_id` routing is still planned.

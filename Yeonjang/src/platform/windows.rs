@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,7 +30,7 @@ impl AutomationBackend for PlatformBackend {
     fn capabilities(&self) -> AutomationCapabilities {
         AutomationCapabilities {
             platform: self.platform_kind(),
-            camera_management: false,
+            camera_management: true,
             command_execution: true,
             application_launch: true,
             screen_capture: true,
@@ -123,23 +124,41 @@ impl AutomationBackend for PlatformBackend {
     fn capture_camera(&self, request: CameraCaptureRequest) -> Result<CameraCaptureResult> {
         shared::validate_camera_request(&request)?;
         let inline_base64 = request.inline_base64;
-        if request
-            .device_id
-            .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
-        {
+        let output_path = resolve_camera_output_path(request.output_path.as_deref());
+        let executable_path = env::current_exe()?;
+        let mut command = Command::new(&executable_path);
+        command.arg("--camera-capture-helper").arg(&output_path);
+        if let Some(device_id) = request.device_id.as_deref() {
+            command.arg("--device-id").arg(device_id);
+        }
+        if inline_base64 {
+            command.arg("--inline-base64");
+        }
+
+        let output = command.output().with_context(|| {
+            format!(
+                "failed to execute Yeonjang camera capture command: {}",
+                executable_path.display()
+            )
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
             bail!(
-                "camera.capture with explicit device_id is not supported on Windows yet"
+                "camera capture failed: {}{}{}",
+                stderr.trim(),
+                if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                    " | "
+                } else {
+                    ""
+                },
+                stdout.trim()
             );
         }
 
-        let output_path = resolve_camera_output_path(request.output_path.as_deref());
-        let output = run_powershell_json(
-            WINDOWS_CAMERA_CAPTURE_SCRIPT,
-            &[output_path.clone()],
-            "camera capture",
-        )?;
+        let output: Value = serde_json::from_slice(&output.stdout)
+            .context("failed to parse camera capture helper output")?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/jpeg");
         let base64_data = if inline_base64 {
@@ -158,7 +177,11 @@ impl AutomationBackend for PlatformBackend {
         }
 
         Ok(CameraCaptureResult {
-            device_id: None,
+            device_id: output
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .or(request.device_id),
             output_path: if inline_base64 {
                 None
             } else {
@@ -466,6 +489,85 @@ impl AutomationBackend for PlatformBackend {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsCameraCaptureHelperRequest {
+    output_path: String,
+    device_id: Option<String>,
+    inline_base64: bool,
+}
+
+pub(crate) fn run_camera_capture_helper(args: Vec<String>) -> Result<()> {
+    let request = parse_windows_camera_capture_helper_request(args)?;
+    let output = if let Some(device_id) = request.device_id.as_deref() {
+        run_powershell_script(
+            WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT,
+            &[request.output_path.clone(), device_id.to_string()],
+            "camera capture",
+        )?
+    } else {
+        run_powershell_script(
+            WINDOWS_CAMERA_CAPTURE_SCRIPT,
+            &[request.output_path.clone()],
+            "camera capture",
+        )?
+    };
+
+    let mut parsed: Value = serde_json::from_str(output.trim())
+        .context("failed to parse Windows camera capture helper output")?;
+    if !request.inline_base64 {
+        if let Some(object) = parsed.as_object_mut() {
+            object.remove("base64Data");
+        }
+    }
+
+    serde_json::to_writer(io::stdout().lock(), &parsed)?;
+    io::stdout().lock().write_all(b"\n")?;
+    Ok(())
+}
+
+fn parse_windows_camera_capture_helper_request(
+    args: Vec<String>,
+) -> Result<WindowsCameraCaptureHelperRequest> {
+    let Some(output_path) = args.first().cloned() else {
+        bail!("output path argument is required");
+    };
+
+    let mut inline_base64 = false;
+    let mut device_id: Option<String> = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--inline-base64" => {
+                inline_base64 = true;
+                index += 1;
+            }
+            "--device-id" => {
+                let value = args
+                    .get(index + 1)
+                    .cloned()
+                    .filter(|candidate| !candidate.trim().is_empty())
+                    .context("device id value is required")?;
+                device_id = Some(value);
+                index += 2;
+            }
+            other => {
+                if device_id.is_none() && !other.trim().is_empty() {
+                    device_id = Some(other.to_string());
+                    index += 1;
+                } else {
+                    bail!("unknown argument: {other}");
+                }
+            }
+        }
+    }
+
+    Ok(WindowsCameraCaptureHelperRequest {
+        output_path,
+        device_id,
+        inline_base64,
+    })
 }
 
 fn resolve_windows_system_control(
@@ -876,9 +978,12 @@ $process = Start-Process @startArgs
 
 const WINDOWS_CAMERA_LIST_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Devices.Enumeration.DeviceInformation, Windows.Devices.Enumeration, ContentType=WindowsRuntime]
+$null = [Windows.Devices.Enumeration.DeviceClass, Windows.Devices.Enumeration, ContentType=WindowsRuntime]
 $items = New-Object System.Collections.ArrayList
 $seen = @{}
-function Add-Camera([string]$id, [string]$name) {
+function Add-Camera([string]$id, [string]$name, [string]$position = $null) {
   if ([string]::IsNullOrWhiteSpace($id) -or [string]::IsNullOrWhiteSpace($name)) {
     return
   }
@@ -889,24 +994,46 @@ function Add-Camera([string]$id, [string]$name) {
   [void]$items.Add([pscustomobject]@{
     id = $id
     name = $name
-    position = $null
+    position = if ([string]::IsNullOrWhiteSpace($position)) { $null } else { $position }
     available = $true
   })
 }
 try {
+  $findAsync = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync([Windows.Devices.Enumeration.DeviceClass]::VideoCapture)
+  $devices = [System.WindowsRuntimeSystemExtensions]::AsTask($findAsync).GetAwaiter().GetResult()
+  foreach ($device in $devices) {
+    $position = $null
+    try {
+      if ($null -ne $device.EnclosureLocation) {
+        $panel = $device.EnclosureLocation.Panel.ToString()
+        switch ($panel) {
+          'Front' { $position = 'front' }
+          'Back' { $position = 'back' }
+          default { $position = $panel.ToLowerInvariant() }
+        }
+      }
+    } catch {
+    }
+    Add-Camera $device.Id $device.Name $position
+  }
+} catch {
+}
+if ($items.Count -eq 0) {
+  try {
   foreach ($device in (Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.Class -in @('Camera', 'Image') })) {
     $id = if (-not [string]::IsNullOrWhiteSpace($device.InstanceId)) { $device.InstanceId } else { $device.DeviceID }
     $name = if (-not [string]::IsNullOrWhiteSpace($device.FriendlyName)) { $device.FriendlyName } else { $device.Name }
-    Add-Camera $id $name
+    Add-Camera $id $name $null
   }
-} catch {
+  } catch {
+  }
 }
 if ($items.Count -eq 0) {
   try {
     foreach ($device in (Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { $_.PNPClass -in @('Camera', 'Image') -or $_.Service -eq 'usbvideo' })) {
       $id = if (-not [string]::IsNullOrWhiteSpace($device.DeviceID)) { $device.DeviceID } else { $device.PNPDeviceID }
       $name = if (-not [string]::IsNullOrWhiteSpace($device.Name)) { $device.Name } else { $device.Caption }
-      Add-Camera $id $name
+      Add-Camera $id $name $null
     }
   } catch {
   }
@@ -921,7 +1048,7 @@ $null = [Windows.Media.Capture.CameraCaptureUI, Windows.Media.Capture, ContentTy
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
 $null = [Windows.Storage.FileIO, Windows.Storage, ContentType=WindowsRuntime]
 $null = [Windows.Storage.Streams.DataReader, Windows.Storage.Streams, ContentType=WindowsRuntime]
-$outputPath = $args[0]
+$outputPath = [System.IO.Path]::GetFullPath($args[0])
 $directory = [System.IO.Path]::GetDirectoryName($outputPath)
 if (-not [string]::IsNullOrWhiteSpace($directory)) {
   [System.IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -941,6 +1068,53 @@ $bytes = New-Object byte[] ([int]$buffer.Length)
 $reader.ReadBytes($bytes)
 [System.IO.File]::WriteAllBytes($outputPath, $bytes)
 [pscustomobject]@{
+  deviceId = $null
+  mimeType = 'image/jpeg'
+  base64Data = [Convert]::ToBase64String($bytes)
+} | ConvertTo-Json -Compress
+"#;
+
+const WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime]
+$null = [Windows.Media.Capture.MediaCaptureInitializationSettings, Windows.Media.Capture, ContentType=WindowsRuntime]
+$null = [Windows.Media.Capture.StreamingCaptureMode, Windows.Media.Capture, ContentType=WindowsRuntime]
+$null = [Windows.Media.MediaProperties.ImageEncodingProperties, Windows.Media.MediaProperties, ContentType=WindowsRuntime]
+$null = [Windows.Storage.StorageFolder, Windows.Storage, ContentType=WindowsRuntime]
+$null = [Windows.Storage.CreationCollisionOption, Windows.Storage, ContentType=WindowsRuntime]
+$outputPath = [System.IO.Path]::GetFullPath($args[0])
+$deviceId = $args[1]
+if ([string]::IsNullOrWhiteSpace($deviceId)) {
+  throw 'A non-empty device_id is required for explicit Windows camera capture.'
+}
+$directory = [System.IO.Path]::GetDirectoryName($outputPath)
+if (-not [string]::IsNullOrWhiteSpace($directory)) {
+  [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+}
+$fileName = [System.IO.Path]::GetFileName($outputPath)
+$settings = New-Object Windows.Media.Capture.MediaCaptureInitializationSettings
+$settings.StreamingCaptureMode = [Windows.Media.Capture.StreamingCaptureMode]::Video
+$settings.VideoDeviceId = $deviceId
+$mediaCapture = New-Object Windows.Media.Capture.MediaCapture
+try {
+  $initializeAsync = $mediaCapture.InitializeAsync($settings)
+  [System.WindowsRuntimeSystemExtensions]::AsTask($initializeAsync).GetAwaiter().GetResult() | Out-Null
+  $folderAsync = [Windows.Storage.StorageFolder]::GetFolderFromPathAsync($directory)
+  $folder = [System.WindowsRuntimeSystemExtensions]::AsTask($folderAsync).GetAwaiter().GetResult()
+  $fileAsync = $folder.CreateFileAsync($fileName, [Windows.Storage.CreationCollisionOption]::ReplaceExisting)
+  $file = [System.WindowsRuntimeSystemExtensions]::AsTask($fileAsync).GetAwaiter().GetResult()
+  $encoding = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
+  $captureAsync = $mediaCapture.CapturePhotoToStorageFileAsync($encoding, $file)
+  [System.WindowsRuntimeSystemExtensions]::AsTask($captureAsync).GetAwaiter().GetResult() | Out-Null
+} finally {
+  if ($null -ne $mediaCapture) {
+    $mediaCapture.Dispose()
+  }
+}
+$bytes = [System.IO.File]::ReadAllBytes($outputPath)
+[pscustomobject]@{
+  deviceId = $deviceId
   mimeType = 'image/jpeg'
   base64Data = [Convert]::ToBase64String($bytes)
 } | ConvertTo-Json -Compress
@@ -1173,10 +1347,12 @@ switch ($action) {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_windows_modifier_key_codes, normalize_windows_mouse_button_name,
-        parse_windows_camera_devices, resolve_optional_mouse_point,
+        PlatformBackend, WindowsCameraCaptureHelperRequest, build_windows_modifier_key_codes,
+        normalize_windows_mouse_button_name, parse_windows_camera_devices,
+        parse_windows_camera_capture_helper_request, resolve_optional_mouse_point,
         resolve_windows_modifier_key_code, resolve_windows_virtual_key_code,
     };
+    use crate::automation::AutomationBackend;
     use serde_json::json;
 
     #[test]
@@ -1257,5 +1433,31 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "cam-2");
+    }
+
+    #[test]
+    fn windows_capabilities_report_camera_management() {
+        let capabilities = PlatformBackend.capabilities();
+        assert!(capabilities.camera_management);
+    }
+
+    #[test]
+    fn parses_camera_capture_helper_args_with_device_id() {
+        let parsed = parse_windows_camera_capture_helper_request(vec![
+            "capture.jpg".to_string(),
+            "--device-id".to_string(),
+            "camera-1".to_string(),
+            "--inline-base64".to_string(),
+        ])
+        .expect("camera helper args should parse");
+
+        assert_eq!(
+            parsed,
+            WindowsCameraCaptureHelperRequest {
+                output_path: "capture.jpg".to_string(),
+                device_id: Some("camera-1".to_string()),
+                inline_base64: true,
+            }
+        );
     }
 }

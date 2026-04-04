@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod automation;
 mod features;
 mod gui;
@@ -9,6 +11,7 @@ mod settings;
 
 use std::env;
 use std::io::{self, BufRead, Write};
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
@@ -114,6 +117,25 @@ fn run_exec_binary(args: Vec<String>) -> Result<()> {
 }
 
 fn run_camera_capture_helper(args: Vec<String>) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        return crate::platform::run_platform_camera_capture_helper(args);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return run_macos_camera_capture_helper(args);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = args;
+        anyhow::bail!("camera capture helper is not implemented for this platform");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_camera_capture_helper(args: Vec<String>) -> Result<()> {
     let current_exe = env::current_exe()?;
     let helper_path = current_exe
         .parent()
