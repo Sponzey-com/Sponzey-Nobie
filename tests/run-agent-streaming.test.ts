@@ -227,6 +227,79 @@ describe("runAgent streaming policy", () => {
     ])
   })
 
+  it("stops after a terminal screen capture failure instead of exploring keyboard or shell fallbacks", async () => {
+    getAllMock.mockReturnValueOnce([{
+      name: 'screen_capture',
+      description: 'screen capture',
+      parameters: { type: 'object', properties: {} },
+    }])
+    dispatchMock.mockResolvedValueOnce({
+      success: false,
+      output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+      error: 'YEONJANG_SCREEN_CAPTURE_PATH_BUG',
+      details: {
+        via: 'yeonjang',
+        stopAfterFailure: true,
+        failureKind: 'path_bug',
+        extensionId: 'yeonjang-windows',
+      },
+    })
+
+    const provider = {
+      chat: vi.fn(async function* () {
+        yield {
+          type: 'tool_use',
+          id: 'tool-screen-1',
+          name: 'screen_capture',
+          input: { extensionId: 'yeonjang-windows' },
+        } as const
+        yield {
+          type: 'message_stop',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      userMessage: '윈도우 메인화면 캡처해서 보여줘',
+      sessionId: 'session-agent-screen-failure',
+      runId: 'run-agent-screen-failure',
+      model: 'gpt-5',
+      provider: provider as never,
+      source: 'telegram',
+      toolsEnabled: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(provider.chat).toHaveBeenCalledTimes(1)
+    expect(chunks).toEqual([
+      {
+        type: 'tool_start',
+        toolName: 'screen_capture',
+        params: { extensionId: 'yeonjang-windows' },
+      },
+      {
+        type: 'tool_end',
+        toolName: 'screen_capture',
+        success: false,
+        output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+        details: {
+          via: 'yeonjang',
+          stopAfterFailure: true,
+          failureKind: 'path_bug',
+          extensionId: 'yeonjang-windows',
+        },
+      },
+      {
+        type: 'text',
+        delta: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+      },
+      { type: 'done', totalTokens: 2 },
+    ])
+  })
+
   it("stops after telegram file send fails in the telegram channel instead of asking the AI again", async () => {
     getAllMock.mockReturnValueOnce([{
       name: "telegram_send_file",

@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -614,18 +614,62 @@ fn run_powershell_json(script: &str, args: &[String], context: &str) -> Result<V
         .with_context(|| format!("failed to parse PowerShell JSON output for {context}"))
 }
 
+fn build_temp_powershell_script_path(context: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let normalized = context
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    let file_name = if normalized.is_empty() {
+        format!("yeonjang-powershell-{stamp}.ps1")
+    } else {
+        format!("yeonjang-{normalized}-{stamp}.ps1")
+    };
+    env::temp_dir().join(file_name)
+}
+
 fn run_powershell_script(script: &str, args: &[String], context: &str) -> Result<String> {
+    let script_path = build_temp_powershell_script_path(context);
+    let script_contents = format!(
+        concat!(
+            "\u{feff}",
+            "$utf8NoBom = New-Object System.Text.UTF8Encoding($false)\n",
+            "[Console]::InputEncoding = $utf8NoBom\n",
+            "[Console]::OutputEncoding = $utf8NoBom\n",
+            "$OutputEncoding = $utf8NoBom\n",
+            "$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'\n",
+            "{}"
+        ),
+        script
+    );
+    fs::write(&script_path, script_contents)
+        .with_context(|| format!("failed to write temporary PowerShell script for {context}"))?;
+
     let output = Command::new("powershell")
         .arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-STA")
-        .arg("-Command")
-        .arg(script)
+        .arg("-File")
+        .arg(&script_path)
         .args(args)
-        .output()
-        .with_context(|| format!("failed to launch PowerShell for {context}"))?;
+        .output();
+
+    let _ = fs::remove_file(&script_path);
+
+    let output = output.with_context(|| format!("failed to launch PowerShell for {context}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1124,8 +1168,29 @@ const WINDOWS_SCREEN_CAPTURE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$outputPath = $args[0]
-$displayArg = if ($args.Count -gt 1) { $args[1] } else { '' }
+
+$outputPath = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
+$displayArg = if ($args.Count -gt 1) { [string]$args[1] } else { '' }
+
+if ($outputPath -match '^\d+$' -and [string]::IsNullOrWhiteSpace($displayArg)) {
+  $displayArg = $outputPath
+  $outputPath = Join-Path $env:TEMP ("yeonjang-screen-" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ".png")
+}
+
+if ($outputPath -match '^\d+$' -and -not [string]::IsNullOrWhiteSpace($displayArg)) {
+  $looksLikePath = $displayArg.Contains('\') -or $displayArg.Contains('/') -or $displayArg.Contains(':')
+  if ($looksLikePath) {
+    $tmp = $outputPath
+    $outputPath = $displayArg
+    $displayArg = $tmp
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($outputPath)) {
+  $outputPath = Join-Path $env:TEMP ("yeonjang-screen-" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ".png")
+}
+
+$outputPath = [System.IO.Path]::GetFullPath($outputPath)
 $directory = [System.IO.Path]::GetDirectoryName($outputPath)
 if (-not [string]::IsNullOrWhiteSpace($directory)) {
   [System.IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -1135,7 +1200,10 @@ if ($screens.Length -eq 0) {
   throw 'No screens are available for capture.'
 }
 if (-not [string]::IsNullOrWhiteSpace($displayArg)) {
-  $index = [int]$displayArg
+  $index = 0
+  if (-not [int]::TryParse($displayArg, [ref]$index)) {
+    throw "Display index is not a valid integer: $displayArg"
+  }
   if ($index -lt 0 -or $index -ge $screens.Length) {
     throw "Display index out of range: $index"
   }

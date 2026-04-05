@@ -9,6 +9,7 @@ vi.mock("../packages/core/src/yeonjang/mqtt-client.js", () => ({
   canYeonjangHandleMethod,
   invokeYeonjangMethod,
   isYeonjangUnavailableError,
+  DEFAULT_YEONJANG_EXTENSION_ID: "yeonjang-main",
 }))
 
 const { keyboardShortcutTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
@@ -42,7 +43,7 @@ describe("keyboard shortcut tool", () => {
       createContext(),
     )
 
-    expect(canYeonjangHandleMethod).toHaveBeenCalledWith("keyboard.action")
+    expect(canYeonjangHandleMethod).toHaveBeenCalledWith("keyboard.action", {})
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       "keyboard.action",
       {

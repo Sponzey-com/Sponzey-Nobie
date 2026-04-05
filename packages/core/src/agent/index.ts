@@ -52,6 +52,9 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Each extension may be on a different computer or device.",
   "Nobie can choose which extension to use based on extension connection data and extension IDs.",
   "When a task requires system privileges or device control, the default policy is to choose an appropriate connected extension instead of doing the work directly in the Nobie core.",
+  "If the user explicitly names a computer, operating system, or Yeonjang extension ID, every Yeonjang tool call must keep that same target extension.",
+  "Do not invent aliases such as 'yeonjang-windows' unless that is the real connected extension ID.",
+  "Do not switch to another extension during recovery unless the user explicitly approves the target change.",
   "",
   "[Top-Level Objective]",
   "Always prioritize the following:",
@@ -166,6 +169,10 @@ interface ExecutionRecoveryFailure {
 interface ExecutedToolResult {
   toolName: string
   result: ToolResult
+}
+
+interface StopAfterFailureDetails {
+  stopAfterFailure?: boolean
 }
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
@@ -488,6 +495,23 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       created_at: Date.now(),
     })
 
+    const terminalFailureText = getTerminalFailureText(executedToolResults)
+    if (terminalFailureText) {
+      yield { type: "text", delta: terminalFailureText }
+      eventBus.emit("agent.stream", { sessionId, runId, delta: terminalFailureText })
+      insertMessage({
+        id: crypto.randomUUID(),
+        session_id: sessionId,
+        root_run_id: runId,
+        role: "assistant",
+        content: terminalFailureText,
+        tool_calls: null,
+        tool_call_id: null,
+        created_at: Date.now(),
+      })
+      break
+    }
+
     if (shouldStopAfterToolRound({
       source: ctx.source,
       toolResults: executedToolResults,
@@ -557,6 +581,21 @@ function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): bo
 
 function isNonRecoverableExecutionToolFailure(result: ToolResult): boolean {
   return result.error === "CAMERA_FACING_SELECTION_UNSUPPORTED"
+}
+
+function getTerminalFailureText(toolResults: ExecutedToolResult[]): string | null {
+  for (const { result } of toolResults) {
+    if (!result.success && shouldStopAfterFailure(result.details)) {
+      const text = result.output.trim()
+      if (text) return text
+    }
+  }
+  return null
+}
+
+function shouldStopAfterFailure(details: unknown): boolean {
+  if (!details || typeof details !== "object") return false
+  return Boolean((details as StopAfterFailureDetails).stopAfterFailure)
 }
 
 function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): string {

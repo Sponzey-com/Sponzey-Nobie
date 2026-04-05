@@ -2,6 +2,7 @@ import { mkdirSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult } from "../types.js"
 import { invokeYeonjangMethod, DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js"
+import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js"
 import { PATHS } from "../../config/index.js"
 
 interface YeonjangCameraDevice {
@@ -121,9 +122,6 @@ function buildCameraFacingUnsupportedMessage(params: {
   ].join("\n")
 }
 
-function resolveExtensionId(extensionId?: string): string {
-  return extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID
-}
 
 function resolveTimeoutMs(timeoutSec?: number): number | undefined {
   if (!Number.isFinite(timeoutSec)) return undefined
@@ -205,7 +203,10 @@ export const yeonjangCameraListTool: AgentTool<YeonjangCameraListParams> = {
   riskLevel: "safe",
   requiresApproval: false,
   async execute(params: YeonjangCameraListParams, ctx: ToolContext): Promise<ToolResult> {
-    const extensionId = resolveExtensionId(params.extensionId)
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    }) ?? DEFAULT_YEONJANG_EXTENSION_ID
     ctx.onProgress(`연장 ${extensionId} 카메라 목록을 조회합니다.`)
     try {
       const timeoutMs = resolveTimeoutMs(params.timeoutSec)
@@ -270,7 +271,10 @@ export const yeonjangCameraCaptureTool: AgentTool<YeonjangCameraCaptureParams> =
   riskLevel: "moderate",
   requiresApproval: true,
   async execute(params: YeonjangCameraCaptureParams, ctx: ToolContext): Promise<ToolResult> {
-    const extensionId = resolveExtensionId(params.extensionId)
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    }) ?? DEFAULT_YEONJANG_EXTENSION_ID
     const inlineBase64 = true
     ctx.onProgress(`연장 ${extensionId} 카메라 캡처를 요청합니다.`)
     try {

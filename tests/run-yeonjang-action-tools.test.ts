@@ -9,6 +9,7 @@ vi.mock("../packages/core/src/yeonjang/mqtt-client.js", () => ({
   canYeonjangHandleMethod,
   invokeYeonjangMethod,
   isYeonjangUnavailableError,
+  DEFAULT_YEONJANG_EXTENSION_ID: "yeonjang-main",
 }))
 
 const { shellExecTool } = await import("../packages/core/src/tools/builtin/shell.ts")
@@ -49,21 +50,25 @@ describe("yeonjang action tools", () => {
         command: "echo $HELLO",
         timeoutSec: 12,
         env: { HELLO: "world" },
+        extensionId: "yeonjang-dongwooshinc28b-92049",
       },
       createContext(),
     )
 
+    expect(canYeonjangHandleMethod).toHaveBeenCalledWith(
+      "system.exec",
+      { extensionId: "yeonjang-dongwooshinc28b-92049" },
+    )
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       "system.exec",
       {
         command: "echo $HELLO",
         args: [],
-        cwd: process.cwd(),
         shell: true,
         env: { HELLO: "world" },
         timeout_sec: 12,
       },
-      { timeoutMs: 12_000 },
+      { timeoutMs: 12_000, extensionId: "yeonjang-dongwooshinc28b-92049" },
     )
   })
 
