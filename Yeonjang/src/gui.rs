@@ -1,8 +1,13 @@
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::sync::mpsc::Receiver;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, Sender},
+};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use eframe::egui::{
@@ -10,6 +15,8 @@ use eframe::egui::{
     FontFamily, FontId, Frame, Layout, Margin, RichText, ScrollArea, Sense, Stroke, TextEdit,
     TextStyle, TopBottomPanel, Ui,
 };
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{Icon as TrayIconImage, TrayIcon, TrayIconBuilder};
 
 use crate::mqtt::{MqttRuntimeHandle, RuntimeEvent, probe_connection, start_runtime};
 use crate::settings::{UiLanguage, YeonjangSettings, load_settings, save_settings};
@@ -26,6 +33,124 @@ enum ConnectionState {
     Disconnected,
     Connected,
     AuthFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayAction {
+    ShowWindow,
+    HideWindow,
+    QuitApp,
+}
+
+struct SystemTrayController {
+    _tray_icon: TrayIcon,
+    receiver: Receiver<TrayAction>,
+}
+
+impl SystemTrayController {
+    fn new(lang: UiLanguage, egui_ctx: egui::Context, quit_requested: Arc<AtomicBool>) -> Result<Self> {
+        let menu = Menu::new();
+        let settings_item = MenuItem::new(
+            t(lang, "설정창 보기", "Show Settings"),
+            true,
+            None,
+        );
+        let hide_item = MenuItem::new(t(lang, "숨기기", "Hide"), true, None);
+        let quit_item = MenuItem::new(t(lang, "종료", "Quit"), true, None);
+
+        menu.append(&settings_item)?;
+        menu.append(&hide_item)?;
+        menu.append(&quit_item)?;
+
+        let tray_icon = TrayIconBuilder::new()
+            .with_tooltip("Yeonjang")
+            .with_icon(build_tray_icon()?)
+            .with_menu(Box::new(menu))
+            .build()?;
+
+        let settings_id = settings_item.id().clone();
+        let hide_id = hide_item.id().clone();
+        let quit_id = quit_item.id().clone();
+        let (sender, receiver) = mpsc::channel();
+        install_tray_menu_handler(sender, egui_ctx, quit_requested, settings_id, hide_id, quit_id);
+
+        Ok(Self {
+            _tray_icon: tray_icon,
+            receiver,
+        })
+    }
+
+    fn drain_actions(&self) -> Vec<TrayAction> {
+        let mut actions = Vec::new();
+
+        while let Ok(action) = self.receiver.try_recv() {
+            actions.push(action);
+        }
+
+        actions
+    }
+}
+
+fn install_tray_menu_handler(
+    sender: Sender<TrayAction>,
+    egui_ctx: egui::Context,
+    quit_requested: Arc<AtomicBool>,
+    settings_id: tray_icon::menu::MenuId,
+    hide_id: tray_icon::menu::MenuId,
+    quit_id: tray_icon::menu::MenuId,
+) {
+    MenuEvent::set_event_handler(Some(move |event: tray_icon::menu::MenuEvent| {
+        let action = if event.id == settings_id {
+            Some(TrayAction::ShowWindow)
+        } else if event.id == hide_id {
+            Some(TrayAction::HideWindow)
+        } else if event.id == quit_id {
+            Some(TrayAction::QuitApp)
+        } else {
+            None
+        };
+
+        if let Some(action) = action {
+            let _ = sender.send(action);
+            match action {
+                TrayAction::ShowWindow => {
+                    let ctx = egui_ctx.clone();
+                    thread::spawn(move || {
+                        for _ in 0..3 {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                            ctx.request_repaint();
+                            thread::sleep(Duration::from_millis(80));
+                        }
+                    });
+                }
+                TrayAction::HideWindow => {
+                    #[cfg(target_os = "windows")]
+                    {
+                        egui_ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        egui_ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
+                }
+                TrayAction::QuitApp => {
+                    quit_requested.store(true, Ordering::SeqCst);
+                    let ctx = egui_ctx.clone();
+                    thread::spawn(move || {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ctx.request_repaint();
+                        thread::sleep(Duration::from_millis(250));
+                        std::process::exit(0);
+                    });
+                }
+            }
+            egui_ctx.request_repaint();
+        }
+    }));
 }
 
 fn t(lang: UiLanguage, ko: &'static str, en: &'static str) -> &'static str {
@@ -52,7 +177,7 @@ pub fn run_gui() -> Result<()> {
         Box::new(|cc| {
             install_platform_fonts(&cc.egui_ctx);
             apply_theme(&cc.egui_ctx);
-            Ok(Box::new(YeonjangGuiApp::new()))
+            Ok(Box::new(YeonjangGuiApp::new(cc.egui_ctx.clone())))
         }),
     )
     .map_err(|error| anyhow!(error.to_string()))?;
@@ -176,10 +301,14 @@ struct YeonjangGuiApp {
     last_error: String,
     mqtt_runtime: Option<MqttRuntimeHandle>,
     mqtt_runtime_events: Option<Receiver<RuntimeEvent>>,
+    tray_controller: Option<SystemTrayController>,
+    window_hidden_to_tray: bool,
+    allow_window_close: bool,
+    quit_requested: Arc<AtomicBool>,
 }
 
 impl YeonjangGuiApp {
-    fn new() -> Self {
+    fn new(egui_ctx: egui::Context) -> Self {
         let (settings, status_message, status_color) = match load_settings() {
             Ok(settings) => {
                 let lang = settings.ui_language;
@@ -225,7 +354,30 @@ impl YeonjangGuiApp {
             .to_string(),
             mqtt_runtime: None,
             mqtt_runtime_events: None,
+            tray_controller: None,
+            window_hidden_to_tray: false,
+            allow_window_close: false,
+            quit_requested: Arc::new(AtomicBool::new(false)),
         };
+
+        match SystemTrayController::new(ui_language, egui_ctx, app.quit_requested.clone()) {
+            Ok(tray_controller) => {
+                app.tray_controller = Some(tray_controller);
+            }
+            Err(error) => {
+                app.set_status(
+                    format!(
+                        "{}: {error}",
+                        t(
+                            ui_language,
+                            "시스템 트레이 초기화 실패",
+                            "Failed to initialize the system tray"
+                        )
+                    ),
+                    color_warn_text(),
+                );
+            }
+        }
 
         if app.settings.connection.auto_connect {
             app.connect_now();
@@ -790,11 +942,75 @@ impl YeonjangGuiApp {
             + usize::from(self.settings.permissions.allow_keyboard_control);
         (enabled, disabled, os_required)
     }
+
+    fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        self.window_hidden_to_tray = true;
+        #[cfg(target_os = "windows")]
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        self.set_status(
+            t(
+                self.lang(),
+                "연장은 시스템 트레이에서 계속 실행됩니다.",
+                "Yeonjang is still running in the system tray.",
+            ),
+            color_success_text(),
+        );
+    }
+
+    fn show_from_tray(&mut self, ctx: &egui::Context) {
+        self.window_hidden_to_tray = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+
+    fn request_quit(&mut self, ctx: &egui::Context) {
+        self.allow_window_close = true;
+        self.window_hidden_to_tray = false;
+        self.quit_requested.store(true, Ordering::SeqCst);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn process_tray_actions(&mut self, ctx: &egui::Context) {
+        let actions = self
+            .tray_controller
+            .as_ref()
+            .map(SystemTrayController::drain_actions)
+            .unwrap_or_default();
+
+        for action in actions {
+            match action {
+                TrayAction::ShowWindow => self.show_from_tray(ctx),
+                TrayAction::HideWindow => self.hide_to_tray(ctx),
+                TrayAction::QuitApp => self.request_quit(ctx),
+            }
+        }
+    }
 }
 
 impl eframe::App for YeonjangGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.request_repaint_after(Duration::from_millis(200));
+        if self.quit_requested.swap(false, Ordering::SeqCst) {
+            self.allow_window_close = true;
+            self.window_hidden_to_tray = false;
+        }
         self.process_runtime_events();
+        self.process_tray_actions(ctx);
+
+        if ctx.input(|input| input.viewport().close_requested()) && !self.allow_window_close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_to_tray(ctx);
+        }
+
         apply_theme(ctx);
         let lang = self.lang();
 
@@ -917,6 +1133,34 @@ impl eframe::App for YeonjangGuiApp {
                 });
             });
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.stop_runtime();
+    }
+}
+
+fn build_tray_icon() -> Result<TrayIconImage> {
+    let width = 32;
+    let height = 32;
+    let mut rgba = Vec::with_capacity(width * height * 4);
+
+    for y in 0..height {
+        for x in 0..width {
+            let edge = x < 3 || y < 3 || x >= width - 3 || y >= height - 3;
+            let diagonal = (x as i32 - y as i32).abs() <= 2;
+            let (r, g, b, a) = if edge {
+                (32, 36, 46, 255)
+            } else if diagonal {
+                (207, 90, 43, 255)
+            } else {
+                (244, 237, 226, 255)
+            };
+            rgba.extend_from_slice(&[r, g, b, a]);
+        }
+    }
+
+    TrayIconImage::from_rgba(rgba, width as u32, height as u32)
+        .map_err(|error| anyhow!(error.to_string()))
 }
 
 impl Drop for YeonjangGuiApp {

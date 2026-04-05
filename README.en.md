@@ -271,6 +271,12 @@ bash scripts/start-local.sh
 cargo run --manifest-path Yeonjang/Cargo.toml
 ```
 
+If you need camera capture on macOS, prefer the bundled app path below instead of plain `cargo run`, because the camera helper is packaged next to the app executable.
+
+```bash
+bash scripts/start-yeonjang-macos.sh
+```
+
 3. In Yeonjang, verify the default broker values.
 
 - Host: `127.0.0.1`
@@ -289,6 +295,7 @@ Notes:
 
 - `cargo run --manifest-path Yeonjang/Cargo.toml -- --stdio` is for standalone node testing.
 - For normal Nobie usage, the expected path is the MQTT-connected Yeonjang GUI/runtime.
+- On macOS, `camera.capture` uses a fixed helper executable inside `Yeonjang.app`, so `scripts/start-yeonjang-macos.sh` is the safest path when camera capture is required.
 
 ## State Directory and Config Files
 

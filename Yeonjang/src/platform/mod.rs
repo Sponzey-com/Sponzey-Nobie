@@ -17,6 +17,8 @@ pub use macos::PlatformBackend as CurrentBackend;
 pub use unsupported::PlatformBackend as CurrentBackend;
 #[cfg(target_os = "windows")]
 pub use windows::PlatformBackend as CurrentBackend;
+#[cfg(target_os = "windows")]
+pub(crate) use windows::run_camera_capture_helper as run_platform_camera_capture_helper;
 
 pub fn current_backend() -> CurrentBackend {
     CurrentBackend

@@ -12,6 +12,7 @@ import { needsCompression, compressContext } from "../memory/compressor.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
+import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js"
 
 const log = createLogger("agent")
 
@@ -51,6 +52,9 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Each extension may be on a different computer or device.",
   "Nobie can choose which extension to use based on extension connection data and extension IDs.",
   "When a task requires system privileges or device control, the default policy is to choose an appropriate connected extension instead of doing the work directly in the Nobie core.",
+  "If the user explicitly names a computer, operating system, or Yeonjang extension ID, every Yeonjang tool call must keep that same target extension.",
+  "Do not invent aliases such as 'yeonjang-windows' unless that is the real connected extension ID.",
+  "Do not switch to another extension during recovery unless the user explicitly approves the target change.",
   "",
   "[Top-Level Objective]",
   "Always prioritize the following:",
@@ -83,6 +87,8 @@ const DEFAULT_SYSTEM_PROMPT = [
   "For simple checks, confirmations, counts, summaries, and status reports, deliver the result as normal text in the current channel.",
   "Do not create temporary text or document files just to send a plain answer.",
   "Use file delivery only when the result is inherently a file artifact such as a screenshot, camera photo, generated document explicitly requested by the user, or an existing file the user explicitly asked to send.",
+  "If the user explicitly requires a front or rear lens on an iPhone Continuity Camera and the extension reports that lens selection is unsupported, do not capture or send a substitute image.",
+  "In that case, explain the limitation clearly and ask the user to switch the phone lens manually or choose another camera.",
   "",
   "[Failure Handling Rules]",
   "If a tool fails, read the reason.",
@@ -158,6 +164,15 @@ interface ExecutionRecoveryFailure {
   toolName: string
   output: string
   error?: string
+}
+
+interface ExecutedToolResult {
+  toolName: string
+  result: ToolResult
+}
+
+interface StopAfterFailureDetails {
+  stopAfterFailure?: boolean
 }
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
@@ -431,6 +446,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       is_error?: boolean
     }> = []
     const executionRecoveryFailures: ExecutionRecoveryFailure[] = []
+    const executedToolResults: ExecutedToolResult[] = []
 
     for (const tu of pendingToolUses) {
       yield { type: "tool_start", toolName: tu.name, params: tu.input }
@@ -449,6 +465,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         output: result.output,
         ...(result.details !== undefined ? { details: result.details } : {}),
       }
+      executedToolResults.push({ toolName: tu.name, result })
 
       if (shouldSignalExecutionRecovery(tu.name, result)) {
         executionRecoveryFailures.push({
@@ -478,6 +495,30 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       created_at: Date.now(),
     })
 
+    const terminalFailureText = getTerminalFailureText(executedToolResults)
+    if (terminalFailureText) {
+      yield { type: "text", delta: terminalFailureText }
+      eventBus.emit("agent.stream", { sessionId, runId, delta: terminalFailureText })
+      insertMessage({
+        id: crypto.randomUUID(),
+        session_id: sessionId,
+        root_run_id: runId,
+        role: "assistant",
+        content: terminalFailureText,
+        tool_calls: null,
+        tool_call_id: null,
+        created_at: Date.now(),
+      })
+      break
+    }
+
+    if (shouldStopAfterToolRound({
+      source: ctx.source,
+      toolResults: executedToolResults,
+    })) {
+      break
+    }
+
     if (executionRecoveryFailures.length > 0) {
       yield {
         type: "execution_recovery",
@@ -501,6 +542,31 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   yield { type: "done", totalTokens }
 }
 
+function shouldStopAfterToolRound(params: {
+  source: ToolContext["source"]
+  toolResults: ExecutedToolResult[]
+}): boolean {
+  for (const toolResult of params.toolResults) {
+    if (shouldTerminateRunAfterSuccessfulTool({
+      type: "tool_end",
+      toolName: toolResult.toolName,
+      success: toolResult.result.success,
+      output: toolResult.result.output,
+      ...(toolResult.result.details !== undefined ? { details: toolResult.result.details } : {}),
+    })) {
+      return true
+    }
+  }
+
+  if (params.source !== "telegram") {
+    return false
+  }
+
+  return params.toolResults.some(({ toolName, result }) =>
+    toolName === "telegram_send_file" && !result.success,
+  )
+}
+
 function shouldAllowWebAccess(userMessage: string): boolean {
   const normalized = userMessage.trim()
   if (!normalized) return false
@@ -508,7 +574,28 @@ function shouldAllowWebAccess(userMessage: string): boolean {
 }
 
 function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): boolean {
-  return !result.success && EXECUTION_RECOVERY_TOOL_NAMES.has(toolName)
+  return !result.success
+    && EXECUTION_RECOVERY_TOOL_NAMES.has(toolName)
+    && !isNonRecoverableExecutionToolFailure(result)
+}
+
+function isNonRecoverableExecutionToolFailure(result: ToolResult): boolean {
+  return result.error === "CAMERA_FACING_SELECTION_UNSUPPORTED"
+}
+
+function getTerminalFailureText(toolResults: ExecutedToolResult[]): string | null {
+  for (const { result } of toolResults) {
+    if (!result.success && shouldStopAfterFailure(result.details)) {
+      const text = result.output.trim()
+      if (text) return text
+    }
+  }
+  return null
+}
+
+function shouldStopAfterFailure(details: unknown): boolean {
+  if (!details || typeof details !== "object") return false
+  return Boolean((details as StopAfterFailureDetails).stopAfterFailure)
 }
 
 function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): string {

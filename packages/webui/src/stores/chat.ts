@@ -158,9 +158,13 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
         ...(typeof data.mimeType === "string" ? { mimeType: data.mimeType } : {}),
         ...(typeof data.caption === "string" ? { caption: data.caption } : {}),
       })
+      flushPendingAssistantRun(runId)
       break
 
     case "agent.end":
+      if (!incomingSessionId || !runId) break
+      if (activeSessionId && incomingSessionId !== activeSessionId) break
+      flushPendingAssistantRun(runId)
       break
 
     case "approval.request":

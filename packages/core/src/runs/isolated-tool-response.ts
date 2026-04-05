@@ -5,6 +5,10 @@ export interface IsolatedToolResponseDecision {
   text?: string
 }
 
+interface ExplicitToolResponseOwnershipDetails {
+  responseOwnership?: "final_text"
+}
+
 function isArtifactDeliveryDetails(value: unknown): boolean {
   if (!value || typeof value !== "object") return false
 
@@ -23,10 +27,10 @@ function isArtifactDeliveryDetails(value: unknown): boolean {
     && typeof candidate.source === "string"
 }
 
-function isYeonjangToolDetails(value: unknown): boolean {
+function hasExplicitFinalTextOwnership(value: unknown): value is ExplicitToolResponseOwnershipDetails {
   if (!value || typeof value !== "object") return false
-  const candidate = value as Partial<{ via: string }>
-  return candidate.via === "yeonjang"
+  const candidate = value as ExplicitToolResponseOwnershipDetails
+  return candidate.responseOwnership === "final_text"
 }
 
 export function decideIsolatedToolResponse(chunk: AgentChunk): IsolatedToolResponseDecision {
@@ -38,7 +42,7 @@ export function decideIsolatedToolResponse(chunk: AgentChunk): IsolatedToolRespo
     return { kind: "artifact" }
   }
 
-  if (isYeonjangToolDetails(chunk.details)) {
+  if (hasExplicitFinalTextOwnership(chunk.details)) {
     const text = chunk.output.trim()
     if (text) {
       return {
@@ -49,4 +53,9 @@ export function decideIsolatedToolResponse(chunk: AgentChunk): IsolatedToolRespo
   }
 
   return { kind: "none" }
+}
+
+export function shouldTerminateRunAfterSuccessfulTool(chunk: AgentChunk): boolean {
+  if (chunk.type !== "tool_end" || !chunk.success) return false
+  return decideIsolatedToolResponse(chunk).kind !== "none"
 }

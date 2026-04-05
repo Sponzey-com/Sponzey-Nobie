@@ -10,6 +10,8 @@ PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
 MACOS_INFO_PLIST="$YEONJANG_DIR/manifests/macos/Info.plist"
 MACOS_ENTITLEMENTS="$YEONJANG_DIR/manifests/macos/Yeonjang.entitlements"
+CAMERA_HELPER_SWIFT="$YEONJANG_DIR/helpers/macos/camera_capture_helper.swift"
+CAMERA_HELPER_BINARY_NAME="yeonjang-camera-helper"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "이 스크립트는 macOS 전용입니다."
@@ -28,6 +30,11 @@ fi
 
 if [[ ! -f "$MACOS_INFO_PLIST" ]]; then
   echo "macOS Info.plist 를 찾을 수 없습니다: $MACOS_INFO_PLIST"
+  exit 1
+fi
+
+if [[ ! -f "$CAMERA_HELPER_SWIFT" ]]; then
+  echo "macOS 카메라 helper Swift 소스를 찾을 수 없습니다: $CAMERA_HELPER_SWIFT"
   exit 1
 fi
 
@@ -66,12 +73,17 @@ APP_CONTENTS="$APP_BUNDLE_PATH/Contents"
 APP_MACOS_DIR="$APP_CONTENTS/MacOS"
 APP_RESOURCES_DIR="$APP_CONTENTS/Resources"
 APP_BINARY_PATH="$APP_MACOS_DIR/$APP_NAME"
+CAMERA_HELPER_BINARY_PATH="$APP_MACOS_DIR/$CAMERA_HELPER_BINARY_NAME"
 
 rm -rf "$APP_BUNDLE_PATH"
 mkdir -p "$APP_MACOS_DIR" "$APP_RESOURCES_DIR"
 cp "$MACOS_INFO_PLIST" "$APP_CONTENTS/Info.plist"
 cp "$BINARY_PATH" "$APP_BINARY_PATH"
 chmod +x "$APP_BINARY_PATH"
+
+echo "macOS 카메라 helper를 빌드합니다..."
+xcrun swiftc -O -o "$CAMERA_HELPER_BINARY_PATH" "$CAMERA_HELPER_SWIFT"
+chmod +x "$CAMERA_HELPER_BINARY_PATH"
 
 if command -v codesign >/dev/null 2>&1; then
   if [[ -f "$MACOS_ENTITLEMENTS" ]]; then
@@ -84,3 +96,4 @@ fi
 echo "빌드 완료:"
 echo "  Binary : $BINARY_PATH"
 echo "  App    : $APP_BUNDLE_PATH"
+echo "  Helper : $CAMERA_HELPER_BINARY_PATH"

@@ -24,16 +24,24 @@ This initial scaffold provides:
   - `system.info`
   - `system.exec`
   - `application.launch` on macOS
+  - `application.launch` on Windows
   - `camera.list` on macOS
   - `camera.capture` on macOS
+  - `camera.list` on Windows
+  - `camera.capture` on Windows
   - `screen.capture` on macOS
+  - `screen.capture` on Windows
   - `mouse.move` on macOS
   - `mouse.click` on macOS
   - `mouse.action` move / click / double_click / button_down / button_up / scroll on macOS
+  - `mouse.move` on Windows
+  - `mouse.click` on Windows
+  - `mouse.action` move / click / double_click / button_down / button_up / scroll on Windows
   - `keyboard.type` on macOS
   - `keyboard.action` shortcut / key_press / key_down / key_up on macOS
-- planned method stubs for:
-  - `system.control`
+  - `keyboard.type` on Windows
+  - `keyboard.action` shortcut / key_press / key_down / key_up on Windows
+  - `system.control` on Windows
 
 ## Priority
 
@@ -105,8 +113,14 @@ Each response is emitted as a single JSON object per line.
 - `system.exec` now respects the Yeonjang permission toggle. If `명령 실행 / Command Execution` is off, request handling returns a permission error.
 - `application.launch` now respects its own Yeonjang permission toggle.
 - camera support is the first platform feature to implement on top of the abstraction layer.
-- macOS camera capture uses an AVFoundation-based Swift helper and expects the bundled app manifest to contain camera usage descriptions.
+- macOS camera capture uses a bundled AVFoundation helper executable placed next to `Yeonjang.app/Contents/MacOS/Yeonjang`.
+- 그래서 macOS 카메라 캡처는 임시 `xcrun swift` 스크립트가 아니라, `scripts/build-yeonjang-macos.sh` 또는 `scripts/start-yeonjang-macos.sh`로 만든 앱 번들 실행 경로를 기준으로 동작합니다.
 - macOS permission manifests live under `Yeonjang/manifests/macos/`.
 - macOS screen capture uses a Swift helper backed by `screencapture`.
 - macOS mouse actions use a CoreGraphics Swift helper and require Accessibility permission.
 - macOS keyboard input uses `System Events` for text typing and CoreGraphics events for key press / down / up actions.
+- Windows screen capture currently uses PowerShell with `System.Windows.Forms` and `System.Drawing`.
+- Windows camera capture now uses the fixed `Yeonjang --camera-capture-helper` path.
+- When `device_id` is provided on Windows, Yeonjang uses WinRT `MediaCapture` for explicit device capture.
+- When `device_id` is omitted on Windows, Yeonjang falls back to the built-in Windows camera UI.
+- Windows mouse and keyboard actions currently use PowerShell with `user32.dll` calls.
