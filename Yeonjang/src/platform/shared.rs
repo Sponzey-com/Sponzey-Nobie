@@ -159,6 +159,7 @@ fn detect_command_policy_violation(request: &CommandExecutionRequest) -> Option<
     None
 }
 
+#[allow(dead_code)]
 pub fn not_implemented(feature: &str, platform: PlatformKind) -> anyhow::Error {
     anyhow!(
         "{feature} is scaffolded but not implemented yet for {:?}",

@@ -4,7 +4,8 @@
  */
 
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
-import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
 
 const MOVE_DELAY_MS = 500
 
@@ -23,6 +24,7 @@ function yeonjangRequiredFailure(method: string): ToolResult {
 interface MouseMoveParams {
   x: number
   y: number
+  extensionId?: string
 }
 
 interface MouseClickParams {
@@ -30,6 +32,7 @@ interface MouseClickParams {
   y: number
   button?: "left" | "right" | "middle"
   double?: boolean
+  extensionId?: string
 }
 
 interface MouseActionParams {
@@ -39,6 +42,7 @@ interface MouseActionParams {
   button?: "left" | "right" | "middle"
   deltaX?: number
   deltaY?: number
+  extensionId?: string
 }
 
 interface YeonjangMouseMoveResult {
@@ -76,20 +80,28 @@ export const mouseMoveTool: AgentTool<MouseMoveParams> = {
     properties: {
       x: { type: "number", description: "X 좌표 (픽셀)" },
       y: { type: "number", description: "Y 좌표 (픽셀)" },
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
     },
     required: ["x", "y"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: MouseMoveParams, _ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: MouseMoveParams, ctx: ToolContext): Promise<ToolResult> => {
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.move")) {
+      if (await canYeonjangHandleMethod("mouse.move", extensionId ? { extensionId } : {})) {
         const remote = await invokeYeonjangMethod<YeonjangMouseMoveResult>(
           "mouse.move",
           { x: params.x, y: params.y },
-          { timeoutMs: 15_000 },
+          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
         )
         return {
           success: remote.moved,
@@ -122,16 +134,24 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
         description: "클릭할 마우스 버튼 (기본: left)",
       },
       double: { type: "boolean", description: "더블 클릭 여부 (기본: false)" },
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
     },
     required: ["x", "y"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: MouseClickParams, _ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: MouseClickParams, ctx: ToolContext): Promise<ToolResult> => {
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.click")) {
+      if (await canYeonjangHandleMethod("mouse.click", extensionId ? { extensionId } : {})) {
         const remote = await invokeYeonjangMethod<YeonjangMouseClickResult>(
           "mouse.click",
           {
@@ -140,7 +160,7 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
             ...(params.button ? { button: params.button } : {}),
             ...(params.double ? { double: params.double } : {}),
           },
-          { timeoutMs: 15_000 },
+          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
         )
         return {
           success: remote.clicked,
@@ -179,16 +199,24 @@ export const mouseActionTool: AgentTool<MouseActionParams> = {
       },
       deltaX: { type: "number", description: "가로 스크롤 값" },
       deltaY: { type: "number", description: "세로 스크롤 값" },
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
     },
     required: ["action"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
-  execute: async (params: MouseActionParams, _ctx: ToolContext): Promise<ToolResult> => {
+  execute: async (params: MouseActionParams, ctx: ToolContext): Promise<ToolResult> => {
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.action")) {
+      if (await canYeonjangHandleMethod("mouse.action", extensionId ? { extensionId } : {})) {
         const remote = await invokeYeonjangMethod<YeonjangMouseActionResult>(
           "mouse.action",
           {
@@ -199,7 +227,7 @@ export const mouseActionTool: AgentTool<MouseActionParams> = {
             ...(typeof params.deltaX === "number" ? { delta_x: params.deltaX } : {}),
             ...(typeof params.deltaY === "number" ? { delta_y: params.deltaY } : {}),
           },
-          { timeoutMs: 15_000 },
+          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
         )
         return {
           success: remote.accepted,

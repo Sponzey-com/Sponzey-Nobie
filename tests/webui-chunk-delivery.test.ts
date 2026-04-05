@@ -16,6 +16,7 @@ describe("webui chunk delivery helper", () => {
       output: "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
       details: {
         via: "yeonjang",
+        responseOwnership: "final_text",
       },
     })
     await onChunk?.({ type: "text", delta: "나중에 생성된 AI 요약문" })
@@ -30,7 +31,7 @@ describe("webui chunk delivery helper", () => {
     })
   })
 
-  it("isolates generic Yeonjang-backed tool output too", async () => {
+  it("uses explicit final-text ownership for Yeonjang-backed action output", async () => {
     const onChunk = createWebUiChunkDeliveryHandler({
       sessionId: "session-2",
       runId: "run-2",
@@ -44,6 +45,7 @@ describe("webui chunk delivery helper", () => {
       output: "(120, 240) 클릭 완료",
       details: {
         via: "yeonjang",
+        responseOwnership: "final_text",
         x: 120,
         y: 240,
         button: "left",

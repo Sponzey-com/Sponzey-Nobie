@@ -6,6 +6,7 @@ describe("execution post-pass recovery", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "스크린샷을 보내줘",
       preview: "screencapture failed",
+      directArtifactDeliverySatisfied: false,
       failedCommandTools: [
         {
           toolName: "shell_exec",
@@ -39,6 +40,7 @@ describe("execution post-pass recovery", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "예약을 등록해줘",
       preview: "create_schedule failed",
+      directArtifactDeliverySatisfied: false,
       failedCommandTools: [],
       commandFailureSeen: false,
       commandRecoveredWithinSamePass: false,
@@ -71,6 +73,7 @@ describe("execution post-pass recovery", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "스크린샷을 보내줘",
       preview: "screencapture failed",
+      directArtifactDeliverySatisfied: false,
       failedCommandTools: [
         {
           toolName: "shell_exec",
@@ -106,6 +109,7 @@ describe("execution post-pass recovery", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "예약을 등록해줘",
       preview: "create_schedule failed",
+      directArtifactDeliverySatisfied: false,
       failedCommandTools: [],
       commandFailureSeen: false,
       commandRecoveredWithinSamePass: false,
@@ -134,5 +138,33 @@ describe("execution post-pass recovery", () => {
       reason: "invalid schedule registration path 이미 시도한 실행 복구 경로와 같은 대안만 남았거나 구조화된 대안이 부족합니다.",
       remainingItems: ["다른 도구 조합이나 다른 실행 전략을 쓰려면 수동 판단이나 추가 입력이 필요합니다."],
     })
+  })
+
+  it("does not retry stale execution recovery after direct artifact delivery is already satisfied", () => {
+    const decision = decideExecutionPostPassRecovery({
+      originalRequest: "FaceTime HD 카메라로 사진 한번만 찍어줘",
+      preview: "사진을 전송했습니다.",
+      directArtifactDeliverySatisfied: true,
+      failedCommandTools: [],
+      commandFailureSeen: false,
+      commandRecoveredWithinSamePass: false,
+      executionRecovery: {
+        summary: "도구 실패 대안 재시도",
+        reason: "earlier capture timeout",
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenCommandFailureRecoveryKeys: new Set<string>(),
+      seenExecutionRecoveryKeys: new Set<string>(),
+      recoveryBudgetUsage: {
+        interpretation: 0,
+        execution: 0,
+        delivery: 0,
+        external: 0,
+      },
+      usedTurns: 1,
+      maxDelegationTurns: 3,
+    })
+
+    expect(decision).toEqual({ kind: "none" })
   })
 })

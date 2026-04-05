@@ -114,6 +114,7 @@ export async function runPostExecutionPass(
   const executionPostPassDecision = moduleDependencies.decideExecutionPostPassRecovery({
     originalRequest: params.originalRequest,
     preview: params.preview,
+    directArtifactDeliverySatisfied: params.wantsDirectArtifactDelivery && params.successfulFileDeliveries.length > 0,
     failedCommandTools: params.failedCommandTools,
     commandFailureSeen: params.commandFailureSeen,
     commandRecoveredWithinSamePass: params.commandRecoveredWithinSamePass,

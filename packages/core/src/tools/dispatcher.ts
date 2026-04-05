@@ -404,12 +404,12 @@ function describeApprovalAction(toolName: string, params: Record<string, unknown
       return `현재 화면을 캡처하고 화면 안에서 텍스트를 찾으려고 합니다${typeof params.text === "string" && params.text.trim() ? `: ${params.text.trim()}` : "."}`
     case "shell_exec":
       return typeof params.command === "string" && params.command.trim()
-        ? `다음 로컬 명령을 실행하려고 합니다: ${params.command.trim()}`
-        : "로컬 명령을 실행하려고 합니다."
+        ? `다음 명령을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : ""}: ${params.command.trim()}`
+        : `명령을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`
     case "app_launch":
       return typeof params.appName === "string" && params.appName.trim()
-        ? `애플리케이션을 실행하려고 합니다: ${params.appName.trim()}`
-        : "애플리케이션을 실행하려고 합니다."
+        ? `애플리케이션을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : ""}: ${params.appName.trim()}`
+        : `애플리케이션을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`
     case "process_kill":
       return "로컬 프로세스를 종료하려고 합니다."
     case "yeonjang_camera_capture":

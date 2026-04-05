@@ -271,6 +271,12 @@ bash scripts/start-local.sh
 cargo run --manifest-path Yeonjang/Cargo.toml
 ```
 
+macOS에서 카메라 캡처까지 쓰려면 앱 번들 helper가 함께 필요하므로, 일반 `cargo run`보다 아래 경로를 권장합니다.
+
+```bash
+bash scripts/start-yeonjang-macos.sh
+```
+
 3. Yeonjang 설정에서 기본 브로커 값을 확인합니다.
 
 - Host: `127.0.0.1`
@@ -289,6 +295,7 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 
 - `cargo run --manifest-path Yeonjang/Cargo.toml -- --stdio`는 노드 단독 테스트용입니다.
 - 일반적인 Nobie 사용에서는 MQTT로 연결된 Yeonjang GUI/runtime를 실행하는 경로를 기준으로 봐야 합니다.
+- macOS `camera.capture`는 `Yeonjang.app` 내부의 고정 helper executable을 사용하므로, 카메라 캡처가 필요하면 `scripts/start-yeonjang-macos.sh` 경로가 가장 안전합니다.
 
 ## 상태 디렉터리와 설정 파일
 

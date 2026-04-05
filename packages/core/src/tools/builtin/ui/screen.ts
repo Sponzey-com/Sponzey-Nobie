@@ -7,7 +7,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import type { AgentTool, ArtifactDeliveryResultDetails, ToolResult } from "../../types.js"
-import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
 import { PATHS } from "../../../config/index.js"
 
 interface YeonjangScreenCaptureResult {
@@ -20,6 +21,15 @@ interface YeonjangScreenCaptureResult {
   base64_data?: string
   message: string
 }
+
+interface ScreenCaptureFailureDetails {
+  via: "yeonjang"
+  extensionId?: string
+  stopAfterFailure?: boolean
+  failureKind?: "path_bug" | "timeout" | "remote_failure"
+}
+
+const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60_000
 
 function extensionFromMimeType(mimeType?: string): string {
   switch ((mimeType ?? "").toLowerCase()) {
@@ -53,6 +63,7 @@ function validateYeonjangBinaryResult(remote: YeonjangScreenCaptureResult): stri
   return remote.base64_data
 }
 
+
 function yeonjangRequiredFailure(method: string): ToolResult {
   return {
     success: false,
@@ -65,14 +76,71 @@ function yeonjangRequiredFailure(method: string): ToolResult {
   }
 }
 
-async function captureScreenViaYeonjang(): Promise<{
+function classifyYeonjangScreenCaptureFailure(message: string): {
+  code: string
+  output: string
+  details: ScreenCaptureFailureDetails
+} {
+  if (/(getdirectoryname|output path is empty|argumentexception|directory name is invalid)/i.test(message)
+    || /디렉터리 이름이 올바르지|경로 처리/.test(message)) {
+    return {
+      code: "YEONJANG_SCREEN_CAPTURE_PATH_BUG",
+      output: [
+        'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.',
+        '이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.',
+        'Windows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+      ].join('\n'),
+      details: {
+        via: "yeonjang",
+        stopAfterFailure: true,
+        failureKind: "path_bug",
+      },
+    }
+  }
+
+  if (/(응답 시간이 초과되었습니다|연결 시간이 초과되었습니다|timed out|timeout)/i.test(message)) {
+    return {
+      code: "YEONJANG_SCREEN_CAPTURE_TIMEOUT",
+      output: [
+        '연장의 화면 캡처가 제한 시간 안에 끝나지 않았습니다.',
+        'Windows Yeonjang을 다시 시작한 뒤 다시 시도해 주세요.',
+      ].join('\n'),
+      details: {
+        via: "yeonjang",
+        stopAfterFailure: true,
+        failureKind: "timeout",
+      },
+    }
+  }
+
+  return {
+    code: "YEONJANG_SCREEN_CAPTURE_REMOTE_FAILURE",
+    output: `Yeonjang 화면 캡처 실패: ${message}`,
+    details: {
+      via: "yeonjang",
+      stopAfterFailure: true,
+      failureKind: "remote_failure",
+    },
+  }
+}
+
+interface ScreenCaptureParams {
+  extensionId?: string
+}
+
+interface ScreenFindTextParams {
+  text: string
+  extensionId?: string
+}
+
+async function captureScreenViaYeonjang(extensionId?: string): Promise<{
   base64: string
   remote: YeonjangScreenCaptureResult
 }> {
   const remote = await invokeYeonjangMethod<YeonjangScreenCaptureResult>(
     "screen.capture",
     { inline_base64: true },
-    { timeoutMs: 20_000 },
+    { timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS, ...(extensionId ? { extensionId } : {}) },
   )
   return {
     base64: validateYeonjangBinaryResult(remote),
@@ -80,20 +148,29 @@ async function captureScreenViaYeonjang(): Promise<{
   }
 }
 
-export const screenCaptureTool: AgentTool<Record<string, never>> = {
+export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
   name: "screen_capture",
   description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 화면 내용을 분석할 때 사용하세요.",
   parameters: {
     type: "object",
-    properties: {},
+    properties: {
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
+    },
     required: [],
   },
   riskLevel: "safe",
   requiresApproval: false,
-  execute: async (_params, ctx): Promise<ToolResult> => {
+  execute: async (params, ctx): Promise<ToolResult> => {
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
     try {
-      if (await canYeonjangHandleMethod("screen.capture")) {
-        const { base64, remote } = await captureScreenViaYeonjang()
+      if (await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
+        const { base64, remote } = await captureScreenViaYeonjang(extensionId)
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
         const localFileSize = statSync(localSavedPath).size
         const artifactDetails: ArtifactDeliveryResultDetails | undefined = ctx.source === "webui" && localSavedPath
@@ -125,15 +202,20 @@ export const screenCaptureTool: AgentTool<Record<string, never>> = {
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
         const message = error instanceof Error ? error.message : String(error)
-        return { success: false, output: `Yeonjang 화면 캡처 실패: ${message}`, error: message }
+        const classified = classifyYeonjangScreenCaptureFailure(message)
+        return {
+          success: false,
+          output: classified.output,
+          error: classified.code,
+          details: {
+            ...classified.details,
+            ...(extensionId ? { extensionId } : {}),
+          },
+        }
       }
     }
     return yeonjangRequiredFailure("screen.capture")
   },
-}
-
-interface ScreenFindTextParams {
-  text: string
 }
 
 export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
@@ -143,20 +225,28 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
     type: "object",
     properties: {
       text: { type: "string", description: "찾을 텍스트" },
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
     },
     required: ["text"],
   },
   riskLevel: "safe",
   requiresApproval: false,
   execute: async (params: ScreenFindTextParams): Promise<ToolResult> => {
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: params.text,
+    })
     try {
-      if (!await canYeonjangHandleMethod("screen.capture")) {
+      if (!await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
         return yeonjangRequiredFailure("screen.capture")
       }
       const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`)
       const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`)
 
-      const { base64 } = await captureScreenViaYeonjang()
+      const { base64 } = await captureScreenViaYeonjang(extensionId)
       writeFileSync(tmpPng, Buffer.from(base64, "base64"))
 
       const { execFile } = await import("node:child_process")

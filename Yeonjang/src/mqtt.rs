@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::node::{capabilities_payload, spawn_request_task};
 use crate::protocol::{Request, Response};
-use crate::settings::YeonjangSettings;
+use crate::settings::{YeonjangSettings, load_settings};
 
 const RESPONSE_CHUNK_BYTES: usize = 48 * 1024;
 const MQTT_MAX_PACKET_BYTES: usize = 8 * 1024 * 1024;
@@ -91,6 +91,13 @@ pub fn start_runtime(
                     let response_events = event_tx.clone();
 
                     thread::spawn(move || {
+                        let _ = publish_runtime_state(
+                            &response_client,
+                            &response_settings,
+                            "refreshing-capabilities",
+                            true,
+                        );
+
                         let (method, response) = match serde_json::from_slice::<Request>(&payload) {
                             Ok(request) => {
                                 let method = request.method.clone();
@@ -123,6 +130,9 @@ pub fn start_runtime(
                             });
                             return;
                         }
+
+                        let _ =
+                            publish_runtime_state(&response_client, &response_settings, "ready", true);
 
                         let _ = response_events.send(RuntimeEvent::RequestHandled {
                             method,
@@ -212,8 +222,7 @@ fn validate_connection_settings(settings: &YeonjangSettings) -> Result<()> {
 
 fn publish_bootstrap(client: &Client, settings: &YeonjangSettings) -> Result<()> {
     client.subscribe(settings.mqtt.request_topic.clone(), QoS::AtLeastOnce)?;
-    publish_capabilities(client, settings)?;
-    publish_status(client, settings, "online", "ready", true)?;
+    publish_runtime_state(client, settings, "ready", true)?;
     Ok(())
 }
 
@@ -267,6 +276,30 @@ fn publish_capabilities(client: &Client, settings: &YeonjangSettings) -> Result<
         serde_json::to_vec(&capabilities_payload())?,
     )?;
     Ok(())
+}
+
+fn publish_runtime_state(
+    client: &Client,
+    settings: &YeonjangSettings,
+    message: &str,
+    retained: bool,
+) -> Result<()> {
+    let runtime_settings = refresh_runtime_settings(settings);
+    publish_capabilities(client, &runtime_settings)?;
+    publish_status(client, &runtime_settings, "online", message, retained)?;
+    Ok(())
+}
+
+fn refresh_runtime_settings(fallback: &YeonjangSettings) -> YeonjangSettings {
+    load_settings()
+        .map(normalize_settings)
+        .map(|mut refreshed| {
+            // Keep publishing on the runtime's active topics even if the persisted
+            // node id/topics changed while the current session is connected.
+            refreshed.mqtt = fallback.mqtt.clone();
+            refreshed
+        })
+        .unwrap_or_else(|_| fallback.clone())
 }
 
 fn publish_status(
