@@ -3,8 +3,9 @@ import { promisify } from "node:util"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
-import type { AgentTool, ToolResult } from "../types.js"
-import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js"
+import type { AgentTool, ToolContext, ToolResult } from "../types.js"
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js"
+import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -14,6 +15,7 @@ interface AppLaunchParams {
   app: string
   args?: string[]
   background?: boolean
+  extensionId?: string
 }
 
 interface AppListParams {
@@ -119,14 +121,22 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
         type: "boolean",
         description: "백그라운드 실행 여부. 기본: true",
       },
+      extensionId: {
+        type: "string",
+        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
     },
     required: ["app"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
 
-  async execute(params: AppLaunchParams): Promise<ToolResult> {
+  async execute(params: AppLaunchParams, ctx: ToolContext): Promise<ToolResult> {
     const { app, args = [], background = true } = params
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
     const isPath = app.startsWith("/") || app.startsWith("./")
 
     // Require approval for direct executable paths
@@ -138,7 +148,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
     }
 
     try {
-      if (await canYeonjangHandleMethod("application.launch")) {
+      if (await canYeonjangHandleMethod("application.launch", extensionId ? { extensionId } : {})) {
         const remote = await invokeYeonjangMethod<YeonjangApplicationLaunchResult>(
           "application.launch",
           {
@@ -146,7 +156,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
             args,
             detached: background,
           },
-          { timeoutMs: 15_000 },
+          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
         )
         return {
           success: remote.launched,

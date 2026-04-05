@@ -1,7 +1,6 @@
-import { homedir } from "node:os"
-import { resolve } from "node:path"
 import type { AgentTool, ToolContext, ToolResult } from "../types.js"
-import { canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js"
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js"
+import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js"
 
 const DEFAULT_TIMEOUT_SEC = 300
 
@@ -10,6 +9,7 @@ interface ShellExecParams {
   workDir?: string
   timeoutSec?: number
   env?: Record<string, string>
+  extensionId?: string
 }
 
 interface YeonjangCommandExecutionResult {
@@ -35,6 +35,11 @@ function detectObfuscation(command: string): string | null {
     }
   }
   return null
+}
+
+function resolveRemoteWorkDir(workDir?: string): string | undefined {
+  const normalized = workDir?.trim()
+  return normalized ? normalized : undefined
 }
 
 function yeonjangRequiredFailure(method: string): ToolResult {
@@ -75,6 +80,10 @@ export const shellExecTool: AgentTool<ShellExecParams> = {
         description: "Additional environment variables to set",
         additionalProperties: { type: "string" },
       },
+      extensionId: {
+        type: "string",
+        description: `Target Yeonjang extension ID when the user specifies a particular computer/device. Default: ${DEFAULT_YEONJANG_EXTENSION_ID}` ,
+      },
     },
     required: ["command"],
   },
@@ -91,24 +100,30 @@ export const shellExecTool: AgentTool<ShellExecParams> = {
       }
     }
 
-    const workDir = params.workDir
-      ? resolve(params.workDir.replace(/^~/, homedir()))
-      : ctx.workDir
+    const extensionId = resolvePreferredYeonjangExtensionId({
+      requestedExtensionId: params.extensionId,
+      userMessage: ctx.userMessage,
+    })
+
+    const workDir = resolveRemoteWorkDir(params.workDir)
 
     try {
-      if (await canYeonjangHandleMethod("system.exec")) {
-        ctx.onProgress(`Yeonjang에서 명령 실행: ${params.command}`)
+      if (await canYeonjangHandleMethod("system.exec", extensionId ? { extensionId } : {})) {
+        ctx.onProgress(`Yeonjang${extensionId ? `(${extensionId})` : ""}에서 명령 실행: ${params.command}`)
         const remote = await invokeYeonjangMethod<YeonjangCommandExecutionResult>(
           "system.exec",
           {
             command: params.command,
             args: [],
-            cwd: workDir,
+            ...(workDir ? { cwd: workDir } : {}),
             shell: true,
             ...(params.env ? { env: params.env } : {}),
             timeout_sec: params.timeoutSec ?? DEFAULT_TIMEOUT_SEC,
           },
-          { timeoutMs: (params.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000 },
+          {
+            timeoutMs: (params.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000,
+            ...(extensionId ? { extensionId } : {}),
+          },
         )
         const combined = [remote.stdout, remote.stderr ? `[stderr]\n${remote.stderr}` : ""].filter(Boolean).join("\n")
         return {
