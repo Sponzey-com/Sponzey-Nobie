@@ -63,6 +63,31 @@ export function getMessagesForRequestGroupWithRunMeta(sessionId, requestGroupId)
        ORDER BY m.created_at ASC`)
         .all(sessionId, requestGroupId);
 }
+export function getMessagesForRun(sessionId, runId) {
+    return getDb()
+        .prepare(`SELECT * FROM messages
+       WHERE session_id = ?
+         AND root_run_id = ?
+       ORDER BY created_at ASC`)
+        .all(sessionId, runId);
+}
+function buildMemoryScopeWhere(filters) {
+    const clauses = [
+        "memory_scope = 'global'",
+        "memory_scope IS NULL",
+        "memory_scope = ''",
+    ];
+    const values = [];
+    if (filters?.sessionId) {
+        clauses.push("(memory_scope = 'session' AND session_id = ?)");
+        values.push(filters.sessionId);
+    }
+    if (filters?.runId) {
+        clauses.push("(memory_scope = 'task' AND run_id = ?)");
+        values.push(filters.runId);
+    }
+    return { whereSql: `(${clauses.join(" OR ")})`, values };
+}
 export function insertAuditLog(log) {
     const id = crypto.randomUUID();
     getDb()
@@ -76,26 +101,32 @@ export function insertMemoryItem(item) {
     const id = crypto.randomUUID();
     const now = Date.now();
     const db = getDb();
-    db.prepare(`INSERT INTO memory_items (id, content, tags, source, session_id, type, importance, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, item.content, JSON.stringify(item.tags ?? []), "agent", item.sessionId ?? null, item.type ?? "user_fact", item.importance ?? "medium", now, now);
+    db.prepare(`INSERT INTO memory_items
+      (id, content, tags, source, memory_scope, session_id, run_id, request_group_id, type, importance, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, item.content, JSON.stringify(item.tags ?? []), "agent", item.scope ?? (item.runId ? "task" : item.sessionId ? "session" : "global"), item.sessionId ?? null, item.runId ?? null, item.requestGroupId ?? null, item.type ?? "user_fact", item.importance ?? "medium", now, now);
     // Sync into FTS index
     db.prepare(`INSERT INTO memory_fts(rowid, content, tags)
      SELECT rowid, content, tags FROM memory_items WHERE id = ?`).run(id);
     return id;
 }
-export function searchMemoryItems(query, limit = 5) {
+export function searchMemoryItems(query, limit = 5, filters) {
+    const scopeFilter = buildMemoryScopeWhere(filters);
     return getDb()
         .prepare(`SELECT m.* FROM memory_fts f
        JOIN memory_items m ON m.rowid = f.rowid
        WHERE memory_fts MATCH ?
+         AND ${scopeFilter.whereSql}
        ORDER BY rank
        LIMIT ?`)
-        .all(query, limit);
+        .all(query, ...scopeFilter.values, limit);
 }
-export function getRecentMemoryItems(limit = 10) {
+export function getRecentMemoryItems(limit = 10, filters) {
+    const scopeFilter = buildMemoryScopeWhere(filters);
     return getDb()
-        .prepare("SELECT * FROM memory_items ORDER BY updated_at DESC LIMIT ?")
-        .all(limit);
+        .prepare(`SELECT * FROM memory_items
+       WHERE ${scopeFilter.whereSql}
+       ORDER BY updated_at DESC LIMIT ?`)
+        .all(...scopeFilter.values, limit);
 }
 export function markMessagesCompressed(ids, summaryId) {
     if (!ids.length)

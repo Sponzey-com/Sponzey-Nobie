@@ -10,16 +10,15 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
 function buildLegacySettingsSnapshot() {
     const cfg = getConfig();
     const telegramChannel = getActiveTelegramChannel();
+    const connection = cfg.ai.connection;
     return {
         ai: {
-            defaultProvider: cfg.ai.defaultProvider,
-            defaultModel: cfg.ai.defaultModel,
-            hasAnthropicKey: (cfg.ai.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
-            hasOpenAIKey: (cfg.ai.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
-            hasGeminiKey: (cfg.ai.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
-            ollamaBaseUrl: cfg.ai.providers.ollama?.baseUrl ?? "",
-            openAIBaseUrl: cfg.ai.providers.openai?.baseUrl ?? "",
-            geminiBaseUrl: cfg.ai.providers.gemini?.baseUrl ?? "",
+            provider: connection.provider,
+            model: connection.model,
+            authMode: connection.auth?.mode ?? "api_key",
+            endpoint: connection.endpoint ?? "",
+            hasApiKey: Boolean(connection.auth?.apiKey),
+            oauthAuthFilePath: connection.auth?.oauthAuthFilePath ?? "",
         },
         security: {
             approvalMode: cfg.security.approvalMode,
@@ -93,34 +92,27 @@ export function registerSettingsRoute(app) {
             if (!raw.ai)
                 raw.ai = {};
             const rawAi = raw.ai;
-            if (typeof ai.defaultProvider === "string")
-                rawAi.defaultProvider = ai.defaultProvider;
-            if (typeof ai.defaultModel === "string")
-                rawAi.defaultModel = ai.defaultModel;
-            if (typeof ai.ollamaBaseUrl === "string") {
-                if (!rawAi.providers)
-                    rawAi.providers = {};
-                const p = rawAi.providers;
-                if (!p.ollama)
-                    p.ollama = {};
-                p.ollama.baseUrl = ai.ollamaBaseUrl;
-            }
-            if (typeof ai.openAIBaseUrl === "string") {
-                if (!rawAi.providers)
-                    rawAi.providers = {};
-                const p = rawAi.providers;
-                if (!p.openai)
-                    p.openai = {};
-                p.openai.baseUrl = ai.openAIBaseUrl;
-            }
-            if (typeof ai.geminiBaseUrl === "string") {
-                if (!rawAi.providers)
-                    rawAi.providers = {};
-                const p = rawAi.providers;
-                if (!p.gemini)
-                    p.gemini = {};
-                p.gemini.baseUrl = ai.geminiBaseUrl;
-            }
+            const currentConnection = rawAi.connection && typeof rawAi.connection === "object"
+                ? rawAi.connection
+                : {};
+            const currentAuth = currentConnection.auth && typeof currentConnection.auth === "object"
+                ? currentConnection.auth
+                : {};
+            rawAi.connection = {
+                ...currentConnection,
+                ...(typeof ai.provider === "string" ? { provider: ai.provider.trim() } : {}),
+                ...(typeof ai.model === "string" ? { model: ai.model.trim() } : {}),
+                ...(typeof ai.endpoint === "string" ? { endpoint: ai.endpoint.trim() } : {}),
+                auth: {
+                    ...currentAuth,
+                    ...(typeof ai.authMode === "string" ? { mode: ai.authMode } : {}),
+                    ...(typeof ai.apiKey === "string" ? { apiKey: ai.apiKey } : {}),
+                    ...(typeof ai.oauthAuthFilePath === "string" ? { oauthAuthFilePath: ai.oauthAuthFilePath.trim() } : {}),
+                },
+            };
+            delete rawAi.providers;
+            delete rawAi.defaultProvider;
+            delete rawAi.defaultModel;
         }
         if (body.security && typeof body.security === "object") {
             const sec = body.security;

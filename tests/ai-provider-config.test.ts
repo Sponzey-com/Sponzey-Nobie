@@ -70,7 +70,7 @@ describe("ai provider configuration", () => {
     expect(() => getProvider()).toThrow("No configured AI backend is available")
   })
 
-  it("derives ai provider settings from builtin backend cards when providers are missing", () => {
+  it("derives a single ai connection from legacy builtin backend cards", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
     tempDirs.push(stateDir)
     process.env["NOBIE_STATE_DIR"] = stateDir
@@ -99,18 +99,55 @@ describe("ai provider configuration", () => {
     expect(() => getProvider()).not.toThrow()
   })
 
-  it("does not invent a fallback model when the configured AI has no default model", () => {
+  it("extracts only one active ai connection from legacy multi-backend config", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
     tempDirs.push(stateDir)
     process.env["NOBIE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
-          defaultProvider: "openai",
-          defaultModel: "",
-          providers: {
+          backends: {
             openai: {
-              apiKeys: ["sk-test"]
+              enabled: true,
+              providerType: "openai",
+              authMode: "api_key",
+              credentials: {
+                apiKey: "sk-openai"
+              },
+              defaultModel: "gpt-5"
+            },
+            gemini: {
+              enabled: true,
+              providerType: "gemini",
+              credentials: {
+                apiKey: "gm-test"
+              },
+              defaultModel: "gemini-2.5-pro"
+            }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+
+    expect(detectAvailableProvider()).toBe("openai")
+    expect(getDefaultModel()).toBe("gpt-5")
+    expect(() => getProvider()).not.toThrow()
+  })
+
+  it("does not invent a fallback model when the configured single ai connection has no model", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "",
+            auth: {
+              apiKey: "sk-test"
             }
           }
         }
@@ -121,5 +158,56 @@ describe("ai provider configuration", () => {
 
     expect(detectAvailableProvider()).toBe("openai")
     expect(getDefaultModel()).toBe("")
+  })
+
+  it("allows an ollama connection without requiring an OpenAI API key", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "ollama",
+            model: "gemma4:26b",
+            endpoint: "http://127.0.0.1:11434",
+            auth: {
+              mode: "api_key"
+            }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+
+    expect(detectAvailableProvider()).toBe("ollama")
+    expect(getDefaultModel()).toBe("gemma4:26b")
+    expect(() => getProvider()).not.toThrow()
+  })
+
+  it("normalizes an ollama endpoint to /v1 for OpenAI-compatible requests", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "ollama",
+            model: "gemma4:26b",
+            endpoint: "http://127.0.0.1:11434",
+            auth: {
+              mode: "api_key"
+            }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+
+    const provider = getProvider() as { baseUrl?: string }
+    expect(provider.baseUrl).toBe("http://127.0.0.1:11434/v1")
   })
 })

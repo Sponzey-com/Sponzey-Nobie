@@ -101,7 +101,7 @@ export function isLocalProviderType(providerType: AIProviderType): boolean {
 export function getAIProviderEndpointPlaceholder(providerType: AIProviderType): string {
   switch (providerType) {
     case "ollama":
-      return "http://127.0.0.1:11434"
+      return "http://127.0.0.1:11434/v1"
     case "llama":
       return "http://127.0.0.1:8080"
     case "openai":
@@ -119,11 +119,12 @@ export function getAIProviderDefaultEndpoint(providerType: AIProviderType): stri
   switch (providerType) {
     case "openai":
       return "https://api.openai.com/v1"
+    case "ollama":
+      return "http://127.0.0.1:11434/v1"
     case "anthropic":
       return "https://api.anthropic.com"
     case "gemini":
       return "https://generativelanguage.googleapis.com"
-    case "ollama":
     case "llama":
     case "custom":
       return ""

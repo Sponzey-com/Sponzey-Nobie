@@ -13,16 +13,15 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
   const telegramChannel = getActiveTelegramChannel()
+  const connection = cfg.ai.connection
   return {
     ai: {
-      defaultProvider: cfg.ai.defaultProvider,
-      defaultModel: cfg.ai.defaultModel,
-      hasAnthropicKey: (cfg.ai.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0,
-      hasOpenAIKey: (cfg.ai.providers.openai?.apiKeys ?? []).filter(Boolean).length > 0,
-      hasGeminiKey: (cfg.ai.providers.gemini?.apiKeys ?? []).filter(Boolean).length > 0,
-      ollamaBaseUrl: cfg.ai.providers.ollama?.baseUrl ?? "",
-      openAIBaseUrl: cfg.ai.providers.openai?.baseUrl ?? "",
-      geminiBaseUrl: cfg.ai.providers.gemini?.baseUrl ?? "",
+      provider: connection.provider,
+      model: connection.model,
+      authMode: connection.auth?.mode ?? "api_key",
+      endpoint: connection.endpoint ?? "",
+      hasApiKey: Boolean(connection.auth?.apiKey),
+      oauthAuthFilePath: connection.auth?.oauthAuthFilePath ?? "",
     },
     security: {
       approvalMode: cfg.security.approvalMode,
@@ -135,26 +134,27 @@ export function registerSettingsRoute(app: FastifyInstance): void {
       if (aiBody) {
         if (!raw.ai) raw.ai = {}
         const rawAi = raw.ai as Record<string, unknown>
-        if (typeof aiBody.defaultProvider === "string") rawAi.defaultProvider = aiBody.defaultProvider
-        if (typeof aiBody.defaultModel === "string") rawAi.defaultModel = aiBody.defaultModel
-        if (typeof aiBody.ollamaBaseUrl === "string") {
-          if (!rawAi.providers) rawAi.providers = {}
-          const p = rawAi.providers as Record<string, unknown>
-          if (!p.ollama) p.ollama = {}
-          ;(p.ollama as Record<string, unknown>).baseUrl = aiBody.ollamaBaseUrl
+        const currentConnection = rawAi.connection && typeof rawAi.connection === "object"
+          ? rawAi.connection as Record<string, unknown>
+          : {}
+        const currentAuth = currentConnection.auth && typeof currentConnection.auth === "object"
+          ? currentConnection.auth as Record<string, unknown>
+          : {}
+        rawAi.connection = {
+          ...currentConnection,
+          ...(typeof aiBody.provider === "string" ? { provider: aiBody.provider.trim() } : {}),
+          ...(typeof aiBody.model === "string" ? { model: aiBody.model.trim() } : {}),
+          ...(typeof aiBody.endpoint === "string" ? { endpoint: aiBody.endpoint.trim() } : {}),
+          auth: {
+            ...currentAuth,
+            ...(typeof aiBody.authMode === "string" ? { mode: aiBody.authMode } : {}),
+            ...(typeof aiBody.apiKey === "string" ? { apiKey: aiBody.apiKey } : {}),
+            ...(typeof aiBody.oauthAuthFilePath === "string" ? { oauthAuthFilePath: aiBody.oauthAuthFilePath.trim() } : {}),
+          },
         }
-        if (typeof aiBody.openAIBaseUrl === "string") {
-          if (!rawAi.providers) rawAi.providers = {}
-          const p = rawAi.providers as Record<string, unknown>
-          if (!p.openai) p.openai = {}
-          ;(p.openai as Record<string, unknown>).baseUrl = aiBody.openAIBaseUrl
-        }
-        if (typeof aiBody.geminiBaseUrl === "string") {
-          if (!rawAi.providers) rawAi.providers = {}
-          const p = rawAi.providers as Record<string, unknown>
-          if (!p.gemini) p.gemini = {}
-          ;(p.gemini as Record<string, unknown>).baseUrl = aiBody.geminiBaseUrl
-        }
+        delete rawAi.providers
+        delete rawAi.defaultProvider
+        delete rawAi.defaultModel
       }
 
       if (body.security && typeof body.security === "object") {

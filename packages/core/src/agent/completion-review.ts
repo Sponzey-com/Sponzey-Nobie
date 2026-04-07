@@ -1,4 +1,4 @@
-import { getDefaultModel, getProvider, inferProviderId, type AIProvider } from "../ai/index.js"
+import { detectAvailableProvider, getDefaultModel, getProvider, type AIProvider } from "../ai/index.js"
 import type { Message } from "../ai/types.js"
 import { createLogger } from "../logger/index.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
@@ -31,7 +31,7 @@ export async function reviewTaskCompletion(params: {
   if (!originalRequest || !latestAssistantMessage) return null
 
   const model = params.model ?? getDefaultModel()
-  const providerId = params.providerId ?? inferProviderId(model)
+  const providerId = params.providerId ?? detectAvailableProvider()
   const provider = params.provider ?? getProvider(providerId)
   const instructions = loadMergedInstructions(params.workDir ?? process.cwd())
   const profileContext = buildUserProfilePromptContext()

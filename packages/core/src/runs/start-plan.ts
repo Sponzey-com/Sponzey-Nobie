@@ -4,11 +4,14 @@ import {
   type RequestEntrySemantics,
 } from "./entry-semantics.js"
 import {
+  compareRequestContinuationWithAI,
+  type RequestContinuationDecision,
+} from "./entry-comparison.js"
+import {
   findLatestWorkerSessionRun,
-  findReconnectRequestGroupSelection,
   getRequestGroupDelegationTurnCount,
   isReusableRequestGroup,
-  type ReconnectRequestGroupSelection,
+  listActiveSessionRequestGroups,
 } from "./store.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -17,7 +20,6 @@ export interface StartPlan {
   entrySemantics: RequestEntrySemantics
   requestedClosedRequestGroup: boolean
   shouldReconnectGroup: boolean
-  reconnectSelection?: ReconnectRequestGroupSelection | undefined
   reconnectTarget?: RootRun | undefined
   reconnectCandidateCount: number
   reconnectNeedsClarification: boolean
@@ -34,9 +36,16 @@ export interface StartPlan {
 interface StartPlanDependencies {
   analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics
   isReusableRequestGroup: typeof isReusableRequestGroup
-  findReconnectRequestGroupSelection: typeof findReconnectRequestGroupSelection
+  listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups
+  compareRequestContinuation: (params: {
+    message: string
+    sessionId: string
+    candidates: RootRun[]
+    model?: string
+  }) => Promise<RequestContinuationDecision>
   getRequestGroupDelegationTurnCount: typeof getRequestGroupDelegationTurnCount
   buildWorkerSessionId: (params: {
+    runId: string
     isRootRequest: boolean
     requestGroupId: string
     taskProfile: TaskProfile
@@ -50,14 +59,19 @@ interface StartPlanDependencies {
 const defaultDependencies: StartPlanDependencies = {
   analyzeRequestEntrySemantics,
   isReusableRequestGroup,
-  findReconnectRequestGroupSelection,
+  listActiveSessionRequestGroups,
+  compareRequestContinuation: async ({ message, candidates, model }) => compareRequestContinuationWithAI({
+    message,
+    candidates,
+    ...(model ? { model } : {}),
+  }),
   getRequestGroupDelegationTurnCount,
   buildWorkerSessionId: () => undefined,
   normalizeTaskProfile: (taskProfile) => taskProfile ?? "general_chat",
   findLatestWorkerSessionRun,
 }
 
-export function buildStartPlan(
+export async function buildStartPlan(
   params: {
     message: string
     sessionId: string
@@ -66,28 +80,43 @@ export function buildStartPlan(
     forceRequestGroupReuse?: boolean | undefined
     contextMode?: AgentContextMode | undefined
     taskProfile?: TaskProfile | undefined
+    model?: string | undefined
     targetId?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
   },
   dependencies: StartPlanDependencies,
-): StartPlan {
-  const entrySemantics = dependencies.analyzeRequestEntrySemantics(params.message)
+): Promise<StartPlan> {
+  const entrySemanticsBase = dependencies.analyzeRequestEntrySemantics(params.message)
   const explicitReusableRequestGroupId =
     params.requestGroupId && (params.forceRequestGroupReuse || dependencies.isReusableRequestGroup(params.requestGroupId))
       ? params.requestGroupId
       : undefined
   const requestedClosedRequestGroup = Boolean(params.requestGroupId && !params.forceRequestGroupReuse && !explicitReusableRequestGroupId)
-  const shouldReconnectGroup = params.requestGroupId == null && entrySemantics.reuse_conversation_context
-  const reconnectSelection = shouldReconnectGroup
-    ? dependencies.findReconnectRequestGroupSelection(params.sessionId, params.message)
+  const reconnectCandidates = params.requestGroupId == null
+    ? dependencies.listActiveSessionRequestGroups(params.sessionId, params.runId)
+    : []
+  const shouldCompareContinuation =
+    params.requestGroupId == null
+    && reconnectCandidates.length > 0
+    && entrySemanticsBase.active_queue_cancellation_mode == null
+  const reconnectDecision: RequestContinuationDecision = shouldCompareContinuation
+    ? await dependencies.compareRequestContinuation({
+        message: params.message,
+        sessionId: params.sessionId,
+        candidates: reconnectCandidates,
+        ...(params.model ? { model: params.model } : {}),
+      }).catch((): RequestContinuationDecision => ({ kind: "new", reason: "comparison failed" }))
+    : { kind: "new", reason: "no comparison required" }
+  const reconnectTarget = reconnectDecision.requestGroupId
+    ? reconnectCandidates.find((candidate) => candidate.requestGroupId === reconnectDecision.requestGroupId)
     : undefined
-  const reconnectTarget = reconnectSelection?.best
-  const reconnectCandidateCount = reconnectSelection?.candidates?.length ?? 0
+  const reconnectCandidateCount = reconnectCandidates.length
+  const shouldReconnectGroup = reconnectDecision.kind !== "new"
   const reconnectNeedsClarification = Boolean(
-    shouldReconnectGroup
+    reconnectDecision.kind === "clarify"
       && explicitReusableRequestGroupId == null
       && reconnectCandidateCount > 0
-      && (!reconnectTarget || reconnectSelection?.ambiguous),
+      && !reconnectTarget,
   )
   const requestGroupId =
     explicitReusableRequestGroupId
@@ -96,11 +125,16 @@ export function buildStartPlan(
   const isRootRequest = requestGroupId === params.runId
   const effectiveTaskProfile = dependencies.normalizeTaskProfile(params.taskProfile)
   const initialDelegationTurnCount = isRootRequest ? 0 : dependencies.getRequestGroupDelegationTurnCount(requestGroupId)
-  const shouldReuseContext = entrySemantics.reuse_conversation_context
+  const shouldReuseContext = Boolean(explicitReusableRequestGroupId || reconnectTarget)
+  const entrySemantics: RequestEntrySemantics = {
+    ...entrySemanticsBase,
+    reuse_conversation_context: shouldReuseContext,
+  }
   const effectiveContextMode =
     params.contextMode
     ?? (isRootRequest ? (shouldReuseContext ? "full" : "isolated") : "request_group")
   const workerSessionId = dependencies.buildWorkerSessionId({
+    runId: params.runId,
     isRootRequest,
     requestGroupId,
     taskProfile: effectiveTaskProfile,
@@ -115,7 +149,6 @@ export function buildStartPlan(
     entrySemantics,
     requestedClosedRequestGroup,
     shouldReconnectGroup,
-    ...(reconnectSelection ? { reconnectSelection } : {}),
     ...(reconnectTarget ? { reconnectTarget } : {}),
     reconnectCandidateCount,
     reconnectNeedsClarification,

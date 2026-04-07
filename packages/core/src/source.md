@@ -7,7 +7,7 @@
 ## 중요 단위
 
 - `agent`: 프롬프트 구성, intake, 완료 판정, 도구 기반 AI 루프
-- `runs`: request-group 실행 생명주기, 라우팅, 복구, 설정된 AI backend 실행 조정
+- `runs`: request-group 실행 생명주기, 복구, 단일 활성 AI 연결 실행 조정
 - `scheduler`: 반복/예약 실행과 채널 전달
 - `tools`: 내장 도구와 승인/실행 정책
 - `api`: WebUI와 로컬 제어용 HTTP/WebSocket 표면
@@ -45,8 +45,8 @@
 - `runs/root-run-driver.ts`는 request-group queue 내부 실행 경계로, execution profile 초기화, root loop 실행, fatal failure 처리, cleanup을 `runs/start.ts` 밖으로 빼는 역할을 맡기 시작했습니다.
 - `runs/intake-bridge-pass.ts`는 intake 결과의 즉시 응답, schedule retry_intake, delegated follow-up 생성을 묶어 `runs/start.ts` 상단 intake orchestration을 더 줄이는 역할을 맡기 시작했습니다. delegated follow-up은 이제 사용자용 실행 시작 안내문 없이 실제 후속 run으로만 handoff합니다.
 - one-time delayed run은 이제 `runs/run-queueing.ts`에서 원 `requestGroupId`를 다시 넘기지 않고 새 root task instance로 시작합니다. 예약 등록을 만든 run/request-group은 `originRunId`, `originRequestGroupId`로 보존하고, 이 lineage는 새 run의 초기 이벤트까지 이어지도록 schedule lifecycle을 분리하기 시작했습니다.
-- `runs/routing.ts`와 `ai/index.ts`는 이제 실제로 연결된 AI backend만 자동 선택 대상으로 봅니다. 기본 provider/model 문자열만 남아 있다고 Claude/OpenAI/Gemini가 내부 fallback으로 호출되지는 않습니다.
-- 런타임은 설정창에 저장된 `ai.providers/defaultProvider/defaultModel`만 기준으로 사용하고, legacy `llm` 키나 외부 worker 경로는 실행 대상으로 보지 않습니다.
+- `runs/routing.ts`와 `ai/index.ts`는 이제 실제로 연결된 단일 활성 AI 연결만 실행 대상으로 봅니다. 기본 provider/model 문자열만 남아 있다고 Claude/OpenAI/Gemini가 내부 fallback으로 호출되지는 않습니다.
+- 런타임은 설정창에 저장된 `ai.connection`만 기준으로 사용하고, legacy `llm` 키나 구형 `ai.providers/defaultProvider/defaultModel`은 로딩 시 단일 연결로 정규화합니다.
 - 이때 Anthropic 계열도 별도 CLI worker가 아니라 설정 기반 `provider:anthropic` backend로만 노출합니다. 실행 경로는 설정창에 연결된 AI backend만 후보가 되고, 외부 worker CLI는 사용하지 않습니다.
 - 반복 스케줄 등록도 이제 `runs/action-execution.ts` receipt에 `scheduleId`, `targetSessionId`, `originRunId`, `originRequestGroupId`를 담기 시작해, 스케줄 엔티티와 등록 태스크 lineage를 같은 구조화 결과로 따라갈 수 있게 정리 중입니다.
 - 반복 스케줄 등록/취소도 이제 intake bridge에서 `schedule.created`, `schedule.cancelled` typed event로 내보내기 시작했고, 반복 스케줄 실행은 `scheduler/lifecycle.ts`를 통해 `schedule.run.*` event를 내보냅니다. 등록 lifecycle과 firing lifecycle을 다른 레코드로 드러내면서 `scheduleId`, `runId`, `requestGroupId`, `targetSessionId` 축을 함께 따라가는 방향입니다.

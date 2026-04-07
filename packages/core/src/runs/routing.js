@@ -1,5 +1,4 @@
 import { buildSetupDraft } from "../control-plane/index.js";
-import { getConfig } from "../config/index.js";
 import { AnthropicProvider } from "../ai/providers/anthropic.js";
 import { GeminiProvider } from "../ai/providers/gemini.js";
 import { OpenAIProvider } from "../ai/providers/openai.js";
@@ -29,16 +28,6 @@ export function resolveRunRouteFromDraft(draft, input, options) {
 function buildConfiguredCandidateTargets(draft, input) {
     const result = [];
     const defaultTargets = draft.routingProfiles.find((item) => item.id === "default")?.targets ?? [];
-    const configuredProvider = getConfig().ai.defaultProvider.trim();
-    const configuredProviderTarget = normalizeTargetId(configuredProvider) ?? configuredProvider;
-    const configuredTarget = defaultTargets.find((targetId) => {
-        const backend = draft.aiBackends.find((item) => item.id === targetId && item.enabled);
-        if (!backend)
-            return false;
-        if (!configuredProvider)
-            return true;
-        return backend.id === configuredProviderTarget || backend.providerType === configuredProvider;
-    });
     const avoided = new Set((input.avoidTargets ?? [])
         .flatMap((value) => expandAvoidTargetIds(normalizeTargetId(value) ?? value))
         .filter((value) => typeof value === "string" && value.trim().length > 0));
@@ -47,9 +36,7 @@ function buildConfiguredCandidateTargets(draft, input) {
             return;
         result.push(value);
     };
-    if (!configuredTarget)
-        return result;
-    add(configuredTarget);
+    add(defaultTargets[0]);
     return result;
 }
 function expandAvoidTargetIds(value) {
@@ -79,16 +66,16 @@ function resolveBackend(backend, _fallbackModel, _options) {
         }
         case "openai": {
             const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"]);
+            const endpoint = normalizeOpenAICompatibleEndpoint("openai", backend.endpoint);
             return {
                 providerId: "openai",
                 model,
-                provider: new OpenAIProvider(profile, backend.endpoint?.trim() || undefined),
+                provider: new OpenAIProvider(profile, endpoint),
             };
         }
         case "ollama":
         case "llama": {
-            const endpoint = backend.endpoint?.trim()
-                || (backend.providerType === "ollama" ? getConfig().ai.providers.ollama?.baseUrl?.trim() : undefined);
+            const endpoint = normalizeOpenAICompatibleEndpoint(backend.providerType, backend.endpoint);
             if (!endpoint)
                 return null;
             const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"]);
@@ -99,7 +86,7 @@ function resolveBackend(backend, _fallbackModel, _options) {
             };
         }
         case "custom": {
-            const endpoint = backend.endpoint?.trim();
+            const endpoint = normalizeOpenAICompatibleEndpoint("custom", backend.endpoint);
             if (!endpoint)
                 return null;
             const apiKey = backend.credentials.apiKey?.trim() || "nobie-custom";
@@ -127,6 +114,14 @@ function buildProfile(apiKeys) {
         currentKeyIndex: 0,
         cooldowns: new Map(),
     };
+}
+function normalizeOpenAICompatibleEndpoint(providerType, endpoint) {
+    const normalized = endpoint?.trim();
+    if (!normalized)
+        return undefined;
+    if (providerType !== "ollama")
+        return normalized;
+    return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`;
 }
 function normalizeTargetId(value) {
     if (!value)

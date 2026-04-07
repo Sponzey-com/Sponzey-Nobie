@@ -4,6 +4,7 @@ import { resolveOpenAICodexAuthFilePath } from "../auth/openai-codex-oauth.js"
 import { AnthropicProvider } from "./providers/anthropic.js"
 import { GeminiProvider } from "./providers/gemini.js"
 import { OpenAIProvider } from "./providers/openai.js"
+import type { AIConnectionConfig } from "../config/types.js"
 import type { AuthProfile, AIProvider } from "./types.js"
 
 const profiles = new Map<string, AuthProfile>()
@@ -13,146 +14,147 @@ function buildProfile(apiKeys: string[]): AuthProfile {
   return { apiKeys, currentKeyIndex: 0, cooldowns: new Map() }
 }
 
-function isOpenAIOAuthConfigured(config = getConfig()): boolean {
-  const openai = config.ai.providers.openai
-  if (openai?.auth?.mode !== "chatgpt_oauth") return false
+function buildOpenAICompatibleProfile(
+  providerId: "openai" | "ollama" | "custom",
+  apiKey: string | undefined,
+): AuthProfile {
+  if (apiKey) return buildProfile([apiKey])
+  if (providerId === "ollama") return buildProfile(["nobie-local"])
+  if (providerId === "custom") return buildProfile(["nobie-custom"])
+  return buildProfile([])
+}
+
+function normalizeOpenAICompatibleEndpoint(
+  providerId: "openai" | "ollama" | "custom",
+  endpoint: string | undefined,
+): string | undefined {
+  const normalized = endpoint?.trim()
+  if (!normalized) return undefined
+  if (providerId !== "ollama") return normalized
+  return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`
+}
+
+export function getActiveAIConnection(config = getConfig()): AIConnectionConfig {
+  return config.ai.connection
+}
+
+function isOpenAIOAuthConfigured(connection = getActiveAIConnection()): boolean {
+  if (connection.provider !== "openai") return false
+  if (connection.auth?.mode !== "chatgpt_oauth") return false
   return existsSync(resolveOpenAICodexAuthFilePath({
-    authFilePath: openai.auth.codexAuthFilePath,
-    clientId: openai.auth.clientId,
+    authFilePath: connection.auth?.oauthAuthFilePath,
+    clientId: connection.auth?.clientId,
   }))
 }
 
-function hasConfiguredAnthropicProvider(config = getConfig()): boolean {
-  return (config.ai.providers.anthropic?.apiKeys ?? []).filter(Boolean).length > 0
-}
+function hasConfiguredConnection(connection = getActiveAIConnection()): boolean {
+  const providerId = connection.provider.trim()
+  if (!providerId) return false
 
-function hasConfiguredOpenAIProvider(config = getConfig()): boolean {
-  const cfg = config.ai.providers
-  const authMode = cfg.openai?.auth?.mode ?? "api_key"
-  if (authMode === "chatgpt_oauth") {
-    return isOpenAIOAuthConfigured(config)
+  if (providerId === "openai") {
+    const authMode = connection.auth?.mode ?? "api_key"
+    if (authMode === "chatgpt_oauth") return isOpenAIOAuthConfigured(connection)
+    return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
   }
-  return (cfg.openai?.apiKeys ?? []).filter(Boolean).length > 0
-    || !!cfg.openai?.baseUrl?.trim()
-}
 
-function hasConfiguredGeminiProvider(config = getConfig()): boolean {
-  return (cfg => (cfg.gemini?.apiKeys ?? []).filter(Boolean).length > 0 || !!cfg.gemini?.baseUrl?.trim())(config.ai.providers)
-}
+  if (providerId === "anthropic" || providerId === "gemini") {
+    return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
+  }
 
-function hasConfiguredProvider(providerId: string, config = getConfig()): boolean {
-  if (providerId === "anthropic") return hasConfiguredAnthropicProvider(config)
-  if (providerId === "openai") return hasConfiguredOpenAIProvider(config)
-  if (providerId === "gemini") return hasConfiguredGeminiProvider(config)
+  if (providerId === "ollama" || providerId === "custom") {
+    return Boolean(connection.endpoint?.trim())
+  }
+
   return false
 }
 
-export function getProvider(providerId?: string): AIProvider {
-  const config = getConfig()
-  const id = providerId?.trim() || detectAvailableProvider()
+export function detectAvailableProvider(): string {
+  const connection = getActiveAIConnection()
+  return hasConfiguredConnection(connection) ? connection.provider.trim() : ""
+}
 
-  if (!id) {
+export function getDefaultModel(): string {
+  const connection = getActiveAIConnection()
+  if (!hasConfiguredConnection(connection)) return ""
+  return connection.model.trim()
+}
+
+export function inferProviderId(_model: string): string {
+  return detectAvailableProvider()
+}
+
+export function getProvider(providerId?: string): AIProvider {
+  const connection = getActiveAIConnection()
+  const activeProviderId = detectAvailableProvider()
+  const requestedProviderId = providerId?.trim() ?? ""
+
+  if (!activeProviderId) {
     throw new Error("No configured AI backend is available. Connect an AI in settings first.")
   }
 
-  if (providers.has(id)) return providers.get(id)!
-
-  const cfg = config.ai.providers
-
-  if (id === "anthropic") {
-    if (!hasConfiguredAnthropicProvider(config)) {
-      throw new Error("Anthropic AI is not configured. Connect it in settings before using it.")
-    }
-    const keys = (cfg.anthropic?.apiKeys ?? []).filter(Boolean)
-    const profile = buildProfile(keys)
-    profiles.set(id, profile)
-    const p = new AnthropicProvider(profile)
-    providers.set(id, p)
-    return p
+  if (requestedProviderId && requestedProviderId !== activeProviderId) {
+    throw new Error(`Only the configured active AI backend can be used. Active backend: "${activeProviderId}".`)
   }
 
-  if (id === "openai") {
-    if (!hasConfiguredOpenAIProvider(config)) {
-      throw new Error("OpenAI AI is not configured. Connect it in settings before using it.")
+  if (providers.has(activeProviderId)) return providers.get(activeProviderId)!
+
+  if (activeProviderId === "anthropic") {
+    const apiKey = connection.auth?.apiKey?.trim()
+    if (!apiKey) {
+      throw new Error("Anthropic AI is not configured. Connect it in settings before using it.")
     }
-    const authMode = cfg.openai?.auth?.mode ?? "api_key"
-    const keys = (cfg.openai?.apiKeys ?? []).filter(Boolean)
-    const profile = buildProfile(keys)
-    profiles.set(id, profile)
-    const p = new OpenAIProvider(
+    const profile = buildProfile([apiKey])
+    profiles.set(activeProviderId, profile)
+    const provider = new AnthropicProvider(profile)
+    providers.set(activeProviderId, provider)
+    return provider
+  }
+
+  if (activeProviderId === "gemini") {
+    const apiKey = connection.auth?.apiKey?.trim()
+    if (!apiKey && !connection.endpoint?.trim()) {
+      throw new Error("Gemini AI is not configured. Connect it in settings before using it.")
+    }
+    const profile = buildProfile(apiKey ? [apiKey] : [])
+    profiles.set(activeProviderId, profile)
+    const provider = new GeminiProvider(profile, connection.endpoint?.trim() || undefined)
+    providers.set(activeProviderId, provider)
+    return provider
+  }
+
+  if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "custom") {
+    const authMode = connection.auth?.mode ?? "api_key"
+    const apiKey = connection.auth?.apiKey?.trim()
+    const profile = buildOpenAICompatibleProfile(activeProviderId, apiKey)
+    const endpoint = normalizeOpenAICompatibleEndpoint(activeProviderId, connection.endpoint)
+    profiles.set(activeProviderId, profile)
+    const provider = new OpenAIProvider(
       profile,
-      cfg.openai?.baseUrl,
-      authMode === "chatgpt_oauth"
+      endpoint,
+      activeProviderId === "openai" && authMode === "chatgpt_oauth"
         ? {
-            authFilePath: cfg.openai?.auth?.codexAuthFilePath,
-            clientId: cfg.openai?.auth?.clientId,
+            authFilePath: connection.auth?.oauthAuthFilePath,
+            clientId: connection.auth?.clientId,
           }
         : undefined,
     )
-    providers.set(id, p)
-    return p
+    providers.set(activeProviderId, provider)
+    return provider
   }
 
-  if (id === "gemini") {
-    if (!hasConfiguredGeminiProvider(config)) {
-      throw new Error("Gemini AI is not configured. Connect it in settings before using it.")
-    }
-    const keys = (cfg.gemini?.apiKeys ?? []).filter(Boolean)
-    const profile = buildProfile(keys)
-    profiles.set(id, profile)
-    const p = new GeminiProvider(profile, cfg.gemini?.baseUrl)
-    providers.set(id, p)
-    return p
-  }
-
-  throw new Error(`Unsupported AI backend: "${id}"`)
+  throw new Error(`Unsupported AI backend: "${activeProviderId}"`)
 }
-
-const MODEL_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
-  [/^gpt-/i, "openai"],
-  [/^o\d/i, "openai"],    // o1, o3-mini, etc.
-  [/^claude-/i, "anthropic"],
-  [/^gemini-/i, "gemini"],
-]
 
 const LLAMA_MODEL_PATTERN = /\bllama(?:[.\-:\w]*)?\b/i
 const OLLAMA_BASEURL_PATTERN = /(^|\/\/)(?:[^/]*ollama|127\.0\.0\.1:11434|localhost:11434)/i
 
-/**
- * 설정에 저장된 AI 연결을 기준으로 기본 공급자를 감지한다.
- */
-export function detectAvailableProvider(): string {
-  const config = getConfig()
-  const configured = config.ai.defaultProvider.trim()
-  if (!configured) return ""
-  return hasConfiguredProvider(configured, config) ? configured : ""
-}
-
-export function getDefaultModel(): string {
-  const config = getConfig()
-  const availableProvider = detectAvailableProvider()
-
-  if (!availableProvider) return ""
-  return config.ai.defaultModel.trim()
-}
-
-/** Infer the provider ID from a model name, falling back to the auto-detected provider. */
-export function inferProviderId(model: string): string {
-  for (const [pattern, id] of MODEL_PROVIDER_PREFIXES) {
-    if (pattern.test(model)) return id
-  }
-  return detectAvailableProvider()
-}
-
 export function shouldForceReasoningMode(providerId: string, model: string): boolean {
-  const config = getConfig()
-  const openaiBaseUrl = config.ai.providers.openai?.baseUrl?.trim() ?? ""
-  const ollamaBaseUrl = config.ai.providers.ollama?.baseUrl?.trim() ?? ""
+  const connection = getActiveAIConnection()
+  const endpoint = connection.endpoint?.trim() ?? ""
 
   if (providerId === "ollama") return true
   if (LLAMA_MODEL_PATTERN.test(model)) return true
-  if (OLLAMA_BASEURL_PATTERN.test(openaiBaseUrl)) return true
-  if (OLLAMA_BASEURL_PATTERN.test(ollamaBaseUrl)) return true
+  if (OLLAMA_BASEURL_PATTERN.test(endpoint)) return true
 
   return false
 }

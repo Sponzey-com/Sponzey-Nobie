@@ -1,27 +1,24 @@
 import { homedir } from "node:os"
 
-export interface AIProviderConfig {
-  anthropic?: {
-    apiKeys: string[]
-  }
-  openai?: {
-    apiKeys: string[]
-    baseUrl?: string
-    auth?: {
-      mode?: "api_key" | "chatgpt_oauth"
-      codexAuthFilePath?: string
-      clientId?: string
-    }
-  }
-  gemini?: {
-    apiKeys: string[]
-    baseUrl?: string
-  }
-  ollama?: {
-    baseUrl: string
-  }
-  openrouter?: {
-    apiKeys: string[]
+export type AIConnectionProvider =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "ollama"
+  | "custom"
+  | ""
+
+export interface AIConnectionConfig {
+  provider: AIConnectionProvider
+  model: string
+  endpoint?: string
+  auth?: {
+    mode?: "api_key" | "chatgpt_oauth"
+    apiKey?: string
+    username?: string
+    password?: string
+    oauthAuthFilePath?: string
+    clientId?: string
   }
 }
 
@@ -137,9 +134,7 @@ export interface SkillsConfig {
 export interface NobieConfig {
   profile: ProfileConfig
   ai: {
-    defaultProvider: string
-    defaultModel: string
-    providers: AIProviderConfig
+    connection: AIConnectionConfig
   }
   security: SecurityConfig
   telegram?: TelegramConfig
@@ -165,9 +160,10 @@ export const DEFAULT_CONFIG: NobieConfig = {
     workspace: homedir(),
   },
   ai: {
-    defaultProvider: "",
-    defaultModel: "",
-    providers: {},
+    connection: {
+      provider: "",
+      model: "",
+    },
   },
   security: {
     allowedPaths: [],

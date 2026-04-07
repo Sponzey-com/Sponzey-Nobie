@@ -170,15 +170,26 @@ function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMo
   }
 }
 
-function buildTreeNodes(attempts: TaskMonitorAttempt[]): TaskMonitorTreeNode[] {
+function describeRunScopeLabel(attempt: TaskMonitorAttempt, text: TextFn): string {
+  switch (attempt.run?.runScope) {
+    case "child":
+      return text("서브 에이전트", "Sub-agent")
+    case "analysis":
+      return text("분석 작업", "Analysis task")
+    default:
+      return text("루트 작업", "Root task")
+  }
+}
+
+function buildTreeNodes(attempts: TaskMonitorAttempt[], text: TextFn): TaskMonitorTreeNode[] {
   const visibleAttempts = attempts.filter((attempt) => attempt.userVisible)
   const sourceAttempts = visibleAttempts.length > 0 ? visibleAttempts : attempts.slice(0, 1)
   return sourceAttempts.map((attempt, index) => ({
     id: attempt.id,
-    label: attempt.label,
-    summary: truncateText(attempt.summary || attempt.prompt || attempt.run?.prompt || attempt.label),
+    label: `${describeRunScopeLabel(attempt, text)} · ${attempt.label}`,
+    summary: truncateText(attempt.run?.handoffSummary || attempt.summary || attempt.prompt || attempt.run?.prompt || attempt.label),
     status: attempt.status,
-    isRoot: index === 0,
+    isRoot: (attempt.run?.runScope ?? "root") === "root" || index === 0,
   }))
 }
 
@@ -209,6 +220,8 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
       id: task.anchorRunId,
       sessionId: task.sessionId,
       requestGroupId: task.requestGroupId,
+      lineageRootRunId: task.id,
+      runScope: "root",
       title: task.title,
       prompt: task.requestText || latestAttempt?.prompt || anchorAttempt?.prompt || task.title,
       source: task.source,
@@ -233,6 +246,8 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
     ...sourceRun,
     id: identityRun.id,
     requestGroupId: task.requestGroupId,
+    lineageRootRunId: sourceRun.lineageRootRunId || identityRun.lineageRootRunId,
+    runScope: sourceRun.runScope ?? identityRun.runScope,
     title: task.title,
     prompt: task.requestText || identityRun.prompt,
     createdAt: task.createdAt,
@@ -276,7 +291,7 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
       attempts,
       visibleAttempts,
       internalAttempts,
-      treeNodes: buildTreeNodes(attempts),
+      treeNodes: buildTreeNodes(attempts, text),
       timeline: buildTimeline(task, attempts, text),
       checklist: buildChecklist(task.checklist, text),
       delivery: {

@@ -10,6 +10,8 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     id: overrides.id,
     sessionId: overrides.sessionId ?? "session-1",
     requestGroupId: overrides.requestGroupId,
+    lineageRootRunId: overrides.lineageRootRunId ?? overrides.requestGroupId,
+    runScope: overrides.runScope ?? "root",
     title: overrides.title ?? overrides.prompt,
     prompt: overrides.prompt,
     source: overrides.source ?? "telegram",
@@ -31,6 +33,8 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.targetLabel ? { targetLabel: overrides.targetLabel } : {}),
     ...(overrides.workerRuntimeKind ? { workerRuntimeKind: overrides.workerRuntimeKind } : {}),
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
+    ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
+    ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
   }
 }
 
@@ -181,6 +185,69 @@ describe("webui task monitor helper", () => {
       "완료 확인",
     ])
     expect(cards[0]?.checklist.completedCount).toBe(1)
+    expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
+      "루트 작업 · 사용자 요청",
+      "루트 작업 · 후속 시도",
+    ])
+  })
+
+  it("shows root and child task lineage in the monitor tree", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "lineage-1",
+        requestGroupId: "root-group",
+        anchorRunId: "run-root",
+        attempts: [
+          {
+            id: "run-root",
+            taskId: "lineage-1",
+            requestGroupId: "root-group",
+            kind: "primary",
+            title: "Main request",
+            prompt: "Collect logs",
+            status: "completed",
+            summary: "루트 작업",
+            userVisible: true,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          {
+            id: "run-child",
+            taskId: "lineage-1",
+            requestGroupId: "child-group",
+            kind: "followup",
+            title: "Child request",
+            prompt: "Inspect Windows logs",
+            status: "running",
+            summary: "서브 작업 실행 중",
+            userVisible: true,
+            createdAt: 3,
+            updatedAt: 4,
+          },
+        ],
+        latestAttemptId: "run-child",
+        runIds: ["run-root", "run-child"],
+      }),
+    ], [
+      makeRun({ id: "run-root", requestGroupId: "root-group", prompt: "Collect logs", summary: "루트 작업", runScope: "root", createdAt: 1, updatedAt: 2 }),
+      makeRun({
+        id: "run-child",
+        requestGroupId: "child-group",
+        prompt: "Inspect Windows logs",
+        summary: "서브 작업 실행 중",
+        runScope: "child",
+        parentRunId: "run-root",
+        handoffSummary: "윈도우 장비 로그만 별도 확인",
+        createdAt: 3,
+        updatedAt: 4,
+      }),
+    ], text)
+
+    expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
+      "루트 작업 · 사용자 요청",
+      "서브 에이전트 · 후속 시도",
+    ])
+    expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })
 
   it("tracks delivery separately from task status", () => {

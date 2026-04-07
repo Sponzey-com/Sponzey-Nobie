@@ -198,10 +198,7 @@ export function buildFollowupPrompt(params: {
   const requiresFilesystemMutation = params.intake.intent_envelope.execution_semantics.filesystemEffect === "mutate"
 
   return buildStructuredExecutionBrief({
-    header: "[Task Intake Bridge]",
-    introLines: [
-      "이 요청은 intake router에서 접수되어 후속 실행으로 전달되었습니다.",
-    ],
+    header: "[Task Execution Brief]",
     originalRequest: params.originalMessage,
     structuredRequest: {
       ...params.intake.structured_request,

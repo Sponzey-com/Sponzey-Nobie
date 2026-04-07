@@ -1,5 +1,5 @@
 import type { SetupDraft, SetupStepId } from "../../contracts/setup"
-import { getBackendDisplayLabel, getRoutingProfileDisplayLabel } from "../../lib/ai-display"
+import { getBackendDisplayLabel } from "../../lib/ai-display"
 import { useUiI18n } from "../../lib/ui-i18n"
 
 const LANGUAGE_LABELS: Record<string, { ko: string; en: string }> = {
@@ -9,7 +9,7 @@ const LANGUAGE_LABELS: Record<string, { ko: string; en: string }> = {
   "zh-CN": { ko: "중국어(간체)", en: "Chinese (Simplified)" },
 }
 
-type ReviewStepId = Extract<SetupStepId, "personal" | "ai_backends" | "ai_routing" | "mcp" | "skills" | "security" | "channels" | "remote_access">
+type ReviewStepId = Extract<SetupStepId, "personal" | "ai_backends" | "mcp" | "skills" | "security" | "channels" | "remote_access">
 
 export function ReviewSummaryPanel({
   draft,
@@ -25,11 +25,6 @@ export function ReviewSummaryPanel({
   const enabledSkills = draft.skills.items.filter((item) => item.enabled)
   const telegramReady = draft.channels.telegramEnabled && Boolean(draft.channels.botToken.trim())
   const { text, displayText, language } = useUiI18n()
-
-  function getTargetLabel(target: string): string {
-    const backend = draft.aiBackends.find((item) => item.id === target)
-    return getBackendDisplayLabel(backend?.id ?? target, backend?.label ?? target, language)
-  }
 
   const languageLabel = LANGUAGE_LABELS[draft.personal.language]
     ? text(LANGUAGE_LABELS[draft.personal.language].ko, LANGUAGE_LABELS[draft.personal.language].en)
@@ -61,7 +56,7 @@ export function ReviewSummaryPanel({
         </SummaryCard>
       </div>
 
-      <SummaryCard title={text("AI 연결", "AI Connections")} stepId="ai_backends" onSelectStep={onSelectStep} text={text}>
+      <SummaryCard title={text("AI 연결", "AI Connection")} stepId="ai_backends" onSelectStep={onSelectStep} text={text}>
         <div className="flex flex-wrap gap-2">
           {enabledBackends.length > 0 ? enabledBackends.map((backend) => (
             <span key={backend.id} className="rounded-full bg-white px-3 py-1 text-xs text-stone-700">
@@ -70,7 +65,7 @@ export function ReviewSummaryPanel({
                 ? ` · ${backend.authMode === "chatgpt_oauth" ? text("ChatGPT OAuth", "ChatGPT OAuth") : text("API Key", "API Key")}`
                 : ""}
             </span>
-          )) : <EmptyChip text={text("사용 중인 AI가 없습니다.", "No AI backends are enabled.")} />}
+          )) : <EmptyChip text={text("활성화된 AI 연결이 없습니다.", "No active AI connection is enabled.")} />}
         </div>
       </SummaryCard>
 
@@ -109,17 +104,6 @@ export function ReviewSummaryPanel({
             <div className="mt-1">{text("상태", "Status")}: {text("예정", "Planned")}</div>
             <div>{text("입력 구조만 준비된 상태입니다.", "Only the input structure is prepared right now.")}</div>
           </div>
-        </div>
-      </SummaryCard>
-
-      <SummaryCard title={text("AI 사용 순서", "AI Routing Order")} stepId="ai_routing" onSelectStep={onSelectStep} text={text}>
-        <div className="space-y-2">
-          {draft.routingProfiles.slice(0, 4).map((profile) => (
-            <div key={profile.id} className="rounded-xl bg-white px-3 py-2 text-sm text-stone-700">
-              <span className="font-medium">{getRoutingProfileDisplayLabel(profile.id, profile.label, language)}</span>
-              <span className="text-stone-500"> · {profile.targets.map(getTargetLabel).join(" → ")}</span>
-            </div>
-          ))}
         </div>
       </SummaryCard>
 

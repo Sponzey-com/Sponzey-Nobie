@@ -70,7 +70,7 @@ That is why the UI and documentation follow these principles:
 
 ### 1. AI Connection `(Implemented)`
 
-Nobie uses AI backends connected from the Settings screen.
+Nobie uses the single AI connection configured in Settings.
 
 - OpenAI
 - Anthropic
@@ -81,6 +81,7 @@ Nobie uses AI backends connected from the Settings screen.
 
 Current behavior:
 
+- Nobie uses only one active AI connection at a time.
 - Nobie uses only configured backend and model selections.
 - Natural-language intake, execution dialogue, and completion review all use the configured AI connection.
 
@@ -188,6 +189,12 @@ The current WebUI setup flow is organized in this order:
 4. Skills
 5. Communication
 6. Review and finish
+
+Current UX direction:
+
+- The settings flow is being simplified so users only need to understand `connect one AI`.
+- Older ideas such as provider priority, multi-AI comparison, or AI order editing are hidden from the default flow.
+- The task monitor is presented as `one AI connection + multiple root/sub-task units`, not as multiple AI lanes.
 
 Current status:
 

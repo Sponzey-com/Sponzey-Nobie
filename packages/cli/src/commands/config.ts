@@ -6,9 +6,10 @@ const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
 // Docs: see design/plan.md
 {
   ai: {
-    defaultProvider: "",
-    defaultModel: "",
-    providers: {},
+    connection: {
+      provider: "",
+      model: "",
+    },
   },
   security: {
     // Directories the agent is allowed to access.

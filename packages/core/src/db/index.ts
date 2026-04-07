@@ -160,6 +160,17 @@ export function getMessagesForRequestGroupWithRunMeta(sessionId: string, request
     .all(sessionId, requestGroupId)
 }
 
+export function getMessagesForRun(sessionId: string, runId: string): DbMessage[] {
+  return getDb()
+    .prepare<[string, string], DbMessage>(
+      `SELECT * FROM messages
+       WHERE session_id = ?
+         AND root_run_id = ?
+       ORDER BY created_at ASC`,
+    )
+    .all(sessionId, runId)
+}
+
 export function insertAuditLog(log: Omit<DbAuditLog, "id">): void {
   const id = crypto.randomUUID()
   getDb()
@@ -250,7 +261,10 @@ export interface DbMemoryItem {
   content: string
   tags: string | null           // JSON array
   source: string | null
+  memory_scope: "global" | "session" | "task" | null
   session_id: string | null
+  run_id: string | null
+  request_group_id: string | null
   type: string | null           // "user_fact" | "session_summary" | "project_note"
   importance: string | null     // "low" | "medium" | "high"
   embedding: Buffer | null
@@ -261,7 +275,10 @@ export interface DbMemoryItem {
 export function insertMemoryItem(item: {
   content: string
   tags?: string[]
+  scope?: "global" | "session" | "task"
   sessionId?: string
+  runId?: string
+  requestGroupId?: string
   type?: string
   importance?: string
 }): string {
@@ -269,14 +286,17 @@ export function insertMemoryItem(item: {
   const now = Date.now()
   const db = getDb()
   db.prepare(
-    `INSERT INTO memory_items (id, content, tags, source, session_id, type, importance, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO memory_items (id, content, tags, source, memory_scope, session_id, run_id, request_group_id, type, importance, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     item.content,
     JSON.stringify(item.tags ?? []),
     "agent",
+    item.scope ?? "global",
     item.sessionId ?? null,
+    item.runId ?? null,
+    item.requestGroupId ?? null,
     item.type ?? "user_fact",
     item.importance ?? "medium",
     now,
@@ -290,24 +310,58 @@ export function insertMemoryItem(item: {
   return id
 }
 
-export function searchMemoryItems(query: string, limit = 5): DbMemoryItem[] {
+function buildMemoryScopeWhere(filters?: {
+  sessionId?: string
+  runId?: string
+}): { clause: string; values: string[] } {
+  const clauses = [`m.memory_scope = 'global'`, `m.memory_scope IS NULL`, `m.memory_scope = ''`]
+  const values: string[] = []
+
+  if (filters?.sessionId) {
+    clauses.push(`(m.memory_scope = 'session' AND m.session_id = ?)`)
+    values.push(filters.sessionId)
+  }
+
+  if (filters?.runId) {
+    clauses.push(`(m.memory_scope = 'task' AND m.run_id = ?)`)
+    values.push(filters.runId)
+  }
+
+  return {
+    clause: `(${clauses.join(" OR ")})`,
+    values,
+  }
+}
+
+export function searchMemoryItems(query: string, limit = 5, filters?: {
+  sessionId?: string
+  runId?: string
+}): DbMemoryItem[] {
+  const scope = buildMemoryScopeWhere(filters)
   return getDb()
-    .prepare<[string, number], DbMemoryItem>(
+    .prepare<unknown[], DbMemoryItem>(
       `SELECT m.* FROM memory_fts f
        JOIN memory_items m ON m.rowid = f.rowid
        WHERE memory_fts MATCH ?
+         AND ${scope.clause}
        ORDER BY rank
        LIMIT ?`,
     )
-    .all(query, limit)
+    .all(query, ...scope.values, limit)
 }
 
-export function getRecentMemoryItems(limit = 10): DbMemoryItem[] {
+export function getRecentMemoryItems(limit = 10, filters?: {
+  sessionId?: string
+  runId?: string
+}): DbMemoryItem[] {
+  const scope = buildMemoryScopeWhere(filters)
   return getDb()
-    .prepare<[number], DbMemoryItem>(
-      "SELECT * FROM memory_items ORDER BY updated_at DESC LIMIT ?",
+    .prepare<unknown[], DbMemoryItem>(
+      `SELECT * FROM memory_items
+       WHERE ${scope.clause}
+       ORDER BY updated_at DESC LIMIT ?`,
     )
-    .all(limit)
+    .all(...scope.values, limit)
 }
 
 export function markMessagesCompressed(ids: string[], summaryId: string): void {

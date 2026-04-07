@@ -11,14 +11,15 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
   } as any
   return {
     analyzeRequestEntrySemantics: vi.fn((message: string) => ({
-      reuse_conversation_context: /continue/i.test(message),
+      reuse_conversation_context: false,
       active_queue_cancellation_mode: null,
     })),
     isReusableRequestGroup: vi.fn(() => false),
-    findReconnectRequestGroupSelection: vi.fn(() => ({
-      best: reconnectRun,
-      candidates: [reconnectRun],
-      ambiguous: false,
+    listActiveSessionRequestGroups: vi.fn(() => [reconnectRun]),
+    compareRequestContinuation: vi.fn(async () => ({
+      kind: "reuse",
+      requestGroupId: "group-prev",
+      reason: "same task",
     })),
     getRequestGroupDelegationTurnCount: vi.fn(() => 2),
     buildWorkerSessionId: vi.fn(() => "worker-session-1"),
@@ -29,9 +30,9 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
 }
 
 describe("build start plan", () => {
-  it("reuses reconnect target when continuation context is detected", () => {
+  it("reuses reconnect target when AI comparison selects an active task", async () => {
     const dependencies = createDependencies()
-    const result = buildStartPlan({
+    const result = await buildStartPlan({
       message: "continue the calendar work",
       sessionId: "session-1",
       runId: "run-1",
@@ -48,37 +49,31 @@ describe("build start plan", () => {
     expect(result.workerSessionId).toBe("worker-session-1")
   })
 
-  it("forces clarification when reconnect selection is ambiguous", () => {
+  it("forces clarification when AI comparison is ambiguous", async () => {
     const dependencies = createDependencies({
-      findReconnectRequestGroupSelection: vi.fn(() => ({
-        best: {
+      listActiveSessionRequestGroups: vi.fn(() => ([
+        {
           id: "run-prev",
           requestGroupId: "group-prev",
           title: "기존 달력 작업",
           updatedAt: 100,
           status: "running",
         } as any,
-        candidates: [
-          {
-            id: "run-prev",
-            requestGroupId: "group-prev",
-            title: "기존 달력 작업",
-            updatedAt: 100,
-            status: "running",
-          } as any,
-          {
-            id: "run-prev-2",
-            requestGroupId: "group-prev-2",
-            title: "기존 계산기 작업",
-            updatedAt: 90,
-            status: "running",
-          } as any,
-        ],
-        ambiguous: true,
+        {
+          id: "run-prev-2",
+          requestGroupId: "group-prev-2",
+          title: "기존 계산기 작업",
+          updatedAt: 90,
+          status: "running",
+        } as any,
+      ])),
+      compareRequestContinuation: vi.fn(async () => ({
+        kind: "clarify",
+        reason: "ambiguous candidates",
       })),
     })
 
-    const result = buildStartPlan({
+    const result = await buildStartPlan({
       message: "continue the work",
       sessionId: "session-2",
       runId: "run-2",
@@ -89,7 +84,7 @@ describe("build start plan", () => {
     expect(result.isRootRequest).toBe(true)
   })
 
-  it("treats closed request groups as new roots unless force reuse is set", () => {
+  it("treats closed request groups as new roots unless force reuse is set", async () => {
     const dependencies = createDependencies({
       analyzeRequestEntrySemantics: vi.fn(() => ({
         reuse_conversation_context: false,
@@ -97,7 +92,7 @@ describe("build start plan", () => {
       })),
     })
 
-    const result = buildStartPlan({
+    const result = await buildStartPlan({
       message: "new message",
       sessionId: "session-3",
       runId: "run-3",
@@ -108,5 +103,30 @@ describe("build start plan", () => {
     expect(result.requestGroupId).toBe("run-3")
     expect(result.isRootRequest).toBe(true)
     expect(result.effectiveContextMode).toBe("isolated")
+  })
+
+  it("skips AI continuation comparison for cancellation commands", async () => {
+    const compareRequestContinuation = vi.fn(async () => ({
+      kind: "reuse",
+      requestGroupId: "group-prev",
+      reason: "should not be used",
+    }))
+    const dependencies = createDependencies({
+      analyzeRequestEntrySemantics: vi.fn(() => ({
+        reuse_conversation_context: false,
+        active_queue_cancellation_mode: "latest",
+      })),
+      compareRequestContinuation,
+    })
+
+    const result = await buildStartPlan({
+      message: "지금 작업 취소해줘",
+      sessionId: "session-4",
+      runId: "run-4",
+    }, dependencies)
+
+    expect(compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.requestGroupId).toBe("run-4")
+    expect(result.isRootRequest).toBe(true)
   })
 })

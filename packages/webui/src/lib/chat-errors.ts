@@ -21,7 +21,7 @@ export function mapChatErrorMessage(raw: string, language: UiLanguage = "ko"): s
     || lower.includes("no backend")
     || lower.includes("provider unavailable")
   ) {
-    return pickUiText(language, "사용 가능한 AI가 연결되어 있지 않습니다. AI 백엔드에서 활성화된 모델과 공급자를 설정해 주세요.", "No usable AI is connected. Configure an enabled provider and model in AI Backends.")
+    return pickUiText(language, "사용 가능한 AI가 연결되어 있지 않습니다. 설정 화면에서 AI 연결과 기본 모델을 확인해 주세요.", "No usable AI is connected. Check the AI connection and default model in Settings.")
   }
 
   if (

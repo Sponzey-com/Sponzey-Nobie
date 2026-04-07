@@ -25,36 +25,48 @@ export async function storeMemory(params) {
 export function storeMemorySync(params) {
     return insertMemoryItem(params);
 }
-export async function searchMemory(query, limit = 5) {
+export async function searchMemory(query, limit = 5, filters) {
     const mode = getConfig().memory?.searchMode ?? "fts";
     try {
-        const results = await searchMemoryItems2(query, limit, mode);
+        const results = await searchMemoryItems2(query, limit, mode, filters);
         return results.map((r) => r.item);
     }
     catch {
         return [];
     }
 }
-export function searchMemorySync(query, limit = 5) {
+export function searchMemorySync(query, limit = 5, filters) {
     try {
-        return searchMemoryItems(query, limit);
+        return searchMemoryItems(query, limit, filters);
     }
     catch {
         return [];
     }
 }
-export function recentMemories(limit = 10) {
-    return getRecentMemoryItems(limit);
+export function recentMemories(limit = 10, filters) {
+    return getRecentMemoryItems(limit, filters);
 }
 /** Build a formatted memory context block for system prompt injection */
-export async function buildMemoryContext(userMessage) {
-    const results = await searchMemory(userMessage, 5);
-    if (!results.length)
-        return "";
-    const lines = results.map((r) => {
+export async function buildMemoryContext(params) {
+    const journalContextPromise = import("./journal.js")
+        .then((mod) => mod.buildMemoryJournalContext(params.query, {
+        limit: 6,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        ...(params.runId ? { runId: params.runId } : {}),
+    }))
+        .catch(() => "");
+    const [results, journalContext] = await Promise.all([
+        searchMemory(params.query, 5, {
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            ...(params.runId ? { runId: params.runId } : {}),
+        }),
+        journalContextPromise,
+    ]);
+    const relatedMemoryContext = results.length ? `[관련 기억]\n${results.map((r) => {
         const date = new Date(r.created_at).toLocaleDateString("ko-KR");
         return `- ${r.content} (${date})`;
-    });
-    return `[관련 기억]\n${lines.join("\n")}`;
+    }).join("\n")}` : "";
+    return [relatedMemoryContext, journalContext].filter(Boolean).join("\n\n");
 }
 //# sourceMappingURL=store.js.map

@@ -127,6 +127,46 @@ describe("yeonjang required tools", () => {
     )
   })
 
+  it("passes the requested second-monitor capture target through to Yeonjang", async () => {
+    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      base64_data: Buffer.from('png').toString('base64'),
+      mime_type: 'image/png',
+      file_name: 'screen.png',
+      file_extension: 'png',
+      size_bytes: 3,
+    })
+
+    const result = await screenCaptureTool.execute({}, createContext('윈도우 2번째 모니터 캡쳐해서 보여줘'))
+
+    expect(result.success).toBe(true)
+    expect(invokeYeonjangMethod).toHaveBeenCalledWith(
+      'screen.capture',
+      { inline_base64: true, display: 1 },
+      expect.objectContaining({ extensionId: 'yeonjang-dongwooshinc28b-92049', timeoutMs: 60000 }),
+    )
+  })
+
+  it("respects an explicit display parameter when provided", async () => {
+    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      base64_data: Buffer.from('png').toString('base64'),
+      mime_type: 'image/png',
+      file_name: 'screen.png',
+      file_extension: 'png',
+      size_bytes: 3,
+    })
+
+    const result = await screenCaptureTool.execute({ display: 1 }, createContext('외부모니터 화면 캡쳐해서 보여줘'))
+
+    expect(result.success).toBe(true)
+    expect(invokeYeonjangMethod).toHaveBeenCalledWith(
+      'screen.capture',
+      { inline_base64: true, display: 1 },
+      { timeoutMs: 60000 },
+    )
+  })
+
   it("fails mouse move when Yeonjang mouse.move is unavailable", async () => {
     const result = await mouseMoveTool.execute({ x: 10, y: 20 }, createContext())
 

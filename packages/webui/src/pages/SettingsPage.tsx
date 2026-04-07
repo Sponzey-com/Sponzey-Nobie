@@ -6,27 +6,26 @@ import { McpServersPanel } from "../components/McpServersPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
 import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
-import { BackendComposer } from "../components/setup/BackendComposer"
-import { BackendHealthCard } from "../components/setup/BackendHealthCard"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
-import { RoutingPriorityEditor } from "../components/setup/RoutingPriorityEditor"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
+import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
 import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { UpdatePanel } from "../components/UpdatePanel"
 import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
-import { isBuiltinBackendId, type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
+import { type AIBackendCard, type NewAIBackendInput } from "../contracts/ai"
 import type { SetupDraft } from "../contracts/setup"
+import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
 import { useUiI18n } from "../lib/ui-i18n"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
-type TabId = "backends" | "routing" | "security" | "channels" | "mqtt" | "remote" | "advanced"
+type TabId = "backends" | "security" | "channels" | "mqtt" | "remote" | "advanced"
 
 function cloneDraft(draft: SetupDraft): SetupDraft {
   return JSON.parse(JSON.stringify(draft)) as SetupDraft
@@ -54,6 +53,7 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
 export function SettingsPage() {
   const [tab, setTab] = useState<TabId>("backends")
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
+  const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
   const [editorVersion, setEditorVersion] = useState(0)
   const [mqttRuntime, setMqttRuntime] = useState<MqttRuntimeResponse | null>(null)
   const [mqttRuntimeLoading, setMqttRuntimeLoading] = useState(false)
@@ -78,6 +78,10 @@ export function SettingsPage() {
   useEffect(() => {
     setLocalDraft(cloneDraft(draft))
   }, [draft])
+
+  useEffect(() => {
+    setSelectedAiBackendId((current) => getPreferredSingleAiBackendId((localDraft ?? draft).aiBackends, current))
+  }, [draft, localDraft])
 
   const loadMqttRuntime = useCallback(async () => {
     setMqttRuntimeLoading(true)
@@ -104,8 +108,7 @@ export function SettingsPage() {
 
   const tabs = useMemo(
     () => [
-      { id: "backends" as const, label: pickUiText(uiLanguage, "AI 연결", "AI Backends"), capabilityKey: "ai.backends" },
-      { id: "routing" as const, label: pickUiText(uiLanguage, "AI 순서", "AI Routing"), capabilityKey: "ai.routing" },
+      { id: "backends" as const, label: pickUiText(uiLanguage, "AI 연결", "AI Connection"), capabilityKey: "ai.backends" },
       { id: "security" as const, label: pickUiText(uiLanguage, "보안", "Security"), capabilityKey: "settings.control" },
       { id: "channels" as const, label: pickUiText(uiLanguage, "채널", "Channels"), capabilityKey: "telegram.channel" },
       { id: "mqtt" as const, label: pickUiText(uiLanguage, "MQTT", "MQTT"), capabilityKey: "mqtt.broker" },
@@ -205,7 +208,6 @@ export function SettingsPage() {
   }
 
   function removeBackend(backendId: string) {
-    if (isBuiltinBackendId(backendId)) return
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
       return {
@@ -220,6 +222,14 @@ export function SettingsPage() {
   }
 
   function updateBackend(backendId: string, patch: Partial<AIBackendCard>) {
+    if (patch.enabled === true) {
+      setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, true))
+      return
+    }
+    if (patch.enabled === false) {
+      setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, false))
+      return
+    }
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
       return {
@@ -231,42 +241,8 @@ export function SettingsPage() {
     })
   }
 
-  function moveRoutingTarget(profileId: RoutingProfile["id"], from: number, to: number) {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      return {
-        ...base,
-        routingProfiles: base.routingProfiles.map((profile) => {
-          if (profile.id !== profileId) return profile
-          const nextTargets = [...profile.targets]
-          const source = nextTargets[from]
-          if (source === undefined || to < 0 || to >= nextTargets.length) return profile
-          nextTargets.splice(from, 1)
-          nextTargets.splice(to, 0, source)
-          return { ...profile, targets: nextTargets }
-        }),
-      }
-    })
-  }
-
-  function setRoutingTargetEnabled(profileId: RoutingProfile["id"], backendId: string, enabled: boolean) {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      return {
-        ...base,
-        routingProfiles: base.routingProfiles.map((profile) => {
-          if (profile.id !== profileId) return profile
-          const hasTarget = profile.targets.includes(backendId)
-          if (enabled && !hasTarget) {
-            return { ...profile, targets: [...profile.targets, backendId] }
-          }
-          if (!enabled && hasTarget) {
-            return { ...profile, targets: profile.targets.filter((target) => target !== backendId) }
-          }
-          return profile
-        }),
-      }
-    })
+  function setRoutingTargetEnabled(_profileId: string, backendId: string, enabled: boolean) {
+    setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, enabled))
   }
 
   function renderActions() {
@@ -299,34 +275,16 @@ export function SettingsPage() {
       case "backends":
         return (
           <div key={`backends-${editorVersion}`} className="space-y-4">
-            <BackendComposer onAdd={addBackend} />
-            <div className="grid gap-4 xl:grid-cols-2">
-              {activeDraft.aiBackends.map((backend) => (
-                <BackendHealthCard
-                  key={backend.id}
-                  backend={backend}
-                  routingProfiles={activeDraft.routingProfiles}
-                  onChange={updateBackend}
-                  onToggle={(backendId, enabled) => updateBackend(backendId, { enabled })}
-                  onRemove={removeBackend}
-                  onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-                />
-              ))}
-            </div>
-          </div>
-        )
-
-      case "routing":
-        return (
-          <div key={`routing-${editorVersion}`} className="grid gap-4 xl:grid-cols-2">
-            {activeDraft.routingProfiles.map((profile) => (
-              <RoutingPriorityEditor
-                key={profile.id}
-                profile={profile}
-                backends={activeDraft.aiBackends}
-                onMove={(from, to) => moveRoutingTarget(profile.id, from, to)}
-              />
-            ))}
+            <SingleAIConnectionPanel
+              backends={activeDraft.aiBackends}
+              routingProfiles={activeDraft.routingProfiles}
+              activeBackendId={selectedAiBackendId}
+              onSelectBackend={setSelectedAiBackendId}
+              onUpdateBackend={updateBackend}
+              onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
+              onRemoveBackend={removeBackend}
+              onSetRoutingTargetEnabled={setRoutingTargetEnabled}
+            />
           </div>
         )
 

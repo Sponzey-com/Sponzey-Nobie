@@ -79,6 +79,10 @@ function hydrateRun(row) {
         id: row.id,
         sessionId: row.session_id,
         requestGroupId: row.request_group_id || row.id,
+        lineageRootRunId: row.lineage_root_run_id || row.request_group_id || row.id,
+        runScope: row.run_scope ?? "root",
+        ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
+        ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
         title: row.title,
         prompt: row.prompt,
         source: row.source,
@@ -122,17 +126,39 @@ export function listActiveRootRuns(limit = 100) {
         .map(hydrateRun);
 }
 export function listRunsForActiveRequestGroups(limitGroups = 100, limitRuns = 300) {
-    const activeGroups = [...new Set(listActiveRootRuns(limitGroups).map((run) => run.requestGroupId))];
+    const activeGroups = [...new Set(listActiveRootRuns(limitGroups).map((run) => run.lineageRootRunId || run.requestGroupId))];
     if (activeGroups.length === 0)
         return [];
     const placeholders = activeGroups.map(() => "?").join(", ");
     return getDb()
         .prepare(`SELECT *
        FROM root_runs
-       WHERE request_group_id IN (${placeholders})
+       WHERE COALESCE(lineage_root_run_id, request_group_id, id) IN (${placeholders})
        ORDER BY updated_at DESC
        LIMIT ?`)
         .all(...activeGroups, limitRuns)
+        .map(hydrateRun);
+}
+export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 1000) {
+    const groups = getDb()
+        .prepare(`SELECT COALESCE(lineage_root_run_id, request_group_id, id) AS lineage_key, MAX(updated_at) AS latest_updated
+       FROM root_runs
+       GROUP BY COALESCE(lineage_root_run_id, request_group_id, id)
+       ORDER BY latest_updated DESC
+       LIMIT ?`)
+        .all(limitGroups)
+        .map((row) => row.lineage_key)
+        .filter((value) => typeof value === "string" && value.length > 0);
+    if (groups.length === 0)
+        return [];
+    const placeholders = groups.map(() => "?").join(", ");
+    return getDb()
+        .prepare(`SELECT *
+       FROM root_runs
+       WHERE COALESCE(lineage_root_run_id, request_group_id, id) IN (${placeholders})
+       ORDER BY updated_at DESC
+       LIMIT ?`)
+        .all(...groups, limitRuns)
         .map(hydrateRun);
 }
 export function recoverActiveRunsOnStartup() {
@@ -272,9 +298,10 @@ export function createRootRun(params) {
         db.prepare(`INSERT INTO root_runs
        (id, session_id, title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
-        request_group_id, delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
+        request_group_id, lineage_root_run_id, parent_run_id, run_scope, handoff_summary,
+        delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
         total_steps, summary, can_cancel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.requestGroupId ?? params.id, 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, now, now);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.requestGroupId ?? params.id, params.lineageRootRunId ?? params.requestGroupId ?? params.id, params.parentRunId ?? null, params.runScope ?? "root", params.handoffSummary ?? null, 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);

@@ -47,6 +47,7 @@ const defaultDependencies: RunJournalDependencies = {
 export function buildRunInstructionJournalRecord(params: RunInstructionJournalParams): MemoryJournalRecordInput {
   return {
     kind: "instruction",
+    scope: "task",
     title: "instruction",
     content: params.message,
     summary: condenseMemoryText(params.message, 280),
@@ -61,6 +62,7 @@ export function buildRunInstructionJournalRecord(params: RunInstructionJournalPa
 export function buildRunSuccessJournalRecord(params: RunSuccessJournalParams): MemoryJournalRecordInput {
   return {
     kind: "success",
+    scope: "session",
     title: "success",
     content: params.text,
     summary: condenseMemoryText(params.summary || params.text, 280),
@@ -76,6 +78,7 @@ export function buildRunFailureJournalRecord(params: RunFailureJournalParams): M
   const detail = params.detail?.trim() || params.summary
   return {
     kind: "failure",
+    scope: "session",
     title: params.title || "failure",
     content: detail,
     summary: extractFocusedErrorMessage(detail, 280) || condenseMemoryText(params.summary, 280),

@@ -298,6 +298,48 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 12,
+    up(db) {
+      const rootRunColumns = db.prepare(`PRAGMA table_info(root_runs)`).all() as Array<{ name: string }>
+      if (!rootRunColumns.some((column) => column.name === "lineage_root_run_id")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN lineage_root_run_id TEXT`)
+      }
+      if (!rootRunColumns.some((column) => column.name === "parent_run_id")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN parent_run_id TEXT`)
+      }
+      if (!rootRunColumns.some((column) => column.name === "run_scope")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN run_scope TEXT`)
+      }
+      if (!rootRunColumns.some((column) => column.name === "handoff_summary")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN handoff_summary TEXT`)
+      }
+      db.exec(`UPDATE root_runs SET lineage_root_run_id = request_group_id WHERE lineage_root_run_id IS NULL OR lineage_root_run_id = ''`)
+      db.exec(`UPDATE root_runs SET run_scope = 'root' WHERE run_scope IS NULL OR run_scope = ''`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_root_runs_lineage_root ON root_runs(lineage_root_run_id, updated_at DESC)`)
+
+      const memoryColumns = db.prepare(`PRAGMA table_info(memory_items)`).all() as Array<{ name: string }>
+      if (!memoryColumns.some((column) => column.name === "memory_scope")) {
+        db.exec(`ALTER TABLE memory_items ADD COLUMN memory_scope TEXT`)
+      }
+      if (!memoryColumns.some((column) => column.name === "run_id")) {
+        db.exec(`ALTER TABLE memory_items ADD COLUMN run_id TEXT`)
+      }
+      if (!memoryColumns.some((column) => column.name === "request_group_id")) {
+        db.exec(`ALTER TABLE memory_items ADD COLUMN request_group_id TEXT`)
+      }
+      db.exec(`
+        UPDATE memory_items
+        SET memory_scope = CASE
+          WHEN session_id IS NULL OR session_id = '' THEN 'global'
+          ELSE 'session'
+        END
+        WHERE memory_scope IS NULL OR memory_scope = ''
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_items_scope_updated ON memory_items(memory_scope, updated_at DESC)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_items_run_scope ON memory_items(run_id, memory_scope, updated_at DESC)`)
+    },
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

@@ -51,7 +51,9 @@
 - `execution-runtime.ts`: 설정된 AI backend로 execution chunk stream 생성
 - `filesystem-verification.ts`: 파일 생성 결과 검증 prompt, 검증 대상 추론, 실제 파일/폴더 존재 확인 helper
 - `analysis-subrun.ts`: 결과 검증 하위 run 생성과 analysis-only subrun 종료 정리 helper
+- `analysis-subrun.ts`: 결과 검증 하위 run 생성과 analysis-only subrun 종료 정리 helper, `lineageRootRunId/parentRunId/runScope`를 가진 child lineage와 `handoff` context mode 적용 경계
 - `external-recovery.ts`: AI/worker runtime 외부 실행 복구 재라우팅, duplicate-stop, recovery prompt 조립 helper
+- `external-recovery.ts`: 외부 복구는 이제 다른 provider/model 전환이 아니라 같은 AI 연결과 같은 대상 유지가 기본입니다. worker runtime 경로가 실패한 경우에만 같은 AI 연결의 기본 추론 경로로 되돌리고, 그 외에는 접근 방식만 바꿔 재시도합니다.
 - `external-recovery-application.ts`: external recovery plan의 duplicate-stop 적용, recovery key 기록, route event 반영, next state 적용 helper
 - `external-recovery-pass.ts`: external recovery의 `plan -> apply -> next state` pass helper
 - `external-recovery-sequence.ts`: `ai -> worker_runtime` 외부 복구 순회와 next state 적용 helper
@@ -69,6 +71,7 @@
 - `review-transition.ts`: 실행 종료 직후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입 helper
 - `review-entry-pass.ts`: review 준비와 direct delivery complete/stop/retry 적용을 묶는 helper
 - `store.ts`: 메모리/DB 기반 run 상태 업데이트
+- root/child/analysis run은 이제 `lineageRootRunId`, `parentRunId`, `runScope`, `handoffSummary`를 저장합니다. child run은 별도 AI 연결이 아니라 같은 AI 연결을 공유하는 독립 실행 단위로 다루고, handoff 시에는 request-group 전체 대화가 아니라 해당 run의 국소 메시지와 handoff 요약만 사용합니다.
 - `routing.ts`: 대상 선택과 복구 시 재라우팅, 설정된 backend만 후보로 삼는 route resolution
 - `worker-runtime.ts`: 제거된 외부 worker runtime 경로를 더 이상 실행하지 않도록 막는 보호 helper
 - `scheduled.ts`: 예약 후속 실행 프롬프트 생성
@@ -76,6 +79,7 @@
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계, tracked chunk 전달/receipt 적용 helper
 - `completion-state.ts`: completion을 `해석/실행/전달/복구 종료` 4축 checklist 상태로 계산하는 helper
+- task projection과 completion checklist는 이제 `lineageRootRunId` 기준 root/child/analysis run 전체를 함께 보며, child run이 남아 있으면 root task를 `completed`로 닫지 않습니다.
 - `terminal-outcome-policy.ts`: `completed/failed/cancelled/awaiting_user` terminal 상태 의미를 판정하는 helper
 - `finalization.ts`: stop/awaiting_user 메시지에서 `중단 사유`와 `원본 오류`를 분리해 사용자에게 안내하는 helper
 - `completion-flow.ts`: completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 결정 helper

@@ -1,6 +1,6 @@
 import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession, getSession } from "../db/index.js"
 import { getConfig } from "../config/index.js"
-import { getDefaultModel, getProvider, inferProviderId } from "../ai/index.js"
+import { getDefaultModel, getProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import type { Message } from "../ai/types.js"
 import { buildTaskIntakeSystemPrompt } from "./intake-prompt.js"
@@ -661,7 +661,7 @@ export async function analyzeTaskIntake(params: {
   }
 
   const model = params.model ?? getDefaultModel()
-  const provider = getProvider(inferProviderId(model))
+  const provider = getProvider()
   const context = buildConversationContext(
     params.sessionId,
     params.requestGroupId,

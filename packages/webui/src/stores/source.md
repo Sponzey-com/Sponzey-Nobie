@@ -9,7 +9,7 @@
 - `chat.ts`: 메시지 스트림, 승인, 세션 연결 run
 - `chat-delivery.ts`: WebSocket으로 들어오는 assistant text/tool call 누적과 flush helper
 - `runs.ts`: raw run 목록, `/api/tasks` task projection, 선택 상태
-- `setup.ts`: 수정 가능한 setup draft와 저장/초기화 생명주기
+- `setup.ts`: 수정 가능한 setup draft와 저장/초기화 생명주기. 현재는 단일 AI 연결 흐름에 맞춰 구형 `ai_routing` step을 `mcp`로 정규화하며 이어받음
 - `capabilities.ts`, `connection.ts`, `uiLanguage.ts`: 보조 전역 상태
 
 ## 메모

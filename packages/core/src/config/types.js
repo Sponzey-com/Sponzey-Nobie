@@ -8,9 +8,10 @@ export const DEFAULT_CONFIG = {
         workspace: homedir(),
     },
     ai: {
-        defaultProvider: "",
-        defaultModel: "",
-        providers: {},
+        connection: {
+            provider: "",
+            model: "",
+        },
     },
     security: {
         allowedPaths: [],

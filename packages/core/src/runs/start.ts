@@ -6,7 +6,7 @@ import {
 } from "../agent/intake.js"
 import { getConfig } from "../config/index.js"
 import type { AIProvider } from "../ai/index.js"
-import { inferProviderId } from "../ai/index.js"
+import { detectAvailableProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import {
@@ -36,6 +36,7 @@ export interface StartRootRunParams {
   message: string
   sessionId: string | undefined
   requestGroupId?: string | undefined
+  parentRunId?: string | undefined
   originRunId?: string | undefined
   originRequestGroupId?: string | undefined
   forceRequestGroupReuse?: boolean | undefined
@@ -51,6 +52,8 @@ export interface StartRootRunParams {
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
   taskProfile?: TaskProfile | undefined
+  runScope?: "root" | "child" | "analysis" | undefined
+  handoffSummary?: string | undefined
   originalRequest?: string | undefined
   executionSemantics?: TaskExecutionSemantics | undefined
   structuredRequest?: TaskStructuredRequest | undefined
@@ -70,116 +73,120 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const runId = params.runId ?? crypto.randomUUID()
   const controller = new AbortController()
-  const targetId = params.targetId ?? (params.model ? inferProviderId(params.model) : undefined)
+  const targetId = params.targetId ?? (params.model ? detectAvailableProvider() : undefined)
   const now = Date.now()
   const workDir = params.workDir ?? process.cwd()
-  const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
-  const startLaunch = prepareStartLaunch({
-    message: params.message,
-    sessionId,
-    runId,
-    source: params.source,
-    controller,
-    now,
-    maxDelegationTurns,
-    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
-    ...(params.originRunId ? { originRunId: params.originRunId } : {}),
-    ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
-    ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
-    ...(params.contextMode ? { contextMode: params.contextMode } : {}),
-    ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
-    ...(targetId ? { targetId } : {}),
-    ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
-    ...(params.model ? { model: params.model } : {}),
-    ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
-    hasRequestGroupExecutionQueue,
-  })
-  const { startPlan } = startLaunch
-  const {
-    entrySemantics,
-    requestedClosedRequestGroup,
-    shouldReconnectGroup,
-    reconnectSelection,
-    reconnectTarget,
-    reconnectCandidateCount,
-    reconnectNeedsClarification,
-    requestGroupId,
-    isRootRequest,
-    effectiveTaskProfile,
-    initialDelegationTurnCount,
-    effectiveContextMode,
-    workerSessionId,
-    reusableWorkerSessionRun,
-  } = startPlan
-  const run = startLaunch.run
-  const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun
-  const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
-    runId,
-    sessionId,
-    requestGroupId,
-    source: params.source,
-    onChunk: params.onChunk,
-    message: params.message,
-    model: params.model,
-    workDir,
-    reuseConversationContext: entrySemantics.reuse_conversation_context,
-    activeQueueCancellationMode: entrySemantics.active_queue_cancellation_mode,
-    startNestedRootRun: startRootRun,
-    syntheticApprovalScopes,
-    logInfo: (message, payload) => log.info(message, payload),
-    logWarn: (message) => log.warn(message),
-    logError: (message, payload) => log.error(message, payload),
-  })
+  const finished = (async () => {
+    const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
+    const startLaunch = await prepareStartLaunch({
+      message: params.message,
+      sessionId,
+      runId,
+      source: params.source,
+      controller,
+      now,
+      maxDelegationTurns,
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+      ...(params.originRunId ? { originRunId: params.originRunId } : {}),
+      ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
+      ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
+      ...(params.contextMode ? { contextMode: params.contextMode } : {}),
+      ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
+      ...(params.runScope ? { runScope: params.runScope } : {}),
+      ...(params.handoffSummary ? { handoffSummary: params.handoffSummary } : {}),
+      ...(targetId ? { targetId } : {}),
+      ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
+      ...(params.model ? { model: params.model } : {}),
+      ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+      hasRequestGroupExecutionQueue,
+    })
+    const { startPlan } = startLaunch
+    const {
+      entrySemantics,
+      reconnectTarget,
+      reconnectNeedsClarification,
+      requestGroupId,
+      isRootRequest,
+      effectiveTaskProfile,
+      effectiveContextMode,
+      workerSessionId,
+    } = startPlan
+    const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun
+    const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
+      runId,
+      sessionId,
+      requestGroupId,
+      source: params.source,
+      onChunk: params.onChunk,
+      message: params.message,
+      model: params.model,
+      workDir,
+      reuseConversationContext: entrySemantics.reuse_conversation_context,
+      activeQueueCancellationMode: entrySemantics.active_queue_cancellation_mode,
+      startNestedRootRun: startRootRun,
+      syntheticApprovalScopes,
+      logInfo: (message, payload) => log.info(message, payload),
+      logWarn: (message) => log.warn(message),
+      logError: (message, payload) => log.error(message, payload),
+    })
 
-  const finished = enqueueRequestGroupExecution({
-    requestGroupId,
-    runId,
-    task: async () => {
-      await executeRootRunDriver({
-        runId,
-        sessionId,
-        requestGroupId,
-        source: params.source,
-        onChunk: params.onChunk,
-        controller,
-        message: params.message,
-        ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
-        ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
-        ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
-        ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
-        currentModel: params.model,
-        currentProviderId: params.providerId,
-        currentProvider: params.provider,
-        currentTargetId: params.targetId,
-        currentTargetLabel: params.targetLabel,
-        workDir,
-        ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
-        ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
-        reconnectNeedsClarification,
-        ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
-        ...(reconnectSelection ? { reconnectSelection } : {}),
-        queuedBehindRequestGroupRun,
-        activeWorkerRuntime: params.workerRuntime,
-        ...(workerSessionId ? { workerSessionId } : {}),
-        ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
-        isRootRequest,
-        contextMode: effectiveContextMode,
-        taskProfile: effectiveTaskProfile,
-        syntheticApprovalRuntimeDependencies,
-        defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
-      }, driverDependencies)
+    return enqueueRequestGroupExecution({
+      requestGroupId,
+      runId,
+      task: async () => {
+        await executeRootRunDriver({
+          runId,
+          sessionId,
+          requestGroupId,
+          source: params.source,
+          onChunk: params.onChunk,
+          controller,
+          message: params.message,
+          ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+          ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
+          ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
+          ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
+          currentModel: params.model,
+          currentProviderId: params.providerId,
+          currentProvider: params.provider,
+          currentTargetId: params.targetId,
+          currentTargetLabel: params.targetLabel,
+          workDir,
+          ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
+          ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+          reconnectNeedsClarification,
+          ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
+          queuedBehindRequestGroupRun,
+          activeWorkerRuntime: params.workerRuntime,
+          ...(workerSessionId ? { workerSessionId } : {}),
+          ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
+          isRootRequest,
+          contextMode: effectiveContextMode,
+          taskProfile: effectiveTaskProfile,
+          syntheticApprovalRuntimeDependencies,
+          defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
+        }, driverDependencies)
 
-      return getRootRun(runId)
-    },
-  }, {
-    getRootRun,
-    logInfo: (message, payload) => log.info(message, payload),
-    logWarn: (message) => log.warn(message),
-    logError: (message, payload) => log.error(message, payload),
+        return getRootRun(runId)
+      },
+    }, {
+      getRootRun,
+      logInfo: (message, payload) => log.info(message, payload),
+      logWarn: (message) => log.warn(message),
+      logError: (message, payload) => log.error(message, payload),
+    })
+  })().catch((error) => {
+    log.error("start root run failed", {
+      runId,
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return undefined
   })
 
   return {
-    runId: run.id,
+    runId,
     sessionId,
     status: "started",
     finished,

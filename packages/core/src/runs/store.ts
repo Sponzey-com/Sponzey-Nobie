@@ -1,12 +1,16 @@
 import { getDb } from "../db/index.js"
 import { eventBus } from "../events/index.js"
-import type { RootRun, RunContextMode, RunEvent, RunStatus, RunStep, RunStepStatus, TaskProfile } from "./types.js"
+import type { RootRun, RunContextMode, RunEvent, RunScope, RunStatus, RunStep, RunStepStatus, TaskProfile } from "./types.js"
 import { DEFAULT_RUN_STEPS } from "./types.js"
 
 interface RootRunRow {
   id: string
   session_id: string
   request_group_id: string | null
+  lineage_root_run_id: string | null
+  parent_run_id: string | null
+  run_scope: RunScope | null
+  handoff_summary: string | null
   title: string
   prompt: string
   source: string
@@ -176,6 +180,10 @@ function hydrateRun(row: RootRunRow): RootRun {
     id: row.id,
     sessionId: row.session_id,
     requestGroupId: row.request_group_id || row.id,
+    lineageRootRunId: row.lineage_root_run_id || row.request_group_id || row.id,
+    runScope: row.run_scope ?? "root",
+    ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
+    ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
     title: row.title,
     prompt: row.prompt,
     source: row.source as RootRun["source"],
@@ -273,15 +281,15 @@ export function listRunsForActiveRequestGroups(limitGroups = 100, limitRuns = 30
 
 export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 1000): RootRun[] {
   const groups = getDb()
-    .prepare<[number], { request_group_id: string | null; latest_updated: number }>(
-      `SELECT request_group_id, MAX(updated_at) AS latest_updated
+    .prepare<[number], { lineage_key: string | null; latest_updated: number }>(
+      `SELECT COALESCE(lineage_root_run_id, request_group_id, id) AS lineage_key, MAX(updated_at) AS latest_updated
        FROM root_runs
-       GROUP BY request_group_id
+       GROUP BY COALESCE(lineage_root_run_id, request_group_id, id)
        ORDER BY latest_updated DESC
        LIMIT ?`,
     )
     .all(limitGroups)
-    .map((row) => row.request_group_id)
+    .map((row) => row.lineage_key)
     .filter((value): value is string => typeof value === "string" && value.length > 0)
 
   if (groups.length === 0) return []
@@ -291,7 +299,7 @@ export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 10
     .prepare<unknown[], RootRunRow>(
       `SELECT *
        FROM root_runs
-       WHERE request_group_id IN (${placeholders})
+       WHERE COALESCE(lineage_root_run_id, request_group_id, id) IN (${placeholders})
        ORDER BY updated_at DESC
        LIMIT ?`,
     )
@@ -494,6 +502,10 @@ export function createRootRun(params: {
   id: string
   sessionId: string
   requestGroupId?: string
+  lineageRootRunId?: string
+  parentRunId?: string
+  runScope?: RunScope
+  handoffSummary?: string
   prompt: string
   source: RootRun["source"]
   taskProfile?: TaskProfile
@@ -515,14 +527,20 @@ export function createRootRun(params: {
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO root_runs
-       (id, session_id, title, prompt, source, status, task_profile, target_id, target_label,
+       (id, session_id, request_group_id, lineage_root_run_id, parent_run_id, run_scope, handoff_summary,
+        title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
-        request_group_id, delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
+        delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
         total_steps, summary, can_cancel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       params.id,
       params.sessionId,
+      params.requestGroupId ?? params.id,
+      params.lineageRootRunId ?? params.requestGroupId ?? params.id,
+      params.parentRunId ?? null,
+      params.runScope ?? "root",
+      params.handoffSummary ?? null,
       title,
       params.prompt,
       params.source,
@@ -533,7 +551,6 @@ export function createRootRun(params: {
       params.workerRuntimeKind ?? null,
       params.workerSessionId ?? null,
       params.contextMode ?? "full",
-      params.requestGroupId ?? params.id,
       params.delegationTurnCount ?? 0,
       params.maxDelegationTurns ?? 5,
       "received",

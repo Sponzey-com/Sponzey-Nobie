@@ -10,7 +10,9 @@ export type RunStatus =
 
 export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled"
 
-export type RunContextMode = "full" | "isolated" | "request_group"
+export type RunContextMode = "full" | "isolated" | "request_group" | "handoff"
+
+export type RunScope = "root" | "child" | "analysis"
 
 export type TaskProfile =
   | "general_chat"
@@ -26,6 +28,10 @@ export interface RootRun {
   id: string
   sessionId: string
   requestGroupId: string
+  lineageRootRunId: string
+  runScope: RunScope
+  parentRunId?: string
+  handoffSummary?: string
   title: string
   prompt: string
   source: "webui" | "cli" | "telegram"

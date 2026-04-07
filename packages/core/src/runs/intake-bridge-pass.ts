@@ -28,6 +28,9 @@ export interface DelegatedRunStartParams {
   sessionId: string
   taskProfile: TaskProfile
   requestGroupId: string
+  parentRunId?: string | undefined
+  runScope?: "root" | "child" | "analysis" | undefined
+  handoffSummary?: string | undefined
   originalRequest: string
   executionSemantics: TaskExecutionSemantics
   structuredRequest: TaskStructuredRequest
@@ -265,6 +268,9 @@ export async function runIntakeBridgePass(
         sessionId: params.sessionId,
         taskProfile: dependencies.normalizeTaskProfile(delegatedTaskProfile),
         requestGroupId: params.requestGroupId,
+        parentRunId: params.runId,
+        runScope: "child",
+        handoffSummary: delegatedAction.title,
         originalRequest: params.message,
         executionSemantics: intake.intent_envelope.execution_semantics,
         structuredRequest: intake.structured_request,
@@ -278,6 +284,7 @@ export async function runIntakeBridgePass(
         workDir: params.workDir,
         source: params.source,
         skipIntake: true,
+        contextMode: "handoff",
         onChunk: params.onChunk,
       })
     }

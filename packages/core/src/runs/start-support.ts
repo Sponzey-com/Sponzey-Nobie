@@ -69,6 +69,7 @@ export function normalizeTaskProfile(taskProfile: string | undefined): TaskProfi
 }
 
 export function buildWorkerSessionId(params: {
+  runId: string
   isRootRequest: boolean
   requestGroupId: string
   taskProfile: TaskProfile
@@ -86,7 +87,7 @@ export function buildWorkerSessionId(params: {
     .replace(/^-+|-+$/g, "")
     .toLowerCase()
 
-  return `B-${params.requestGroupId.slice(0, 8)}-${workerRole}-${normalizedTarget || "default"}`
+  return `B-${params.runId.slice(0, 8)}-${workerRole}-${normalizedTarget || "default"}`
 }
 
 export function markAbortedRunCancelledIfActive(runId: string): void {

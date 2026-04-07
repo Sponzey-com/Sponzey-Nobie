@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest"
 
 const getAllMock = vi.fn(() => [])
 const dispatchMock = vi.fn()
+const getMessagesForRunMock = vi.fn(() => [])
+const buildMemoryContextMock = vi.fn(async () => "")
 
 vi.mock("../packages/core/src/db/index.js", () => ({
   getDb: () => ({
@@ -13,12 +15,13 @@ vi.mock("../packages/core/src/db/index.js", () => ({
   getMessages: vi.fn(() => []),
   getMessagesForRequestGroup: vi.fn(() => []),
   getMessagesForRequestGroupWithRunMeta: vi.fn(() => []),
+  getMessagesForRun: (...args: unknown[]) => getMessagesForRunMock(...args),
   insertMemoryItem: vi.fn(),
   markMessagesCompressed: vi.fn(),
 }))
 
 vi.mock("../packages/core/src/memory/store.js", () => ({
-  buildMemoryContext: vi.fn(async () => ""),
+  buildMemoryContext: (...args: unknown[]) => buildMemoryContextMock(...args),
 }))
 
 vi.mock("../packages/core/src/memory/nobie-md.js", () => ({
@@ -423,6 +426,45 @@ describe("runAgent streaming policy", () => {
         ].join("\n"),
       },
       { type: "done", totalTokens: 4 },
+    ])
+  })
+
+  it("uses run-local messages and scoped memory when context mode is handoff", async () => {
+    const provider = {
+      chat: vi.fn(async function* () {
+        yield { type: "text_delta", delta: "handoff ok" } as const
+        yield {
+          type: "message_stop",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      userMessage: "후속 작업 진행",
+      sessionId: "session-handoff",
+      requestGroupId: "group-handoff",
+      runId: "run-handoff",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "webui",
+      toolsEnabled: false,
+      contextMode: "handoff",
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(getMessagesForRunMock).toHaveBeenCalledWith("session-handoff", "run-handoff")
+    expect(buildMemoryContextMock).toHaveBeenCalledWith({
+      query: "후속 작업 진행",
+      sessionId: "session-handoff",
+      requestGroupId: "group-handoff",
+      runId: "run-handoff",
+    })
+    expect(chunks).toEqual([
+      { type: "text", delta: "handoff ok" },
+      { type: "done", totalTokens: 2 },
     ])
   })
 })
