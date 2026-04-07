@@ -66,6 +66,9 @@ export function RunsPage() {
         <div className="border-b border-stone-200 px-5 py-5">
           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Task Monitor</div>
           <div className="mt-2 text-xl font-semibold text-stone-900">{text("태스크 상태 모니터", "Task monitor")}</div>
+          <div className="mt-2 text-xs leading-5 text-stone-500">
+            {text("모든 태스크는 현재 설정된 AI 연결 하나를 공유하고, root/sub-task 단위로만 나뉩니다.", "All tasks share the current single AI connection and are split only by root or sub-task units.")}
+          </div>
         </div>
         <div className="h-[calc(100%-6.25rem)] overflow-y-auto p-4">
           <div className="space-y-3">

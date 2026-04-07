@@ -7,7 +7,9 @@ export interface RequestEntrySemantics {
 
 export function analyzeRequestEntrySemantics(message: string): RequestEntrySemantics {
   return {
-    reuse_conversation_context: detectReuseConversationContext(message),
+    // Conversation reuse is decided by an isolated AI comparison step in start-plan.ts.
+    // Entry semantics keeps only deterministic local checks such as cancellation intent.
+    reuse_conversation_context: false,
     active_queue_cancellation_mode: detectActiveQueueCancellationMode(message),
   }
 }
@@ -44,37 +46,6 @@ export function buildActiveQueueCancellationMessage(params: {
     ? `\n\n아직 ${params.remainingCount}건의 다른 활성 작업은 계속 진행 중입니다.`
     : ""
   return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
-}
-
-function detectReuseConversationContext(message: string): boolean {
-  const trimmed = message.trim()
-  if (!trimmed) return false
-
-  const koreanReferencePatterns = [
-    /(?:아까|방금|이전|전에|앞에서|위에서)\b/u,
-    /(?:기존(?:에)?|만들었던|만든|작성한|열었던|하던)\s*(?:것|거|파일|폴더|프로그램|화면|페이지)?/u,
-    /(?:그|저)\s*(?:것|거|파일|폴더|프로그램|화면|페이지|코드|달력|계산기)/u,
-    /(?:수정|고쳐|바꿔|이어(?:서)?|계속(?:해서)?|추가(?:해)?|보완(?:해)?|업데이트(?:해)?|리팩터링(?:해)?)/u,
-  ]
-  if (koreanReferencePatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  const koreanContinuationPatterns = [
-    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|아직|왜\s*안|안\s*돼|안돼|결과|오류|에러|실패)/u,
-    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
-  ]
-  if (koreanContinuationPatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  const englishReferencePatterns = [
-    /\b(?:previous|earlier|before|existing)\b/i,
-    /\b(?:that|it|those)\s+(?:file|folder|program|page|screen|code|calendar|calculator)\b/i,
-    /\b(?:modify|edit|fix|change|continue|resume|update|extend|improve|refactor)\b/i,
-    /\b(?:the file|the folder|the program|the page|the code)\b/i,
-    /\b(?:and|also|then|next|again|now|here|this|that|it|why|result|error|failed)\b/i,
-    /\b(?:show|send|fix|change|update|continue|resume|again)\b/i,
-  ]
-  if (englishReferencePatterns.some((pattern) => pattern.test(trimmed))) return true
-
-  return false
 }
 
 function detectActiveQueueCancellationMode(message: string): ActiveQueueCancellationMode | null {

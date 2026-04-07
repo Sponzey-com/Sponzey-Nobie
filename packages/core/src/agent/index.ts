@@ -1,11 +1,11 @@
 import { homedir } from "node:os"
 import { eventBus } from "../events/index.js"
-import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode, type AIProvider } from "../ai/index.js"
+import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode, type AIProvider } from "../ai/index.js"
 import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, insertMemoryItem, markMessagesCompressed } from "../db/index.js"
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertMemoryItem, markMessagesCompressed } from "../db/index.js"
 import { loadNobieMd, loadSysPropMd } from "../memory/nobie-md.js"
 import { buildMemoryContext } from "../memory/store.js"
 import { needsCompression, compressContext } from "../memory/compressor.js"
@@ -141,7 +141,7 @@ export type AgentChunk =
   | { type: "done"; totalTokens: number }
   | { type: "error"; message: string }
 
-export type AgentContextMode = "full" | "isolated" | "request_group"
+export type AgentContextMode = "full" | "isolated" | "request_group" | "handoff"
 
 export interface RunAgentParams {
   userMessage: string
@@ -207,6 +207,8 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   // Load prior messages from DB
   const priorDbMessages = contextMode === "isolated"
     ? []
+    : contextMode === "handoff"
+      ? getMessagesForRun(sessionId, runId)
     : contextMode === "request_group"
       ? (params.requestGroupId ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId)) : [])
       : params.requestGroupId
@@ -271,7 +273,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     input_schema: t.parameters,
   }))
 
-  const resolvedProviderId = params.providerId ?? inferProviderId(model)
+  const resolvedProviderId = params.providerId ?? detectAvailableProvider()
   const provider = params.provider ?? getProvider(resolvedProviderId)
   const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model)
 
@@ -293,7 +295,12 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const instructions = loadMergedInstructions(workDir)
   const profileContext = buildUserProfilePromptContext()
   const nobieMd = loadNobieMd(workDir)
-  const memoryContext = await buildMemoryContext(params.memorySearchQuery ?? params.userMessage)
+  const memoryContext = await buildMemoryContext({
+    query: params.memorySearchQuery ?? params.userMessage,
+    sessionId,
+    runId,
+    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+  })
 
   const systemPrompt = [
     baseSystemPrompt,
@@ -321,7 +328,10 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       const summaryId = crypto.randomUUID()
       insertMemoryItem({
         content: compressed.summary,
+        scope: "session",
         sessionId,
+        runId,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
         type: "session_summary",
         importance: "medium",
       })
@@ -340,6 +350,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const ctx: ToolContext = {
     sessionId,
     runId,
+    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     workDir,
     userMessage: params.userMessage,
     source: params.source ?? "cli",

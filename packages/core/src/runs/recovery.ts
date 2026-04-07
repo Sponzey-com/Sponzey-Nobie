@@ -277,7 +277,7 @@ export function buildAiErrorRecoveryPrompt(params: {
     params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
     params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
     "방금 실패한 접근을 그대로 반복하지 말고, 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
-    "필요하면 더 짧은 응답, 더 단순한 단계 분해, 다른 도구 조합, 다른 실행 경로를 선택하세요.",
+    "같은 AI 연결과 같은 대상은 유지하고, provider/model 전환 없이 더 짧은 응답, 더 단순한 단계 분해, 다른 도구 조합 같은 전략만 바꾸세요.",
     "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")
@@ -321,7 +321,7 @@ export function buildWorkerRuntimeErrorRecoveryPrompt(params: {
     avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
     params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
     params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "같은 작업 세션 경로를 그대로 반복하지 말고, 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
+    "같은 AI 연결과 같은 대상은 유지하고, 같은 작업 세션 경로를 그대로 반복하지 말고 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
     "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
   ].filter(Boolean).join("\n\n")

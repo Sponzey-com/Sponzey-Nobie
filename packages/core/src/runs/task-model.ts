@@ -791,7 +791,7 @@ function buildTaskChecklist(params: {
 export function buildTaskModels(runs: RootRun[]): TaskModel[] {
   const grouped = new Map<string, RootRun[]>()
   for (const run of runs) {
-    const key = run.requestGroupId || run.id
+    const key = run.lineageRootRunId || run.requestGroupId || run.id
     const existing = grouped.get(key)
     if (existing) existing.push(run)
     else grouped.set(key, [run])
@@ -802,9 +802,9 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
   for (const [, groupRuns] of grouped.entries()) {
     const orderedRuns = [...groupRuns].sort((a, b) => a.createdAt - b.createdAt)
     const latestRun = [...groupRuns].sort((a, b) => b.updatedAt - a.updatedAt)[0]
-    const anchorRun = orderedRuns[0]
+    const anchorRun = [...orderedRuns].find((run) => run.runScope === "root" || !run.parentRunId) ?? orderedRuns[0]
     if (!anchorRun || !latestRun) continue
-    const taskId = anchorRun.requestGroupId || anchorRun.id
+    const taskId = anchorRun.lineageRootRunId || anchorRun.requestGroupId || anchorRun.id
     const summary = computeTaskSummary(groupRuns)
 
     const attempts: TaskAttemptModel[] = orderedRuns.map((run, index) => {

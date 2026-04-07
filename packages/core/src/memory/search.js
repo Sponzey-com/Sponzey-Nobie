@@ -9,9 +9,9 @@ function rrfScore(rank) {
     return 1 / (RRF_K + rank + 1);
 }
 /** FTS-only search */
-export function ftsSearch(query, limit) {
+export function ftsSearch(query, limit, filters) {
     try {
-        const items = searchMemoryItems(query, limit);
+        const items = searchMemoryItems(query, limit, filters);
         return items.map((item, rank) => ({ item, score: rrfScore(rank), source: "fts" }));
     }
     catch {
@@ -19,7 +19,7 @@ export function ftsSearch(query, limit) {
     }
 }
 /** Vector-only search using in-process cosine similarity */
-export async function vectorSearch(query, limit) {
+export async function vectorSearch(query, limit, filters) {
     const provider = getEmbeddingProvider();
     if (provider.dimensions === 0)
         return [];
@@ -32,8 +32,16 @@ export async function vectorSearch(query, limit) {
     }
     const db = getDb();
     const rows = db
-        .prepare("SELECT * FROM memory_items WHERE embedding IS NOT NULL")
-        .all();
+        .prepare(`SELECT * FROM memory_items
+       WHERE embedding IS NOT NULL
+         AND (
+           memory_scope = 'global'
+           OR memory_scope IS NULL
+           OR memory_scope = ''
+           ${filters?.sessionId ? "OR (memory_scope = 'session' AND session_id = ?)" : ""}
+           ${filters?.runId ? "OR (memory_scope = 'task' AND run_id = ?)" : ""}
+         )`)
+        .all(...(filters?.sessionId ? [filters.sessionId] : []), ...(filters?.runId ? [filters.runId] : []));
     if (!rows.length)
         return [];
     const scored = [];
@@ -49,10 +57,10 @@ export async function vectorSearch(query, limit) {
         .slice(0, limit);
 }
 /** Hybrid search: RRF fusion of FTS and vector results */
-export async function hybridSearch(query, limit) {
+export async function hybridSearch(query, limit, filters) {
     const [ftsResults, vecResults] = await Promise.all([
-        Promise.resolve(ftsSearch(query, limit * 2)),
-        vectorSearch(query, limit * 2),
+        Promise.resolve(ftsSearch(query, limit * 2, filters)),
+        vectorSearch(query, limit * 2, filters),
     ]);
     // Build score map
     const scoreMap = new Map();
@@ -78,12 +86,12 @@ export async function hybridSearch(query, limit) {
         .map(({ item, score }) => ({ item, score, source: "hybrid" }));
 }
 /** Main entry point respecting config.memory.searchMode */
-export async function searchMemoryItems2(query, limit = 5, mode) {
+export async function searchMemoryItems2(query, limit = 5, mode, filters) {
     const resolvedMode = mode ?? "fts";
     if (resolvedMode === "vector")
-        return vectorSearch(query, limit);
+        return vectorSearch(query, limit, filters);
     if (resolvedMode === "hybrid")
-        return hybridSearch(query, limit);
-    return ftsSearch(query, limit);
+        return hybridSearch(query, limit, filters);
+    return ftsSearch(query, limit, filters);
 }
 //# sourceMappingURL=search.js.map

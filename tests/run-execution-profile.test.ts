@@ -90,4 +90,59 @@ describe("execution profile", () => {
     expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
     expect(result.intentEnvelope.delivery_mode).toBe("direct")
   })
+
+  it("downgrades mistaken direct artifact delivery for plain monitor-count questions", () => {
+    const result = buildResolvedExecutionProfile({
+      message: "모니터 몇개있지?",
+      originalRequest: "모니터 몇개있지?",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "required",
+        artifactDelivery: "direct",
+        approvalRequired: true,
+        approvalTool: "external_action",
+      },
+      structuredRequest: {
+        source_language: "ko",
+        normalized_english: "How many monitors are connected?",
+        target: "Total count of connected monitors",
+        to: "webui session unknown",
+        context: ["Original user request: 모니터 몇개있지?"],
+        complete_condition: ["Successfully identified and reported the number of monitors."],
+      },
+      intentEnvelope: {
+        intent_type: "task_intake",
+        source_language: "ko",
+        normalized_english: "How many monitors are connected?",
+        target: "Total count of connected monitors",
+        destination: "webui session unknown",
+        context: ["Original user request: 모니터 몇개있지?"],
+        complete_condition: ["Successfully identified and reported the number of monitors."],
+        schedule_spec: {
+          detected: false,
+          kind: "none",
+          status: "not_applicable",
+          schedule_text: "",
+        },
+        execution_semantics: {
+          filesystemEffect: "none",
+          privilegedOperation: "required",
+          artifactDelivery: "direct",
+          approvalRequired: true,
+          approvalTool: "external_action",
+        },
+        delivery_mode: "direct",
+        requires_approval: true,
+        approval_tool: "external_action",
+        preferred_target: "auto",
+        needs_tools: true,
+        needs_web: false,
+      },
+    })
+
+    expect(result.executionSemantics.artifactDelivery).toBe("none")
+    expect(result.wantsDirectArtifactDelivery).toBe(false)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
+    expect(result.intentEnvelope.delivery_mode).toBe("none")
+  })
 })

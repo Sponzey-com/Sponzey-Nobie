@@ -38,7 +38,6 @@ const STEP_ORDER: SetupStepId[] = [
   "welcome",
   "personal",
   "ai_backends",
-  "ai_routing",
   "mcp",
   "skills",
   "security",
@@ -50,6 +49,11 @@ const STEP_ORDER: SetupStepId[] = [
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 let pendingTelegramRuntimeSync = false
+
+function normalizeSetupStep(step: SetupStepId): SetupStepId {
+  if (step === "ai_routing") return "mcp"
+  return step
+}
 
 function toBackendSlug(value: string) {
   return value
@@ -210,7 +214,10 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
     try {
       const [state, draft, checks] = await Promise.all([api.setupStatus(), api.setupDraft(), api.setupChecks()])
       set({
-        state,
+        state: {
+          ...state,
+          currentStep: normalizeSetupStep(state.currentStep),
+        },
         draft,
         checks,
         initialized: true,
@@ -245,16 +252,17 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
     }
   },
   setStep: (step) => {
-    const nextStep = step === "done" && !get().state.completed ? "review" : step
+    const normalized = normalizeSetupStep(step)
+    const nextStep = normalized === "done" && !get().state.completed ? "review" : normalized
     setStateAndPersist({ ...get().state, currentStep: nextStep })
   },
   nextStep: () => {
-    const currentIndex = STEP_ORDER.indexOf(get().state.currentStep)
+    const currentIndex = STEP_ORDER.indexOf(normalizeSetupStep(get().state.currentStep))
     const nextStep = STEP_ORDER[Math.min(currentIndex + 1, STEP_ORDER.length - 1)] ?? "done"
     setStateAndPersist({ ...get().state, currentStep: nextStep })
   },
   prevStep: () => {
-    const currentIndex = STEP_ORDER.indexOf(get().state.currentStep)
+    const currentIndex = STEP_ORDER.indexOf(normalizeSetupStep(get().state.currentStep))
     const nextStep = STEP_ORDER[Math.max(currentIndex - 1, 0)] ?? "welcome"
     setStateAndPersist({ ...get().state, currentStep: nextStep })
   },

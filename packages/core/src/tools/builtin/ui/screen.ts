@@ -126,6 +126,7 @@ function classifyYeonjangScreenCaptureFailure(message: string): {
 
 interface ScreenCaptureParams {
   extensionId?: string
+  display?: number | string
 }
 
 interface ScreenFindTextParams {
@@ -133,14 +134,50 @@ interface ScreenFindTextParams {
   extensionId?: string
 }
 
-async function captureScreenViaYeonjang(extensionId?: string): Promise<{
+function resolveRequestedDisplay(display: number | string | undefined, userMessage: string): number | undefined {
+  if (typeof display === "number" && Number.isInteger(display) && display >= 0) return display
+  if (typeof display === "string") {
+    const trimmed = display.trim().toLowerCase()
+    if (/^\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10)
+    if (trimmed === "main" || trimmed === "primary") return 0
+    if (trimmed === "secondary" || trimmed === "external") return 1
+  }
+
+  const trimmedMessage = userMessage.trim()
+  const koreanOrdinal = trimmedMessage.match(/(\d+)\s*(?:번째|번)\s*(?:모니터|디스플레이|화면)/u)
+  if (koreanOrdinal) {
+    const ordinal = Number.parseInt(koreanOrdinal[1] ?? "", 10)
+    if (Number.isInteger(ordinal) && ordinal > 0) return ordinal - 1
+  }
+
+  const englishOrdinal = trimmedMessage.match(/\b(\d+)(?:st|nd|rd|th)?\s+(?:monitor|display|screen)\b/i)
+  if (englishOrdinal) {
+    const ordinal = Number.parseInt(englishOrdinal[1] ?? "", 10)
+    if (Number.isInteger(ordinal) && ordinal > 0) return ordinal - 1
+  }
+
+  if (/(외부\s*모니터|서브\s*모니터|보조\s*모니터|두\s*번째\s*모니터|두번째\s*모니터)/u.test(trimmedMessage)) return 1
+  if (/\b(?:second|secondary|external)\s+(?:monitor|display|screen)\b/i.test(trimmedMessage)) return 1
+  if (/(메인\s*모니터|주\s*모니터|기본\s*모니터)/u.test(trimmedMessage)) return 0
+  if (/\b(?:main|primary)\s+(?:monitor|display|screen)\b/i.test(trimmedMessage)) return 0
+
+  return undefined
+}
+
+async function captureScreenViaYeonjang(params: {
+  extensionId?: string
+  display?: number
+}): Promise<{
   base64: string
   remote: YeonjangScreenCaptureResult
 }> {
   const remote = await invokeYeonjangMethod<YeonjangScreenCaptureResult>(
     "screen.capture",
-    { inline_base64: true },
-    { timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS, ...(extensionId ? { extensionId } : {}) },
+    {
+      inline_base64: true,
+      ...(params.display !== undefined ? { display: params.display } : {}),
+    },
+    { timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS, ...(params.extensionId ? { extensionId: params.extensionId } : {}) },
   )
   return {
     base64: validateYeonjangBinaryResult(remote),
@@ -150,13 +187,17 @@ async function captureScreenViaYeonjang(extensionId?: string): Promise<{
 
 export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
   name: "screen_capture",
-  description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 화면 내용을 분석할 때 사용하세요.",
+  description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 특정 모니터를 캡처하려면 display를 지정하세요. 예: 메인 모니터=0, 두 번째 모니터=1.",
   parameters: {
     type: "object",
     properties: {
       extensionId: {
         type: "string",
         description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+      },
+      display: {
+        type: "integer",
+        description: "캡처할 모니터 인덱스. 0은 메인, 1은 두 번째 모니터입니다. 사용자가 특정 모니터를 지목한 경우 지정합니다.",
       },
     },
     required: [],
@@ -168,9 +209,13 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const display = resolveRequestedDisplay(params.display, ctx.userMessage)
     try {
       if (await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
-        const { base64, remote } = await captureScreenViaYeonjang(extensionId)
+        const { base64, remote } = await captureScreenViaYeonjang({
+          ...(extensionId ? { extensionId } : {}),
+          ...(display !== undefined ? { display } : {}),
+        })
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
         const localFileSize = statSync(localSavedPath).size
         const artifactDetails: ArtifactDeliveryResultDetails | undefined = ctx.source === "webui" && localSavedPath
@@ -195,6 +240,7 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
             transferEncoding: "base64",
             localSavedPath,
             localFileSize,
+            ...(display !== undefined ? { display } : {}),
             ...(artifactDetails ?? {}),
           },
         }
@@ -246,7 +292,7 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
       const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`)
       const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`)
 
-      const { base64 } = await captureScreenViaYeonjang(extensionId)
+      const { base64 } = await captureScreenViaYeonjang(extensionId ? { extensionId } : {})
       writeFileSync(tmpPng, Buffer.from(base64, "base64"))
 
       const { execFile } = await import("node:child_process")

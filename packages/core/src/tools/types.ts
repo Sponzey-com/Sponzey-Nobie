@@ -3,6 +3,7 @@ export type RiskLevel = "safe" | "moderate" | "dangerous"
 export interface ToolContext {
   sessionId: string
   runId: string
+  requestGroupId?: string
   workDir: string
   userMessage: string
   source: "webui" | "cli" | "telegram"

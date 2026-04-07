@@ -9,6 +9,8 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     id: overrides.id,
     sessionId: overrides.sessionId ?? "session-1",
     requestGroupId: overrides.requestGroupId,
+    lineageRootRunId: overrides.lineageRootRunId ?? overrides.requestGroupId,
+    runScope: overrides.runScope ?? "root",
     title: overrides.title ?? overrides.prompt,
     prompt: overrides.prompt,
     source: overrides.source ?? "telegram",
@@ -30,6 +32,8 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.targetLabel ? { targetLabel: overrides.targetLabel } : {}),
     ...(overrides.workerRuntimeKind ? { workerRuntimeKind: overrides.workerRuntimeKind } : {}),
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
+    ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
+    ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
   }
 }
 
@@ -255,6 +259,49 @@ describe("buildTaskModels", () => {
       completedCount: 2,
       actionableCount: 4,
       failedCount: 2,
+    })
+  })
+
+  it("keeps the root task open while a child run in the same lineage is still running", () => {
+    const task = buildTaskModels([
+      makeRun({
+        id: "run-root-done",
+        requestGroupId: "group-root",
+        lineageRootRunId: "lineage-1",
+        runScope: "root",
+        prompt: "윈도우 메인 화면 캡처",
+        status: "completed",
+        summary: "루트 실행은 끝났습니다.",
+        createdAt: 1,
+        updatedAt: 2,
+      }),
+      makeRun({
+        id: "run-child-active",
+        requestGroupId: "group-child",
+        lineageRootRunId: "lineage-1",
+        runScope: "child",
+        parentRunId: "run-root-done",
+        prompt: "[Task Intake Bridge]\nTask: 윈도우 메인 화면 캡처",
+        status: "running",
+        summary: "후속 작업이 아직 진행 중입니다.",
+        createdAt: 3,
+        updatedAt: 4,
+      }),
+    ])[0]
+
+    expect(task?.id).toBe("lineage-1")
+    expect(task?.runIds).toEqual(["run-root-done", "run-child-active"])
+    expect(task?.status).toBe("running")
+    expect(task?.checklist).toEqual({
+      items: [
+        { key: "request", status: "completed", summary: "후속 작업이 아직 진행 중입니다." },
+        { key: "execution", status: "completed", summary: "루트 실행은 끝났습니다." },
+        { key: "delivery", status: "not_required" },
+        { key: "completion", status: "running", summary: "후속 작업이 아직 진행 중입니다." },
+      ],
+      completedCount: 2,
+      actionableCount: 3,
+      failedCount: 0,
     })
   })
 

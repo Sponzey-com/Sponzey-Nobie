@@ -3,19 +3,14 @@ import { prepareStartLaunch } from "../packages/core/src/runs/start-launch.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 
 describe("prepare start launch", () => {
-  it("creates the run and initializes it from the computed start plan", () => {
-    const buildStartPlan = vi.fn(() => ({
+  it("creates the run and initializes it from the computed start plan", async () => {
+    const buildStartPlan = vi.fn(async () => ({
       entrySemantics: {
         reuse_conversation_context: true,
         active_queue_cancellation_mode: null,
       },
       requestedClosedRequestGroup: false,
       shouldReconnectGroup: true,
-      reconnectSelection: {
-        best: undefined,
-        candidates: [],
-        ambiguous: false,
-      },
       reconnectTarget: {
         id: "run-prev",
         requestGroupId: "group-prev",
@@ -47,7 +42,7 @@ describe("prepare start launch", () => {
       interruptedWorkerRunCount: 0,
     }))
 
-    const result = prepareStartLaunch({
+    const result = await prepareStartLaunch({
       message: "continue work",
       sessionId: "session-1",
       runId: "run-1",
@@ -62,7 +57,8 @@ describe("prepare start launch", () => {
     }, {
       buildStartPlan: buildStartPlan as any,
       isReusableRequestGroup: vi.fn(),
-      findReconnectRequestGroupSelection: vi.fn(),
+      listActiveSessionRequestGroups: vi.fn(),
+      compareRequestContinuation: vi.fn(),
       getRequestGroupDelegationTurnCount: vi.fn(),
       buildWorkerSessionId: vi.fn(),
       normalizeTaskProfile: vi.fn(),
@@ -99,19 +95,14 @@ describe("prepare start launch", () => {
     expect(result.startPlan.requestGroupId).toBe("group-prev")
   })
 
-  it("forwards delayed schedule lineage into start initialization", () => {
-    const buildStartPlan = vi.fn(() => ({
+  it("forwards delayed schedule lineage into start initialization", async () => {
+    const buildStartPlan = vi.fn(async () => ({
       entrySemantics: {
         reuse_conversation_context: true,
         active_queue_cancellation_mode: null,
       },
       requestedClosedRequestGroup: false,
       shouldReconnectGroup: false,
-      reconnectSelection: {
-        best: undefined,
-        candidates: [],
-        ambiguous: false,
-      },
       reconnectTarget: undefined,
       reconnectCandidateCount: 0,
       reconnectNeedsClarification: false,
@@ -129,7 +120,7 @@ describe("prepare start launch", () => {
       interruptedWorkerRunCount: 0,
     }))
 
-    prepareStartLaunch({
+    await prepareStartLaunch({
       message: "delayed hello",
       sessionId: "session-delayed",
       runId: "run-delayed",
@@ -143,7 +134,8 @@ describe("prepare start launch", () => {
     }, {
       buildStartPlan: buildStartPlan as any,
       isReusableRequestGroup: vi.fn(),
-      findReconnectRequestGroupSelection: vi.fn(),
+      listActiveSessionRequestGroups: vi.fn(),
+      compareRequestContinuation: vi.fn(),
       getRequestGroupDelegationTurnCount: vi.fn(),
       buildWorkerSessionId: vi.fn(),
       normalizeTaskProfile: vi.fn(),
@@ -166,8 +158,8 @@ describe("prepare start launch", () => {
     }), expect.any(Object))
   })
 
-  it("passes analyzeRequestEntrySemantics through when using the real start plan helper", () => {
-    const result = prepareStartLaunch({
+  it("uses isolated AI comparison result when using the real start plan helper", async () => {
+    const result = await prepareStartLaunch({
       message: "continue the previous work",
       sessionId: "session-real",
       runId: "run-real",
@@ -179,15 +171,26 @@ describe("prepare start launch", () => {
     }, {
       buildStartPlan,
       analyzeRequestEntrySemantics: vi.fn((message: string) => ({
-        reuse_conversation_context: /continue/i.test(message),
+        reuse_conversation_context: false,
         active_queue_cancellation_mode: null,
       })) as any,
       isReusableRequestGroup: vi.fn(() => false),
-      findReconnectRequestGroupSelection: vi.fn(() => ({
-        best: undefined,
-        candidates: [],
-        ambiguous: false,
-      })),
+      listActiveSessionRequestGroups: vi.fn(() => ([
+        {
+          id: "run-prev",
+          requestGroupId: "group-prev",
+          title: "기존 작업",
+          prompt: "기존 작업",
+          summary: "이전 작업",
+          updatedAt: 100,
+          status: "running",
+        } as any,
+      ])),
+      compareRequestContinuation: vi.fn(async () => ({
+        kind: "reuse",
+        requestGroupId: "group-prev",
+        reason: "same task",
+      })) as any,
       getRequestGroupDelegationTurnCount: vi.fn(() => 0),
       buildWorkerSessionId: vi.fn(() => undefined),
       normalizeTaskProfile: vi.fn((taskProfile) => taskProfile ?? "general_chat"),
@@ -208,6 +211,6 @@ describe("prepare start launch", () => {
     })
 
     expect(result.startPlan.entrySemantics.reuse_conversation_context).toBe(true)
-    expect(result.startPlan.requestGroupId).toBe("run-real")
+    expect(result.startPlan.requestGroupId).toBe("group-prev")
   })
 })

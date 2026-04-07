@@ -108,7 +108,7 @@ export function DashboardPage() {
           </div>
 
           <div className="rounded-2xl border border-stone-200 bg-white p-5">
-            <div className="text-sm font-semibold text-stone-900">{text("AI 백엔드", "AI backends")}</div>
+            <div className="text-sm font-semibold text-stone-900">{text("AI 연결", "AI connection")}</div>
             <div className="mt-5 space-y-3">
               {visibleBackends.map((backend) => (
                 <div key={backend.id} className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">

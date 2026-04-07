@@ -173,8 +173,17 @@ function resolveExecutionSemantics(params: {
   intentEnvelope?: TaskIntentEnvelope
 }): TaskExecutionSemantics {
   const base = params.executionSemantics ?? buildDefaultTaskExecutionSemantics()
+  const shouldUseDirectArtifactDelivery = shouldTreatAsDirectArtifactDelivery(params, base)
+
+  if (base.artifactDelivery === "direct" && !shouldUseDirectArtifactDelivery) {
+    return {
+      ...base,
+      artifactDelivery: "none",
+    }
+  }
+
   if (base.artifactDelivery === "direct") return base
-  if (!shouldTreatAsDirectArtifactDelivery(params, base)) return base
+  if (!shouldUseDirectArtifactDelivery) return base
   return {
     ...base,
     artifactDelivery: "direct",
@@ -223,6 +232,19 @@ function shouldTreatAsDirectArtifactDelivery(
 
   if (!combined) return false
 
-  return /(screen\s*capture|screenshot|screen shot|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture)/iu.test(combined)
+  const normalized = combined.trim()
+  if (!normalized) return false
+
+  const referencesExplicitArtifactFile = /\.(pdf|png|jpe?g|webp|csv|json|txt|docx|xlsx)\b/iu.test(normalized)
+  const referencesArtifactImage = /(screen\s*capture|screenshot|screen shot|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture)/iu.test(normalized)
     || /(화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영)/u.test(combined)
+  const referencesArtifactDelivery = (
+    /\b(file|document|attachment|report|image|artifact)\b/iu.test(normalized)
+    && /\b(send|deliver|attach|return|export|show)\b/iu.test(normalized)
+  ) || (
+    /(?:파일|문서|첨부|보고서|이미지)/u.test(normalized)
+    && /(?:보내|전달|첨부|반환|내보내|보여)/u.test(normalized)
+  )
+
+  return referencesExplicitArtifactFile || referencesArtifactImage || referencesArtifactDelivery
 }

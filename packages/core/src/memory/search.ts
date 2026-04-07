@@ -19,9 +19,12 @@ export interface MemorySearchResult {
 }
 
 /** FTS-only search */
-export function ftsSearch(query: string, limit: number): MemorySearchResult[] {
+export function ftsSearch(query: string, limit: number, filters?: {
+  sessionId?: string
+  runId?: string
+}): MemorySearchResult[] {
   try {
-    const items = searchMemoryItems(query, limit)
+    const items = searchMemoryItems(query, limit, filters)
     return items.map((item, rank) => ({ item, score: rrfScore(rank), source: "fts" as const }))
   } catch {
     return []
@@ -29,7 +32,10 @@ export function ftsSearch(query: string, limit: number): MemorySearchResult[] {
 }
 
 /** Vector-only search using in-process cosine similarity */
-export async function vectorSearch(query: string, limit: number): Promise<MemorySearchResult[]> {
+export async function vectorSearch(query: string, limit: number, filters?: {
+  sessionId?: string
+  runId?: string
+}): Promise<MemorySearchResult[]> {
   const provider = getEmbeddingProvider()
   if (provider.dimensions === 0) return []
 
@@ -38,8 +44,18 @@ export async function vectorSearch(query: string, limit: number): Promise<Memory
 
   const db = getDb()
   const rows = db
-    .prepare<[], DbMemoryItem>("SELECT * FROM memory_items WHERE embedding IS NOT NULL")
-    .all()
+    .prepare<unknown[], DbMemoryItem>(
+      `SELECT * FROM memory_items
+       WHERE embedding IS NOT NULL
+         AND (
+           memory_scope = 'global'
+           OR memory_scope IS NULL
+           OR memory_scope = ''
+           ${filters?.sessionId ? "OR (memory_scope = 'session' AND session_id = ?)" : ""}
+           ${filters?.runId ? "OR (memory_scope = 'task' AND run_id = ?)" : ""}
+         )`,
+    )
+    .all(...(filters?.sessionId ? [filters.sessionId] : []), ...(filters?.runId ? [filters.runId] : []))
 
   if (!rows.length) return []
 
@@ -57,10 +73,13 @@ export async function vectorSearch(query: string, limit: number): Promise<Memory
 }
 
 /** Hybrid search: RRF fusion of FTS and vector results */
-export async function hybridSearch(query: string, limit: number): Promise<MemorySearchResult[]> {
+export async function hybridSearch(query: string, limit: number, filters?: {
+  sessionId?: string
+  runId?: string
+}): Promise<MemorySearchResult[]> {
   const [ftsResults, vecResults] = await Promise.all([
-    Promise.resolve(ftsSearch(query, limit * 2)),
-    vectorSearch(query, limit * 2),
+    Promise.resolve(ftsSearch(query, limit * 2, filters)),
+    vectorSearch(query, limit * 2, filters),
   ])
 
   // Build score map
@@ -93,10 +112,14 @@ export async function searchMemoryItems2(
   query: string,
   limit = 5,
   mode?: "fts" | "vector" | "hybrid",
+  filters?: {
+    sessionId?: string
+    runId?: string
+  },
 ): Promise<MemorySearchResult[]> {
   const resolvedMode = mode ?? "fts"
 
-  if (resolvedMode === "vector") return vectorSearch(query, limit)
-  if (resolvedMode === "hybrid") return hybridSearch(query, limit)
-  return ftsSearch(query, limit)
+  if (resolvedMode === "vector") return vectorSearch(query, limit, filters)
+  if (resolvedMode === "hybrid") return hybridSearch(query, limit, filters)
+  return ftsSearch(query, limit, filters)
 }

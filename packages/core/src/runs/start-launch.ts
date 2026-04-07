@@ -1,5 +1,6 @@
 import type { AgentContextMode } from "../agent/index.js"
 import { analyzeRequestEntrySemantics } from "./entry-semantics.js"
+import { compareRequestContinuationWithAI } from "./entry-comparison.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
@@ -15,9 +16,9 @@ import {
   bindActiveRunController,
   interruptOrphanWorkerSessionRuns,
   findLatestWorkerSessionRun,
-  findReconnectRequestGroupSelection,
   getRequestGroupDelegationTurnCount,
   isReusableRequestGroup,
+  listActiveSessionRequestGroups,
   createRootRun,
   setRunStepStatus,
   updateRunStatus,
@@ -28,9 +29,11 @@ interface StartLaunchDependencies {
   buildStartPlan: typeof buildStartPlan
   analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics
   isReusableRequestGroup: typeof isReusableRequestGroup
-  findReconnectRequestGroupSelection: typeof findReconnectRequestGroupSelection
+  listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups
+  compareRequestContinuation: typeof compareRequestContinuationWithAI
   getRequestGroupDelegationTurnCount: typeof getRequestGroupDelegationTurnCount
   buildWorkerSessionId: (params: {
+    runId: string
     isRootRequest: boolean
     requestGroupId: string
     taskProfile: TaskProfile
@@ -55,7 +58,8 @@ const defaultDependencies: StartLaunchDependencies = {
   buildStartPlan,
   analyzeRequestEntrySemantics,
   isReusableRequestGroup,
-  findReconnectRequestGroupSelection,
+  listActiveSessionRequestGroups,
+  compareRequestContinuation: compareRequestContinuationWithAI,
   getRequestGroupDelegationTurnCount,
   buildWorkerSessionId,
   normalizeTaskProfile,
@@ -78,7 +82,7 @@ export interface PreparedStartLaunch {
   queuedBehindRequestGroupRun: boolean
 }
 
-export function prepareStartLaunch(
+export async function prepareStartLaunch(
   params: {
     message: string
     sessionId: string
@@ -88,11 +92,14 @@ export function prepareStartLaunch(
     now: number
     maxDelegationTurns: number
     requestGroupId?: string | undefined
+    parentRunId?: string | undefined
     originRunId?: string | undefined
     originRequestGroupId?: string | undefined
     forceRequestGroupReuse?: boolean | undefined
     contextMode?: AgentContextMode | undefined
     taskProfile?: TaskProfile | undefined
+    runScope?: "root" | "child" | "analysis" | undefined
+    handoffSummary?: string | undefined
     targetId?: string | undefined
     targetLabel?: string | undefined
     model?: string | undefined
@@ -100,8 +107,8 @@ export function prepareStartLaunch(
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
   },
   dependencies: StartLaunchDependencies = defaultDependencies,
-): PreparedStartLaunch {
-  const startPlan = dependencies.buildStartPlan({
+): Promise<PreparedStartLaunch> {
+  const startPlan = await dependencies.buildStartPlan({
     message: params.message,
     sessionId: params.sessionId,
     runId: params.runId,
@@ -109,12 +116,14 @@ export function prepareStartLaunch(
     ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
     ...(params.contextMode ? { contextMode: params.contextMode } : {}),
     ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
+    ...(params.model ? { model: params.model } : {}),
     ...(params.targetId ? { targetId: params.targetId } : {}),
     ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
   }, {
     analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
     isReusableRequestGroup: dependencies.isReusableRequestGroup,
-    findReconnectRequestGroupSelection: dependencies.findReconnectRequestGroupSelection,
+    listActiveSessionRequestGroups: dependencies.listActiveSessionRequestGroups,
+    compareRequestContinuation: dependencies.compareRequestContinuation,
     getRequestGroupDelegationTurnCount: dependencies.getRequestGroupDelegationTurnCount,
     buildWorkerSessionId: dependencies.buildWorkerSessionId,
     normalizeTaskProfile: dependencies.normalizeTaskProfile,
@@ -127,6 +136,10 @@ export function prepareStartLaunch(
     id: params.runId,
     sessionId: params.sessionId,
     requestGroupId: startPlan.requestGroupId,
+    lineageRootRunId: startPlan.requestGroupId,
+    ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+    ...(params.runScope ? { runScope: params.runScope } : {}),
+    ...(params.handoffSummary ? { handoffSummary: params.handoffSummary } : {}),
     prompt: params.message,
     source: params.source,
     maxDelegationTurns: params.maxDelegationTurns,

@@ -10,10 +10,12 @@ const ERROR_LINE_PATTERN = /(error|failed?|exception|invalid|timeout|timed out|n
 let _memoryDb: BetterSqlite3.Database | null = null
 
 export type MemoryJournalKind = "instruction" | "success" | "failure" | "response"
+export type MemoryJournalScope = "global" | "session" | "task"
 
 export interface MemoryJournalRecord {
   id: string
   kind: MemoryJournalKind
+  scope: MemoryJournalScope
   session_id: string | null
   run_id: string | null
   request_group_id: string | null
@@ -28,6 +30,7 @@ export interface MemoryJournalRecord {
 
 export interface MemoryJournalRecordInput {
   kind: MemoryJournalKind
+  scope?: MemoryJournalScope
   content: string
   title?: string
   summary?: string
@@ -50,6 +53,7 @@ function getMemoryJournalDb(): BetterSqlite3.Database {
     CREATE TABLE IF NOT EXISTS memory_records (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'session',
       session_id TEXT,
       run_id TEXT,
       request_group_id TEXT,
@@ -70,6 +74,20 @@ function getMemoryJournalDb(): BetterSqlite3.Database {
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memory_records_fts
       USING fts5(title, content, summary, tags, content='memory_records', content_rowid='rowid');
+  `)
+
+  const columns = _memoryDb.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === "scope")) {
+    _memoryDb.exec(`ALTER TABLE memory_records ADD COLUMN scope TEXT DEFAULT 'session'`)
+  }
+  _memoryDb.exec(`
+    UPDATE memory_records
+    SET scope = CASE
+      WHEN session_id IS NULL OR session_id = '' THEN 'global'
+      WHEN run_id IS NOT NULL AND run_id != '' THEN 'task'
+      ELSE 'session'
+    END
+    WHERE scope IS NULL OR scope = ''
   `)
 
   return _memoryDb
@@ -150,11 +168,12 @@ export function insertMemoryJournalRecord(input: MemoryJournalRecordInput): stri
 
   db.prepare(
     `INSERT INTO memory_records
-      (id, kind, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.kind,
+    input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"),
     input.sessionId ?? null,
     input.runId ?? null,
     input.requestGroupId ?? null,
@@ -206,6 +225,9 @@ export function searchMemoryJournal(
   options?: {
     limit?: number
     kinds?: MemoryJournalKind[]
+    sessionId?: string
+    requestGroupId?: string
+    runId?: string
   },
 ): MemoryJournalRecord[] {
   try {
@@ -216,6 +238,16 @@ export function searchMemoryJournal(
     const kinds = options?.kinds ?? []
     const db = getMemoryJournalDb()
     const whereKind = kinds.length > 0 ? `AND m.kind IN (${kinds.map(() => "?").join(", ")})` : ""
+    const scopeClauses = [`m.scope = 'global'`]
+    const scopeValues: string[] = []
+    if (options?.sessionId) {
+      scopeClauses.push(`(m.scope = 'session' AND m.session_id = ?)`)
+      scopeValues.push(options.sessionId)
+    }
+    if (options?.runId) {
+      scopeClauses.push(`(m.scope = 'task' AND m.run_id = ?)`)
+      scopeValues.push(options.runId)
+    }
 
     return db
       .prepare<unknown[], MemoryJournalRecord>(
@@ -224,10 +256,11 @@ export function searchMemoryJournal(
          JOIN memory_records m ON m.rowid = f.rowid
          WHERE memory_records_fts MATCH ?
          ${whereKind}
+         AND (${scopeClauses.join(" OR ")})
          ORDER BY bm25(memory_records_fts), m.created_at DESC
          LIMIT ?`,
       )
-      .all(ftsQuery, ...kinds, limit)
+      .all(ftsQuery, ...kinds, ...scopeValues, limit)
   } catch {
     return []
   }
@@ -248,11 +281,19 @@ function kindLabel(kind: MemoryJournalKind): string {
   }
 }
 
-export function buildMemoryJournalContext(query: string, limit = 6): string {
+export function buildMemoryJournalContext(query: string, options?: {
+  limit?: number
+  sessionId?: string
+  requestGroupId?: string
+  runId?: string
+}): string {
   try {
     const records = searchMemoryJournal(query, {
-      limit,
+      limit: options?.limit ?? 6,
       kinds: ["instruction", "failure", "success", "response"],
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+      ...(options?.requestGroupId ? { requestGroupId: options.requestGroupId } : {}),
+      ...(options?.runId ? { runId: options.runId } : {}),
     })
     if (!records.length) return ""
 

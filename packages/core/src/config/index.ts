@@ -20,70 +20,133 @@ function toStringArray(value: unknown): string[] {
     : []
 }
 
+function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record<string, unknown> | undefined {
+  const rawAiProviders = toObject(rawAi.providers)
+  const rawAiBackends = toObject(rawAi.backends)
+  const configuredProvider = toString(rawAi.defaultProvider)
+  const configuredModel = toString(rawAi.defaultModel)
+
+  const buildConnection = (
+    provider: string,
+    model: string,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    provider,
+    model,
+    ...patch,
+  })
+
+  if (configuredProvider === "openai") {
+    const openai = toObject(rawAiProviders.openai)
+    const auth = toObject(openai.auth)
+    return buildConnection("openai", configuredModel, {
+      endpoint: toString(openai.baseUrl) || undefined,
+      auth: {
+        mode: toString(auth.mode) || "api_key",
+        apiKey: toStringArray(openai.apiKeys)[0] || undefined,
+        oauthAuthFilePath: toString(auth.codexAuthFilePath) || undefined,
+        clientId: toString(auth.clientId) || undefined,
+      },
+    })
+  }
+
+  if (configuredProvider === "anthropic") {
+    const anthropic = toObject(rawAiProviders.anthropic)
+    return buildConnection("anthropic", configuredModel, {
+      auth: {
+        mode: "api_key",
+        apiKey: toStringArray(anthropic.apiKeys)[0] || undefined,
+      },
+    })
+  }
+
+  if (configuredProvider === "gemini") {
+    const gemini = toObject(rawAiProviders.gemini)
+    return buildConnection("gemini", configuredModel, {
+      endpoint: toString(gemini.baseUrl) || undefined,
+      auth: {
+        mode: "api_key",
+        apiKey: toStringArray(gemini.apiKeys)[0] || undefined,
+      },
+    })
+  }
+
+  if (configuredProvider === "ollama") {
+    const ollama = toObject(rawAiProviders.ollama)
+    return buildConnection("ollama", configuredModel, {
+      endpoint: toString(ollama.baseUrl) || undefined,
+      auth: {
+        mode: "api_key",
+      },
+    })
+  }
+
+  const openai = toObject(rawAiBackends.openai)
+  if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
+    return buildConnection("openai", toString(openai.defaultModel), {
+      endpoint: toString(openai.endpoint) || undefined,
+      auth: {
+        mode: toString(openai.authMode) || "api_key",
+        apiKey: toString(toObject(openai.credentials).apiKey) || undefined,
+        oauthAuthFilePath: toString(toObject(openai.credentials).oauthAuthFilePath) || undefined,
+      },
+    })
+  }
+
+  const anthropic = toObject(rawAiBackends.anthropic)
+  if (anthropic.enabled === true && toString(anthropic.providerType) === "anthropic") {
+    return buildConnection("anthropic", toString(anthropic.defaultModel), {
+      auth: {
+        mode: "api_key",
+        apiKey: toString(toObject(anthropic.credentials).apiKey) || undefined,
+      },
+    })
+  }
+
+  const gemini = toObject(rawAiBackends.gemini)
+  if (gemini.enabled === true && toString(gemini.providerType) === "gemini") {
+    return buildConnection("gemini", toString(gemini.defaultModel), {
+      endpoint: toString(gemini.endpoint) || undefined,
+      auth: {
+        mode: "api_key",
+        apiKey: toString(toObject(gemini.credentials).apiKey) || undefined,
+      },
+    })
+  }
+
+  const ollama = toObject(rawAiBackends.ollama)
+  if (ollama.enabled === true && toString(ollama.providerType) === "ollama") {
+    return buildConnection("ollama", toString(ollama.defaultModel), {
+      endpoint: toString(ollama.endpoint) || undefined,
+      auth: {
+        mode: "api_key",
+      },
+    })
+  }
+
+  return undefined
+}
+
 function normalizeLegacyAiConfig(parsed: Partial<NobieConfig>): Partial<NobieConfig> {
   const root = toObject(parsed)
   const rawAi = toObject(root.ai)
-  const rawAiProviders = toObject(rawAi.providers)
-  const rawAiBackends = toObject(rawAi.backends)
+  const rawConnection = toObject(rawAi.connection)
 
-  const providers = toObject(rawAi.providers)
-
-  if (Object.keys(providers).length === 0) {
-    const openai = toObject(rawAiBackends.openai)
-    const anthropic = toObject(rawAiBackends.anthropic)
-    const gemini = toObject(rawAiBackends.gemini)
-    const ollama = toObject(rawAiBackends.ollama)
-    const inferredProviders: Record<string, unknown> = {}
-
-    if (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth") {
-      inferredProviders.openai = {
-        baseUrl: toString(openai.endpoint),
-        apiKeys: toStringArray(toObject(openai.credentials).apiKey ? [toObject(openai.credentials).apiKey] : []),
-        auth: {
-          mode: toString(openai.authMode) || "api_key",
-          codexAuthFilePath: toString(toObject(openai.credentials).oauthAuthFilePath) || undefined,
-        },
-      }
-    }
-
-    if (toString(anthropic.providerType) === "anthropic") {
-      inferredProviders.anthropic = {
-        apiKeys: toStringArray(toObject(anthropic.credentials).apiKey ? [toObject(anthropic.credentials).apiKey] : []),
-      }
-    }
-
-    if (toString(gemini.providerType) === "gemini") {
-      inferredProviders.gemini = {
-        baseUrl: toString(gemini.endpoint) || undefined,
-        apiKeys: toStringArray(toObject(gemini.credentials).apiKey ? [toObject(gemini.credentials).apiKey] : []),
-      }
-    }
-
-    if (toString(ollama.providerType) === "ollama" && toString(ollama.endpoint)) {
-      inferredProviders.ollama = {
-        baseUrl: toString(ollama.endpoint),
-      }
-    }
-
-    if (Object.keys(inferredProviders).length > 0) {
-      rawAi.providers = inferredProviders
-    }
-  }
-
-  if (!toString(rawAi.defaultProvider)) {
-    const openai = toObject(rawAiBackends.openai)
-    const anthropic = toObject(rawAiBackends.anthropic)
-    const gemini = toObject(rawAiBackends.gemini)
-
-    if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
-      rawAi.defaultProvider = "openai"
-      if (!toString(rawAi.defaultModel) && toString(openai.defaultModel)) rawAi.defaultModel = toString(openai.defaultModel)
-    } else if (anthropic.enabled === true && toString(anthropic.providerType) === "anthropic") {
-      rawAi.defaultProvider = "anthropic"
-      if (!toString(rawAi.defaultModel) && toString(anthropic.defaultModel)) rawAi.defaultModel = toString(anthropic.defaultModel)
-    } else if (gemini.enabled === true && toString(gemini.providerType) === "gemini") {
-      rawAi.defaultProvider = "gemini"
-      if (!toString(rawAi.defaultModel) && toString(gemini.defaultModel)) rawAi.defaultModel = toString(gemini.defaultModel)
+  if (!toString(rawConnection.provider)) {
+    rawAi.connection = inferConnectionFromLegacyConfig(rawAi) ?? {}
+  } else {
+    rawAi.connection = {
+      provider: toString(rawConnection.provider),
+      model: toString(rawConnection.model),
+      endpoint: toString(rawConnection.endpoint) || undefined,
+      auth: {
+        mode: toString(toObject(rawConnection.auth).mode) || "api_key",
+        apiKey: toString(toObject(rawConnection.auth).apiKey) || undefined,
+        username: toString(toObject(rawConnection.auth).username) || undefined,
+        password: toString(toObject(rawConnection.auth).password) || undefined,
+        oauthAuthFilePath: toString(toObject(rawConnection.auth).oauthAuthFilePath) || undefined,
+        clientId: toString(toObject(rawConnection.auth).clientId) || undefined,
+      },
     }
   }
 

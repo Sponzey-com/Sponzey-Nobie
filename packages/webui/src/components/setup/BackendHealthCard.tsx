@@ -36,7 +36,9 @@ export function BackendHealthCard({
   onChange,
   onRemove,
   onSetRoutingTargetEnabled,
+  onSelectBuiltinProviderType,
   errors,
+  showRoutingTags = true,
 }: {
   backend: AIBackendCard
   routingProfiles: RoutingProfile[]
@@ -44,7 +46,9 @@ export function BackendHealthCard({
   onChange: (id: string, patch: Partial<AIBackendCard>) => void
   onRemove?: (id: string) => void
   onSetRoutingTargetEnabled: (profileId: RoutingProfile["id"], backendId: string, enabled: boolean) => void
+  onSelectBuiltinProviderType?: (providerType: AIProviderType) => void
   errors?: BackendCardErrors
+  showRoutingTags?: boolean
 }) {
   const [loadingModels, setLoadingModels] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -106,6 +110,11 @@ export function BackendHealthCard({
       : "__current__"
 
   function handleProviderTypeChange(providerType: AIProviderType) {
+    if (isBuiltinBackend && onSelectBuiltinProviderType) {
+      onSelectBuiltinProviderType(providerType)
+      clearDiscoveryState()
+      return
+    }
     onChange(backend.id, {
       providerType,
       authMode: providerType === "openai" ? (backend.authMode ?? "api_key") : "api_key",
@@ -178,6 +187,14 @@ export function BackendHealthCard({
               </option>
             ))}
           </select>
+          {isBuiltinBackend ? (
+            <p className="mt-2 text-xs leading-5 text-stone-500">
+              {text(
+                "기본 제공 연결은 여기서 바로 전환됩니다. 서브 에이전트 역할 구분은 화면에 노출하지 않고 시스템 내부에서만 사용합니다.",
+                "Built-in connections switch directly here. Sub-agent role distinctions are kept internal and are not exposed in the UI.",
+              )}
+            </p>
+          ) : null}
         </div>
 
         {backend.providerType === "openai" ? (
@@ -301,27 +318,29 @@ export function BackendHealthCard({
           {errors?.defaultModel ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.defaultModel}</p> : null}
         </div>
 
-        <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-          <div className="text-sm font-semibold text-stone-900">{text("AI 라우팅 태그", "AI Routing Tags")}</div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {routingProfiles.map((profile) => {
-              const active = profile.targets.includes(backend.id)
-              return (
-                <button
-                  key={`${backend.id}-${profile.id}`}
-                  onClick={() => onSetRoutingTargetEnabled(profile.id, backend.id, !active)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    active
-                      ? "border-stone-900 bg-stone-900 text-white"
-                      : "border-stone-200 bg-white text-stone-700"
-                  }`}
-                >
-                  {getRoutingProfileDisplayLabel(profile.id, profile.label, language)}
-                </button>
-              )
-            })}
+        {showRoutingTags ? (
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+            <div className="text-sm font-semibold text-stone-900">{text("AI 라우팅 태그", "AI Routing Tags")}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {routingProfiles.map((profile) => {
+                const active = profile.targets.includes(backend.id)
+                return (
+                  <button
+                    key={`${backend.id}-${profile.id}`}
+                    onClick={() => onSetRoutingTargetEnabled(profile.id, backend.id, !active)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      active
+                        ? "border-stone-900 bg-stone-900 text-white"
+                        : "border-stone-200 bg-white text-stone-700"
+                    }`}
+                  >
+                    {getRoutingProfileDisplayLabel(profile.id, profile.label, language)}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
 
       {backend.reason ? <div className="mt-3 rounded-xl bg-stone-100 px-3 py-2 text-xs leading-5 text-stone-600">{displayText(backend.reason)}</div> : null}

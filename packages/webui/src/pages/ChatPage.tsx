@@ -244,7 +244,9 @@ export function ChatPage() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-stone-900">{text("작업 큐", "Task queue")}</div>
-                <div className="mt-1 text-xs text-stone-500">{text("현재 세션에서 요청한 태스크 목록입니다.", "This is the list of tasks requested in the current session.")}</div>
+                <div className="mt-1 text-xs text-stone-500">
+                  {text("현재 세션의 root/sub-task 목록입니다. 모두 같은 AI 연결을 공유합니다.", "This is the root/sub-task list for the current session. They all share the same AI connection.")}
+                </div>
               </div>
               <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600">
                 {text(`${queueCards.length}개`, `${queueCards.length}`)}

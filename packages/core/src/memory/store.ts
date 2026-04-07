@@ -12,7 +12,10 @@ export async function storeMemory(params: {
   content: string
   tags?: string[]
   importance?: "low" | "medium" | "high"
+  scope?: "global" | "session" | "task"
   sessionId?: string
+  requestGroupId?: string
+  runId?: string
   type?: "user_fact" | "session_summary" | "project_note"
 }): Promise<string> {
   const id = insertMemoryItem(params)
@@ -39,39 +42,64 @@ export function storeMemorySync(params: {
   content: string
   tags?: string[]
   importance?: "low" | "medium" | "high"
+  scope?: "global" | "session" | "task"
   sessionId?: string
+  requestGroupId?: string
+  runId?: string
   type?: "user_fact" | "session_summary" | "project_note"
 }): string {
   return insertMemoryItem(params)
 }
 
-export async function searchMemory(query: string, limit = 5): Promise<DbMemoryItem[]> {
+export async function searchMemory(query: string, limit = 5, filters?: {
+  sessionId?: string
+  runId?: string
+}): Promise<DbMemoryItem[]> {
   const mode = getConfig().memory?.searchMode ?? "fts"
   try {
-    const results = await searchMemoryItems2(query, limit, mode)
+    const results = await searchMemoryItems2(query, limit, mode, filters)
     return results.map((r) => r.item)
   } catch {
     return []
   }
 }
 
-export function searchMemorySync(query: string, limit = 5): DbMemoryItem[] {
+export function searchMemorySync(query: string, limit = 5, filters?: {
+  sessionId?: string
+  runId?: string
+}): DbMemoryItem[] {
   try {
-    return searchMemoryItems(query, limit)
+    return searchMemoryItems(query, limit, filters)
   } catch {
     return []
   }
 }
 
-export function recentMemories(limit = 10): DbMemoryItem[] {
-  return getRecentMemoryItems(limit)
+export function recentMemories(limit = 10, filters?: {
+  sessionId?: string
+  runId?: string
+}): DbMemoryItem[] {
+  return getRecentMemoryItems(limit, filters)
 }
 
 /** Build a formatted memory context block for system prompt injection */
-export async function buildMemoryContext(userMessage: string): Promise<string> {
+export async function buildMemoryContext(params: {
+  query: string
+  sessionId?: string
+  requestGroupId?: string
+  runId?: string
+}): Promise<string> {
   const [results, journalContext] = await Promise.all([
-    searchMemory(userMessage, 5),
-    Promise.resolve(buildMemoryJournalContext(userMessage, 6)),
+    searchMemory(params.query, 5, {
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      ...(params.runId ? { runId: params.runId } : {}),
+    }),
+    Promise.resolve(buildMemoryJournalContext(params.query, {
+      limit: 6,
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      ...(params.runId ? { runId: params.runId } : {}),
+    })),
   ])
 
   const relatedMemoryContext = results.length

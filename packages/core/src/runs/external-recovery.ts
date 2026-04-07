@@ -1,12 +1,9 @@
 import type { AIProvider } from "../ai/index.js"
-import { resolveRunRoute, type ResolvedRunRoute } from "./routing.js"
 import {
   buildAiErrorRecoveryPrompt,
-  buildAiRecoveryAvoidTargets,
   buildAiRecoveryKey,
   buildWorkerRuntimeErrorRecoveryPrompt,
   buildWorkerRuntimeRecoveryKey,
-  hasMeaningfulRouteChange,
 } from "./recovery.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -43,18 +40,6 @@ export interface ExternalRecoveryPlan {
   }
 }
 
-interface ExternalRecoveryDependencies {
-  resolveRoute: (params: {
-    taskProfile: TaskProfile
-    fallbackModel?: string
-    avoidTargets?: string[]
-  }) => ResolvedRunRoute
-}
-
-const defaultDependencies: ExternalRecoveryDependencies = {
-  resolveRoute: resolveRunRoute,
-}
-
 export function planExternalRecovery(params: {
   kind: ExternalRecoveryKind
   taskProfile: TaskProfile
@@ -63,9 +48,7 @@ export function planExternalRecovery(params: {
   seenKeys: Set<string>
   originalRequest: string
   previousResult: string
-  dependencies?: Partial<ExternalRecoveryDependencies>
 }): ExternalRecoveryPlan {
-  const dependencies = { ...defaultDependencies, ...params.dependencies }
   const recoveryKey = params.kind === "ai"
     ? buildAiRecoveryKey({
         targetId: params.current.targetId,
@@ -84,49 +67,6 @@ export function planExternalRecovery(params: {
         message: params.payload.message,
       })
 
-  const reroute = dependencies.resolveRoute({
-    taskProfile: params.taskProfile,
-    ...(params.current.model ? { fallbackModel: params.current.model } : {}),
-    avoidTargets: buildAiRecoveryAvoidTargets(params.current.targetId, params.current.workerRuntime?.kind),
-  })
-  const avoidTargets = buildAiRecoveryAvoidTargets(params.current.targetId, params.current.workerRuntime?.kind)
-
-  const routeChanged = hasMeaningfulRouteChange({
-    currentTargetId: params.current.targetId,
-    currentModel: params.current.model,
-    currentProviderId: params.current.providerId,
-    currentWorkerRuntimeKind: params.current.workerRuntime?.kind,
-    nextTargetId: reroute.targetId,
-    nextModel: reroute.model ?? params.current.model,
-    nextProviderId: reroute.providerId ?? params.current.providerId,
-    nextWorkerRuntimeKind: reroute.workerRuntime?.kind,
-  })
-
-  if (!routeChanged && params.seenKeys.has(recoveryKey)) {
-    return {
-      recoveryKey,
-      eventLabel: params.kind === "ai"
-        ? "AI 오류를 분석하고 다른 방법으로 재시도합니다."
-        : "작업 세션 오류를 분석하고 다른 방법으로 재시도합니다.",
-      routeChanged: false,
-      nextState: params.current,
-      nextMessage: "",
-      duplicateStop: params.kind === "ai"
-        ? {
-            summary: "같은 AI 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
-            reason: params.payload.reason,
-            ...(params.payload.message.trim() ? { rawMessage: params.payload.message } : {}),
-            remainingItems: ["같은 실행 대상과 같은 AI 경로에서 동일한 오류가 반복되어 다른 수동 조치가 필요합니다."],
-          }
-        : {
-            summary: "같은 작업 세션 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
-            reason: params.payload.reason,
-            ...(params.payload.message.trim() ? { rawMessage: params.payload.message } : {}),
-            remainingItems: ["같은 작업 세션에서 동일한 오류가 반복되어 다른 수동 조치가 필요합니다."],
-          },
-    }
-  }
-
   const nextState: ExternalRecoveryState = {
     model: params.current.model,
     providerId: params.current.providerId,
@@ -135,22 +75,38 @@ export function planExternalRecovery(params: {
     targetLabel: params.current.targetLabel,
     workerRuntime: params.current.workerRuntime,
   }
-
+  const sameAiRecovery = params.current.targetLabel ?? params.current.targetId ?? params.current.providerId ?? params.current.model ?? "현재 AI 연결"
+  const sameTargetDirective = `같은 AI 연결(${sameAiRecovery})과 같은 대상에서 접근 방식만 바꿔 복구합니다.`
+  const fallbackToEmbeddedAi = Boolean(params.current.workerRuntime)
   let routeEventLabel: string | undefined
-  if (routeChanged) {
-    routeEventLabel = reroute.targetLabel
-      ? `${params.kind === "ai" ? "AI" : "작업 세션"} 복구 경로 전환: ${describeCurrentTarget(params.current)} -> ${reroute.targetLabel}`
-      : `${params.kind === "ai" ? "AI" : "작업 세션"} 복구를 위해 다른 실행 경로로 전환합니다.`
-    nextState.model = reroute.model ?? nextState.model
-    nextState.providerId = reroute.providerId ?? nextState.providerId
-    nextState.provider = reroute.provider
-    nextState.targetId = reroute.targetId ?? nextState.targetId
-    nextState.targetLabel = reroute.targetLabel ?? reroute.targetId ?? nextState.targetLabel
-    nextState.workerRuntime = reroute.workerRuntime
-  } else if (params.current.workerRuntime) {
-    routeEventLabel = `${params.current.workerRuntime.label} 경로 대신 기본 추론 경로로 전환합니다.`
+  if (fallbackToEmbeddedAi) {
     nextState.workerRuntime = undefined
-    nextState.provider = undefined
+    routeEventLabel = `${params.current.workerRuntime?.label ?? "작업 세션"} 대신 같은 AI 연결의 기본 추론 경로로 복구합니다.`
+  }
+
+  if (!fallbackToEmbeddedAi && params.seenKeys.has(recoveryKey)) {
+    return {
+      recoveryKey,
+      eventLabel: params.kind === "ai"
+        ? "AI 오류를 분석하고 다른 방법으로 재시도합니다."
+        : "작업 세션 오류를 분석하고 다른 방법으로 재시도합니다.",
+      routeChanged: false,
+      nextState,
+      nextMessage: "",
+      duplicateStop: params.kind === "ai"
+        ? {
+            summary: "같은 AI 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
+            reason: params.payload.reason,
+            ...(params.payload.message.trim() ? { rawMessage: params.payload.message } : {}),
+            remainingItems: ["같은 AI 연결과 같은 대상에서 동일한 오류가 반복되어 다른 수동 조치가 필요합니다."],
+          }
+        : {
+            summary: "같은 작업 세션 오류가 같은 대상에서 반복되어 자동 진행을 멈췄습니다.",
+            reason: params.payload.reason,
+            ...(params.payload.message.trim() ? { rawMessage: params.payload.message } : {}),
+            remainingItems: ["같은 AI 연결과 같은 대상에서 동일한 작업 세션 오류가 반복되어 다른 수동 조치가 필요합니다."],
+          },
+    }
   }
 
   return {
@@ -158,7 +114,7 @@ export function planExternalRecovery(params: {
     eventLabel: params.kind === "ai"
       ? "AI 오류를 분석하고 다른 방법으로 재시도합니다."
       : "작업 세션 오류를 분석하고 다른 방법으로 재시도합니다.",
-    routeChanged,
+    routeChanged: false,
     ...(routeEventLabel ? { routeEventLabel } : {}),
     nextState,
     nextMessage: params.kind === "ai"
@@ -169,10 +125,7 @@ export function planExternalRecovery(params: {
           reason: params.payload.reason,
           message: params.payload.message,
           failedRoute: describeCurrentAttempt(params.current),
-          avoidTargets,
-          ...(describeRecoveryNextRoute(routeChanged, reroute, params.current)
-            ? { nextRouteHint: describeRecoveryNextRoute(routeChanged, reroute, params.current) }
-            : {}),
+          nextRouteHint: sameTargetDirective,
         })
       : buildWorkerRuntimeErrorRecoveryPrompt({
           originalRequest: params.originalRequest,
@@ -181,10 +134,7 @@ export function planExternalRecovery(params: {
           reason: params.payload.reason,
           message: params.payload.message,
           failedRoute: describeCurrentAttempt(params.current),
-          avoidTargets,
-          ...(describeRecoveryNextRoute(routeChanged, reroute, params.current)
-            ? { nextRouteHint: describeRecoveryNextRoute(routeChanged, reroute, params.current) }
-            : {}),
+          nextRouteHint: sameTargetDirective,
         }),
   }
 }
@@ -205,20 +155,4 @@ function describeCurrentAttempt(state: ExternalRecoveryState): string {
   if (state.providerId) details.push(state.providerId)
   if (state.model) details.push(state.model)
   return details.join(" / ")
-}
-
-function describeRecoveryNextRoute(
-  routeChanged: boolean,
-  reroute: ResolvedRunRoute,
-  current: ExternalRecoveryState,
-): string | undefined {
-  if (routeChanged) {
-    return reroute.targetLabel ?? reroute.targetId ?? reroute.model ?? reroute.providerId ?? "다른 실행 경로"
-  }
-
-  if (current.workerRuntime) {
-    return "기본 AI 추론 경로"
-  }
-
-  return undefined
 }

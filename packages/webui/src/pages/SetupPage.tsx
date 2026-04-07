@@ -5,15 +5,13 @@ import { DisabledPanel } from "../components/DisabledPanel"
 import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { McpSetupForm } from "../components/setup/McpSetupForm"
-import { BackendComposer } from "../components/setup/BackendComposer"
-import { BackendHealthCard } from "../components/setup/BackendHealthCard"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { PersonalSettingsForm } from "../components/setup/PersonalSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { ReviewSummaryPanel } from "../components/setup/ReviewSummaryPanel"
-import { RoutingPriorityEditor } from "../components/setup/RoutingPriorityEditor"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
 import { SkillSetupForm } from "../components/setup/SkillSetupForm"
+import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
 import { SetupAssistPanel } from "../components/setup/SetupAssistPanel"
 import { SetupExpandableSection } from "../components/setup/SetupExpandableSection"
 import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
@@ -24,6 +22,7 @@ import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { SetupDraft, SetupState, SetupStepMeta } from "../contracts/setup"
+import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import {
   canSkipSetupStep,
   hasEditableSetupStep,
@@ -65,6 +64,7 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
 
 export function SetupPage() {
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
+  const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
   const [showValidation, setShowValidation] = useState(false)
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const [testingMcpServerId, setTestingMcpServerId] = useState<string | null>(null)
@@ -91,6 +91,11 @@ export function SetupPage() {
   }, [draft])
 
   const activeDraft = localDraft ?? draft
+
+  useEffect(() => {
+    setSelectedAiBackendId((current) => getPreferredSingleAiBackendId(activeDraft.aiBackends, current))
+  }, [activeDraft])
+
   const steps = useMemo(() => createSetupSteps(capabilities, activeDraft, state, uiLanguage), [capabilities, activeDraft, state, uiLanguage])
   const currentStep = steps.find((step) => step.id === state.currentStep) ?? steps[0]!
   const currentIndex = steps.findIndex((step) => step.id === state.currentStep)
@@ -174,6 +179,14 @@ export function SetupPage() {
   }
 
   function updateBackend(backendId: string, patch: Partial<AIBackendCard>) {
+    if (patch.enabled === true) {
+      setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, true))
+      return
+    }
+    if (patch.enabled === false) {
+      setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, false))
+      return
+    }
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
       return {
@@ -185,42 +198,9 @@ export function SetupPage() {
     })
   }
 
-  function moveRoutingTarget(profileId: RoutingProfile["id"], from: number, to: number) {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      return {
-        ...base,
-        routingProfiles: base.routingProfiles.map((profile) => {
-          if (profile.id !== profileId) return profile
-          const nextTargets = [...profile.targets]
-          const source = nextTargets[from]
-          if (source === undefined || to < 0 || to >= nextTargets.length) return profile
-          nextTargets.splice(from, 1)
-          nextTargets.splice(to, 0, source)
-          return { ...profile, targets: nextTargets }
-        }),
-      }
-    })
-  }
-
   function setRoutingTargetEnabled(profileId: RoutingProfile["id"], backendId: string, enabled: boolean) {
-    setLocalDraft((current) => {
-      const base = cloneDraft(current ?? draft)
-      return {
-        ...base,
-        routingProfiles: base.routingProfiles.map((profile) => {
-          if (profile.id !== profileId) return profile
-          const hasTarget = profile.targets.includes(backendId)
-          if (enabled && !hasTarget) {
-            return { ...profile, targets: [...profile.targets, backendId] }
-          }
-          if (!enabled && hasTarget) {
-            return { ...profile, targets: profile.targets.filter((target) => target !== backendId) }
-          }
-          return profile
-        }),
-      }
-    })
+    void profileId
+    setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, enabled))
   }
 
   function updateMcpServer(serverId: string, patch: Partial<SetupDraft["mcp"]["servers"][number]>) {
@@ -518,57 +498,28 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="AI 연결을 준비합니다"
-              description="먼저 어떤 AI를 연결할지 고르고, 연결 주소와 기본 모델을 정합니다. 어려운 용어는 괄호 안에만 보조로 표시합니다."
+              description="여기서는 AI 하나만 연결하면 됩니다. 연결할 공급자를 고르고, 인증과 기본 모델만 확인하면 나머지는 같은 연결을 계속 사용합니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
             ) : null}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label="AI 카드 수" value={String(activeDraft.aiBackends.length)} />
-              <StatCard label="사용 중" value={String(activeDraft.aiBackends.filter((backend) => backend.enabled).length)} />
+              <StatCard label="활성 AI" value={enabledBackends[0]?.label ?? "없음"} compact />
+              <StatCard label="활성 모델" value={enabledBackends[0]?.defaultModel || "미설정"} compact />
               <StatCard label="주소 입력됨" value={String(activeDraft.aiBackends.filter((backend) => backend.endpoint?.trim()).length)} />
-              <StatCard label="기본 모델 설정" value={String(activeDraft.aiBackends.filter((backend) => backend.defaultModel.trim()).length)} />
+              <StatCard label="준비 상태" value={enabledBackends.length === 1 ? "ready" : "select 1"} compact />
             </div>
-            <BackendComposer onAdd={addBackend} />
-            <div className="grid gap-4 xl:grid-cols-2">
-              {activeDraft.aiBackends.map((backend) => (
-                <BackendHealthCard
-                  key={backend.id}
-                  backend={backend}
-                  routingProfiles={activeDraft.routingProfiles}
-                  onChange={updateBackend}
-                  onToggle={(backendId, enabled) => updateBackend(backendId, { enabled })}
-                  onRemove={removeBackend}
-                  onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-                  errors={shouldShowValidation ? currentValidation.backendErrors[backend.id] : undefined}
-                />
-              ))}
-            </div>
-          </div>
-        )
-
-      case "ai_routing":
-        return (
-          <div className="space-y-6">
-            <SectionIntro
-              title="AI 사용 순서를 정합니다"
-              description="어떤 상황에서 어떤 AI를 먼저 사용할지 정하는 단계입니다. 지금은 기본 순서를 확인하고, 필요할 때만 조정해도 됩니다."
+            <SingleAIConnectionPanel
+              backends={activeDraft.aiBackends}
+              routingProfiles={activeDraft.routingProfiles}
+              activeBackendId={selectedAiBackendId}
+              onSelectBackend={setSelectedAiBackendId}
+              onUpdateBackend={updateBackend}
+              onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
+              onRemoveBackend={removeBackend}
+              onSetRoutingTargetEnabled={setRoutingTargetEnabled}
+              backendErrors={shouldShowValidation ? currentValidation.backendErrors : undefined}
             />
-            <SetupExpandableSection
-              title="고급 AI 순서 설정"
-              description="기본 순서를 그대로 써도 됩니다. 특별한 용도별로 어떤 AI를 먼저 쓸지만 바꾸고 싶을 때 펼쳐서 조정하세요."
-            >
-              <div className="grid gap-4 xl:grid-cols-2">
-                {activeDraft.routingProfiles.map((profile) => (
-                  <RoutingPriorityEditor
-                    key={profile.id}
-                    profile={profile}
-                    backends={activeDraft.aiBackends}
-                    onMove={(from, to) => moveRoutingTarget(profile.id, from, to)}
-                  />
-                ))}
-              </div>
-            </SetupExpandableSection>
           </div>
         )
 
@@ -1084,7 +1035,6 @@ function createSetupSteps(
   const telegramCapability = capabilities.find((item) => item.key === "telegram.channel")
   const hasPersonalInfo = validateSetupStep("personal", draft).valid
   const hasConfiguredBackend = validateSetupStep("ai_backends", draft).valid
-  const hasRoutingTargets = draft.routingProfiles.some((profile) => profile.targets.length > 0)
   const hasConfiguredMcpServers = draft.mcp.servers.length > 0
   const hasMcpReady = validateSetupStep("mcp", draft).valid
   const hasConfiguredSkills = draft.skills.items.length > 0
@@ -1124,29 +1074,16 @@ function createSetupSteps(
     },
     withCapability(
       "ai_backends",
-      t("AI 연결 (AI Backend)", "AI Backends"),
-      t("응답에 사용할 AI를 연결합니다.", "Connect the AI models used for responses."),
+      t("AI 연결", "AI Connection"),
+      t("응답과 계획, 검토에 사용할 AI 연결 하나를 정합니다.", "Choose the single AI connection used for responses, planning, and review."),
       capabilities.find((item) => item.key === "ai.backends"),
       true,
       [
-        t("사용할 AI 종류를 고릅니다.", "Choose which AI provider to use."),
-        t("연결 주소와 기본 모델을 정합니다.", "Set the endpoint and default model."),
-        t("연결 확인으로 실제 동작 여부를 확인합니다.", "Verify that the connection really works."),
+        t("사용할 AI 공급자 하나를 고릅니다.", "Choose one AI provider."),
+        t("인증, 연결 주소, 기본 모델을 확인합니다.", "Confirm the credentials, endpoint, and default model."),
+        t("연결 확인으로 실제 동작 여부를 검증합니다.", "Verify that the connection really works."),
       ],
       hasConfiguredBackend,
-    ),
-    withCapability(
-      "ai_routing",
-      t("AI 사용 순서", "AI Routing"),
-      t("상황별로 어떤 AI를 먼저 쓸지 정합니다.", "Set which AI should be tried first for each case."),
-      capabilities.find((item) => item.key === "ai.routing"),
-      false,
-      [
-        t("업무 유형별 우선순위를 봅니다.", "Review priorities by task type."),
-        t("기본 순서를 유지할지 판단합니다.", "Decide whether to keep the default order."),
-        t("필요할 때만 순서를 조정합니다.", "Adjust the order only when needed."),
-      ],
-      hasRoutingTargets,
     ),
     withCapability(
       "mcp",

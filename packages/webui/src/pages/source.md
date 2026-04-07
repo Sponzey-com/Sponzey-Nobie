@@ -6,8 +6,8 @@
 
 ## 주요 화면
 
-- `SetupPage`: 최초 설정과 수정 가능한 setup 흐름
-- `SettingsPage`: 고급 설정과 MQTT 런타임 관리
+- `SetupPage`: 최초 설정과 수정 가능한 setup 흐름. 현재는 단일 AI 연결 기준으로 위저드를 단순화하고, 구형 `AI 순서` 단계는 숨김 호환만 유지
+- `SettingsPage`: 단일 AI 연결 카드, MQTT 런타임 관리, 고급 설정
 - `ChatPage`: 사용자용 task queue와 승인 UI가 붙는 대화 화면
 - `RunsPage`: task monitor와 내부 디버그 attempt를 함께 보는 실행 모니터링 화면
 - `DashboardPage`, `AuditPage`, `PluginsPage`, `SchedulePage`: 보조 운영 화면
@@ -21,5 +21,6 @@
 - 이 adapter는 이제 `TaskModel.runIds`와 `latestAttemptId`를 기준으로 raw run detail을 붙여, 같은 `requestGroupId`라는 이유만으로 unrelated run을 다시 섞지 않도록 정리 중입니다.
 - `ChatPage`와 `RunsPage`는 task projection의 `failure`를 그대로 보여주며, 실행 실패와 전달 실패를 구분한 마지막 실패 요약과 detail lines를 별도 블록으로 노출합니다.
 - `ChatPage`와 `RunsPage`는 task projection의 checklist state도 그대로 보여주며, 카드에서는 진행 비율을, 상세 패널에서는 `request / execution / delivery / completion` 단계 상태를 체크박스처럼 노출합니다.
+- `ChatPage`와 `RunsPage`의 task tree는 이제 `runScope(root / child / analysis)`와 `handoffSummary`를 읽어 root task와 sub-agent 관계를 더 직접적으로 보여줍니다.
 - `ChatPage`의 새 run 시작도 이제 `createRun -> /api/runs`만 쓰고, 화면 안에서 과거 `api/agent/run` fallback을 다시 두지 않는 방향으로 정리 중입니다.
 - `RunsPage`는 request-group 단위 대표 run만 보여주더라도, 요청 영역에는 내부 보조 run 프롬프트가 아니라 그룹 내 마지막 사용자성 요청을 우선 표시해 취소·정리 상태에서도 원래 요청을 잃지 않도록 유지합니다.

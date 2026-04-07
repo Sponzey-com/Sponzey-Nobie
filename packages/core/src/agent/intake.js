@@ -1,6 +1,6 @@
 import { getMessages, getMessagesForRequestGroupWithRunMeta } from "../db/index.js";
 import { getConfig } from "../config/index.js";
-import { getDefaultModel, getProvider, inferProviderId } from "../ai/index.js";
+import { getDefaultModel, getProvider } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { buildTaskIntakeSystemPrompt } from "./intake-prompt.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
@@ -21,7 +21,7 @@ export async function analyzeTaskIntake(params) {
         return heuristic;
     }
     const model = params.model ?? getDefaultModel();
-    const provider = getProvider(inferProviderId(model));
+    const provider = getProvider();
     const context = buildConversationContext(params.sessionId, params.requestGroupId, params.userMessage);
     const instructions = loadMergedInstructions(params.workDir ?? process.cwd());
     const profileContext = buildUserProfilePromptContext();

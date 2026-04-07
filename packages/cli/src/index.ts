@@ -62,8 +62,8 @@ program
     console.log(`State dir:   ${PATHS.stateDir}`)
     console.log(`Config:      ${PATHS.configFile}`)
     console.log(`DB:          ${PATHS.dbFile}`)
-    console.log(`Provider:    ${cfg.ai.defaultProvider}`)
-    console.log(`Model:       ${cfg.ai.defaultModel}`)
+    console.log(`Provider:    ${cfg.ai.connection.provider}`)
+    console.log(`Model:       ${cfg.ai.connection.model}`)
     console.log(`Approval:    ${cfg.security.approvalMode}`)
   })
 

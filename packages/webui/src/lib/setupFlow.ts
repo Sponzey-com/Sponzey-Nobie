@@ -32,11 +32,11 @@ export interface StepValidation {
 }
 
 export function hasEditableSetupStep(stepId: SetupStepId): boolean {
-  return ["personal", "ai_backends", "ai_routing", "mcp", "skills", "security", "channels", "remote_access"].includes(stepId)
+  return ["personal", "ai_backends", "mcp", "skills", "security", "channels", "remote_access"].includes(stepId)
 }
 
 export function canSkipSetupStep(stepId: SetupStepId): boolean {
-  return ["ai_routing", "mcp", "skills", "security", "remote_access"].includes(stepId)
+  return ["mcp", "skills", "security", "remote_access"].includes(stepId)
 }
 
 export function isSetupStepDirty(savedDraft: SetupDraft, localDraft: SetupDraft, stepId: SetupStepId): boolean {

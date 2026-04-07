@@ -86,7 +86,32 @@ describe("setup backend merge", () => {
     expect(changed?.defaultModel).toBe("")
   })
 
-  it("persists builtin provider settings under ai.providers and drops legacy llm config", () => {
+  it("rejects drafts that enable more than one active ai connection", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+    reloadConfig()
+
+    const draft = buildSetupDraft()
+
+    expect(() => saveSetupDraft({
+      ...draft,
+      aiBackends: draft.aiBackends.map((backend) => (
+        backend.id === "provider:openai" || backend.id === "provider:gemini"
+          ? {
+              ...backend,
+              enabled: true,
+              defaultModel: backend.id === "provider:openai" ? "gpt-5" : "gemini-2.5-pro",
+              credentials: backend.id === "provider:openai"
+                ? { apiKey: "sk-test", oauthAuthFilePath: "" }
+                : { apiKey: "gemini-key" },
+            }
+          : backend
+      )),
+    })).toThrow("Only one active AI connection can be enabled.")
+  })
+
+  it("persists the active ai connection and drops legacy multi-provider config", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
     tempDirs.push(stateDir)
     process.env["NOBIE_STATE_DIR"] = stateDir
@@ -110,14 +135,15 @@ describe("setup backend merge", () => {
 
     const raw = parseJsonLike(readFileSync(join(stateDir, "config.json5"), "utf-8"))
 
-    expect(raw.ai?.defaultProvider).toBe("openai")
-    expect(raw.ai?.defaultModel).toBe("gpt-5")
-    expect(raw.ai?.providers?.openai?.baseUrl).toBe("https://chatgpt.com/backend-api/codex")
-    expect(raw.ai?.providers?.openai?.auth?.mode).toBe("chatgpt_oauth")
+    expect(raw.ai?.connection?.provider).toBe("openai")
+    expect(raw.ai?.connection?.model).toBe("gpt-5")
+    expect(raw.ai?.connection?.endpoint).toBe("https://chatgpt.com/backend-api/codex")
+    expect(raw.ai?.connection?.auth?.mode).toBe("chatgpt_oauth")
+    expect(raw.ai?.providers).toBeUndefined()
     expect(raw.llm).toBeUndefined()
   })
 
-  it("does not let stale builtin backend overrides replace provider-specific cards", () => {
+  it("rebuilds builtin cards from the active single ai connection", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
     tempDirs.push(stateDir)
     process.env["NOBIE_STATE_DIR"] = stateDir
@@ -140,13 +166,11 @@ describe("setup backend merge", () => {
     })
 
     const raw = parseJsonLike(readFileSync(join(stateDir, "config.json5"), "utf-8"))
-    raw.ai.backends.gemini = {
-      enabled: true,
-      providerType: "openai",
-      authMode: "chatgpt_oauth",
-      credentials: { apiKey: "" },
-      endpoint: "https://chatgpt.com/backend-api/codex",
-      defaultModel: "gpt-5",
+    raw.ai.connection = {
+      provider: "gemini",
+      model: "gemini-2.5-pro",
+      endpoint: "https://generativelanguage.googleapis.com",
+      auth: { apiKey: "gemini-key" },
     }
     writeFileSync(join(stateDir, "config.json5"), JSON.stringify(raw, null, 2), "utf-8")
 
@@ -154,9 +178,11 @@ describe("setup backend merge", () => {
 
     const nextDraft = buildSetupDraft()
     const gemini = nextDraft.aiBackends.find((backend) => backend.id === "provider:gemini")
+    const openai = nextDraft.aiBackends.find((backend) => backend.id === "provider:openai")
 
     expect(gemini?.providerType).toBe("gemini")
-    expect(gemini?.enabled).toBe(false)
-    expect(gemini?.defaultModel).toBe("")
+    expect(gemini?.enabled).toBe(true)
+    expect(gemini?.defaultModel).toBe("gemini-2.5-pro")
+    expect(openai?.enabled).toBe(false)
   })
 })

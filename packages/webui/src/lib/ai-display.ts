@@ -24,11 +24,11 @@ const ROUTING_LABELS: Record<RoutingProfileId, { ko: string; en: string }> = {
 }
 
 const BACKEND_LABELS: Record<string, { ko: string; en: string }> = {
-  "provider:openai": { ko: "범용 원격 추론", en: "General Remote Reasoning" },
-  "provider:anthropic": { ko: "Anthropic 추론", en: "Anthropic Reasoning" },
-  "provider:gemini": { ko: "계획·리서치 추론", en: "Planning / Research Reasoning" },
-  "provider:ollama": { ko: "로컬 모델 실행", en: "Local Model Runtime" },
-  "provider:llama_cpp": { ko: "로컬 추론 서버", en: "Local Inference Server" },
+  "provider:openai": { ko: "OpenAI", en: "OpenAI" },
+  "provider:anthropic": { ko: "Anthropic", en: "Anthropic" },
+  "provider:gemini": { ko: "Gemini", en: "Gemini" },
+  "provider:ollama": { ko: "Ollama", en: "Ollama" },
+  "provider:llama_cpp": { ko: "Llama", en: "Llama" },
 }
 
 export function getAIProviderDisplayLabel(providerType: AIProviderType, language: DisplayLanguage): string {

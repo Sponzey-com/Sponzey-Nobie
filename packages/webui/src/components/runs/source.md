@@ -6,7 +6,7 @@
 
 ## 주요 파일
 
-- `RunStatusCard.tsx`: 큐 카드와 트리 구조 표시
+- `RunStatusCard.tsx`: 큐 카드와 트리 구조 표시. 현재는 root task와 sub-agent 관계를 한 카드 안에서 구분해 보여줌
 - `RunSummaryPanel.tsx`: 탑다운 실행 요약과 진단 정보
 - `TaskChecklistPanel.tsx`: task projection의 checklist state를 체크박스형 상태 패널로 표시
 - `TaskFailurePanel.tsx`: task projection이 계산한 실패 종류, 마지막 실패 요약, detail lines 표시

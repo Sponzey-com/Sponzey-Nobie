@@ -7,7 +7,7 @@ import { runAgent } from "../agent/index.js";
 import { eventBus } from "../events/index.js";
 import { getDb, getSession, insertMessage, insertSchedule, insertSession } from "../db/index.js";
 import { getConfig } from "../config/index.js";
-import { inferProviderId } from "../ai/index.js";
+import { detectAvailableProvider } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { loadNobieMd } from "../memory/nobie-md.js";
@@ -138,7 +138,7 @@ export function startRootRun(params) {
     const requestGroupId = params.requestGroupId ?? (reconnectNeedsClarification ? runId : reconnectTarget?.requestGroupId) ?? runId;
     const isRootRequest = requestGroupId === runId;
     const controller = new AbortController();
-    const targetId = params.targetId ?? (params.model ? inferProviderId(params.model) : undefined);
+    const targetId = params.targetId ?? (params.model ? detectAvailableProvider() : undefined);
     const effectiveTaskProfile = normalizeTaskProfile(params.taskProfile);
     const now = Date.now();
     const workDir = params.workDir ?? process.cwd();
@@ -1080,6 +1080,15 @@ function buildAwaitingUserMessage(params) {
     ].filter(Boolean);
     return lines.join("\n\n");
 }
+function finalizeAnalysisOnlySubrun(runId, params, dependencies) {
+    dependencies.setRunStepStatus(runId, "executing", "completed", params.executionSummary);
+    dependencies.setRunStepStatus(runId, "reviewing", "completed", params.relaySummary);
+    dependencies.setRunStepStatus(runId, "finalizing", "completed", "보조 분석 결과를 상위 태스크에 넘겼습니다.");
+    dependencies.updateRunStatus(runId, "interrupted", params.relaySummary, false);
+    if (params.eventLabel) {
+        dependencies.appendRunEvent(runId, params.eventLabel);
+    }
+}
 async function runFilesystemVerificationSubtask(params) {
     const runId = crypto.randomUUID();
     const prompt = buildFilesystemVerificationPrompt(params.originalRequest, params.mutationPaths);
@@ -1087,11 +1096,15 @@ async function runFilesystemVerificationSubtask(params) {
         id: runId,
         sessionId: params.sessionId,
         requestGroupId: params.requestGroupId,
+        lineageRootRunId: params.requestGroupId,
+        parentRunId: params.parentRunId,
+        runScope: "analysis",
+        handoffSummary: "결과 검증 하위 작업",
         prompt,
         source: params.source,
         taskProfile: "review",
         targetLabel: "결과 검증",
-        contextMode: "request_group",
+        contextMode: "handoff",
         maxDelegationTurns: 0,
     });
     appendRunEvent(params.parentRunId, "결과 검증 하위 작업을 생성했습니다.");
@@ -1108,15 +1121,20 @@ async function runFilesystemVerificationSubtask(params) {
     });
     if (verification.ok) {
         await completeRunWithAssistantMessage(runId, params.sessionId, verification.message, params.source, params.onChunk);
-        appendRunEvent(params.parentRunId, "결과 검증 하위 작업이 완료되었습니다.");
+        finalizeAnalysisOnlySubrun(runId, {
+            executionSummary: verification.summary,
+            relaySummary: "검증 분석 결과를 상위 태스크에 전달했습니다.",
+            eventLabel: "검증 분석 종료",
+        }, { appendRunEvent, setRunStepStatus, updateRunStatus });
+        appendRunEvent(params.parentRunId, "결과 검증 하위 작업이 성공 분석 결과를 전달했습니다.");
         return { ok: true, summary: verification.summary };
     }
-    await emitStandaloneAssistantMessage(runId, params.sessionId, verification.message, params.source, params.onChunk);
-    setRunStepStatus(runId, "executing", "failed", verification.summary);
-    setRunStepStatus(runId, "reviewing", "failed", verification.summary);
-    updateRunStatus(runId, "failed", verification.summary, false);
-    appendRunEvent(runId, "결과 검증 실패");
-    appendRunEvent(params.parentRunId, "결과 검증 하위 작업이 실패했습니다.");
+    finalizeAnalysisOnlySubrun(runId, {
+        executionSummary: verification.summary,
+        relaySummary: "검증 분석 결과를 상위 태스크에 전달했습니다.",
+        eventLabel: "검증 분석 종료",
+    }, { appendRunEvent, setRunStepStatus, updateRunStatus });
+    appendRunEvent(params.parentRunId, "결과 검증 하위 작업이 실패 분석 결과를 전달했습니다.");
     return {
         ok: false,
         summary: verification.summary,

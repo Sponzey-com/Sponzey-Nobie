@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { eventBus } from "../events/index.js";
-import { getProvider, getDefaultModel, inferProviderId, shouldForceReasoningMode } from "../ai/index.js";
+import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode } from "../ai/index.js";
 import { toolDispatcher } from "../tools/dispatcher.js";
 import { createLogger } from "../logger/index.js";
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, insertMemoryItem, markMessagesCompressed } from "../db/index.js";
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertMemoryItem, markMessagesCompressed } from "../db/index.js";
 import { loadNobieMd } from "../memory/nobie-md.js";
 import { buildMemoryContext } from "../memory/store.js";
 import { needsCompression, compressContext } from "../memory/compressor.js";
@@ -48,11 +48,13 @@ export async function* runAgent(params) {
     // Load prior messages from DB
     const priorDbMessages = contextMode === "isolated"
         ? []
-        : contextMode === "request_group"
-            ? (params.requestGroupId ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId)) : [])
-            : params.requestGroupId
-                ? getMessagesForRequestGroup(sessionId, params.requestGroupId)
-                : getMessages(sessionId);
+        : contextMode === "handoff"
+            ? getMessagesForRun(sessionId, runId)
+            : contextMode === "request_group"
+                ? (params.requestGroupId ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId)) : [])
+                : params.requestGroupId
+                    ? getMessagesForRequestGroup(sessionId, params.requestGroupId)
+                    : getMessages(sessionId);
     const rawMessages = priorDbMessages.map((m) => ({
         role: m.role,
         content: m.tool_calls ? JSON.parse(m.tool_calls) : m.content,
@@ -104,7 +106,7 @@ export async function* runAgent(params) {
         description: t.description,
         input_schema: t.parameters,
     }));
-    const resolvedProviderId = params.providerId ?? inferProviderId(model);
+    const resolvedProviderId = params.providerId ?? detectAvailableProvider();
     const provider = params.provider ?? getProvider(resolvedProviderId);
     const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model);
     // ── Build system prompt with NOBIE.md + memory context ────────────────
@@ -134,7 +136,12 @@ export async function* runAgent(params) {
     const instructions = loadMergedInstructions(workDir);
     const profileContext = buildUserProfilePromptContext();
     const nobieMd = loadNobieMd(workDir);
-    const memoryContext = await buildMemoryContext(params.userMessage);
+    const memoryContext = await buildMemoryContext({
+        query: params.memorySearchQuery ?? params.userMessage,
+        sessionId,
+        runId,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    });
     const systemPrompt = [
         baseSystemPrompt,
         reasoningDirective,
@@ -158,7 +165,10 @@ export async function* runAgent(params) {
             const summaryId = crypto.randomUUID();
             insertMemoryItem({
                 content: compressed.summary,
+                scope: "session",
                 sessionId,
+                runId,
+                ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
                 type: "session_summary",
                 importance: "medium",
             });
@@ -174,8 +184,10 @@ export async function* runAgent(params) {
     const ctx = {
         sessionId,
         runId,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
         workDir,
         userMessage: params.userMessage,
+        source: params.source ?? "cli",
         allowWebAccess,
         signal,
         onProgress: (msg) => {

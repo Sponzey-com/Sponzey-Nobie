@@ -37,7 +37,7 @@ export const memoryStoreTool: AgentTool<MemoryStoreParams> = {
       content: params.content,
       ...(params.tags !== undefined && { tags: params.tags }),
       importance: params.importance ?? "medium",
-      sessionId: ctx.sessionId,
+      scope: "global",
       type: "user_fact",
     })
     return { success: true, output: `메모리에 저장됨 (id: ${id.slice(0, 8)}…)` }
@@ -64,9 +64,12 @@ export const memorySearchTool: AgentTool<MemorySearchParams> = {
   },
   riskLevel: "safe",
   requiresApproval: false,
-  execute: async (params: MemorySearchParams): Promise<ToolResult> => {
+  execute: async (params: MemorySearchParams, ctx: ToolContext): Promise<ToolResult> => {
     const limit = Math.min(params.limit ?? 5, 20)
-    const results = await searchMemory(params.query, limit)
+    const results = await searchMemory(params.query, limit, {
+      sessionId: ctx.sessionId,
+      ...(ctx.runId ? { runId: ctx.runId } : {}),
+    })
     if (results.length === 0) {
       return { success: true, output: "관련 메모리를 찾을 수 없습니다." }
     }

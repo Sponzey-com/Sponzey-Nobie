@@ -1,6 +1,6 @@
 import crypto from "node:crypto"
 import { buildFilesystemVerificationPrompt, verifyFilesystemTargets } from "./filesystem-verification.js"
-import type { RunContextMode, RunStatus, RunStepStatus, TaskProfile } from "./types.js"
+import type { RunContextMode, RunScope, RunStatus, RunStepStatus, TaskProfile } from "./types.js"
 
 export interface AnalysisOnlySubrunResult {
   ok: boolean
@@ -14,6 +14,10 @@ export interface AnalysisOnlySubrunDependencies {
     id: string
     sessionId: string
     requestGroupId: string
+    lineageRootRunId?: string
+    parentRunId?: string
+    runScope?: RunScope
+    handoffSummary?: string
     prompt: string
     source: "webui" | "cli" | "telegram"
     taskProfile: TaskProfile
@@ -75,11 +79,15 @@ export async function runFilesystemVerificationSubtask(params: {
     id: runId,
     sessionId: params.sessionId,
     requestGroupId: params.requestGroupId,
+    lineageRootRunId: params.requestGroupId,
+    parentRunId: params.parentRunId,
+    runScope: "analysis",
+    handoffSummary: "결과 검증 하위 작업",
     prompt,
     source: params.source,
     taskProfile: "review",
     targetLabel: "결과 검증",
-    contextMode: "request_group",
+    contextMode: "handoff",
     maxDelegationTurns: 0,
   })
 
