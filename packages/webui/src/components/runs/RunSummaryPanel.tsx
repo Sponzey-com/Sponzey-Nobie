@@ -39,7 +39,7 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
         <div>
           <div className="text-lg font-semibold text-stone-900">{run.title}</div>
           <div className="mt-1 text-sm text-stone-500">
-            {toTaskProfileText(run.taskProfile, language)} · {toRunStatusText(run.status, language)} · {text(`단계 ${run.currentStepIndex}/${run.totalSteps}`, `Step ${run.currentStepIndex}/${run.totalSteps}`)}
+            {toTaskProfileText(run.taskProfile, language)} · {toRunStatusText(run.status, language)} · {text(`진행 ${run.currentStepIndex}/${run.totalSteps}`, `Progress ${run.currentStepIndex}/${run.totalSteps}`)}
           </div>
         </div>
         <RunTargetBadge targetId={run.targetId} targetLabel={run.targetLabel} />
@@ -53,19 +53,19 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
         </div>
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-          <div className="text-xs font-semibold text-stone-500">{text("실행 정보", "Execution details")}</div>
+          <div className="text-xs font-semibold text-stone-500">{text("진행 정보", "Run details")}</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <InfoRow
-              label={text("재질의 예산", "Follow-up budget")}
+              label={text("후속 시도 한도", "Follow-up limit")}
               value={`${run.delegationTurnCount} / ${run.maxDelegationTurns === 0 ? text("무제한", "Unlimited") : run.maxDelegationTurns}`}
             />
             <InfoRow
-              label={text("문맥 범위", "Context scope")}
+              label={text("참조 범위", "Context range")}
               value={toContextModeText(run.contextMode, language)}
             />
             <InfoRow
-              label={text("작업 세션", "Worker session")}
-              value={run.workerSessionId || text("루트 검토 실행", "Root review execution")}
+              label={text("세션 ID", "Session ID")}
+              value={run.workerSessionId || text("기본 세션", "Default session")}
             />
             <InfoRow
               label={text("실행 대상", "Execution target")}
@@ -82,7 +82,7 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
         </div>
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-          <div className="text-xs font-semibold text-stone-500">{text("최근 기록", "Recent records")}</div>
+          <div className="text-xs font-semibold text-stone-500">{text("최근 기록", "Recent history")}</div>
           <div className="mt-3 space-y-2 text-sm text-stone-700">
             {run.recentEvents.length > 0 ? run.recentEvents.slice(-5).reverse().map((event) => (
               <div key={event.id} className="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2.5">

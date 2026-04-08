@@ -304,6 +304,322 @@ bash scripts/start-yeonjang-macos.sh
 - 일반적인 Nobie 사용에서는 MQTT로 연결된 Yeonjang GUI/runtime를 실행하는 경로를 기준으로 봐야 합니다.
 - macOS `camera.capture`는 `Yeonjang.app` 내부의 고정 helper executable을 사용하므로, 카메라 캡처가 필요하면 `scripts/start-yeonjang-macos.sh` 경로가 가장 안전합니다.
 
+## Telegram / Slack 연결 상세 가이드
+
+이 섹션은 `Bot Token`, `App Token`, `사용자 ID`, `채팅방/채널 ID` 같은 연결 정보를 실제로 어떻게 구하는지 단계별로 설명합니다.
+
+중요:
+
+- 텔레그램과 슬랙 토큰은 비밀번호처럼 취급해야 합니다.
+- 토큰과 사용자 ID, 채널 ID는 `README` 예시처럼 직접 입력해도 되지만, 실사용 값은 Git에 커밋하면 안 됩니다.
+- Nobie가 이미 실행 중인 상태에서 같은 Telegram Bot Token으로 `getUpdates`를 직접 호출하면 `409 Conflict`가 날 수 있습니다. 이 경우에는 Nobie를 잠시 멈추고 확인하는 것이 안전합니다.
+
+### Telegram 연결 절차
+
+#### 1. Telegram Bot 생성
+
+1. Telegram에서 `@BotFather`를 엽니다.
+2. `/newbot`을 보냅니다.
+3. 봇 이름과 봇 사용자명(username)을 입력합니다.
+4. BotFather가 발급한 `Bot Token`을 복사합니다.
+
+예시:
+
+- `1234567890:AA...`
+
+이 값이 Nobie 설정 화면의 `Telegram Bot Token`입니다.
+
+#### 2. 봇과 1:1 대화 시작
+
+1. 방금 만든 봇을 Telegram에서 검색합니다.
+2. 봇과의 대화창을 엽니다.
+3. `/start`를 한 번 보냅니다.
+
+이 단계가 필요한 이유:
+
+- Telegram은 사용자가 먼저 말을 걸지 않은 봇에게는 메시지를 보내기 어렵습니다.
+- `getUpdates`로 사용자 ID를 확인하려면 먼저 봇과 실제 대화가 한 번 생겨야 합니다.
+
+#### 3. Telegram 사용자 ID 얻기
+
+가장 직접적인 방법은 `getUpdates`입니다.
+
+1. Nobie가 같은 Bot Token으로 실행 중이면 잠시 중지합니다.
+2. 브라우저나 터미널에서 아래 주소를 호출합니다.
+
+```bash
+curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+```
+
+3. 응답 JSON에서 다음 위치를 찾습니다.
+
+- `result[].message.from.id`
+
+이 값이 `allowedUserIds`에 넣을 Telegram 사용자 ID입니다.
+
+예시:
+
+```json
+{
+  "message": {
+    "from": {
+      "id": 42120565
+    }
+  }
+}
+```
+
+위 예시에서 사용자 ID는 `42120565`입니다.
+
+#### 4. Telegram 그룹 / 채팅방 ID 얻기
+
+1. 봇을 대상 그룹에 초대합니다.
+2. 그룹에서 아무 메시지나 하나 보냅니다.
+3. 다시 아래를 호출합니다.
+
+```bash
+curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+```
+
+4. 응답 JSON에서 다음 위치를 찾습니다.
+
+- `result[].message.chat.id`
+
+이 값이 그룹 또는 채팅방 ID입니다.
+
+예시:
+
+```json
+{
+  "message": {
+    "chat": {
+      "id": -1001234567890,
+      "title": "팀 운영방"
+    }
+  }
+}
+```
+
+위 예시에서 채팅방 ID는 `-1001234567890`입니다.
+
+참고:
+
+- 개인 대화는 보통 양수 ID입니다.
+- 그룹 / 슈퍼그룹은 보통 음수 ID입니다.
+- 슈퍼그룹은 `-100...` 형태인 경우가 많습니다.
+
+#### 5. Telegram 그룹에서 봇이 반응하지 않을 때 확인할 것
+
+1. `@BotFather`에서 `/setprivacy`를 사용해 대상 봇의 privacy mode를 확인합니다.
+2. 그룹의 일반 메시지까지 읽어야 하면 privacy mode를 꺼야 할 수 있습니다.
+3. Nobie 설정의 `allowedUserIds`, `allowedGroupIds`가 실제 값과 일치하는지 확인합니다.
+4. 같은 Bot Token을 쓰는 다른 프로세스가 없는지 확인합니다.
+
+특히 다음 오류가 나오면 거의 항상 중복 실행 문제입니다.
+
+- `409: Conflict: terminated by other getUpdates request`
+
+이 경우:
+
+1. Nobie daemon을 중지합니다.
+2. 다른 Telegram bot 프로세스가 있으면 정리합니다.
+3. Nobie를 다시 시작합니다.
+
+### Slack 연결 절차
+
+Slack은 Telegram보다 준비 단계가 더 많습니다. Nobie의 Slack 연결은 `Bot Token + App Token + Socket Mode + Event Subscriptions + Interactivity`가 함께 맞아야 합니다.
+
+#### 1. Slack 앱 생성
+
+1. 브라우저에서 `https://api.slack.com/apps`를 엽니다.
+2. `Create New App`을 누릅니다.
+3. `From scratch`를 선택합니다.
+4. 앱 이름과 워크스페이스를 선택합니다.
+
+#### 2. Bot Token 발급
+
+1. Slack 앱 설정에서 `OAuth & Permissions`로 이동합니다.
+2. Bot Token Scopes를 추가합니다.
+
+최소 권장 범위:
+
+- `app_mentions:read`
+- `chat:write`
+- `files:write`
+- `channels:history`
+- `groups:history`
+- `im:history`
+- `mpim:history`
+
+3. `Install to Workspace` 또는 `Reinstall to Workspace`를 실행합니다.
+4. 설치 후 발급되는 `Bot User OAuth Token`을 복사합니다.
+
+예시:
+
+- `xoxb-...`
+
+이 값이 Nobie 설정 화면의 `Slack Bot Token`입니다.
+
+#### 3. App Token 발급
+
+1. Slack 앱 설정에서 `Basic Information`으로 이동합니다.
+2. `App-Level Tokens` 섹션에서 새 토큰을 생성합니다.
+3. Scope는 최소 `connections:write`를 포함해야 합니다.
+4. 발급된 App Token을 복사합니다.
+
+예시:
+
+- `xapp-...`
+
+이 값이 Nobie 설정 화면의 `Slack App Token`입니다.
+
+#### 4. Socket Mode 활성화
+
+1. Slack 앱 설정에서 `Socket Mode`로 이동합니다.
+2. `Enable Socket Mode`를 켭니다.
+3. 앞에서 만든 `xapp-...` 토큰이 Socket Mode용인지 확인합니다.
+
+이 단계가 빠지면 Nobie가 Slack 이벤트를 실시간으로 받지 못합니다.
+
+#### 5. Event Subscriptions 활성화
+
+1. Slack 앱 설정에서 `Event Subscriptions`로 이동합니다.
+2. `Enable Events`를 켭니다.
+3. Bot Events에 아래 항목을 추가합니다.
+
+권장 항목:
+
+- `app_mention`
+- `message.im`
+
+필요에 따라:
+
+- `message.channels`
+- `message.groups`
+- `message.mpim`
+
+설명:
+
+- `app_mention`: 채널에서 `@봇이름`으로 부른 메시지를 받기 위해 필요
+- `message.im`: DM(1:1) 메시지를 받기 위해 필요
+- `message.channels` / `message.groups`: 공개/비공개 채널 일반 메시지를 직접 읽어야 할 때 필요
+
+채널에서 `@Nobie 안녕`처럼 말하는 방식으로 쓸 예정이면 최소 `app_mention`은 반드시 있어야 합니다.
+
+#### 6. Interactivity 활성화 `(버튼 승인용)`
+
+Slack에서 승인/거부 버튼을 누르게 하려면 `Interactivity`도 켜야 합니다.
+
+1. Slack 앱 설정에서 `Interactivity & Shortcuts`로 이동합니다.
+2. `Interactivity`를 켭니다.
+
+주의:
+
+- Socket Mode 기반 앱에서는 버튼 클릭 이벤트도 Slack 앱 설정에서 허용되어야 합니다.
+- 이 설정이 빠지면 Nobie가 승인 버튼을 보내더라도 클릭 이벤트를 처리하지 못합니다.
+
+#### 7. 봇을 실제 채널에 초대
+
+1. Slack에서 Nobie를 쓸 채널을 엽니다.
+2. 채널 입력창에 아래처럼 입력합니다.
+
+```text
+/invite @봇이름
+```
+
+3. 봇이 채널에 들어왔는지 확인합니다.
+
+이 단계가 빠지면 채널에 메시지를 보내도 Nobie가 반응하지 않을 수 있습니다.
+
+#### 8. Slack 사용자 ID 얻기
+
+방법 A. 프로필 화면에서 얻기
+
+1. Slack에서 본인 프로필을 엽니다.
+2. `More` 또는 `...` 메뉴를 엽니다.
+3. `Copy member ID`를 누릅니다.
+
+예시:
+
+- `U0AR31K88Q3`
+
+이 값이 Nobie 설정의 `slackAllowedUserIds`에 들어가는 사용자 ID입니다.
+
+방법 B. 메시지 링크 / 개발자 도구를 통한 확인
+
+- Slack URL이나 개발자 도구에서도 확인할 수 있지만, 가장 쉬운 방법은 `Copy member ID`입니다.
+
+#### 9. Slack 채널 ID 얻기
+
+방법 A. 채널 URL에서 얻기
+
+1. 대상 채널을 엽니다.
+2. 브라우저 주소창 또는 Slack 링크를 확인합니다.
+
+대개 이런 형태입니다.
+
+```text
+https://app.slack.com/client/TWORKSPACE/C0AR3AS899R
+```
+
+여기서 마지막 `C0AR3AS899R`가 채널 ID입니다.
+
+방법 B. DM / 그룹 DM 구분
+
+- 공개/비공개 채널: 보통 `C...` 또는 `G...`
+- DM: 보통 `D...`
+
+이 값이 Nobie 설정의 `slackAllowedChannelIds`에 들어가는 채널 ID입니다.
+
+#### 10. Slack에서 Nobie가 반응하지 않을 때 확인할 것
+
+아래 순서대로 확인하면 대부분 원인을 찾을 수 있습니다.
+
+1. `Slack Bot Token (xoxb-...)`이 올바른지 확인
+2. `Slack App Token (xapp-...)`이 올바른지 확인
+3. `Socket Mode`가 켜져 있는지 확인
+4. `Event Subscriptions`에 `app_mention`, `message.im`이 들어 있는지 확인
+5. `Interactivity`가 켜져 있는지 확인
+6. 봇이 대상 채널에 초대되어 있는지 확인
+7. `slackAllowedUserIds`, `slackAllowedChannelIds`가 실제 값과 일치하는지 확인
+8. Nobie를 재시작한 뒤 다시 테스트
+
+#### 11. Slack 승인 버튼이 보이지 않거나 동작하지 않을 때
+
+버튼형 승인에는 다음 조건이 모두 맞아야 합니다.
+
+1. Slack 연결이 정상이어야 함
+2. 승인 요청이 새로 생성되어야 함
+3. `Interactivity`가 켜져 있어야 함
+4. Nobie가 최신 코드로 재시작되어 있어야 함
+
+참고:
+
+- 예전 승인 메시지는 새 버튼 UI로 자동 갱신되지 않습니다.
+- 코드를 바꾼 뒤에는 `새 승인 요청`을 다시 발생시켜야 합니다.
+
+### Nobie 설정에 입력하는 값 정리
+
+Telegram:
+
+- `botToken`: BotFather가 준 Bot Token
+- `allowedUserIds`: `getUpdates`의 `message.from.id`
+- `allowedGroupIds`: `getUpdates`의 `message.chat.id`
+
+Slack:
+
+- `slackBotToken`: `xoxb-...`
+- `slackAppToken`: `xapp-...`
+- `slackAllowedUserIds`: Slack `Copy member ID` 결과
+- `slackAllowedChannelIds`: 채널 URL 또는 DM/채널 ID
+
+제한 없이 열고 싶을 때:
+
+- Telegram `allowedUserIds`, `allowedGroupIds`
+- Slack `slackAllowedUserIds`, `slackAllowedChannelIds`
+
+를 비워 두면 구현상 전체 허용으로 동작할 수 있습니다. 다만 운영 환경에서는 필요한 ID만 명시하는 쪽이 안전합니다.
+
 ## 상태 디렉터리와 설정 파일
 
 기본 상태 디렉터리는 다음 우선순위를 따릅니다.

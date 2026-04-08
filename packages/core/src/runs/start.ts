@@ -47,7 +47,7 @@ export interface StartRootRunParams {
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
   workDir?: string | undefined
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   skipIntake?: boolean | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined

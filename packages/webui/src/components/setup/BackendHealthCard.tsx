@@ -190,8 +190,8 @@ export function BackendHealthCard({
           {isBuiltinBackend ? (
             <p className="mt-2 text-xs leading-5 text-stone-500">
               {text(
-                "기본 제공 연결은 여기서 바로 전환됩니다. 서브 에이전트 역할 구분은 화면에 노출하지 않고 시스템 내부에서만 사용합니다.",
-                "Built-in connections switch directly here. Sub-agent role distinctions are kept internal and are not exposed in the UI.",
+                "기본 제공 연결은 여기서 바로 전환됩니다. 내부 역할 구분은 화면에 따로 표시하지 않습니다.",
+                "Built-in connections switch directly here. Internal role distinctions are not shown in the UI.",
               )}
             </p>
           ) : null}

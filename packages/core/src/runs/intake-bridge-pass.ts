@@ -42,7 +42,7 @@ export interface DelegatedRunStartParams {
   targetId?: string | undefined
   targetLabel?: string | undefined
   workDir: string
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   skipIntake?: boolean | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
@@ -87,7 +87,7 @@ export async function runIntakeBridgePass(
     requestGroupId: string
     model: string | undefined
     workDir: string
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     runId: string
     onChunk: RunChunkDeliveryHandler | undefined
     reuseConversationContext: boolean

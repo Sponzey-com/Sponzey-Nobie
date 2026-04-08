@@ -5,7 +5,7 @@ import {
   type MemoryJournalRecordInput,
 } from "../memory/journal.js"
 
-export type RunJournalSource = "webui" | "cli" | "telegram"
+export type RunJournalSource = "webui" | "cli" | "telegram" | "slack"
 
 export interface RunInstructionJournalParams {
   runId: string

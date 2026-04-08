@@ -24,6 +24,9 @@ export function ReviewSummaryPanel({
   const enabledMcpServers = draft.mcp.servers.filter((server) => server.enabled)
   const enabledSkills = draft.skills.items.filter((item) => item.enabled)
   const telegramReady = draft.channels.telegramEnabled && Boolean(draft.channels.botToken.trim())
+  const slackReady = draft.channels.slackEnabled
+    && Boolean(draft.channels.slackBotToken.trim())
+    && Boolean(draft.channels.slackAppToken.trim())
   const { text, displayText, language } = useUiI18n()
 
   const languageLabel = LANGUAGE_LABELS[draft.personal.language]
@@ -101,8 +104,8 @@ export function ReviewSummaryPanel({
           </div>
           <div className="rounded-xl bg-white px-3 py-3 text-sm text-stone-700">
             <div className="font-medium">Slack</div>
-            <div className="mt-1">{text("상태", "Status")}: {text("예정", "Planned")}</div>
-            <div>{text("입력 구조만 준비된 상태입니다.", "Only the input structure is prepared right now.")}</div>
+            <div className="mt-1">{text("상태", "Status")}: {slackReady ? text("준비됨", "Ready") : text("미설정", "Not configured")}</div>
+            <div>{text("입력 채널", "Input Channel")}: {draft.channels.slackEnabled ? text("켜짐", "On") : text("꺼짐", "Off")}</div>
           </div>
         </div>
       </SummaryCard>

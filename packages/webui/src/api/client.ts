@@ -68,6 +68,7 @@ export const api = {
   testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) =>
     getControlPlaneAdapter().testBackend(endpoint, providerType, credentials, authMode),
   testTelegram: (botToken: string) => getControlPlaneAdapter().testTelegram(botToken),
+  testSlack: (botToken: string, appToken: string) => getControlPlaneAdapter().testSlack(botToken, appToken),
   testMcpServer: (server: SetupMcpServerDraft) => getControlPlaneAdapter().testMcpServer(server),
   testSkillPath: (path: string) => getControlPlaneAdapter().testSkillPath(path),
   generateAuthToken: () => getControlPlaneAdapter().generateAuthToken(),
@@ -102,6 +103,16 @@ export const api = {
   cancelRun: (runId: string) =>
     request<{ run: RootRun }>(`/api/runs/${runId}/cancel`, {
       method: "POST",
+    }),
+
+  deleteRunHistory: (runId: string) =>
+    request<{ ok: boolean; deletedRunCount: number }>(`/api/runs/${runId}`, {
+      method: "DELETE",
+    }),
+
+  clearHistoricalRunHistory: () =>
+    request<{ ok: boolean; deletedRunCount: number }>("/api/runs/history/inactive", {
+      method: "DELETE",
     }),
 
   sessions: () => request<{ sessions: Array<{ id: string; updated_at: number; summary: string | null }> }>("/api/agent/sessions"),
@@ -148,6 +159,9 @@ export const api = {
 
   restartTelegram: () =>
     request<{ ok: boolean; status?: string; error?: string }>("/api/settings/telegram/restart", { method: "POST" }),
+
+  restartChannels: () =>
+    request<{ ok: boolean; status?: string; error?: string }>("/api/settings/channels/restart", { method: "POST" }),
 
   testAi: () =>
     request<{ ok: boolean; response?: string; model?: string; error?: string }>(

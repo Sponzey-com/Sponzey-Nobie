@@ -11,7 +11,7 @@ export interface ExecutionChunkStreamParams {
   providerId?: string | undefined
   provider?: AIProvider | undefined
   workDir: string
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   signal: AbortSignal
   toolsEnabled?: boolean | undefined
   isRootRequest: boolean

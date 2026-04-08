@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
+import { stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { testMcpServerConnection, testSkillPath, type SetupMcpServerDraft } from "../../control-plane/setup-extensions.js"
 import {
@@ -99,6 +100,54 @@ export function registerSetupRoute(app: FastifyInstance): void {
     }
   })
 
+  app.post<{ Body: { botToken?: string; appToken?: string } }>("/api/setup/test-slack", { preHandler: authMiddleware }, async (req, reply) => {
+    const botToken = req.body?.botToken?.trim()
+    const appToken = req.body?.appToken?.trim()
+    if (!botToken) {
+      return reply.status(400).send({ ok: false, message: "Slack Bot Token이 비어 있습니다." })
+    }
+    if (!appToken) {
+      return reply.status(400).send({ ok: false, message: "Slack App Token이 비어 있습니다." })
+    }
+
+    try {
+      const authResponse = await fetch("https://slack.com/api/auth.test", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${botToken}` },
+      })
+      const authPayload = await authResponse.json() as { ok?: boolean; error?: string; user?: string; team?: string }
+      if (!authResponse.ok || authPayload.ok !== true) {
+        return reply.status(400).send({
+          ok: false,
+          message: authPayload.error ?? "Slack Bot Token 연결에 실패했습니다.",
+        })
+      }
+
+      const socketResponse = await fetch("https://slack.com/api/apps.connections.open", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${appToken}` },
+      })
+      const socketPayload = await socketResponse.json() as { ok?: boolean; error?: string; url?: string }
+      if (!socketResponse.ok || socketPayload.ok !== true || !socketPayload.url) {
+        return reply.status(400).send({
+          ok: false,
+          message: socketPayload.error ?? "Slack App Token 연결에 실패했습니다.",
+        })
+      }
+
+      const label = authPayload.team || authPayload.user || "Slack"
+      return {
+        ok: true,
+        message: `Slack 연결 성공: ${label}. 아직 반응이 없다면 Slack 앱에 Event Subscriptions(app_mention, message.im)과 Socket Mode가 켜져 있고, 봇이 대상 채널에 초대되었는지 확인해 주세요.`,
+      }
+    } catch (error) {
+      return reply.status(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  })
+
   app.post<{ Body: { server: SetupMcpServerDraft } }>("/api/setup/test-mcp-server", { preHandler: authMiddleware }, async (req, reply) => {
     const server = req.body?.server
     if (!server || typeof server !== "object") {
@@ -125,6 +174,7 @@ export function registerSetupRoute(app: FastifyInstance): void {
   })
 
   app.post("/api/setup/reset", { preHandler: authMiddleware }, async () => {
+    stopActiveSlackChannel()
     stopActiveTelegramChannel()
     return resetSetupEnvironment()
   })

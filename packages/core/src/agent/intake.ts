@@ -203,7 +203,7 @@ function extractLiteralDeliveryText(text: string): string | null {
 
 function buildStructuredRequestEnvironment(
   sessionId: string | undefined,
-  source: "webui" | "cli" | "telegram" | undefined,
+  source: "webui" | "cli" | "telegram" | "slack" | undefined,
 ): StructuredRequestEnvironment {
   const session = sessionId ? getSession(sessionId) : undefined
   const resolvedSource = session?.source ?? source ?? "unknown"
@@ -233,6 +233,13 @@ function buildStructuredRequestEnvironment(
     return {
       destination: `webui session ${sessionId ?? "unknown"}`,
       contextLines: [`Execution channel: webui session ${sessionId ?? "unknown"}`],
+    }
+  }
+
+  if (resolvedSource === "slack") {
+    return {
+      destination: `slack session ${sessionId ?? "unknown"}`,
+      contextLines: [`Execution channel: slack session ${sessionId ?? "unknown"}`],
     }
   }
 
@@ -614,7 +621,7 @@ export async function analyzeTaskIntake(params: {
   requestGroupId?: string
   model?: string
   workDir?: string
-  source?: "webui" | "cli" | "telegram"
+  source?: "webui" | "cli" | "telegram" | "slack"
 }): Promise<TaskIntakeResult | null> {
   const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
   const environment = buildStructuredRequestEnvironment(params.sessionId, params.source)
@@ -1042,7 +1049,7 @@ function buildConversationContext(
   requestGroupId: string | undefined,
   latestUserMessage: string,
   normalizedEnglishMessage: string,
-  source: "webui" | "cli" | "telegram" | undefined,
+  source: "webui" | "cli" | "telegram" | "slack" | undefined,
 ): string {
   const lines: string[] = []
   const environment = buildStructuredRequestEnvironment(sessionId, source)

@@ -45,6 +45,14 @@ export interface TelegramConfig {
   allowedGroupIds: number[]
 }
 
+export interface SlackConfig {
+  enabled: boolean
+  botToken: string
+  appToken: string
+  allowedUserIds: string[]
+  allowedChannelIds: string[]
+}
+
 export interface WebuiConfig {
   enabled: boolean
   port: number
@@ -138,6 +146,7 @@ export interface NobieConfig {
   }
   security: SecurityConfig
   telegram?: TelegramConfig
+  slack?: SlackConfig
   webui: WebuiConfig
   scheduler: SchedulerConfig
   mqtt: MqttConfig
@@ -179,6 +188,13 @@ export const DEFAULT_CONFIG: NobieConfig = {
     auth: {
       enabled: false,
     },
+  },
+  slack: {
+    enabled: false,
+    botToken: "",
+    appToken: "",
+    allowedUserIds: [],
+    allowedChannelIds: [],
   },
   scheduler: {
     enabled: true,

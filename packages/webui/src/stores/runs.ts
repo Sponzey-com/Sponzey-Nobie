@@ -16,6 +16,8 @@ interface RunsState {
   selectRun: (runId: string) => void
   createRun: (message: string, sessionId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
   cancelRun: (runId: string) => Promise<void>
+  deleteRunHistory: (runId: string) => Promise<void>
+  clearHistoricalRunHistory: () => Promise<void>
   upsertRun: (run: RootRun) => void
   replaceRun: (run: RootRun) => void
 }
@@ -125,6 +127,17 @@ export const useRunsStore = create<RunsState>((set, get) => {
     cancelRun: async (runId) => {
       const response = await api.cancelRun(runId)
       get().replaceRun(response.run)
+    },
+    deleteRunHistory: async (runId) => {
+      await api.deleteRunHistory(runId)
+      set((state) => ({
+        selectedRunId: state.selectedRunId === runId ? null : state.selectedRunId,
+      }))
+      await get().refresh()
+    },
+    clearHistoricalRunHistory: async () => {
+      await api.clearHistoricalRunHistory()
+      await get().refresh()
     },
     upsertRun: (run) =>
       set((state) => {

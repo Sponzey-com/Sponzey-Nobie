@@ -117,6 +117,10 @@ export class ToolDispatcher {
     return this.tools.get(name)
   }
 
+  isToolAvailableForSource(tool: AnyTool, source: ToolContext["source"]): boolean {
+    return tool.availableSources == null || tool.availableSources.includes(source)
+  }
+
   async dispatch(
     name: string,
     params: Record<string, unknown>,
@@ -136,6 +140,14 @@ export class ToolDispatcher {
         success: false,
         output: `Unknown tool: "${name}"`,
         error: `Tool "${name}" is not registered`,
+      }
+    }
+
+    if (!this.isToolAvailableForSource(tool, ctx.source)) {
+      return {
+        success: false,
+        output: `${name} 도구는 ${ctx.source} 채널에서는 사용할 수 없습니다.`,
+        error: "TOOL_SOURCE_NOT_SUPPORTED",
       }
     }
 

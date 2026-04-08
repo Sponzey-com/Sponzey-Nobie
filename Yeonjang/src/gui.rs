@@ -693,6 +693,22 @@ impl YeonjangGuiApp {
                         color_success_text(),
                     );
                 }
+                RuntimeEvent::Reconnecting(message) => {
+                    self.connection_attempted = true;
+                    self.connection_state = ConnectionState::Disconnected;
+                    self.last_error = message.clone();
+                    self.set_status(
+                        format!(
+                            "{}: {message}",
+                            t(
+                                self.lang(),
+                                "브로커 연결이 끊겨 다시 연결하는 중입니다",
+                                "Broker connection lost. Reconnecting"
+                            )
+                        ),
+                        color_warn_text(),
+                    );
+                }
                 RuntimeEvent::Disconnected(message) => {
                     self.stop_runtime();
                     self.connection_state = ConnectionState::Disconnected;

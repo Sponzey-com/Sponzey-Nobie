@@ -11,6 +11,8 @@ import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { ReviewSummaryPanel } from "../components/setup/ReviewSummaryPanel"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
 import { SkillSetupForm } from "../components/setup/SkillSetupForm"
+import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
+import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
 import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
 import { SetupAssistPanel } from "../components/setup/SetupAssistPanel"
 import { SetupExpandableSection } from "../components/setup/SetupExpandableSection"
@@ -364,7 +366,7 @@ export function SetupPage() {
 
     const nextDraft = mergeSetupStepDraft(draft, activeDraft, state.currentStep)
     const success = await saveDraftSnapshot(nextDraft, {
-      syncTelegramRuntime: state.currentStep === "channels",
+      syncChannelRuntime: state.currentStep === "channels",
     })
 
     if (success) {
@@ -436,7 +438,10 @@ export function SetupPage() {
               <StatCard label="현재 단계" value={state.completed ? "설정 완료" : "환영"} />
               <StatCard label="설정된 AI" value={String(configuredBackends.length)} />
               <StatCard label="사용 중 AI" value={String(enabledBackends.length)} />
-              <StatCard label="채널 준비" value={activeDraft.channels.botToken.trim() ? "입력됨" : "미입력"} />
+              <StatCard
+                label="채널 준비"
+                value={activeDraft.channels.botToken.trim() || (activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim()) ? "입력됨" : "미입력"}
+              />
             </div>
             <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="rounded-3xl border border-stone-200 bg-white p-6">
@@ -646,16 +651,22 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="대화 채널을 연결합니다"
-              description="메신저에서 Nobie와 대화하려면 채널 정보를 입력하고 연결 확인을 해야 합니다. 현재는 Telegram을 우선 지원합니다."
+              description="메신저에서 Nobie와 대화하려면 채널 정보를 입력하고 연결 확인을 해야 합니다. Telegram과 Slack을 모두 연결할 수 있습니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
             ) : null}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label="준비된 채널" value={activeDraft.channels.botToken.trim() ? "1" : "0"} />
-              <StatCard label="사용 중 채널" value={activeDraft.channels.telegramEnabled ? "1" : "0"} />
-              <StatCard label="지금 연결 가능" value="Telegram" />
-              <StatCard label="추가 예정" value="Slack" />
+              <StatCard
+                label="준비된 채널"
+                value={String(Number(Boolean(activeDraft.channels.botToken.trim())) + Number(Boolean(activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim())))}
+              />
+              <StatCard
+                label="사용 중 채널"
+                value={String(Number(activeDraft.channels.telegramEnabled) + Number(activeDraft.channels.slackEnabled))}
+              />
+              <StatCard label="바로 연결 가능" value="Telegram / Slack" />
+              <StatCard label="입력 방식" value="Bot Token" />
             </div>
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -681,46 +692,48 @@ export function SetupPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-base font-semibold text-stone-900">Slack</div>
-                    <div className="mt-1 text-sm leading-6 text-stone-600">회사나 팀용 메신저 연결을 위한 준비 영역입니다. 이번 단계에서는 입력 구조만 먼저 보여줍니다.</div>
+                    <div className="mt-1 text-sm leading-6 text-stone-600">회사나 팀용 메신저로 Nobie와 대화할 때 쓰는 채널입니다.</div>
                   </div>
-                  <div className="rounded-full border border-stone-200 bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-700">
-                    예정
+                  <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${activeDraft.channels.slackEnabled && activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim()
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-stone-200 bg-stone-100 text-stone-700"}`}>
+                    {activeDraft.channels.slackEnabled && activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim() ? "준비됨" : "미설정"}
                   </div>
                 </div>
               </div>
             </div>
             {currentStep.status === "error" && currentStep.reason ? (
-              <RuntimeNotice tone="error" title="Telegram 런타임 오류" message={currentStep.reason} />
+              <RuntimeNotice tone="error" title="채널 런타임 오류" message={currentStep.reason} />
             ) : currentStep.reason ? (
-              <RuntimeNotice tone="info" title="Telegram 상태" message={currentStep.reason} />
+              <RuntimeNotice tone="info" title="채널 상태" message={currentStep.reason} />
             ) : null}
-            <TelegramSettingsForm
-              value={activeDraft.channels}
-              onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
-              errors={shouldShowValidation ? {
-                telegramEnabled: currentValidation.fieldErrors.telegramEnabled,
-                botToken: currentValidation.fieldErrors.botToken,
-              } : undefined}
-            />
-            <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
-            <SetupExpandableSection
-              title="Slack 준비 보기"
-              description="아직 실제 연결은 준비 중입니다. 나중에 어떤 정보를 입력하게 될지 먼저 확인할 수 있습니다."
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-stone-700">봇 토큰 (Bot Token)</label>
-                  <input className="input" disabled placeholder="Slack 연결 단계에서 입력합니다" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-stone-700">앱 토큰 (App Token)</label>
-                  <input className="input" disabled placeholder="Slack 연결 단계에서 입력합니다" />
-                </div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <div className="space-y-4">
+                <TelegramSettingsForm
+                  value={activeDraft.channels}
+                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+                  errors={shouldShowValidation ? {
+                    telegramEnabled: currentValidation.fieldErrors.telegramEnabled,
+                    botToken: currentValidation.fieldErrors.botToken,
+                  } : undefined}
+                />
+                <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
               </div>
-              <div className="mt-4 rounded-2xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
-                Slack은 입력 구조와 설명만 먼저 보여주고, 실제 연결과 런타임 시작은 다음 단계에서 구현합니다.
+              <div className="space-y-4">
+                <SlackSettingsForm
+                  value={activeDraft.channels}
+                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+                  errors={shouldShowValidation ? {
+                    slackBotToken: currentValidation.fieldErrors.slackBotToken,
+                    slackAppToken: currentValidation.fieldErrors.slackAppToken,
+                  } : undefined}
+                />
+                <SlackCheckPanel
+                  botToken={activeDraft.channels.slackBotToken}
+                  appToken={activeDraft.channels.slackAppToken}
+                />
               </div>
-            </SetupExpandableSection>
+            </div>
           </div>
         )
 
@@ -1033,6 +1046,7 @@ function createSetupSteps(
 ): SetupStepMeta[] {
   const t = (korean: string, english: string) => pickUiText(language, korean, english)
   const telegramCapability = capabilities.find((item) => item.key === "telegram.channel")
+  const slackCapability = capabilities.find((item) => item.key === "slack.channel")
   const hasPersonalInfo = validateSetupStep("personal", draft).valid
   const hasConfiguredBackend = validateSetupStep("ai_backends", draft).valid
   const hasConfiguredMcpServers = draft.mcp.servers.length > 0
@@ -1130,7 +1144,7 @@ function createSetupSteps(
       "channels",
       t("대화 채널 (Communication)", "Communication"),
       t("메신저에서 Nobie와 대화할 채널을 연결합니다.", "Connect the messaging channels used to talk with Nobie."),
-      telegramCapability,
+      telegramCapability ?? slackCapability,
       draft.channels,
       true,
       [
@@ -1215,7 +1229,13 @@ function withSetupChannelCapability(
   label: string,
   description: string,
   capability: FeatureCapability | undefined,
-  channels: { telegramEnabled: boolean; botToken: string },
+  channels: {
+    telegramEnabled: boolean
+    botToken: string
+    slackEnabled: boolean
+    slackBotToken: string
+    slackAppToken: string
+  },
   required: boolean,
   highlights: string[],
   completed: boolean,
@@ -1251,8 +1271,10 @@ function withSetupChannelCapability(
   }
 
   const hasTelegramConfig = Boolean(channels.botToken.trim())
-  const reason = hasTelegramConfig && channels.telegramEnabled && capability.reason?.includes("런타임이 시작되지 않았습니다.")
-    ? t("Telegram 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다.", "Telegram details are saved. Check the channel details for runtime status.")
+  const hasSlackConfig = Boolean(channels.slackBotToken.trim() && channels.slackAppToken.trim())
+  const hasSavedChannel = (hasTelegramConfig && channels.telegramEnabled) || (hasSlackConfig && channels.slackEnabled)
+  const reason = hasSavedChannel && capability.reason?.includes("런타임이 시작되지 않았습니다.")
+    ? t("채널 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다.", "Channel details are saved. Check the channel details for runtime status.")
     : undefined
 
   return {

@@ -8,6 +8,7 @@ export type CapabilityArea =
   | "ai"
   | "security"
   | "telegram"
+  | "slack"
   | "scheduler"
   | "plugins"
   | "memory"

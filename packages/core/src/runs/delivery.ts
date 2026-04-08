@@ -6,7 +6,7 @@ import { eventBus } from "../events/index.js"
 
 export interface SuccessfulFileDelivery {
   toolName: string
-  channel: "telegram" | "webui"
+  channel: "telegram" | "webui" | "slack"
   filePath: string
   caption?: string
   messageId?: number
@@ -35,7 +35,7 @@ export type RunChunkDeliveryHandler =
   | ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | void> | ChunkDeliveryReceipt | void)
   | undefined
 
-export type DeliverySource = "webui" | "cli" | "telegram"
+export type DeliverySource = "webui" | "cli" | "telegram" | "slack"
 
 export interface AssistantTextDeliveryReceipt {
   persisted: boolean
@@ -85,6 +85,8 @@ export function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDeliver
     ? "텔레그램"
     : last.channel === "webui"
       ? "WebUI"
+      : last.channel === "slack"
+        ? "Slack"
       : "채널"
   return `${channelLabel} 파일 전달 완료: ${displayHomePath(last.filePath)}`
 }

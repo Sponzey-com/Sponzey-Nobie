@@ -6,7 +6,7 @@ export interface ToolContext {
   requestGroupId?: string
   workDir: string
   userMessage: string
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   allowWebAccess: boolean
   onProgress: (message: string) => void
   signal: AbortSignal
@@ -14,7 +14,7 @@ export interface ToolContext {
 
 export interface ArtifactDeliveryResultDetails {
   kind: "artifact_delivery"
-  channel: "telegram" | "webui"
+  channel: "telegram" | "webui" | "slack"
   filePath: string
   caption?: string
   mimeType?: string
@@ -27,7 +27,7 @@ export function isArtifactDeliveryResultDetails(value: unknown): value is Artifa
 
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
   return candidate.kind === "artifact_delivery"
-    && (candidate.channel === "telegram" || candidate.channel === "webui")
+    && (candidate.channel === "telegram" || candidate.channel === "webui" || candidate.channel === "slack")
     && typeof candidate.filePath === "string"
     && typeof candidate.size === "number"
     && typeof candidate.source === "string"
@@ -51,6 +51,7 @@ export interface AgentTool<TParams = unknown> {
   }
   riskLevel: RiskLevel
   requiresApproval: boolean
+  availableSources?: ToolContext["source"][]
   execute(params: TParams, ctx: ToolContext): Promise<ToolResult>
 }
 

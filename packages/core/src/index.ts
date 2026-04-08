@@ -75,7 +75,7 @@ export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/b
 export type { MqttBrokerSnapshot } from "./mqtt/broker.js"
 
 // Channels
-export { startChannels, TelegramChannel } from "./channels/index.js"
+export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.js"
 
 // Runs
 export { startRootRun } from "./runs/start.js"
@@ -97,6 +97,7 @@ import { registerBuiltinTools as _registerBuiltinTools } from "./tools/index.js"
 import { startServer as _startServer } from "./api/server.js"
 import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js"
 import { startMqttBroker as _startMqttBroker, stopMqttBroker as _stopMqttBroker } from "./mqtt/broker.js"
+import { startChannels as _startChannels } from "./channels/index.js"
 
 export function bootstrap(): void {
   _loadConfig()
@@ -113,6 +114,7 @@ export async function bootstrapRuntime(): Promise<void> {
 export async function bootstrapAsync(): Promise<void> {
   await bootstrapRuntime()
   await _startMqttBroker()
+  await _startChannels()
   try {
     await _startServer()
   } catch (error) {

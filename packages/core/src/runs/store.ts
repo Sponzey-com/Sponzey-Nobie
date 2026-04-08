@@ -208,6 +208,53 @@ function hydrateRun(row: RootRunRow): RootRun {
   }
 }
 
+function buildSqlPlaceholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ")
+}
+
+function resolveLineageKey(row: Pick<RootRunRow, "id" | "request_group_id" | "lineage_root_run_id">): string {
+  return row.lineage_root_run_id || row.request_group_id || row.id
+}
+
+function selectRunRowsForLineage(lineageKey: string): RootRunRow[] {
+  return getDb()
+    .prepare<[string], RootRunRow>(
+      `SELECT *
+       FROM root_runs
+       WHERE COALESCE(lineage_root_run_id, request_group_id, id) = ?
+       ORDER BY created_at ASC, updated_at ASC`,
+    )
+    .all(lineageKey)
+}
+
+function deleteRunRows(params: { runIds: string[]; requestGroupIds: string[] }): number {
+  const { runIds, requestGroupIds } = params
+  if (runIds.length === 0) return 0
+
+  for (const runId of runIds) {
+    const controller = activeRunControllers.get(runId)
+    if (controller) controller.abort()
+    clearActiveRunController(runId)
+  }
+
+  const db = getDb()
+  const tx = db.transaction(() => {
+    const runPlaceholders = buildSqlPlaceholders(runIds.length)
+    db.prepare(`DELETE FROM messages WHERE root_run_id IN (${runPlaceholders})`).run(...runIds)
+    db.prepare(`DELETE FROM channel_message_refs WHERE root_run_id IN (${runPlaceholders})`).run(...runIds)
+
+    if (requestGroupIds.length > 0) {
+      const requestGroupPlaceholders = buildSqlPlaceholders(requestGroupIds.length)
+      db.prepare(`DELETE FROM channel_message_refs WHERE request_group_id IN (${requestGroupPlaceholders})`).run(...requestGroupIds)
+    }
+
+    db.prepare(`DELETE FROM root_runs WHERE id IN (${runPlaceholders})`).run(...runIds)
+  })
+
+  tx()
+  return runIds.length
+}
+
 export function listRootRuns(limit = 50): RootRun[] {
   return getDb()
     .prepare<[number], RootRunRow>(
@@ -783,4 +830,42 @@ export function cancelRootRun(runId: string, options: CancelRootRunOptions = {})
   }
 
   return getRootRun(runId) ?? current
+}
+
+export function deleteRunHistory(runId: string): { deletedRunCount: number } | undefined {
+  const target = getDb()
+    .prepare<[string], RootRunRow>("SELECT * FROM root_runs WHERE id = ?")
+    .get(runId)
+  if (!target) return undefined
+
+  const lineageKey = resolveLineageKey(target)
+  const rows = selectRunRowsForLineage(lineageKey)
+  const runIds = rows.map((row) => row.id)
+  const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value): value is string => typeof value === "string" && value.length > 0))]
+
+  return {
+    deletedRunCount: deleteRunRows({ runIds, requestGroupIds }),
+  }
+}
+
+export function clearHistoricalRunHistory(): { deletedRunCount: number } {
+  const rows = getDb()
+    .prepare<[], RootRunRow>(
+      `SELECT *
+       FROM root_runs
+       WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted')
+       ORDER BY updated_at DESC`,
+    )
+    .all()
+
+  if (rows.length === 0) {
+    return { deletedRunCount: 0 }
+  }
+
+  const runIds = rows.map((row) => row.id)
+  const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value): value is string => typeof value === "string" && value.length > 0))]
+
+  return {
+    deletedRunCount: deleteRunRows({ runIds, requestGroupIds }),
+  }
 }

@@ -64,7 +64,7 @@ export interface TaskDeliveryModel {
   taskId: string
   status: TaskDeliveryStatus
   sourceAttemptId?: string
-  channel?: "telegram" | "webui" | "cli" | "unknown"
+  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
   summary?: string
   artifact?: TaskArtifactModel
 }

@@ -10,6 +10,8 @@ import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
+import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
+import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
 import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
 import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
@@ -141,7 +143,7 @@ export function SettingsPage() {
   }
 
   async function handleSave() {
-    await saveDraftSnapshot(activeDraft, { syncTelegramRuntime: channelsDirty })
+    await saveDraftSnapshot(activeDraft, { syncChannelRuntime: channelsDirty })
     setEditorVersion((current) => current + 1)
   }
 
@@ -302,15 +304,29 @@ export function SettingsPage() {
         return (
           <div key={`channels-${editorVersion}`} className="space-y-4">
             {activeCapability?.status === "error" && activeCapability.reason ? (
-              <RuntimeNotice title={text("Telegram 런타임 오류", "Telegram Runtime Error")} message={activeCapability.reason} tone="error" />
+              <RuntimeNotice title={text("채널 런타임 오류", "Channel Runtime Error")} message={activeCapability.reason} tone="error" />
             ) : activeCapability?.reason ? (
-              <RuntimeNotice title={text("Telegram 상태", "Telegram Status")} message={activeCapability.reason} tone="info" />
+              <RuntimeNotice title={text("채널 상태", "Channel Status")} message={activeCapability.reason} tone="info" />
             ) : null}
-            <TelegramSettingsForm
-              value={activeDraft.channels}
-              onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
-            />
-            <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
+            <div className="grid gap-4 xl:grid-cols-2">
+              <div className="space-y-4">
+                <TelegramSettingsForm
+                  value={activeDraft.channels}
+                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+                />
+                <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
+              </div>
+              <div className="space-y-4">
+                <SlackSettingsForm
+                  value={activeDraft.channels}
+                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+                />
+                <SlackCheckPanel
+                  botToken={activeDraft.channels.slackBotToken}
+                  appToken={activeDraft.channels.slackAppToken}
+                />
+              </div>
+            </div>
           </div>
         )
 
@@ -362,7 +378,7 @@ export function SettingsPage() {
             <ActiveInstructionsPanel />
             <PlannedState
               title={text("고급 제어", "Advanced Controls")}
-              description={text("고급 메모리와 시맨틱 검색 제어면은 이후 단계에서 연결합니다.", "Advanced memory and semantic search controls will be connected in a later phase.")}
+              description={text("고급 메모리와 시맨틱 검색 제어는 준비 중입니다.", "Advanced memory and semantic search controls are coming soon.")}
             />
           </div>
         )
@@ -435,7 +451,7 @@ export function SettingsPage() {
                     {capability ? <CapabilityBadge status={capability.status} /> : null}
                   </div>
                   <div className={`mt-2 text-xs leading-5 ${tab === item.id ? "text-stone-300" : "text-stone-500"}`}>
-                    {capability?.reason ? displayText(capability.reason) : capability?.label ?? "Phase 0002"}
+                    {capability?.reason ? displayText(capability.reason) : capability?.label ?? text("준비 중", "Coming soon")}
                   </div>
                 </button>
               )
@@ -471,14 +487,15 @@ function resolveSettingsCapability(
   if (!capability) return capability
 
   if (tabId === "channels") {
-    if (capability.status === "error") return capability
     const hasTelegramConfig = Boolean(draft.channels.botToken.trim())
+    const hasSlackConfig = Boolean(draft.channels.slackBotToken.trim() && draft.channels.slackAppToken.trim())
+    if (capability.status === "error" && !hasSlackConfig) return capability
     return {
       ...capability,
       status: "ready" as const,
-      reason: hasTelegramConfig && draft.channels.telegramEnabled && capability.reason?.includes("런타임이 시작되지 않았습니다.")
-        ? "Telegram 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다."
-        : undefined,
+      reason: hasTelegramConfig || hasSlackConfig
+        ? "채널 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다."
+        : "Telegram 또는 Slack 중 하나를 연결할 수 있습니다.",
     }
   }
 

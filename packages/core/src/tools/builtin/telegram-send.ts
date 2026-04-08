@@ -91,6 +91,7 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
   },
   riskLevel: "safe",
   requiresApproval: false,
+  availableSources: ["telegram"],
 
   async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const filePath = params.filePath.replace(/^~/, homedir())
