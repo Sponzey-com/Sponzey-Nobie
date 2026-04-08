@@ -27,18 +27,18 @@ function TaskMonitorBadges({
   return (
     <div className="flex flex-wrap gap-2">
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-        {text("시도", "Attempts")} {attemptCount}
+        {text("실행", "Runs")} {attemptCount}
       </span>
       {internalAttemptCount > 0 ? (
         <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
-          {text("내부 시도", "Internal")} {internalAttemptCount}
+          {text("내부 재시도", "Internal retries")} {internalAttemptCount}
         </span>
       ) : null}
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-        {text("체크", "Checklist")} {checklistLabel}
+        {text("진행 단계", "Progress")} {checklistLabel}
       </span>
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-        {text("전달", "Delivery")} {deliveryLabel}
+        {text("결과 전달", "Result delivery")} {deliveryLabel}
       </span>
     </div>
   )
@@ -46,7 +46,16 @@ function TaskMonitorBadges({
 
 export function RunsPage() {
   const { text, displayText } = useUiI18n()
-  const { runs, tasks, selectedRunId, ensureInitialized, selectRun, cancelRun } = useRunsStore()
+  const {
+    runs,
+    tasks,
+    selectedRunId,
+    ensureInitialized,
+    selectRun,
+    cancelRun,
+    deleteRunHistory,
+    clearHistoricalRunHistory,
+  } = useRunsStore()
 
   useEffect(() => {
     ensureInitialized()
@@ -59,15 +68,55 @@ export function RunsPage() {
   const selectedRequestText = selectedCard?.requestText ?? selectedRun?.prompt ?? ""
   const selectedInternalAttempts = selectedCard?.internalAttempts ?? []
   const selectedDeliveryLabel = selectedCard ? describeTaskDeliveryStatus(selectedCard.delivery.status, text) : ""
+  const historicalCards = cards.filter((card) =>
+    ["completed", "failed", "cancelled", "interrupted"].includes(card.representative.status),
+  )
+  const canDeleteSelected = Boolean(selectedRun && ["completed", "failed", "cancelled", "interrupted"].includes(selectedRun.status))
+
+  async function handleDeleteSelected(): Promise<void> {
+    if (!selectedRun) return
+    const confirmed = window.confirm(
+      text(
+        "선택한 실행 기록을 정리할까요? 관련된 하위 실행과 전달 기록도 함께 지워집니다.",
+        "Clear the selected activity record? Related child runs and delivery records will also be removed.",
+      ),
+    )
+    if (!confirmed) return
+    await deleteRunHistory(selectedRun.id)
+  }
+
+  async function handleClearHistoricalHistory(): Promise<void> {
+    if (historicalCards.length === 0) return
+    const confirmed = window.confirm(
+      text(
+        "완료된 이전 실행 기록을 모두 정리할까요? 현재 진행 중인 항목은 남겨둡니다.",
+        "Clear all completed past activity records? Active items will be kept.",
+      ),
+    )
+    if (!confirmed) return
+    await clearHistoricalRunHistory()
+  }
 
   return (
     <div className="flex h-full overflow-hidden bg-stone-100">
       <div className="w-[28rem] shrink-0 border-r border-stone-200 bg-white">
         <div className="border-b border-stone-200 px-5 py-5">
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Task Monitor</div>
-          <div className="mt-2 text-xl font-semibold text-stone-900">{text("태스크 상태 모니터", "Task monitor")}</div>
-          <div className="mt-2 text-xs leading-5 text-stone-500">
-            {text("모든 태스크는 현재 설정된 AI 연결 하나를 공유하고, root/sub-task 단위로만 나뉩니다.", "All tasks share the current single AI connection and are split only by root or sub-task units.")}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{text("실행 현황", "Activity Monitor")}</div>
+              <div className="mt-2 text-xl font-semibold text-stone-900">{text("실행 현황", "Activity monitor")}</div>
+              <div className="mt-2 text-xs leading-5 text-stone-500">
+                {text("현재 진행 중이거나 최근에 처리된 항목을 한곳에서 확인합니다. 모두 같은 AI 연결을 공유합니다.", "Review active and recent items in one place. They all share the same AI connection.")}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleClearHistoricalHistory()}
+              disabled={historicalCards.length === 0}
+              className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+            >
+              {text("이전 기록 정리", "Clear past items")}
+            </button>
           </div>
         </div>
         <div className="h-[calc(100%-6.25rem)] overflow-y-auto p-4">
@@ -103,6 +152,16 @@ export function RunsPage() {
                 run={selectedRun}
                 extraContent={(
                   <div className="space-y-4">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteSelected()}
+                        disabled={!canDeleteSelected}
+                        className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+                      >
+                        {text("이 항목 정리", "Clear this item")}
+                      </button>
+                    </div>
                     <TaskChecklistPanel
                       checklist={selectedCard?.checklist ?? {
                         items: [],
@@ -123,27 +182,27 @@ export function RunsPage() {
                     {selectedCard?.delivery.artifact ? (
                       <TaskArtifactPanel
                         artifact={selectedCard.delivery.artifact}
-                        title={text("전달 결과물", "Delivered artifact")}
+                        title={text("전달된 파일", "Delivered file")}
                         text={text}
                       />
                     ) : null}
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("태스크 시도", "Task attempts")}</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("실행 횟수", "Run count")}</div>
                         <div className="mt-2 text-sm font-medium text-stone-900">{selectedCard?.attempts.length ?? 0}</div>
                       </div>
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("내부 시도", "Internal attempts")}</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("내부 재시도", "Internal retries")}</div>
                         <div className="mt-2 text-sm font-medium text-stone-900">{selectedInternalAttempts.length}</div>
                       </div>
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("전달 상태", "Delivery status")}</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("결과 전달 상태", "Result delivery status")}</div>
                         <div className="mt-2 text-sm font-medium text-stone-900">{selectedDeliveryLabel}</div>
                       </div>
                     </div>
                     {selectedInternalAttempts.length > 0 ? (
                       <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-                        <div className="text-xs font-semibold text-stone-500">{text("내부 디버그 시도", "Internal debug attempts")}</div>
+                        <div className="text-xs font-semibold text-stone-500">{text("내부 재시도 기록", "Internal retry history")}</div>
                         <div className="mt-3 space-y-2">
                           {selectedInternalAttempts.map((attempt) => (
                             <div key={attempt.id} className="rounded-xl border border-stone-200 bg-white px-3 py-2.5">
@@ -160,7 +219,7 @@ export function RunsPage() {
                 )}
               />
               <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                <div className="mb-4 text-sm font-semibold text-stone-900">{text("단계 타임라인", "Step timeline")}</div>
+                <div className="mb-4 text-sm font-semibold text-stone-900">{text("진행 단계", "Progress steps")}</div>
                 <RunStepTimeline steps={selectedRun.steps} />
               </div>
             </div>
@@ -180,8 +239,8 @@ export function RunsPage() {
           </div>
         ) : (
           <EmptyState
-            title={text("표시할 태스크가 없습니다", "No tasks to display")}
-            description={text("채팅에서 메시지를 보내면 태스크 이력이 여기에 표시됩니다.", "Tasks created from chat will appear here.")}
+            title={text("표시할 항목이 없습니다", "No items to display")}
+            description={text("채팅에서 메시지를 보내면 실행 이력이 여기에 표시됩니다.", "Items created from chat will appear here.")}
           />
         )}
       </div>

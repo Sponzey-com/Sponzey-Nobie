@@ -5,6 +5,8 @@ import { getConfig, reloadConfig } from "../../config/index.js"
 import { getProvider, getDefaultModel } from "../../ai/index.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
+import { getActiveSlackChannel, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
+import { startChannels } from "../../channels/index.js"
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js"
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
@@ -13,6 +15,7 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
   const telegramChannel = getActiveTelegramChannel()
+  const slackChannel = getActiveSlackChannel()
   const connection = cfg.ai.connection
   return {
     ai: {
@@ -47,6 +50,14 @@ function buildLegacySettingsSnapshot() {
       allowedUserIds: cfg.telegram?.allowedUserIds ?? [],
       allowedGroupIds: cfg.telegram?.allowedGroupIds ?? [],
       isRunning: telegramChannel !== null,
+    },
+    slack: {
+      enabled: cfg.slack?.enabled ?? false,
+      hasBotToken: Boolean(cfg.slack?.botToken),
+      hasAppToken: Boolean(cfg.slack?.appToken),
+      allowedUserIds: cfg.slack?.allowedUserIds ?? [],
+      allowedChannelIds: cfg.slack?.allowedChannelIds ?? [],
+      isRunning: slackChannel !== null,
     },
     mqtt: {
       enabled: cfg.mqtt.enabled,
@@ -225,6 +236,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
   )
 
   app.post("/api/settings/reset", { preHandler: authMiddleware }, async () => {
+    stopActiveSlackChannel()
     stopActiveTelegramChannel()
     const snapshot = resetSetupEnvironment()
     try {
@@ -272,6 +284,34 @@ export function registerSettingsRoute(app: FastifyInstance): void {
       return { ok: true, status: "started" }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      setTelegramRuntimeError(message)
+      return reply.status(500).send({ ok: false, error: message })
+    }
+  })
+
+  app.post("/api/settings/channels/restart", { preHandler: authMiddleware }, async (_req, reply) => {
+    const cfg = reloadConfig()
+
+    try {
+      stopActiveSlackChannel()
+      stopActiveTelegramChannel()
+      setSlackRuntimeError(null)
+      setTelegramRuntimeError(null)
+
+      const hasTelegramConfig = Boolean(cfg.telegram?.botToken)
+      const hasSlackConfig = Boolean(cfg.slack?.botToken && cfg.slack?.appToken)
+      if ((cfg.telegram?.enabled && !hasTelegramConfig) || (cfg.slack?.enabled && !hasSlackConfig)) {
+        return reply.status(400).send({
+          ok: false,
+          error: "활성화된 채널의 필수 토큰이 비어 있습니다.",
+        })
+      }
+
+      await startChannels()
+      return { ok: true, status: "started" }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setSlackRuntimeError(message)
       setTelegramRuntimeError(message)
       return reply.status(500).send({ ok: false, error: message })
     }

@@ -90,7 +90,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   ) : capability?.reason ? (
                     <div className="mt-2 line-clamp-2 text-xs leading-5 text-stone-500">{displayText(capability.reason)}</div>
                   ) : (
-                    <div className="mt-2 text-xs text-stone-500">{capability?.label ?? "Phase 0001"}</div>
+                    <div className="mt-2 text-xs text-stone-500">{capability?.label ?? pickUiText(uiLanguage, "준비 중", "Coming soon")}</div>
                   )}
                 </Link>
               )
@@ -99,9 +99,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="border-t border-white/10 px-6 py-4">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">Phase</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">{pickUiText(uiLanguage, "상태", "Status")}</div>
           <div className="mt-2 text-sm text-stone-300">
-            {pickUiText(uiLanguage, "0002 · 로컬 제어 패널", "0002 · Local Control Plane")}
+            {pickUiText(uiLanguage, "로컬 제어 패널", "Local Control Panel")}
           </div>
         </div>
       </aside>

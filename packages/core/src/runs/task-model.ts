@@ -67,7 +67,7 @@ export interface TaskDeliveryModel {
   taskId: string
   status: TaskDeliveryStatus
   sourceAttemptId?: string
-  channel?: "telegram" | "webui" | "cli" | "unknown"
+  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
   summary?: string
   artifact?: TaskArtifactModel
 }
@@ -250,10 +250,11 @@ function computeTaskRequest(groupRuns: RootRun[]): string {
   return anchorRun?.prompt?.trim() || ""
 }
 
-function detectDeliveryChannel(label: string): "telegram" | "webui" | "cli" | "unknown" {
+function detectDeliveryChannel(label: string): "telegram" | "webui" | "slack" | "cli" | "unknown" {
   const normalized = label.toLowerCase()
   if (normalized.includes("텔레그램") || normalized.includes("telegram")) return "telegram"
   if (normalized.includes("webui")) return "webui"
+  if (normalized.includes("slack")) return "slack"
   if (normalized.includes("cli")) return "cli"
   return "unknown"
 }
@@ -295,7 +296,7 @@ function mapTerminalFailureStatus(status: TaskFailureModel["status"]): Extract<T
 interface TaskDeliverySignal {
   status: TaskDeliveryStatus
   sourceAttemptId?: string
-  channel?: "telegram" | "webui" | "cli" | "unknown"
+  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
   summary?: string
   artifact?: TaskArtifactModel
   at?: number

@@ -19,7 +19,7 @@ export interface AnalysisOnlySubrunDependencies {
     runScope?: RunScope
     handoffSummary?: string
     prompt: string
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     taskProfile: TaskProfile
     targetLabel?: string
     contextMode: RunContextMode
@@ -66,7 +66,7 @@ export async function runFilesystemVerificationSubtask(params: {
   parentRunId: string
   requestGroupId: string
   sessionId: string
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   originalRequest: string
   mutationPaths: string[]
   workDir: string

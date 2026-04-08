@@ -58,7 +58,7 @@ export interface NobieEvents {
     registrationKind: "one_time" | "recurring"
     title: string
     task: string
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     scheduleText: string
     scheduleId?: string
     runAtMs?: number

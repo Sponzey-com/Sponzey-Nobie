@@ -342,14 +342,27 @@ function validateChannels(draft: SetupDraft): StepValidation {
   const fieldErrors: Record<string, string> = {}
   const summary: string[] = []
 
-  if (!draft.channels.telegramEnabled) {
-    fieldErrors.telegramEnabled = "Telegram 입력 채널을 켜야 합니다."
+  const hasTelegram = draft.channels.telegramEnabled
+  const hasSlack = draft.channels.slackEnabled
+
+  if (!hasTelegram && !hasSlack) {
+    fieldErrors.telegramEnabled = "Telegram 또는 Slack 입력 채널을 하나 이상 켜야 합니다."
     summary.push(fieldErrors.telegramEnabled)
   }
 
-  if (draft.channels.telegramEnabled && !draft.channels.botToken.trim()) {
+  if (hasTelegram && !draft.channels.botToken.trim()) {
     fieldErrors.botToken = "Bot Token을 입력해야 합니다."
     summary.push(fieldErrors.botToken)
+  }
+
+  if (hasSlack && !draft.channels.slackBotToken.trim()) {
+    fieldErrors.slackBotToken = "Slack Bot Token을 입력해야 합니다."
+    summary.push(fieldErrors.slackBotToken)
+  }
+
+  if (hasSlack && !draft.channels.slackAppToken.trim()) {
+    fieldErrors.slackAppToken = "Slack App Token을 입력해야 합니다."
+    summary.push(fieldErrors.slackAppToken)
   }
 
   return {

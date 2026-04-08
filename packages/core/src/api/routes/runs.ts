@@ -3,6 +3,8 @@ import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
 import {
   cancelRootRun,
+  clearHistoricalRunHistory,
+  deleteRunHistory,
   getRootRun,
   listRootRuns,
   listRunsForRecentRequestGroups,
@@ -15,7 +17,7 @@ export async function startLocalRun(params: {
   message: string
   sessionId: string | undefined
   model: string | undefined
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
 }) {
   const runId = crypto.randomUUID()
   const sessionId = params.sessionId ?? crypto.randomUUID()
@@ -81,5 +83,16 @@ export function registerRunsRoute(app: FastifyInstance): void {
     const run = cancelRootRun(req.params.id)
     if (!run) return reply.status(404).send({ error: "Run not found or not cancellable" })
     return { run }
+  })
+
+  app.delete("/api/runs/history/inactive", { preHandler: authMiddleware }, async () => {
+    const result = clearHistoricalRunHistory()
+    return { ok: true, deletedRunCount: result.deletedRunCount }
+  })
+
+  app.delete<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {
+    const result = deleteRunHistory(req.params.id)
+    if (!result) return reply.status(404).send({ error: "Run not found" })
+    return { ok: true, deletedRunCount: result.deletedRunCount }
   })
 }

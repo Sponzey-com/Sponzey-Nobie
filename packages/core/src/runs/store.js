@@ -106,6 +106,44 @@ function hydrateRun(row) {
         recentEvents,
     };
 }
+function buildSqlPlaceholders(count) {
+    return Array.from({ length: count }, () => "?").join(", ");
+}
+function resolveLineageKey(row) {
+    return row.lineage_root_run_id || row.request_group_id || row.id;
+}
+function selectRunRowsForLineage(lineageKey) {
+    return getDb()
+        .prepare(`SELECT *
+       FROM root_runs
+       WHERE COALESCE(lineage_root_run_id, request_group_id, id) = ?
+       ORDER BY created_at ASC, updated_at ASC`)
+        .all(lineageKey);
+}
+function deleteRunRows(params) {
+    const { runIds, requestGroupIds } = params;
+    if (runIds.length === 0)
+        return 0;
+    for (const runId of runIds) {
+        const controller = activeRunControllers.get(runId);
+        if (controller)
+            controller.abort();
+        clearActiveRunController(runId);
+    }
+    const db = getDb();
+    const tx = db.transaction(() => {
+        const runPlaceholders = buildSqlPlaceholders(runIds.length);
+        db.prepare(`DELETE FROM messages WHERE root_run_id IN (${runPlaceholders})`).run(...runIds);
+        db.prepare(`DELETE FROM channel_message_refs WHERE root_run_id IN (${runPlaceholders})`).run(...runIds);
+        if (requestGroupIds.length > 0) {
+            const requestGroupPlaceholders = buildSqlPlaceholders(requestGroupIds.length);
+            db.prepare(`DELETE FROM channel_message_refs WHERE request_group_id IN (${requestGroupPlaceholders})`).run(...requestGroupIds);
+        }
+        db.prepare(`DELETE FROM root_runs WHERE id IN (${runPlaceholders})`).run(...runIds);
+    });
+    tx();
+    return runIds.length;
+}
 export function listRootRuns(limit = 50) {
     return getDb()
         .prepare(`SELECT *
@@ -457,5 +495,35 @@ export function cancelRootRun(runId) {
         updateRunStatus(run.id, "cancelled", "사용자가 실행을 취소했습니다.", false);
     }
     return getRootRun(runId) ?? current;
+}
+export function deleteRunHistory(runId) {
+    const target = getDb()
+        .prepare("SELECT * FROM root_runs WHERE id = ?")
+        .get(runId);
+    if (!target)
+        return undefined;
+    const lineageKey = resolveLineageKey(target);
+    const rows = selectRunRowsForLineage(lineageKey);
+    const runIds = rows.map((row) => row.id);
+    const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
+    return {
+        deletedRunCount: deleteRunRows({ runIds, requestGroupIds }),
+    };
+}
+export function clearHistoricalRunHistory() {
+    const rows = getDb()
+        .prepare(`SELECT *
+       FROM root_runs
+       WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted')
+       ORDER BY updated_at DESC`)
+        .all();
+    if (rows.length === 0) {
+        return { deletedRunCount: 0 };
+    }
+    const runIds = rows.map((row) => row.id);
+    const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
+    return {
+        deletedRunCount: deleteRunRows({ runIds, requestGroupIds }),
+    };
 }
 //# sourceMappingURL=store.js.map

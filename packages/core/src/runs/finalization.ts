@@ -6,7 +6,7 @@ import {
 import { describeAssistantTextDeliveryFailure } from "./recovery.js"
 import type { RunStatus, RunStepStatus } from "./types.js"
 
-export type FinalizationSource = "webui" | "cli" | "telegram"
+export type FinalizationSource = "webui" | "cli" | "telegram" | "slack"
 
 export interface AwaitingUserParams {
   preview: string

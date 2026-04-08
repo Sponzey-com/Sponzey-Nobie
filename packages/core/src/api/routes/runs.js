@@ -1,5 +1,5 @@
 import { authMiddleware } from "../middleware/auth.js";
-import { cancelRootRun, getRootRun, listRootRuns, } from "../../runs/store.js";
+import { cancelRootRun, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listRootRuns, } from "../../runs/store.js";
 import { startRootRun } from "../../runs/start.js";
 export async function startLocalRun(params) {
     const started = startRootRun(params);
@@ -47,6 +47,16 @@ export function registerRunsRoute(app) {
         if (!run)
             return reply.status(404).send({ error: "Run not found or not cancellable" });
         return { run };
+    });
+    app.delete("/api/runs/history/inactive", { preHandler: authMiddleware }, async () => {
+        const result = clearHistoricalRunHistory();
+        return { ok: true, deletedRunCount: result.deletedRunCount };
+    });
+    app.delete("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {
+        const result = deleteRunHistory(req.params.id);
+        if (!result)
+            return reply.status(404).send({ error: "Run not found" });
+        return { ok: true, deletedRunCount: result.deletedRunCount };
     });
 }
 //# sourceMappingURL=runs.js.map

@@ -71,7 +71,7 @@ export function RunStatusCard({
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-stone-900">{run.title}</div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
-            <span>{toTaskProfileText(run.taskProfile, language)} · {text(`단계 ${run.currentStepIndex}/${run.totalSteps}`, `Step ${run.currentStepIndex}/${run.totalSteps}`)}</span>
+            <span>{toTaskProfileText(run.taskProfile, language)} · {text(`진행 ${run.currentStepIndex}/${run.totalSteps}`, `Progress ${run.currentStepIndex}/${run.totalSteps}`)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${toStatusPillClass(run.status)}`}>
               {toRunStatusText(run.status, language)}
             </span>
@@ -86,20 +86,20 @@ export function RunStatusCard({
         <RunTargetBadge targetId={run.targetId} targetLabel={run.targetLabel} />
         {run.workerSessionId ? (
           <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-            {text("작업 세션", "Worker session")} {run.workerSessionId}
+            {text("세션", "Session")} {run.workerSessionId}
           </span>
         ) : null}
         <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-          {text("문맥", "Context")} {toContextModeText(run.contextMode, language)}
+          {text("참조", "Context")} {toContextModeText(run.contextMode, language)}
         </span>
         <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-          {text("재질의", "Follow-up")} {run.delegationTurnCount}/{run.maxDelegationTurns === 0 ? text("무제한", "Unlimited") : run.maxDelegationTurns}
+          {text("후속 시도", "Follow-up")} {run.delegationTurnCount}/{run.maxDelegationTurns === 0 ? text("무제한", "Unlimited") : run.maxDelegationTurns}
         </span>
       </div>
 
       {treeNodes && treeNodes.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-stone-200 bg-stone-50/80 px-3 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">{text("작업 흐름", "Task flow")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">{text("진행 흐름", "Progress flow")}</div>
           <div className="mt-3 space-y-3">
             {treeNodes.map((node) => (
               <div key={node.id} className={node.isRoot ? "" : "relative ml-5 border-l border-stone-200 pl-4"}>

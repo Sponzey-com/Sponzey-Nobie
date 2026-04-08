@@ -10,6 +10,7 @@ import type {
   StatusResponse,
   TestBackendResponse,
   TestMcpServerResponse,
+  TestSlackResponse,
   TestSkillPathResponse,
   TestTelegramResponse,
 } from "./types"
@@ -73,6 +74,11 @@ export const localAdapter: ControlPlaneAdapter = {
     request<TestTelegramResponse>("/api/setup/test-telegram", {
       method: "POST",
       body: JSON.stringify({ botToken }),
+    }),
+  testSlack: (botToken, appToken) =>
+    request<TestSlackResponse>("/api/setup/test-slack", {
+      method: "POST",
+      body: JSON.stringify({ botToken, appToken }),
     }),
   testMcpServer: (server: SetupMcpServerDraft) =>
     request<TestMcpServerResponse>("/api/setup/test-mcp-server", {

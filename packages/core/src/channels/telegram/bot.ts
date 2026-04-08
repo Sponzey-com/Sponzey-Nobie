@@ -13,6 +13,7 @@ import { registerCommands } from "./commands.js"
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
 import { findChannelMessageRef, getSession, insertChannelMessageRef } from "../../db/index.js"
 import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js"
+import { setTelegramRuntimeError } from "./runtime.js"
 
 const log = createLogger("channel:telegram")
 
@@ -27,6 +28,7 @@ export class TelegramChannel {
   private runningRuns = new Map<string, Set<string>>()
   private sessionIds = new Map<string, string>()
   private fileHandler: FileHandler
+  private pollingTask: Promise<void> | null = null
 
   constructor(private config: TelegramConfig) {
     this.bot = new Bot(config.botToken)
@@ -304,12 +306,39 @@ export class TelegramChannel {
       { command: "help", description: "전체 명령어 설명" },
     ])
 
-    await this.bot.start()
+    if (this.bot.isRunning()) return
+
+    let startupSettled = false
+
+    await new Promise<void>((resolve, reject) => {
+      const pollingTask = this.bot.start({
+        onStart: () => {
+          startupSettled = true
+          setTelegramRuntimeError(null)
+          resolve()
+        },
+      })
+
+      this.pollingTask = pollingTask
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err)
+          setTelegramRuntimeError(message)
+          if (!startupSettled) {
+            reject(err)
+            return
+          }
+          log.error(`Telegram polling stopped: ${message}`)
+        })
+        .finally(() => {
+          this.pollingTask = null
+        })
+    })
   }
 
   stop(): void {
     log.info("Stopping Telegram bot...")
     void this.bot.stop()
+    this.pollingTask = null
   }
 
   async sendTextToSession(sessionId: string, text: string): Promise<number[]> {

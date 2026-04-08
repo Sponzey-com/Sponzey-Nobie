@@ -72,6 +72,11 @@ export interface SetupChannelDraft {
   botToken: string
   allowedUserIds: string
   allowedGroupIds: string
+  slackEnabled: boolean
+  slackBotToken: string
+  slackAppToken: string
+  slackAllowedUserIds: string
+  slackAllowedChannelIds: string
 }
 
 export interface SetupRemoteAccessDraft {

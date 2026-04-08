@@ -23,6 +23,8 @@ import { registerInstructionsRoute } from "./routes/instructions.js"
 import { registerMcpRoute } from "./routes/mcp.js"
 import { registerUpdateRoute } from "./routes/update.js"
 import { registerWsRoute } from "./ws/stream.js"
+import { stopActiveSlackChannel } from "../channels/slack/runtime.js"
+import { stopActiveTelegramChannel } from "../channels/telegram/runtime.js"
 import { startScheduler, stopScheduler } from "../scheduler/index.js"
 import { pluginLoader } from "../plugins/loader.js"
 import { mcpRegistry } from "../mcp/registry.js"
@@ -85,6 +87,8 @@ export async function startServer(): Promise<void> {
 
 export async function closeServer(): Promise<void> {
   stopScheduler()
+  stopActiveSlackChannel()
+  stopActiveTelegramChannel()
   await stopMqttBroker()
   await mcpRegistry.closeAll()
   if (server) {

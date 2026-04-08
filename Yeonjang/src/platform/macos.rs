@@ -244,7 +244,9 @@ impl AutomationBackend for PlatformBackend {
         let mut command = Command::new("xcrun");
         command.arg("swift").arg(&script_path).arg(&output_path);
         if let Some(display) = request.display {
-            command.arg("--display").arg(display.to_string());
+            command
+                .arg("--display")
+                .arg(normalize_macos_screen_capture_display(display).to_string());
         }
         if inline_base64 {
             command.arg("--inline-base64");
@@ -1082,6 +1084,10 @@ fn write_swift_screen_script() -> Result<PathBuf> {
     Ok(script_path)
 }
 
+fn normalize_macos_screen_capture_display(display: u32) -> u32 {
+    display.saturating_add(1)
+}
+
 fn write_swift_mouse_action_script() -> Result<PathBuf> {
     let script_path = env::temp_dir().join(format!(
         "yeonjang-mouse-action-{}.swift",
@@ -1483,7 +1489,7 @@ do {
 mod tests {
     use super::{
         MacosKeyboardTarget, build_modifier_clause, build_modifier_key_codes,
-        normalize_mouse_button_name, resolve_macos_keyboard_key_code,
+        normalize_macos_screen_capture_display, normalize_mouse_button_name, resolve_macos_keyboard_key_code,
         resolve_macos_keyboard_target, resolve_optional_mouse_point,
     };
 
@@ -1557,5 +1563,11 @@ mod tests {
                 .to_string()
                 .contains("requires both `x` and `y` when coordinates are provided")
         );
+    }
+
+    #[test]
+    fn normalizes_screen_capture_display_to_one_based_index() {
+        assert_eq!(normalize_macos_screen_capture_display(0), 1);
+        assert_eq!(normalize_macos_screen_capture_display(1), 2);
     }
 }

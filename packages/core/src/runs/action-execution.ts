@@ -35,7 +35,7 @@ export type ScheduleActionReceipt =
       task: string
       runAtMs: number
       scheduleText: string
-      source: "webui" | "cli" | "telegram"
+      source: "webui" | "cli" | "telegram" | "slack"
       destination: string
       taskProfile: TaskProfile
       directDelivery: boolean
@@ -49,7 +49,7 @@ export type ScheduleActionReceipt =
       task: string
       cron: string
       scheduleText: string
-      source: "webui" | "cli" | "telegram"
+      source: "webui" | "cli" | "telegram" | "slack"
       targetSessionId?: string
       originRunId: string
       originRequestGroupId: string
@@ -74,7 +74,7 @@ export interface ScheduleDelayedRunRequest {
   structuredRequest?: TaskStructuredRequest
   intentEnvelope?: TaskIntentEnvelope
   workDir?: string
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   onChunk: RunChunkDeliveryHandler | undefined
   immediateCompletionText?: string
   preferredTarget?: string
@@ -91,7 +91,7 @@ export interface ScheduleActionExecutionParams {
   requestGroupId: string
   model: string | undefined
   workDir?: string | undefined
-  source: "webui" | "cli" | "telegram"
+  source: "webui" | "cli" | "telegram" | "slack"
   onChunk: RunChunkDeliveryHandler | undefined
 }
 
@@ -101,7 +101,7 @@ export interface ScheduleActionDependencies {
     title: string
     task: string
     cron: string
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     sessionId: string
     originRunId: string
     originRequestGroupId: string
@@ -120,7 +120,7 @@ function defaultScheduleActionReceipts(): ScheduleActionReceipt[] {
 }
 
 function describeDefaultScheduleDestination(source: ScheduleActionExecutionParams["source"]): string {
-  return source === "telegram" ? "telegram current session" : `${source} current session`
+  return source === "telegram" || source === "slack" ? `${source} current session` : `${source} current session`
 }
 
 export function createDefaultScheduleActionDependencies(
@@ -131,14 +131,14 @@ export function createDefaultScheduleActionDependencies(
     createRecurringSchedule: (params) => {
       const now = Date.now()
       const scheduleId = crypto.randomUUID()
-      const targetSessionId = params.source === "telegram" ? params.sessionId : undefined
+      const targetSessionId = params.source === "telegram" || params.source === "slack" ? params.sessionId : undefined
       insertSchedule({
         id: scheduleId,
         name: params.title,
         cron_expression: params.cron,
         prompt: params.task,
         enabled: 1,
-        target_channel: params.source === "telegram" ? "telegram" : "agent",
+        target_channel: params.source === "telegram" ? "telegram" : params.source === "slack" ? "slack" : "agent",
         target_session_id: targetSessionId ?? null,
         execution_driver: "internal",
         origin_run_id: params.originRunId,

@@ -25,13 +25,13 @@ const { mouseMoveTool } = await import("../packages/core/src/tools/builtin/ui/mo
 const { keyboardTypeTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
 const { windowFocusTool } = await import("../packages/core/src/tools/builtin/ui/window.ts")
 
-function createContext(userMessage = "연장으로 실행해줘"): ToolContext {
+function createContext(userMessage = "연장으로 실행해줘", source: ToolContext["source"] = "telegram"): ToolContext {
   return {
     sessionId: "session-1",
     runId: "run-1",
     workDir: process.cwd(),
     userMessage,
-    source: "telegram",
+    source,
     allowWebAccess: false,
     onProgress: vi.fn(),
     signal: new AbortController().signal,
@@ -165,6 +165,26 @@ describe("yeonjang required tools", () => {
       { inline_base64: true, display: 1 },
       { timeoutMs: 60000 },
     )
+  })
+
+  it("returns slack artifact delivery details for screen capture requested from slack", async () => {
+    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      base64_data: Buffer.from('png').toString('base64'),
+      mime_type: 'image/png',
+      file_name: 'screen.png',
+      file_extension: 'png',
+      size_bytes: 3,
+    })
+
+    const result = await screenCaptureTool.execute({}, createContext('메인 화면 캡쳐해서 보여줘', 'slack'))
+
+    expect(result.success).toBe(true)
+    expect(result.details).toMatchObject({
+      kind: 'artifact_delivery',
+      channel: 'slack',
+      source: 'slack',
+    })
   })
 
   it("fails mouse move when Yeonjang mouse.move is unavailable", async () => {

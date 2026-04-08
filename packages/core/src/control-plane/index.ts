@@ -13,6 +13,7 @@ import {
   type SetupSkillDraftItem,
 } from "./setup-extensions.js"
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
+import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js"
@@ -30,7 +31,7 @@ export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
 export interface FeatureCapability {
   key: string
   label: string
-  area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt"
+  area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "slack" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt"
   status: CapabilityStatus
   implemented: boolean
   enabled: boolean
@@ -132,6 +133,11 @@ export interface SetupDraft {
     botToken: string
     allowedUserIds: string
     allowedGroupIds: string
+    slackEnabled: boolean
+    slackBotToken: string
+    slackAppToken: string
+    slackAllowedUserIds: string
+    slackAllowedChannelIds: string
   }
   mqtt: {
     enabled: boolean
@@ -620,6 +626,11 @@ export function buildSetupDraft(): SetupDraft {
       botToken: config.telegram?.botToken ?? "",
       allowedUserIds: toNumberArrayString(config.telegram?.allowedUserIds ?? []),
       allowedGroupIds: toNumberArrayString(config.telegram?.allowedGroupIds ?? []),
+      slackEnabled: config.slack?.enabled ?? false,
+      slackBotToken: config.slack?.botToken ?? "",
+      slackAppToken: config.slack?.appToken ?? "",
+      slackAllowedUserIds: (config.slack?.allowedUserIds ?? []).join("\n"),
+      slackAllowedChannelIds: (config.slack?.allowedChannelIds ?? []).join("\n"),
     },
     mqtt: {
       enabled: config.mqtt.enabled,
@@ -716,6 +727,21 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
     botToken: draft.channels.botToken,
     allowedUserIds: parseIdString(draft.channels.allowedUserIds),
     allowedGroupIds: parseIdString(draft.channels.allowedGroupIds),
+  }
+
+  raw.slack = {
+    ...toObject(raw.slack),
+    enabled: draft.channels.slackEnabled,
+    botToken: draft.channels.slackBotToken,
+    appToken: draft.channels.slackAppToken,
+    allowedUserIds: draft.channels.slackAllowedUserIds
+      .split(/[\s,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+    allowedChannelIds: draft.channels.slackAllowedChannelIds
+      .split(/[\s,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean),
   }
 
   raw.mqtt = {
@@ -828,6 +854,8 @@ export function createCapabilities(): FeatureCapability[] {
   const config = getConfig()
   const telegramRunning = getActiveTelegramChannel() !== null
   const telegramRuntimeError = getTelegramRuntimeError()
+  const slackRunning = getActiveSlackChannel() !== null
+  const slackRuntimeError = getSlackRuntimeError()
   const mcpSummary = mcpRegistry.getSummary()
   const mcpStatuses = mcpRegistry.getStatuses()
   const mqtt = getMqttBrokerSnapshot()
@@ -879,6 +907,30 @@ export function createCapabilities(): FeatureCapability[] {
     telegramCapability.reason = telegramRuntimeError
   } else if (!telegramRunning) {
     telegramCapability.reason = "Telegram 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다."
+  }
+
+  const slackCapability: FeatureCapability = {
+    key: "slack.channel",
+    label: "Slack Channel",
+    area: "slack",
+    status: config.slack?.botToken && config.slack?.appToken
+      ? config.slack.enabled
+        ? slackRunning
+          ? "ready"
+          : slackRuntimeError ? "error" : "disabled"
+        : "disabled"
+      : "disabled",
+    implemented: true,
+    enabled: Boolean(config.slack?.enabled && slackRunning),
+  }
+  if (!config.slack?.botToken || !config.slack?.appToken) {
+    slackCapability.reason = "Slack Bot Token과 App Token이 설정되지 않았습니다."
+  } else if (!config.slack.enabled) {
+    slackCapability.reason = "Slack 채널이 비활성화되어 있습니다."
+  } else if (slackRuntimeError) {
+    slackCapability.reason = slackRuntimeError
+  } else if (!slackRunning) {
+    slackCapability.reason = "Slack 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다."
   }
 
   const mqttCapability: FeatureCapability = {
@@ -958,6 +1010,7 @@ export function createCapabilities(): FeatureCapability[] {
       reason: "세션별/요청별 override는 후속 Phase에서 연결합니다.",
     },
     telegramCapability,
+    slackCapability,
     mqttCapability,
     (() => {
       const capability: FeatureCapability = {

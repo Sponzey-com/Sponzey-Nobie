@@ -6,6 +6,8 @@ const { mockApi, mockSetDisconnected } = vi.hoisted(() => ({
     tasks: vi.fn(),
     createRun: vi.fn(),
     cancelRun: vi.fn(),
+    deleteRunHistory: vi.fn(),
+    clearHistoricalRunHistory: vi.fn(),
   },
   mockSetDisconnected: vi.fn(),
 }))
@@ -120,6 +122,8 @@ describe("webui runs store", () => {
     mockApi.tasks.mockReset()
     mockApi.createRun.mockReset()
     mockApi.cancelRun.mockReset()
+    mockApi.deleteRunHistory.mockReset()
+    mockApi.clearHistoricalRunHistory.mockReset()
     mockSetDisconnected.mockReset()
   })
 
@@ -177,5 +181,38 @@ describe("webui runs store", () => {
     expect(useRunsStore.getState().runs.map((run) => run.id)).toEqual(["task-newer", "task-older"])
     expect(useRunsStore.getState().tasks.map((task) => task.id)).toEqual(["task-newer", "task-older"])
     expect(useRunsStore.getState().selectedRunId).toBe("task-newer")
+  })
+
+  it("removes the selected history item through the delete API and refreshes", async () => {
+    mockApi.deleteRunHistory.mockResolvedValue({ ok: true, deletedRunCount: 1 })
+    mockApi.runs.mockResolvedValue({ runs: [] })
+    mockApi.tasks.mockResolvedValue({ tasks: [] })
+
+    useRunsStore.setState({
+      initialized: true,
+      loading: false,
+      lastError: "",
+      runs: [makeRun("task-old", 10)],
+      tasks: [makeTask("task-old", 10)],
+      selectedRunId: "task-old",
+    })
+
+    await useRunsStore.getState().deleteRunHistory("task-old")
+
+    expect(mockApi.deleteRunHistory).toHaveBeenCalledWith("task-old")
+    expect(mockApi.runs).toHaveBeenCalled()
+    expect(mockApi.tasks).toHaveBeenCalled()
+  })
+
+  it("clears historical history through the delete API and refreshes", async () => {
+    mockApi.clearHistoricalRunHistory.mockResolvedValue({ ok: true, deletedRunCount: 3 })
+    mockApi.runs.mockResolvedValue({ runs: [makeRun("task-active", 20)] })
+    mockApi.tasks.mockResolvedValue({ tasks: [makeTask("task-active", 20)] })
+
+    await useRunsStore.getState().clearHistoricalRunHistory()
+
+    expect(mockApi.clearHistoricalRunHistory).toHaveBeenCalledTimes(1)
+    expect(mockApi.runs).toHaveBeenCalled()
+    expect(mockApi.tasks).toHaveBeenCalled()
   })
 })

@@ -31,7 +31,7 @@ interface SetupStore {
   patchSecurity: (patch: Partial<SetupDraft["security"]>) => void
   patchChannels: (patch: Partial<SetupDraft["channels"]>) => void
   patchRemoteAccess: (patch: Partial<SetupDraft["remoteAccess"]>) => void
-  saveDraftSnapshot: (draft: SetupDraft, options?: { syncTelegramRuntime?: boolean }) => Promise<boolean>
+  saveDraftSnapshot: (draft: SetupDraft, options?: { syncChannelRuntime?: boolean }) => Promise<boolean>
 }
 
 const STEP_ORDER: SetupStepId[] = [
@@ -48,7 +48,7 @@ const STEP_ORDER: SetupStepId[] = [
 ]
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
-let pendingTelegramRuntimeSync = false
+let pendingChannelRuntimeSync = false
 
 function normalizeSetupStep(step: SetupStepId): SetupStepId {
   if (step === "ai_routing") return "mcp"
@@ -77,7 +77,7 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
 async function persistSetupSnapshot(snapshot?: {
   draft?: SetupDraft
   state?: SetupState
-  syncTelegramRuntime?: boolean
+  syncChannelRuntime?: boolean
 }): Promise<boolean> {
   const current = useSetupStore.getState()
   const draft = snapshot?.draft ?? current.draft
@@ -89,11 +89,11 @@ async function persistSetupSnapshot(snapshot?: {
   try {
     const response = await api.saveSetupDraft({ draft, state })
     let runtimeError = ""
-    const shouldSyncTelegramRuntime = snapshot?.syncTelegramRuntime ?? pendingTelegramRuntimeSync
-    if (shouldSyncTelegramRuntime) {
-      pendingTelegramRuntimeSync = false
+    const shouldSyncChannelRuntime = snapshot?.syncChannelRuntime ?? pendingChannelRuntimeSync
+    if (shouldSyncChannelRuntime) {
+      pendingChannelRuntimeSync = false
       try {
-        await api.restartTelegram()
+        await api.restartChannels()
       } catch (error) {
         runtimeError = error instanceof Error ? error.message : String(error)
       }
@@ -181,6 +181,11 @@ function createInitialSetupDraft(): SetupDraft {
       botToken: "",
       allowedUserIds: "",
       allowedGroupIds: "",
+      slackEnabled: false,
+      slackBotToken: "",
+      slackAppToken: "",
+      slackAllowedUserIds: "",
+      slackAllowedChannelIds: "",
     },
     mqtt: {
       enabled: false,
@@ -404,7 +409,10 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
   patchChannels: (patch) => {
     const draft = get().draft
     if (Object.prototype.hasOwnProperty.call(patch, "telegramEnabled")) {
-      pendingTelegramRuntimeSync = true
+      pendingChannelRuntimeSync = true
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "slackEnabled")) {
+      pendingChannelRuntimeSync = true
     }
     setDraftAndPersist({
       ...draft,
@@ -421,7 +429,7 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
   saveDraftSnapshot: async (draft, options) => {
     return await persistSetupSnapshot({
       draft,
-      syncTelegramRuntime: options?.syncTelegramRuntime,
+      syncChannelRuntime: options?.syncChannelRuntime,
     })
   },
 }))

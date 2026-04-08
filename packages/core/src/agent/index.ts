@@ -154,7 +154,7 @@ export interface RunAgentParams {
   provider?: AIProvider | undefined
   systemPrompt?: string | undefined
   workDir?: string | undefined
-  source?: "webui" | "cli" | "telegram" | undefined
+  source?: "webui" | "cli" | "telegram" | "slack" | undefined
   signal?: AbortSignal | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
@@ -264,7 +264,8 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const allowWebAccess = shouldAllowWebAccess(params.userMessage)
   const tools = toolsEnabled
     ? toolDispatcher.getAll().filter((tool) =>
-        allowWebAccess || (tool.name !== "web_search" && tool.name !== "web_fetch"),
+        toolDispatcher.isToolAvailableForSource(tool, params.source ?? "cli")
+        && (allowWebAccess || (tool.name !== "web_search" && tool.name !== "web_fetch")),
       )
     : []
   const toolDefs: ToolDefinition[] = tools.map((t) => ({

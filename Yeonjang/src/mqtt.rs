@@ -1,5 +1,9 @@
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -14,10 +18,12 @@ use crate::settings::{YeonjangSettings, load_settings};
 const RESPONSE_CHUNK_BYTES: usize = 48 * 1024;
 const MQTT_MAX_PACKET_BYTES: usize = 8 * 1024 * 1024;
 const MQTT_REQUEST_CHANNEL_CAPACITY: usize = 256;
+const MQTT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {
     Connected,
+    Reconnecting(String),
     Disconnected(String),
     AuthFailed(String),
     ResponsePublishFailed { method: String, message: String },
@@ -25,13 +31,17 @@ pub enum RuntimeEvent {
 }
 
 pub struct MqttRuntimeHandle {
-    client: Client,
+    client: Arc<Mutex<Option<Client>>>,
+    stop_requested: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl MqttRuntimeHandle {
     pub fn stop(mut self) -> Result<()> {
-        let _ = self.client.disconnect();
+        self.stop_requested.store(true, Ordering::SeqCst);
+        if let Some(client) = self.client.lock().ok().and_then(|guard| guard.clone()) {
+            let _ = client.disconnect();
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -45,124 +55,72 @@ pub fn start_runtime(
     validate_connection_settings(&settings)?;
 
     let normalized = normalize_settings(settings);
-    let mut options = build_options(&normalized)?;
-    options.set_keep_alive(Duration::from_secs(20));
-    options.set_max_packet_size(MQTT_MAX_PACKET_BYTES, MQTT_MAX_PACKET_BYTES);
-    options.set_request_channel_capacity(MQTT_REQUEST_CHANNEL_CAPACITY);
-    options.set_credentials(
-        normalized.connection.username.clone(),
-        normalized.connection.password.clone(),
-    );
-    options.set_last_will(LastWill::new(
-        normalized.mqtt.status_topic.clone(),
-        serde_json::to_vec(&status_payload(&normalized, "offline", "disconnected"))?,
-        QoS::AtLeastOnce,
-        true,
-    ));
-
-    let (client, mut connection) = Client::new(options, 20);
-    let control_client = client.clone();
     let (event_tx, event_rx) = mpsc::channel::<RuntimeEvent>();
+    let active_client = Arc::new(Mutex::new(None));
+    let stop_requested = Arc::new(AtomicBool::new(false));
+    let control_client = Arc::clone(&active_client);
+    let control_stop = Arc::clone(&stop_requested);
 
     let thread = thread::spawn(move || {
-        if let Err(error) = publish_bootstrap(&client, &normalized) {
-            let _ = event_tx.send(classify_error(&error));
-            return;
-        }
-
-        let mut announced_connected = false;
-
-        for notification in connection.iter() {
-            match notification {
-                Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                    announced_connected = true;
-                    let _ = event_tx.send(RuntimeEvent::Connected);
+        while !stop_requested.load(Ordering::SeqCst) {
+            let options = match build_runtime_options(&normalized) {
+                Ok(options) => options,
+                Err(error) => {
+                    let _ = event_tx.send(RuntimeEvent::Disconnected(error.to_string()));
+                    break;
                 }
-                Ok(Event::Incoming(Incoming::Publish(publish))) => {
-                    if publish.topic != normalized.mqtt.request_topic {
+            };
+
+            let (client, mut connection) = Client::new(options, 20);
+            if let Ok(mut slot) = active_client.lock() {
+                *slot = Some(client.clone());
+            }
+
+            if let Err(error) = publish_bootstrap(&client, &normalized) {
+                match classify_error(&error) {
+                    RuntimeEvent::AuthFailed(message) => {
+                        let _ = event_tx.send(RuntimeEvent::AuthFailed(message));
+                        break;
+                    }
+                    RuntimeEvent::Disconnected(message) | RuntimeEvent::Reconnecting(message) => {
+                        let _ = event_tx.send(RuntimeEvent::Reconnecting(format!(
+                            "{message}. Retrying in {} seconds.",
+                            MQTT_RECONNECT_DELAY.as_secs()
+                        )));
+                        if !sleep_with_stop_check(MQTT_RECONNECT_DELAY, &stop_requested) {
+                            break;
+                        }
                         continue;
                     }
-
-                    // Keep the MQTT event loop responsive. Long-running work such as
-                    // screen or camera capture must not block keepalive handling.
-                    let payload = publish.payload.to_vec();
-                    let response_client = client.clone();
-                    let response_settings = normalized.clone();
-                    let response_events = event_tx.clone();
-
-                    thread::spawn(move || {
-                        let _ = publish_runtime_state(
-                            &response_client,
-                            &response_settings,
-                            "refreshing-capabilities",
-                            true,
-                        );
-
-                        let (method, response) = match serde_json::from_slice::<Request>(&payload) {
-                            Ok(request) => {
-                                let method = request.method.clone();
-                                let response =
-                                    spawn_request_task(request).join().unwrap_or_else(|_| {
-                                        Response::error(
-                                            None,
-                                            "request_failed",
-                                            "request thread panicked",
-                                        )
-                                    });
-                                (method, response)
-                            }
-                            Err(error) => (
-                                "invalid_request".to_string(),
-                                Response::error(
-                                    None,
-                                    "invalid_request",
-                                    format!("failed to parse request payload: {error}"),
-                                ),
-                            ),
-                        };
-
-                        if let Err(error) =
-                            publish_response(&response_client, &response_settings, &response)
-                        {
-                            let _ = response_events.send(RuntimeEvent::ResponsePublishFailed {
-                                method,
-                                message: error.to_string(),
-                            });
-                            return;
-                        }
-
-                        let _ =
-                            publish_runtime_state(&response_client, &response_settings, "ready", true);
-
-                        let _ = response_events.send(RuntimeEvent::RequestHandled {
-                            method,
-                            ok: response.ok,
-                        });
-                    });
-                }
-                Ok(Event::Outgoing(Outgoing::Disconnect)) => {
-                    let _ = event_tx.send(RuntimeEvent::Disconnected(
-                        "requested disconnect".to_string(),
-                    ));
-                    break;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    let message = error.to_string();
-                    let _ = event_tx.send(classify_error(&anyhow!(message)));
-                    break;
+                    other => {
+                        let _ = event_tx.send(other);
+                        break;
+                    }
                 }
             }
-        }
 
-        if announced_connected {
-            let _ = publish_status(&client, &normalized, "offline", "disconnected", true);
+            let should_retry = run_connection_loop(
+                &client,
+                &mut connection,
+                &normalized,
+                &event_tx,
+                &stop_requested,
+            );
+
+            if let Ok(mut slot) = active_client.lock() {
+                *slot = None;
+            }
+
+            if !should_retry {
+                break;
+            }
         }
     });
 
     Ok((
         MqttRuntimeHandle {
             client: control_client,
+            stop_requested: control_stop,
             thread: Some(thread),
         },
         event_rx,
@@ -185,6 +143,169 @@ pub fn probe_connection(settings: &YeonjangSettings) -> Result<()> {
     TcpStream::connect_timeout(&target, Duration::from_secs(2))
         .with_context(|| format!("failed to reach MQTT broker at {address}"))?;
     Ok(())
+}
+
+fn build_runtime_options(settings: &YeonjangSettings) -> Result<MqttOptions> {
+    let mut options = build_options(settings)?;
+    options.set_keep_alive(Duration::from_secs(20));
+    options.set_max_packet_size(MQTT_MAX_PACKET_BYTES, MQTT_MAX_PACKET_BYTES);
+    options.set_request_channel_capacity(MQTT_REQUEST_CHANNEL_CAPACITY);
+    options.set_credentials(
+        settings.connection.username.clone(),
+        settings.connection.password.clone(),
+    );
+    options.set_last_will(LastWill::new(
+        settings.mqtt.status_topic.clone(),
+        serde_json::to_vec(&status_payload(settings, "offline", "disconnected"))?,
+        QoS::AtLeastOnce,
+        true,
+    ));
+    Ok(options)
+}
+
+fn sleep_with_stop_check(duration: Duration, stop_requested: &AtomicBool) -> bool {
+    let step = Duration::from_millis(100);
+    let mut elapsed = Duration::ZERO;
+    while elapsed < duration {
+        if stop_requested.load(Ordering::SeqCst) {
+            return false;
+        }
+        let sleep_for = duration.saturating_sub(elapsed).min(step);
+        thread::sleep(sleep_for);
+        elapsed += sleep_for;
+    }
+    true
+}
+
+fn run_connection_loop(
+    client: &Client,
+    connection: &mut rumqttc::Connection,
+    settings: &YeonjangSettings,
+    event_tx: &mpsc::Sender<RuntimeEvent>,
+    stop_requested: &AtomicBool,
+) -> bool {
+    let mut announced_connected = false;
+
+    for notification in connection.iter() {
+        if stop_requested.load(Ordering::SeqCst) {
+            let _ = event_tx.send(RuntimeEvent::Disconnected(
+                "requested disconnect".to_string(),
+            ));
+            return false;
+        }
+
+        match notification {
+            Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                announced_connected = true;
+                let _ = event_tx.send(RuntimeEvent::Connected);
+            }
+            Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                if publish.topic != settings.mqtt.request_topic {
+                    continue;
+                }
+
+                let payload = publish.payload.to_vec();
+                let response_client = client.clone();
+                let response_settings = settings.clone();
+                let response_events = event_tx.clone();
+
+                thread::spawn(move || {
+                    let _ = publish_runtime_state(
+                        &response_client,
+                        &response_settings,
+                        "refreshing-capabilities",
+                        true,
+                    );
+
+                    let (method, response) = match serde_json::from_slice::<Request>(&payload) {
+                        Ok(request) => {
+                            let method = request.method.clone();
+                            let response =
+                                spawn_request_task(request).join().unwrap_or_else(|_| {
+                                    Response::error(
+                                        None,
+                                        "request_failed",
+                                        "request thread panicked",
+                                    )
+                                });
+                            (method, response)
+                        }
+                        Err(error) => (
+                            "invalid_request".to_string(),
+                            Response::error(
+                                None,
+                                "invalid_request",
+                                format!("failed to parse request payload: {error}"),
+                            ),
+                        ),
+                    };
+
+                    if let Err(error) =
+                        publish_response(&response_client, &response_settings, &response)
+                    {
+                        let _ = response_events.send(RuntimeEvent::ResponsePublishFailed {
+                            method,
+                            message: error.to_string(),
+                        });
+                        return;
+                    }
+
+                    let _ =
+                        publish_runtime_state(&response_client, &response_settings, "ready", true);
+
+                    let _ = response_events.send(RuntimeEvent::RequestHandled {
+                        method,
+                        ok: response.ok,
+                    });
+                });
+            }
+            Ok(Event::Outgoing(Outgoing::Disconnect)) => {
+                let _ = event_tx.send(RuntimeEvent::Disconnected(
+                    "requested disconnect".to_string(),
+                ));
+                return false;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if announced_connected {
+                    let _ = publish_status(client, settings, "offline", "disconnected", true);
+                }
+
+                match classify_error(&anyhow!(error.to_string())) {
+                    RuntimeEvent::AuthFailed(message) => {
+                        let _ = event_tx.send(RuntimeEvent::AuthFailed(message));
+                        return false;
+                    }
+                    RuntimeEvent::Disconnected(message) | RuntimeEvent::Reconnecting(message) => {
+                        let _ = event_tx.send(RuntimeEvent::Reconnecting(format!(
+                            "{message}. Retrying in {} seconds.",
+                            MQTT_RECONNECT_DELAY.as_secs()
+                        )));
+                        return sleep_with_stop_check(MQTT_RECONNECT_DELAY, stop_requested);
+                    }
+                    other => {
+                        let _ = event_tx.send(other);
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    if announced_connected {
+        let _ = publish_status(client, settings, "offline", "disconnected", true);
+    }
+
+    if stop_requested.load(Ordering::SeqCst) {
+        let _ = event_tx.send(RuntimeEvent::Disconnected("requested disconnect".to_string()));
+        return false;
+    }
+
+    let _ = event_tx.send(RuntimeEvent::Reconnecting(format!(
+        "MQTT connection ended. Retrying in {} seconds.",
+        MQTT_RECONNECT_DELAY.as_secs()
+    )));
+    sleep_with_stop_check(MQTT_RECONNECT_DELAY, stop_requested)
 }
 
 fn normalize_settings(mut settings: YeonjangSettings) -> YeonjangSettings {

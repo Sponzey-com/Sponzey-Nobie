@@ -19,13 +19,10 @@ export async function serveCommand(): Promise<void> {
 
   console.log(`스폰지 노비 · Sponzey Nobie daemon starting (PID=${process.pid})`)
 
-  const { bootstrapAsync, startChannels } = await import("@nobie/core")
+  const { bootstrapAsync } = await import("@nobie/core")
 
   // Bootstrap: load config, init DB, register tools, start WebUI + scheduler
   await bootstrapAsync()
-
-  // Start Telegram and other channels
-  startChannels()
 
   console.log("스폰지 노비 · Sponzey Nobie daemon running. Press Ctrl+C to stop.")
 

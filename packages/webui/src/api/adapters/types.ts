@@ -106,6 +106,11 @@ export interface TestTelegramResponse {
   message: string
 }
 
+export interface TestSlackResponse {
+  ok: boolean
+  message: string
+}
+
 export interface TestMcpServerResponse {
   ok: boolean
   message: string
@@ -137,6 +142,7 @@ export interface ControlPlaneAdapter {
   completeSetup: () => Promise<SetupState>
   testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) => Promise<TestBackendResponse>
   testTelegram: (botToken: string) => Promise<TestTelegramResponse>
+  testSlack: (botToken: string, appToken: string) => Promise<TestSlackResponse>
   testMcpServer: (server: SetupMcpServerDraft) => Promise<TestMcpServerResponse>
   testSkillPath: (path: string) => Promise<TestSkillPathResponse>
   generateAuthToken: () => Promise<{ token: string }>

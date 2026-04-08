@@ -218,10 +218,13 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
         })
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
         const localFileSize = statSync(localSavedPath).size
-        const artifactDetails: ArtifactDeliveryResultDetails | undefined = ctx.source === "webui" && localSavedPath
+        const artifactChannel = ctx.source === "webui" || ctx.source === "telegram" || ctx.source === "slack"
+          ? ctx.source
+          : null
+        const artifactDetails: ArtifactDeliveryResultDetails | undefined = artifactChannel && localSavedPath
           ? {
               kind: "artifact_delivery",
-              channel: "webui",
+              channel: artifactChannel,
               filePath: localSavedPath,
               mimeType: remote.mime_type ?? "image/png",
               size: localFileSize,

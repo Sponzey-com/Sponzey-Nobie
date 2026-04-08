@@ -304,6 +304,278 @@ Notes:
 - For normal Nobie usage, the expected path is the MQTT-connected Yeonjang GUI/runtime.
 - On macOS, `camera.capture` uses a fixed helper executable inside `Yeonjang.app`, so `scripts/start-yeonjang-macos.sh` is the safest path when camera capture is required.
 
+## Detailed Telegram / Slack Connection Guide
+
+This section explains, step by step, how to obtain the real values needed for channel connection, such as `Bot Token`, `App Token`, `user ID`, `chat ID`, and `channel ID`.
+
+Important:
+
+- Treat Telegram and Slack tokens like passwords.
+- You can type IDs and tokens directly into Nobie, but real production values should never be committed to Git.
+- If Nobie is already running with the same Telegram bot token, calling `getUpdates` manually can return `409 Conflict`. In that case, stop Nobie briefly before checking.
+
+### Telegram Setup
+
+#### 1. Create a Telegram bot
+
+1. Open `@BotFather` in Telegram.
+2. Send `/newbot`.
+3. Enter a bot name and a bot username.
+4. Copy the `Bot Token` returned by BotFather.
+
+Example:
+
+- `1234567890:AA...`
+
+This value goes into Nobie's `Telegram Bot Token` setting.
+
+#### 2. Start a 1:1 chat with the bot
+
+1. Search for the bot you just created in Telegram.
+2. Open the bot's direct chat.
+3. Send `/start` once.
+
+Why this matters:
+
+- Telegram bots usually cannot message a user who has never interacted with them.
+- `getUpdates` is also much easier to inspect after an actual chat has started.
+
+#### 3. Get your Telegram user ID
+
+The most direct method is `getUpdates`.
+
+1. If Nobie is currently running with the same bot token, stop it briefly.
+2. Call this URL in a browser or terminal:
+
+```bash
+curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+```
+
+3. In the returned JSON, find:
+
+- `result[].message.from.id`
+
+That value is the Telegram user ID to place in `allowedUserIds`.
+
+Example:
+
+```json
+{
+  "message": {
+    "from": {
+      "id": 42120565
+    }
+  }
+}
+```
+
+In this example, the user ID is `42120565`.
+
+#### 4. Get a Telegram group / chat ID
+
+1. Invite the bot to the target group.
+2. Send at least one message in that group.
+3. Call:
+
+```bash
+curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+```
+
+4. In the returned JSON, find:
+
+- `result[].message.chat.id`
+
+That value is the group or chat ID.
+
+Example:
+
+```json
+{
+  "message": {
+    "chat": {
+      "id": -1001234567890,
+      "title": "Team Operations"
+    }
+  }
+}
+```
+
+In this example, the chat ID is `-1001234567890`.
+
+Notes:
+
+- Direct chats usually have positive IDs.
+- Groups and supergroups usually have negative IDs.
+- Supergroups often use the `-100...` format.
+
+#### 5. If the bot does not respond in a Telegram group
+
+1. Use `@BotFather` and check `/setprivacy` for the bot.
+2. If the bot must read ordinary group messages, privacy mode may need to be disabled.
+3. Confirm that Nobie's `allowedUserIds` and `allowedGroupIds` match the real values.
+4. Confirm that no other process is using the same bot token.
+
+If you see this error, it is usually a duplicate long polling process:
+
+- `409: Conflict: terminated by other getUpdates request`
+
+### Slack Setup
+
+#### 1. Create a Slack app
+
+1. Open the Slack API dashboard.
+2. Create a new app for your workspace.
+3. Give it a clear app name.
+
+You will use this single app for Nobie's Slack channel connection.
+
+#### 2. Get the Slack Bot Token
+
+1. Open the app settings.
+2. Go to `OAuth & Permissions`.
+3. Install the app to your workspace if it is not installed yet.
+4. Copy the `Bot User OAuth Token`.
+
+Example format:
+
+- `xoxb-...`
+
+This value goes into Nobie's `Slack Bot Token`.
+
+#### 3. Get the Slack App Token
+
+1. In the app settings, open `Basic Information`.
+2. Scroll to `App-Level Tokens`.
+3. Create a token with `connections:write`.
+4. Copy the token.
+
+Example format:
+
+- `xapp-...`
+
+This value goes into Nobie's `Slack App Token`.
+
+#### 4. Enable Socket Mode
+
+1. In the Slack app settings, open `Socket Mode`.
+2. Turn it on.
+3. Make sure the app token created above is active.
+
+Nobie currently expects Slack to be connected through Socket Mode.
+
+#### 5. Enable Event Subscriptions
+
+1. Open `Event Subscriptions`.
+2. Turn events on.
+3. Add the event types Nobie needs.
+
+Recommended minimum:
+
+- `app_mention`
+- `message.im`
+
+Optional, depending on your usage:
+
+- `message.channels`
+- `message.groups`
+
+Meaning:
+
+- `app_mention`: needed when users say `@Nobie ...` in a channel
+- `message.im`: needed for direct messages
+- `message.channels` / `message.groups`: needed if you want broader message handling in channels or private groups
+
+#### 6. Enable Interactivity for approval buttons
+
+1. Open `Interactivity & Shortcuts`.
+2. Turn `Interactivity` on.
+
+Nobie uses Slack button interactions for approval flows such as:
+
+- approve
+- approve once
+- deny
+
+If Interactivity is disabled, the approval buttons may not work even if they are shown.
+
+#### 7. Invite the bot to the target Slack channel
+
+1. Open the Slack channel you want Nobie to use.
+2. Invite the bot application into that channel.
+3. Send a test mention such as:
+
+```text
+@Nobie hello
+```
+
+If the bot is not in the channel, Nobie will not receive the relevant channel events.
+
+#### 8. Get the Slack user ID
+
+One easy method:
+
+1. Open the user's profile in Slack.
+2. Open the menu for that profile.
+3. Use `Copy member ID` or the equivalent menu item.
+
+The copied value looks like:
+
+- `U0123456789`
+
+That is the value for Nobie's `slackAllowedUserIds`.
+
+#### 9. Get the Slack channel ID
+
+One easy method:
+
+1. Open the target Slack channel in a browser.
+2. Look at the URL.
+
+Example:
+
+```text
+https://app.slack.com/client/T12345678/C23456789
+```
+
+In this example:
+
+- workspace/team ID: `T12345678`
+- channel ID: `C23456789`
+
+That channel ID is the value for Nobie's `slackAllowedChannelIds`.
+
+You can also use Slack's UI menus to copy the channel ID, depending on your workspace UI version.
+
+#### 10. If Slack does not respond
+
+Check these items in order:
+
+1. `Slack Enabled` is turned on in Nobie settings.
+2. Both `Slack Bot Token` and `Slack App Token` are correct.
+3. `Socket Mode` is enabled in the Slack app.
+4. `Event Subscriptions` includes `app_mention` and/or `message.im`.
+5. `Interactivity` is enabled if approval buttons are expected.
+6. The bot has been invited to the actual target channel.
+7. `slackAllowedUserIds` and `slackAllowedChannelIds` match the real values.
+8. Nobie has been restarted after the settings change.
+
+### Which values go into Nobie settings
+
+Telegram:
+
+- `Telegram Bot Token` -> BotFather token
+- `allowedUserIds` -> Telegram `message.from.id`
+- `allowedGroupIds` -> Telegram `message.chat.id`
+
+Slack:
+
+- `Slack Bot Token` -> `xoxb-...`
+- `Slack App Token` -> `xapp-...`
+- `slackAllowedUserIds` -> Slack member ID such as `U0123456789`
+- `slackAllowedChannelIds` -> Slack channel ID such as `C23456789`
+
+If you leave allowlists empty, the channel may behave more openly depending on the current runtime rules, but in production it is safer to enter explicit user IDs and channel IDs.
+
 ## State Directory and Config Files
 
 The default state directory follows this priority:

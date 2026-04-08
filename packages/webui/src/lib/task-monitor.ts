@@ -44,7 +44,7 @@ export interface TaskMonitorTimelineItem {
 
 export interface TaskMonitorDelivery {
   status: TaskDeliveryStatus
-  channel?: "telegram" | "webui" | "cli" | "unknown"
+  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
   summary?: string
   artifact?: TaskArtifactModel
 }
@@ -100,9 +100,9 @@ function describeAttemptLabel(attempt: TaskAttemptModel, text: TextFn): string {
     case "followup":
       return text("후속 시도", "Follow-up attempt")
     case "intake_bridge":
-      return text("작업 분해 및 대상 선택", "Task intake and target selection")
+      return text("요청 정리 및 대상 선택", "Request triage and target selection")
     case "scheduled_execution":
-      return attempt.title || text("예약 작업 실행", "Scheduled task execution")
+      return attempt.title || text("예약 실행", "Scheduled run")
     case "approval_continuation":
       return text("승인 후 작업 계속 진행", "Continue after approval")
     case "verification":
@@ -133,14 +133,14 @@ function describeActivityOwner(
   text: TextFn,
 ): string {
   if (activity.attemptId) {
-    return labelByAttemptId.get(activity.attemptId) ?? text("태스크 시도", "Task attempt")
+    return labelByAttemptId.get(activity.attemptId) ?? text("실행 기록", "Run history")
   }
 
   if ((activity.kind as TaskActivityKind).startsWith("delivery.")) {
-    return text("전달", "Delivery")
+    return text("결과 전달", "Result delivery")
   }
 
-  return text("태스크", "Task")
+  return text("항목", "Item")
 }
 
 function describeChecklistItemLabel(key: TaskChecklistItemKey, text: TextFn): string {
@@ -148,9 +148,9 @@ function describeChecklistItemLabel(key: TaskChecklistItemKey, text: TextFn): st
     case "request":
       return text("요청 확인", "Request confirmed")
     case "execution":
-      return text("실행", "Execution")
+      return text("실행 진행", "Execution")
     case "delivery":
-      return text("전달", "Delivery")
+      return text("결과 전달", "Result delivery")
     case "completion":
       return text("완료 확인", "Completion check")
   }
@@ -173,11 +173,11 @@ function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMo
 function describeRunScopeLabel(attempt: TaskMonitorAttempt, text: TextFn): string {
   switch (attempt.run?.runScope) {
     case "child":
-      return text("서브 에이전트", "Sub-agent")
+      return text("후속 실행", "Follow-up run")
     case "analysis":
-      return text("분석 작업", "Analysis task")
+      return text("분석", "Analysis")
     default:
-      return text("루트 작업", "Root task")
+      return text("기본 실행", "Main run")
   }
 }
 

@@ -34,7 +34,7 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
     targetLabel?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
     workDir?: string | undefined
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     skipIntake: true
     toolsEnabled?: boolean | undefined
     contextMode?: AgentContextMode | undefined
@@ -103,7 +103,7 @@ export function scheduleDelayedRootRun(
     structuredRequest?: TaskStructuredRequest
     intentEnvelope?: TaskIntentEnvelope
     workDir?: string
-    source: "webui" | "cli" | "telegram"
+    source: "webui" | "cli" | "telegram" | "slack"
     onChunk: RunChunkDeliveryHandler | undefined
     immediateCompletionText?: string
     preferredTarget?: string

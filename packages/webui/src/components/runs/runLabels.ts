@@ -47,10 +47,10 @@ export function toTaskProfileText(taskProfile: RootRun["taskProfile"], language:
 export function toContextModeText(contextMode: RunContextMode, language: UiLanguage) {
   switch (contextMode) {
     case "request_group":
-      return pickUiText(language, "같은 요청만 참조", "Use only the same request")
+      return pickUiText(language, "같은 요청만 참조", "Same request only")
     case "isolated":
-      return pickUiText(language, "현재 요청만 단독 처리", "Use only this request")
+      return pickUiText(language, "현재 요청만 참조", "This request only")
     default:
-      return pickUiText(language, "대화 전체 참조", "Use the full conversation")
+      return pickUiText(language, "대화 전체 참조", "Full conversation")
   }
 }

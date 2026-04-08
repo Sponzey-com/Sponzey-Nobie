@@ -36,6 +36,7 @@ vi.mock("../packages/core/src/instructions/merge.js", () => ({
 vi.mock("../packages/core/src/tools/dispatcher.js", () => ({
   toolDispatcher: {
     getAll: (...args: unknown[]) => getAllMock(...args),
+    isToolAvailableForSource: () => true,
     dispatch: (...args: unknown[]) => dispatchMock(...args),
   },
 }))
@@ -224,6 +225,76 @@ describe("runAgent streaming policy", () => {
           filePath: "/tmp/capture.jpg",
           size: 128,
           source: "telegram",
+        },
+      },
+      { type: "done", totalTokens: 2 },
+    ])
+  })
+
+  it("stops after successful slack screen capture artifact delivery instead of continuing with extra tools", async () => {
+    getAllMock.mockReturnValueOnce([{
+      name: "screen_capture",
+      description: "screen capture",
+      parameters: { type: "object", properties: {} },
+    }])
+    dispatchMock.mockResolvedValueOnce({
+      success: true,
+      output: "Yeonjang 스크린샷 캡처 완료.",
+      details: {
+        kind: "artifact_delivery",
+        channel: "slack",
+        filePath: "/tmp/screen.png",
+        size: 128,
+        source: "slack",
+      },
+    })
+
+    const provider = {
+      chat: vi.fn(async function* () {
+        yield {
+          type: "tool_use",
+          id: "tool-screen-slack-1",
+          name: "screen_capture",
+          input: { extensionId: "yeonjang-main" },
+        } as const
+        yield {
+          type: "message_stop",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      userMessage: "메인 화면 캡쳐해서 보여줘",
+      sessionId: "session-agent-slack-screen-success",
+      runId: "run-agent-slack-screen-success",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "slack",
+      toolsEnabled: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(provider.chat).toHaveBeenCalledTimes(1)
+    expect(chunks).toEqual([
+      {
+        type: "tool_start",
+        toolName: "screen_capture",
+        params: { extensionId: "yeonjang-main" },
+      },
+      {
+        type: "tool_end",
+        toolName: "screen_capture",
+        success: true,
+        output: "Yeonjang 스크린샷 캡처 완료.",
+        details: {
+          kind: "artifact_delivery",
+          channel: "slack",
+          filePath: "/tmp/screen.png",
+          size: 128,
+          source: "slack",
         },
       },
       { type: "done", totalTokens: 2 },
