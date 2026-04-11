@@ -67,6 +67,16 @@ function inferConnectionFromLegacyConfig(rawAi) {
             },
         });
     }
+    if (configuredProvider === "llama") {
+        const llama = toObject(rawAiProviders.llama ?? rawAiProviders.llama_cpp);
+        return buildConnection("llama", configuredModel, {
+            endpoint: toString(llama.baseUrl) || undefined,
+            auth: {
+                mode: "api_key",
+                apiKey: toStringArray(llama.apiKeys)[0] || undefined,
+            },
+        });
+    }
     const openai = toObject(rawAiBackends.openai);
     if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
         return buildConnection("openai", toString(openai.defaultModel), {
@@ -103,6 +113,16 @@ function inferConnectionFromLegacyConfig(rawAi) {
             endpoint: toString(ollama.endpoint) || undefined,
             auth: {
                 mode: "api_key",
+            },
+        });
+    }
+    const llama = toObject(rawAiBackends.llama_cpp ?? rawAiBackends.llama);
+    if (llama.enabled === true && toString(llama.providerType) === "llama") {
+        return buildConnection("llama", toString(llama.defaultModel), {
+            endpoint: toString(llama.endpoint) || undefined,
+            auth: {
+                mode: "api_key",
+                apiKey: toString(toObject(llama.credentials).apiKey) || undefined,
             },
         });
     }
@@ -183,6 +203,11 @@ function readEnvOverrides() {
         },
     };
 }
+/**
+ * Parse a .env file and apply values to process.env.
+ * - 값이 있는 키: 쉘 환경변수에 없을 때만 설정 (쉘 우선)
+ * - 값이 빈 키 (KEY=): 쉘에서 온 값이라도 강제 삭제 — "이 키를 쓰지 않겠다"는 명시적 선언
+ */
 function loadDotEnv(filePath) {
     if (!existsSync(filePath))
         return;
@@ -196,13 +221,15 @@ function loadDotEnv(filePath) {
             continue;
         const key = line.slice(0, eqIdx).trim();
         let value = line.slice(eqIdx + 1).trim();
-        if ((value.startsWith("\"") && value.endsWith("\"")) ||
+        // strip optional surrounding quotes
+        if ((value.startsWith('"') && value.endsWith('"')) ||
             (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
         }
         if (!key)
             continue;
         if (value === "") {
+            // 빈 값으로 명시 → 쉘에서 상속된 값도 제거
             delete process.env[key];
         }
         else if (!(key in process.env)) {
@@ -210,6 +237,13 @@ function loadDotEnv(filePath) {
         }
     }
 }
+/**
+ * Load .env files. Priority:
+ *  1. 쉘 환경변수 (비어있지 않은 값에 한해)
+ *  2. cwd()/.env
+ *  3. ~/.wizby/.env (legacy ~/.howie/.env fallback via PATHS)
+ * .env에서 KEY= (빈 값)으로 설정하면 쉘 환경변수도 무효화됨
+ */
 export function loadEnv() {
     loadDotEnv(join(process.cwd(), ".env"));
     loadDotEnv(join(PATHS.stateDir, ".env"));
@@ -272,4 +306,3 @@ export function reloadConfig() {
     return loadConfig();
 }
 export { PATHS } from "./paths.js";
-//# sourceMappingURL=index.js.map

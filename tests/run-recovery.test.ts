@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildAiRecoveryKey,
+  summarizeRawErrorForUser,
   describeAssistantTextDeliveryFailure,
   describeRecoveryAlternatives,
   hasMeaningfulRouteChange,
@@ -22,6 +23,12 @@ describe("run recovery helpers", () => {
     })
 
     expect(key).toBe("provider:openai::auth")
+  })
+
+  it("summarizes raw html auth errors for user-facing messages", () => {
+    const summary = summarizeRawErrorForUser("403 <html><head><meta name=\"viewport\"></head><body>Forbidden</body></html>")
+
+    expect(summary).toBe("인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.")
   })
 
   it("returns a recovery candidate for unseen command failures", () => {

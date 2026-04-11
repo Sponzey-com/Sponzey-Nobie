@@ -510,6 +510,75 @@ function finalizeStructuredArtifacts(params: {
   }
 }
 
+function looksLikePromissoryExecutionReceipt(message: string): boolean {
+  return /(지금\s*바로\s*확인해드릴게요|확인해드릴게요|확인해볼게요|확인하겠습니다|조회해드릴게요|알려드릴게요|let me check|i(?:'| wi)ll check|checking now|looking it up|i(?:'| wi)ll look it up)/iu.test(message)
+}
+
+function looksLikeLiveInformationRequest(message: string): boolean {
+  const normalized = message.trim()
+  if (!normalized) return false
+  const mentionsLiveTiming = /(지금|현재|오늘|실시간|latest|current|today|now)/iu.test(normalized)
+  const mentionsLookupTopic = /(날씨|weather|기온|온도|forecast|news|headline|환율|rate|주가|stock|시세)/iu.test(normalized)
+  return mentionsLiveTiming && mentionsLookupTopic
+}
+
+export function promotePromissoryDirectAnswer(
+  result: TaskIntakeResult,
+  latestUserMessage: string,
+): TaskIntakeResult {
+  const hasNonReplyAction = result.action_items.some((item) => item.type !== "reply")
+  const shouldPromote = result.intent.category === "direct_answer"
+    && result.user_message.mode === "direct_answer"
+    && (
+      result.execution.requires_run
+      || result.execution.requires_delegation
+      || result.execution.needs_tools
+      || result.execution.needs_web
+      || looksLikePromissoryExecutionReceipt(result.user_message.text)
+      || looksLikeLiveInformationRequest(latestUserMessage)
+    )
+
+  if (!shouldPromote) return result
+
+  const retainedActions = result.action_items.filter((item) => item.type !== "reply")
+  const actionItems = retainedActions.length > 0
+    ? retainedActions
+    : [{
+        id: "run-task-promoted-from-intake",
+        type: "run_task" as const,
+        title: result.structured_request.target || result.intent.summary || "요청 실행",
+        priority: "normal" as const,
+        reason: "직접 답변이 아니라 실제 후속 실행이 필요한 요청입니다.",
+        payload: {
+          goal: result.structured_request.normalized_english || result.structured_request.target || result.intent.summary,
+          context: result.structured_request.context.join("\n"),
+          task_profile: inferTaskProfileFromTask(latestUserMessage),
+          preferred_target: result.execution.suggested_target || "auto",
+          success_criteria: result.structured_request.complete_condition,
+          constraints: [],
+        },
+      }]
+
+  return {
+    ...result,
+    intent: {
+      ...result.intent,
+      category: "task_intake",
+    },
+    user_message: {
+      mode: "accepted_receipt",
+      text: result.user_message.text,
+    },
+    action_items: actionItems,
+    execution: {
+      ...result.execution,
+      requires_run: true,
+      needs_web: result.execution.needs_web || looksLikeLiveInformationRequest(latestUserMessage),
+    },
+    notes: Array.from(new Set([...result.notes, "promissory-direct-answer-promoted"])),
+  }
+}
+
 function buildTaskIntentEnvelope(
   result: TaskIntakeCoreResult,
   structuredRequest: TaskStructuredRequest,
@@ -1297,12 +1366,12 @@ function parseTaskIntakeResult(
       ),
       ...(normalized ? { normalized } : {}),
     })
-    return {
+    return promotePromissoryDirectAnswer({
       ...resultWithoutStructuredArtifacts,
       notes: artifacts.notes,
       structured_request: artifacts.structuredRequest,
       intent_envelope: artifacts.intentEnvelope,
-    }
+    }, latestUserMessage)
   } catch {
     return null
   }

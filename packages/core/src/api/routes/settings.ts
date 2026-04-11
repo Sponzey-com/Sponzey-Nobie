@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import JSON5 from "json5"
 import { getConfig, reloadConfig } from "../../config/index.js"
-import { getProvider, getDefaultModel } from "../../ai/index.js"
+import { getProvider, getDefaultModel, resetAIProviderCache } from "../../ai/index.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveSlackChannel, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
@@ -224,6 +224,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
 
       writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
       const reloaded = reloadConfig()
+      resetAIProviderCache()
       updateActiveRunsMaxDelegationTurns(reloaded.orchestration.maxDelegationTurns)
       try {
         await restartMqttBrokerFromConfig()
@@ -253,6 +254,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
 
   app.post("/api/settings/reload", { preHandler: authMiddleware }, async () => {
     reloadConfig()
+    resetAIProviderCache()
     try {
       await restartMqttBrokerFromConfig()
     } catch {

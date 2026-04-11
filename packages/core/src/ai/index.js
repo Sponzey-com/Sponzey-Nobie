@@ -6,6 +6,7 @@ import { GeminiProvider } from "./providers/gemini.js";
 import { OpenAIProvider } from "./providers/openai.js";
 const profiles = new Map();
 const providers = new Map();
+const providerFingerprints = new Map();
 function buildProfile(apiKeys) {
     return { apiKeys, currentKeyIndex: 0, cooldowns: new Map() };
 }
@@ -14,6 +15,8 @@ function buildOpenAICompatibleProfile(providerId, apiKey) {
         return buildProfile([apiKey]);
     if (providerId === "ollama")
         return buildProfile(["nobie-local"]);
+    if (providerId === "llama")
+        return buildProfile(["nobie-llama"]);
     if (providerId === "custom")
         return buildProfile(["nobie-custom"]);
     return buildProfile([]);
@@ -25,6 +28,23 @@ function normalizeOpenAICompatibleEndpoint(providerId, endpoint) {
     if (providerId !== "ollama")
         return normalized;
     return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`;
+}
+function buildProviderFingerprint(connection) {
+    const providerId = connection.provider.trim();
+    const authMode = connection.auth?.mode ?? "api_key";
+    const endpoint = providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom"
+        ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint) ?? ""
+        : connection.endpoint?.trim() ?? "";
+    const model = connection.model.trim();
+    const oauthAuthFilePath = connection.auth?.oauthAuthFilePath?.trim() ?? "";
+    const clientId = connection.auth?.clientId?.trim() ?? "";
+    const apiKeyFingerprint = connection.auth?.apiKey?.trim() ? "api-key:set" : "api-key:empty";
+    return [providerId, authMode, endpoint, model, oauthAuthFilePath, clientId, apiKeyFingerprint].join("|");
+}
+export function resetAIProviderCache() {
+    providers.clear();
+    profiles.clear();
+    providerFingerprints.clear();
 }
 export function getActiveAIConnection(config = getConfig()) {
     return config.ai.connection;
@@ -40,7 +60,7 @@ function isOpenAIOAuthConfigured(connection = getActiveAIConnection()) {
     }));
 }
 function hasConfiguredConnection(connection = getActiveAIConnection()) {
-    const providerId = connection?.provider?.trim() ?? "";
+    const providerId = connection.provider.trim();
     if (!providerId)
         return false;
     if (providerId === "openai") {
@@ -52,7 +72,7 @@ function hasConfiguredConnection(connection = getActiveAIConnection()) {
     if (providerId === "anthropic" || providerId === "gemini") {
         return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim());
     }
-    if (providerId === "ollama" || providerId === "custom") {
+    if (providerId === "ollama" || providerId === "llama" || providerId === "custom") {
         return Boolean(connection.endpoint?.trim());
     }
     return false;
@@ -74,14 +94,19 @@ export function getProvider(providerId) {
     const connection = getActiveAIConnection();
     const activeProviderId = detectAvailableProvider();
     const requestedProviderId = providerId?.trim() ?? "";
+    const currentFingerprint = buildProviderFingerprint(connection);
     if (!activeProviderId) {
         throw new Error("No configured AI backend is available. Connect an AI in settings first.");
     }
     if (requestedProviderId && requestedProviderId !== activeProviderId) {
         throw new Error(`Only the configured active AI backend can be used. Active backend: "${activeProviderId}".`);
     }
-    if (providers.has(activeProviderId))
+    if (providers.has(activeProviderId) && providerFingerprints.get(activeProviderId) === currentFingerprint) {
         return providers.get(activeProviderId);
+    }
+    providers.delete(activeProviderId);
+    profiles.delete(activeProviderId);
+    providerFingerprints.set(activeProviderId, currentFingerprint);
     if (activeProviderId === "anthropic") {
         const apiKey = connection.auth?.apiKey?.trim();
         if (!apiKey) {
@@ -126,7 +151,7 @@ const OLLAMA_BASEURL_PATTERN = /(^|\/\/)(?:[^/]*ollama|127\.0\.0\.1:11434|localh
 export function shouldForceReasoningMode(providerId, model) {
     const connection = getActiveAIConnection();
     const endpoint = connection.endpoint?.trim() ?? "";
-    if (providerId === "ollama")
+    if (providerId === "ollama" || providerId === "llama")
         return true;
     if (LLAMA_MODEL_PATTERN.test(model))
         return true;

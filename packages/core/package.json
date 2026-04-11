@@ -16,12 +16,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "aedes": "^0.51.3",
     "@anthropic-ai/sdk": "^0.36.3",
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.2.0",
     "@mozilla/readability": "^0.6.0",
+    "aedes": "^0.51.3",
     "better-sqlite3": "^11.7.0",
     "cheerio": "^1.2.0",
     "fastify": "^5.8.2",
@@ -31,12 +31,14 @@
     "mqtt": "^5.14.1",
     "openai": "^6.29.0",
     "playwright": "^1.58.2",
+    "selenium-webdriver": "^4.42.0",
     "turndown": "^7.2.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/jsdom": "^28.0.0",
     "@types/mozilla__readability": "^0.4.2",
+    "@types/selenium-webdriver": "^4.35.5",
     "@types/turndown": "^5.0.6"
   }
 }

@@ -3,12 +3,15 @@ import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import JSON5 from "json5";
 import { getConfig, PATHS, reloadConfig } from "../config/index.js";
+import { resetAIProviderCache } from "../ai/index.js";
 import { DEFAULT_CONFIG } from "../config/types.js";
 import { buildMcpSetupDraft, buildSkillsSetupDraft, persistMcpSetupDraft, persistSkillsSetupDraft, } from "./setup-extensions.js";
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js";
+import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js";
 import { mcpRegistry } from "../mcp/registry.js";
+import { getMqttBrokerSnapshot } from "../mqtt/broker.js";
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js";
-import { OPENAI_CODEX_KNOWN_MODELS, resolveOpenAICodexAuthFilePath, resolveOpenAICodexBaseUrl } from "../auth/openai-codex-oauth.js";
+import { OPENAI_CODEX_KNOWN_MODELS, OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexAuthFilePath, resolveOpenAICodexBaseUrl, } from "../auth/openai-codex-oauth.js";
 const KNOWN_BACKENDS = [
     "provider:openai",
     "provider:anthropic",
@@ -107,6 +110,7 @@ function writeRawConfig(raw) {
     ensureParentDir(PATHS.configFile);
     writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8");
     reloadConfig();
+    resetAIProviderCache();
 }
 function defaultSetupState() {
     return {
@@ -190,7 +194,7 @@ function hasConfiguredConnection(config, providerType) {
     if (providerType === "anthropic" || providerType === "gemini") {
         return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim());
     }
-    if (providerType === "ollama" || providerType === "custom") {
+    if (providerType === "ollama" || providerType === "llama" || providerType === "custom") {
         return Boolean(connection.endpoint?.trim());
     }
     return false;
@@ -207,6 +211,7 @@ function createDefaultAiBackends(config) {
         : undefined;
     const geminiEndpoint = isActiveConnection(config, "gemini") ? connection.endpoint?.trim() || undefined : undefined;
     const ollamaEndpoint = isActiveConnection(config, "ollama") ? connection.endpoint?.trim() || undefined : undefined;
+    const llamaEndpoint = isActiveConnection(config, "llama") ? connection.endpoint?.trim() || undefined : undefined;
     return [
         {
             id: "provider:openai",
@@ -263,18 +268,21 @@ function createDefaultAiBackends(config) {
         },
         {
             id: "provider:llama_cpp",
-            label: "로컬 경량 추론",
+            label: "Llama",
             kind: "provider",
             providerType: "llama",
             authMode: "api_key",
-            credentials: {},
+            credentials: {
+                apiKey: isActiveConnection(config, "llama") ? (connection.auth?.apiKey ?? "") : "",
+            },
             local: true,
-            enabled: false,
+            enabled: hasConfiguredConnection(config, "llama"),
             availableModels: [],
-            defaultModel: "",
-            status: "planned",
+            defaultModel: isActiveConnection(config, "llama") ? connection.model : "",
+            status: hasConfiguredConnection(config, "llama") ? "ready" : "planned",
             summary: "",
             tags: ["local", "private_local"],
+            ...(llamaEndpoint ? { endpoint: llamaEndpoint } : {}),
         },
         {
             id: "provider:anthropic",
@@ -314,6 +322,9 @@ function mergeBackend(base, value) {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
         local: typeof raw.local === "boolean" ? raw.local : base.local,
         providerType: normalizeBackendProviderType(raw.providerType) ?? base.providerType,
+        authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
+            ? raw.authMode
+            : base.authMode,
         credentials: toCredentials(raw.credentials),
         defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : base.defaultModel,
         summary: typeof raw.summary === "string" ? sanitizeBackendSummary(raw.summary) : base.summary,
@@ -382,6 +393,9 @@ function sanitizeCustomBackends(value) {
             label: raw.label,
             kind,
             providerType: normalizeBackendProviderType(raw.providerType) ?? "custom",
+            authMode: ["api_key", "chatgpt_oauth"].includes(String(raw.authMode))
+                ? raw.authMode
+                : "api_key",
             credentials: toCredentials(raw.credentials),
             local: typeof raw.local === "boolean" ? raw.local : false,
             enabled: typeof raw.enabled === "boolean" ? raw.enabled : false,
@@ -402,6 +416,7 @@ function sanitizeCustomBackends(value) {
 }
 export function buildSetupDraft() {
     const config = getConfig();
+    const raw = readRawConfig();
     const defaults = createDefaultAiBackends(config);
     const customBackends = config.ai.connection.provider === "custom"
         ? [{
@@ -450,6 +465,18 @@ export function buildSetupDraft() {
             botToken: config.telegram?.botToken ?? "",
             allowedUserIds: toNumberArrayString(config.telegram?.allowedUserIds ?? []),
             allowedGroupIds: toNumberArrayString(config.telegram?.allowedGroupIds ?? []),
+            slackEnabled: config.slack?.enabled ?? false,
+            slackBotToken: config.slack?.botToken ?? "",
+            slackAppToken: config.slack?.appToken ?? "",
+            slackAllowedUserIds: (config.slack?.allowedUserIds ?? []).join("\n"),
+            slackAllowedChannelIds: (config.slack?.allowedChannelIds ?? []).join("\n"),
+        },
+        mqtt: {
+            enabled: config.mqtt.enabled,
+            host: config.mqtt.host,
+            port: config.mqtt.port,
+            username: config.mqtt.username,
+            password: config.mqtt.password,
         },
         remoteAccess: {
             authEnabled: config.webui.auth.enabled,
@@ -502,6 +529,10 @@ function persistBackends(raw, draft) {
 }
 export function saveSetupDraft(draft, state) {
     const raw = readRawConfig();
+    const rawWebuiAuth = {
+        ...toObject(toObject(raw.webui).auth),
+    };
+    delete rawWebuiAuth.oauth;
     raw.profile = {
         ...toObject(raw.profile),
         profileName: draft.personal.profileName,
@@ -531,12 +562,35 @@ export function saveSetupDraft(draft, state) {
         allowedUserIds: parseIdString(draft.channels.allowedUserIds),
         allowedGroupIds: parseIdString(draft.channels.allowedGroupIds),
     };
+    raw.slack = {
+        ...toObject(raw.slack),
+        enabled: draft.channels.slackEnabled,
+        botToken: draft.channels.slackBotToken,
+        appToken: draft.channels.slackAppToken,
+        allowedUserIds: draft.channels.slackAllowedUserIds
+            .split(/[\s,]+/)
+            .map((value) => value.trim())
+            .filter(Boolean),
+        allowedChannelIds: draft.channels.slackAllowedChannelIds
+            .split(/[\s,]+/)
+            .map((value) => value.trim())
+            .filter(Boolean),
+    };
+    raw.mqtt = {
+        ...toObject(raw.mqtt),
+        enabled: draft.mqtt.enabled,
+        host: draft.mqtt.host.trim(),
+        port: Math.max(1, Math.min(65535, Math.floor(Number.isFinite(draft.mqtt.port) ? draft.mqtt.port : 1883))),
+        username: draft.mqtt.username.trim(),
+        password: draft.mqtt.password,
+        allowAnonymous: false,
+    };
     raw.webui = {
         ...toObject(raw.webui),
         host: draft.remoteAccess.host,
         port: draft.remoteAccess.port,
         auth: {
-            ...toObject(toObject(raw.webui).auth),
+            ...rawWebuiAuth,
             enabled: draft.remoteAccess.authEnabled,
             token: draft.remoteAccess.authToken,
         },
@@ -549,11 +603,12 @@ export function saveSetupDraft(draft, state) {
         throw new Error("Only one active AI connection can be enabled.");
     }
     const activeBackend = enabledBackends[0];
+    const persistedProviderType = activeBackend?.providerType;
     rawAi.connection = activeBackend
         ? {
-            provider: activeBackend.providerType,
+            provider: persistedProviderType,
             model: activeBackend.defaultModel.trim(),
-            endpoint: activeBackend.providerType === "openai" && activeBackend.authMode === "chatgpt_oauth"
+            endpoint: persistedProviderType === "openai" && activeBackend.authMode === "chatgpt_oauth"
                 ? resolveOpenAICodexBaseUrl(activeBackend.endpoint)
                 : activeBackend.endpoint?.trim() || undefined,
             auth: {
@@ -624,8 +679,11 @@ export function createCapabilities() {
     const config = getConfig();
     const telegramRunning = getActiveTelegramChannel() !== null;
     const telegramRuntimeError = getTelegramRuntimeError();
+    const slackRunning = getActiveSlackChannel() !== null;
+    const slackRuntimeError = getSlackRuntimeError();
     const mcpSummary = mcpRegistry.getSummary();
     const mcpStatuses = mcpRegistry.getStatuses();
+    const mqtt = getMqttBrokerSnapshot();
     const mcpCapability = {
         key: "mcp.client",
         label: "MCP Client",
@@ -677,6 +735,55 @@ export function createCapabilities() {
     }
     else if (!telegramRunning) {
         telegramCapability.reason = "Telegram 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다.";
+    }
+    const slackCapability = {
+        key: "slack.channel",
+        label: "Slack Channel",
+        area: "slack",
+        status: config.slack?.botToken && config.slack?.appToken
+            ? config.slack.enabled
+                ? slackRunning
+                    ? "ready"
+                    : slackRuntimeError ? "error" : "disabled"
+                : "disabled"
+            : "disabled",
+        implemented: true,
+        enabled: Boolean(config.slack?.enabled && slackRunning),
+    };
+    if (!config.slack?.botToken || !config.slack?.appToken) {
+        slackCapability.reason = "Slack Bot Token과 App Token이 설정되지 않았습니다.";
+    }
+    else if (!config.slack.enabled) {
+        slackCapability.reason = "Slack 채널이 비활성화되어 있습니다.";
+    }
+    else if (slackRuntimeError) {
+        slackCapability.reason = slackRuntimeError;
+    }
+    else if (!slackRunning) {
+        slackCapability.reason = "Slack 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다.";
+    }
+    const mqttCapability = {
+        key: "mqtt.broker",
+        label: "MQTT Broker",
+        area: "mqtt",
+        status: !config.mqtt.enabled ? "disabled" : mqtt.running ? "ready" : mqtt.reason ? "error" : "disabled",
+        implemented: true,
+        enabled: Boolean(config.mqtt.enabled && mqtt.running),
+    };
+    if (!config.mqtt.enabled) {
+        mqttCapability.reason = "MQTT 브로커가 설정에서 비활성화되어 있습니다.";
+    }
+    else if (mqtt.running) {
+        const hostLabel = mqtt.host === "0.0.0.0" ? "모든 네트워크 인터페이스" : mqtt.host;
+        const authLabel = mqtt.authEnabled
+            ? mqtt.allowAnonymous
+                ? "ID/password 인증이 켜져 있고 익명 접속도 허용됩니다."
+                : "ID/password 인증이 필요합니다."
+            : "익명 접속만 허용됩니다.";
+        mqttCapability.reason = `${hostLabel}:${mqtt.port} 에서 브로커가 실행 중입니다. ${authLabel}`;
+    }
+    else if (mqtt.reason) {
+        mqttCapability.reason = mqtt.reason;
     }
     return [
         { key: "setup.wizard", label: "Setup Wizard", area: "setup", status: "ready", implemented: true, enabled: true },
@@ -733,6 +840,8 @@ export function createCapabilities() {
             reason: "세션별/요청별 override는 후속 Phase에서 연결합니다.",
         },
         telegramCapability,
+        slackCapability,
+        mqttCapability,
         (() => {
             const capability = {
                 key: "scheduler.core",
@@ -840,7 +949,7 @@ function candidateUrls(endpoint, providerType) {
     const root = stripKnownEndpointSuffix(normalized);
     return [...new Set(candidatePaths(providerType).map((path) => `${root}${path}`))];
 }
-function createDiscoveryHeaders(providerType, credentials) {
+function createDiscoveryHeaders(providerType, credentials, authMode = "api_key") {
     const headers = {
         Accept: "application/json",
     };
@@ -850,6 +959,14 @@ function createDiscoveryHeaders(providerType, credentials) {
     if (username || password) {
         headers.Authorization = `Basic ${Buffer.from(`${username ?? ""}:${password ?? ""}`).toString("base64")}`;
         return headers;
+    }
+    if (providerType === "openai" && authMode === "chatgpt_oauth") {
+        return readOpenAICodexAccessToken({
+            authFilePath: credentials.oauthAuthFilePath,
+        }).then(({ accessToken }) => ({
+            ...headers,
+            Authorization: `Bearer ${accessToken}`,
+        }));
     }
     if (!apiKey)
         return headers;
@@ -871,17 +988,55 @@ function createDiscoveryHeaders(providerType, credentials) {
             return headers;
     }
 }
-export async function discoverModelsFromEndpoint(endpoint, providerType = "custom", credentials = {}) {
+export async function discoverModelsFromEndpoint(endpoint, providerType = "custom", credentials = {}, authMode = "api_key") {
     const normalized = normalizeEndpoint(endpoint);
     if (!normalized) {
         throw new Error("엔드포인트를 먼저 입력하세요.");
     }
+    if (providerType === "openai" && authMode === "chatgpt_oauth") {
+        const { accessToken } = await readOpenAICodexAccessToken({
+            authFilePath: credentials.oauthAuthFilePath,
+        });
+        const baseUrl = resolveOpenAICodexBaseUrl(normalized);
+        const sourceUrl = `${baseUrl}${OPENAI_CODEX_RESPONSES_PATH}`;
+        const response = await fetch(sourceUrl, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                Accept: "text/event-stream",
+                "User-Agent": OPENAI_CODEX_USER_AGENT,
+            },
+            body: JSON.stringify({
+                model: OPENAI_CODEX_KNOWN_MODELS[0],
+                input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+                instructions: "You are Codex.",
+                store: false,
+                stream: true,
+            }),
+        });
+        if (!response.ok) {
+            const detail = (await response.text().catch(() => "")).trim();
+            throw new Error(detail || `${response.status} ${response.statusText}`);
+        }
+        try {
+            await response.body?.cancel?.();
+        }
+        catch {
+            // ignore cancellation failure for probe requests
+        }
+        return {
+            models: [...OPENAI_CODEX_KNOWN_MODELS],
+            sourceUrl,
+        };
+    }
+    const headers = await createDiscoveryHeaders(providerType, credentials, authMode);
     const errors = [];
     for (const candidate of candidateUrls(normalized, providerType)) {
         try {
             const response = await fetch(candidate, {
                 method: "GET",
-                headers: createDiscoveryHeaders(providerType, credentials),
+                headers,
             });
             if (!response.ok) {
                 errors.push(`${candidate}: ${response.status} ${response.statusText}`);
@@ -900,4 +1055,3 @@ export async function discoverModelsFromEndpoint(endpoint, providerType = "custo
     }
     throw new Error(errors[0] ?? "모델 목록을 가져오지 못했습니다.");
 }
-//# sourceMappingURL=index.js.map

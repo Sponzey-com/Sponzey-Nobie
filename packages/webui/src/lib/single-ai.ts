@@ -11,13 +11,13 @@ function hasConfiguredBackend(backend: AIBackendCard): boolean {
 }
 
 export function getPreferredSingleAiBackendId(backends: AIBackendCard[], preferredId?: string | null): string | null {
-  if (preferredId && backends.some((backend) => backend.id === preferredId)) return preferredId
-
   const enabled = backends.find((backend) => backend.enabled)
   if (enabled) return enabled.id
 
   const configured = backends.find((backend) => hasConfiguredBackend(backend))
   if (configured) return configured.id
+
+  if (preferredId && backends.some((backend) => backend.id === preferredId)) return preferredId
 
   return backends[0]?.id ?? null
 }

@@ -81,6 +81,17 @@ function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record
     })
   }
 
+  if (configuredProvider === "llama") {
+    const llama = toObject(rawAiProviders.llama ?? rawAiProviders.llama_cpp)
+    return buildConnection("llama", configuredModel, {
+      endpoint: toString(llama.baseUrl) || undefined,
+      auth: {
+        mode: "api_key",
+        apiKey: toStringArray(llama.apiKeys)[0] || undefined,
+      },
+    })
+  }
+
   const openai = toObject(rawAiBackends.openai)
   if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
     return buildConnection("openai", toString(openai.defaultModel), {
@@ -120,6 +131,17 @@ function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record
       endpoint: toString(ollama.endpoint) || undefined,
       auth: {
         mode: "api_key",
+      },
+    })
+  }
+
+  const llama = toObject(rawAiBackends.llama_cpp ?? rawAiBackends.llama)
+  if (llama.enabled === true && toString(llama.providerType) === "llama") {
+    return buildConnection("llama", toString(llama.defaultModel), {
+      endpoint: toString(llama.endpoint) || undefined,
+      auth: {
+        mode: "api_key",
+        apiKey: toString(toObject(llama.credentials).apiKey) || undefined,
       },
     })
   }

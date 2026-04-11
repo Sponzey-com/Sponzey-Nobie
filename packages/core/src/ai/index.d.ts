@@ -1,4 +1,5 @@
 import type { AIProvider } from "./types.js";
+export declare function resetAIProviderCache(): void;
 export declare function getProvider(providerId?: string): AIProvider;
 /**
  * 설정에 저장된 AI 연결만 기준으로 공급자를 자동 감지한다.

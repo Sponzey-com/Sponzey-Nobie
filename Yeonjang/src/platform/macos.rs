@@ -36,7 +36,7 @@ impl AutomationBackend for PlatformBackend {
             screen_capture: true,
             mouse_control: true,
             keyboard_control: true,
-            system_control: false,
+            system_control: true,
         }
     }
 
@@ -45,13 +45,33 @@ impl AutomationBackend for PlatformBackend {
     }
 
     fn control_system(&self, request: SystemControlRequest) -> Result<SystemControlResult> {
-        bail!(
-            "{}",
-            shared::not_implemented(
-                &format!("system.control(action={})", request.action),
-                self.platform_kind()
-            )
-        )
+        let (program, args, action, message) = resolve_macos_system_control(&request)?;
+        let output = Command::new(&program)
+            .args(&args)
+            .output()
+            .with_context(|| format!("failed to run macOS system control command `{program}`"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            bail!(
+                "system control failed: {}{}{}",
+                stderr.trim(),
+                if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                    " | "
+                } else {
+                    ""
+                },
+                stdout.trim()
+            );
+        }
+
+        Ok(SystemControlResult {
+            accepted: true,
+            action,
+            target: request.target,
+            message,
+        })
     }
 
     fn execute_command(&self, request: CommandExecutionRequest) -> Result<CommandExecutionResult> {
@@ -744,6 +764,74 @@ fn normalize_mouse_button_name(button: &str) -> Result<&'static str> {
         "right" => Ok("right"),
         "middle" | "center" => Ok("middle"),
         other => bail!("unsupported mouse button for macOS: {other}"),
+    }
+}
+
+fn resolve_macos_system_control(
+    request: &SystemControlRequest,
+) -> Result<(String, Vec<String>, String, String)> {
+    let action = request.action.trim().to_lowercase();
+    let target = request
+        .target
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if !target.is_empty() && target != "local" && target != "localhost" && target != "." {
+        bail!(
+            "system.control target `{}` is not supported on macOS yet",
+            request.target.as_deref().unwrap_or_default()
+        );
+    }
+
+    match action.as_str() {
+        "lock" | "lock_screen" | "lock_workstation" => {
+            let program =
+                "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession";
+            if !Path::new(program).is_file() {
+                bail!("macOS lock helper was not found: {program}");
+            }
+            Ok((
+                program.to_string(),
+                vec!["-suspend".to_string()],
+                action,
+                "macOS lock requested.".to_string(),
+            ))
+        }
+        "sleep" | "sleepnow" | "sleep_now" => Ok((
+            "/usr/bin/pmset".to_string(),
+            vec!["sleepnow".to_string()],
+            action,
+            "macOS sleep requested.".to_string(),
+        )),
+        "logoff" | "logout" | "signout" | "sign_out" => Ok((
+            "/usr/bin/osascript".to_string(),
+            vec![
+                "-e".to_string(),
+                "tell application \"System Events\" to log out".to_string(),
+            ],
+            action,
+            "macOS logout requested.".to_string(),
+        )),
+        "restart" | "reboot" => Ok((
+            "/usr/bin/osascript".to_string(),
+            vec![
+                "-e".to_string(),
+                "tell application \"System Events\" to restart".to_string(),
+            ],
+            action,
+            "macOS restart requested.".to_string(),
+        )),
+        "shutdown" | "poweroff" | "power_off" => Ok((
+            "/usr/bin/osascript".to_string(),
+            vec![
+                "-e".to_string(),
+                "tell application \"System Events\" to shut down".to_string(),
+            ],
+            action,
+            "macOS shutdown requested.".to_string(),
+        )),
+        other => bail!("system.control action `{other}` is not supported on macOS yet"),
     }
 }
 
@@ -1488,10 +1576,12 @@ do {
 #[cfg(test)]
 mod tests {
     use super::{
-        MacosKeyboardTarget, build_modifier_clause, build_modifier_key_codes,
-        normalize_macos_screen_capture_display, normalize_mouse_button_name, resolve_macos_keyboard_key_code,
-        resolve_macos_keyboard_target, resolve_optional_mouse_point,
+        MacosKeyboardTarget, PlatformBackend, build_modifier_clause, build_modifier_key_codes,
+        normalize_macos_screen_capture_display, normalize_mouse_button_name,
+        resolve_macos_keyboard_key_code, resolve_macos_keyboard_target,
+        resolve_macos_system_control, resolve_optional_mouse_point,
     };
+    use crate::automation::{AutomationBackend, SystemControlRequest};
 
     #[test]
     fn resolves_letter_shortcut_to_keystroke() {
@@ -1569,5 +1659,41 @@ mod tests {
     fn normalizes_screen_capture_display_to_one_based_index() {
         assert_eq!(normalize_macos_screen_capture_display(0), 1);
         assert_eq!(normalize_macos_screen_capture_display(1), 2);
+    }
+
+    #[test]
+    fn macos_capabilities_report_system_control() {
+        let capabilities = PlatformBackend.capabilities();
+        assert!(capabilities.system_control);
+    }
+
+    #[test]
+    fn resolves_sleep_system_control() {
+        let (program, args, action, message) =
+            resolve_macos_system_control(&SystemControlRequest {
+                action: "sleep".to_string(),
+                target: None,
+            })
+            .expect("sleep action should resolve");
+
+        assert_eq!(program, "/usr/bin/pmset");
+        assert_eq!(args, vec!["sleepnow"]);
+        assert_eq!(action, "sleep");
+        assert_eq!(message, "macOS sleep requested.");
+    }
+
+    #[test]
+    fn rejects_remote_system_control_target() {
+        let error = resolve_macos_system_control(&SystemControlRequest {
+            action: "sleep".to_string(),
+            target: Some("remote-host".to_string()),
+        })
+        .expect_err("remote target should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("target `remote-host` is not supported")
+        );
     }
 }

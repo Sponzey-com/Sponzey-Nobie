@@ -84,6 +84,13 @@ describe("webui single ai helper", () => {
     expect(getPreferredSingleAiBackendId(draft.aiBackends)).toBe("provider:gemini")
   })
 
+  it("prefers a configured backend over a stale preferred selection", () => {
+    const draft = makeDraft()
+    draft.aiBackends[0]!.defaultModel = "gpt-5.4"
+    draft.aiBackends[0]!.endpoint = "https://api.openai.com/v1"
+    expect(getPreferredSingleAiBackendId(draft.aiBackends, "provider:gemini")).toBe("provider:openai")
+  })
+
   it("enables only one backend and syncs routing targets", () => {
     const draft = makeDraft()
     const next = setSingleAiBackendEnabled(draft, "provider:openai", true)

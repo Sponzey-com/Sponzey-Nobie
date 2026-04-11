@@ -22,14 +22,14 @@ The goal of Nobie is not just to answer like a chat bot, but to understand reque
 ## Current Status Summary
 
 - `Implemented`: WebUI setup, AI connection, MCP and Skill registration, Telegram integration, task monitor, local execution tools, scheduling, and Yeonjang extension connectivity
-- `Planned`: Slack channel support, stronger Windows-specific installation and operations support, broader environment validation, and further setup UX simplification
+- `Planned`: Slack channel hardening, stronger Windows/Linux installation and operations support, broader environment validation, and further setup UX simplification
 
 Important:
 
 - Nobie uses the `AI connected in Settings` for natural-language interpretation, request structuring, and completion review.
 - There is no separate hidden external LLM actor in the process.
 - The internal `packages/core/src/ai` layer is an adapter for configured AI backends.
-- The current officially supported operating system is `macOS`.
+- The current officially supported operating system is `macOS`. Windows/Linux paths in `Yeonjang` are partially implemented, but still need environment-specific validation and operations hardening.
 - Nobie's current command-style local execution, app launch, screen capture, and keyboard or mouse control require the `Yeonjang` extension to be running.
 
 The detailed process source of truth is [process.md](./process.md).
@@ -126,7 +126,7 @@ Important:
 
 - Local device control and command execution are currently restricted to the `Yeonjang` path.
 - In practice, this means `Yeonjang` must be running if you want these features to work.
-- This path is currently implemented for `macOS`.
+- This path is most thoroughly validated on `macOS`. Windows/Linux functionality is implemented by feature area, and reported capabilities depend on installed OS tools and permissions.
 
 ### 6. Local Work Execution `(Implemented)`
 
@@ -596,8 +596,8 @@ It stores:
 The following items should still be treated as `not yet implemented` or `partially implemented`:
 
 - Slack channel integration
-- stronger Windows-specific installation and operations support `(currently unsupported)`
-- broader validation of UI automation outside macOS `(currently unsupported)`
+- stronger Windows/Linux installation and operations support `(partially implemented, needs more validation)`
+- broader validation of UI automation outside macOS `(partially implemented, needs more validation)`
 - further setup UX simplification and onboarding improvements
 - expanded operations and user-help documentation
 

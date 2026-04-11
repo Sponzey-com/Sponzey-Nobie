@@ -261,11 +261,15 @@ export function SettingsPage() {
             {pickUiText(uiLanguage, "취소", "Cancel")}
           </button>
           <button
-            onClick={() => void handleSave()}
-            disabled={!isDirty || saving}
-            className="rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => { if (!isDirty || saving) return; void handleSave() }}
+            disabled={saving}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${isDirty ? "bg-stone-900 text-white" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}
           >
-            {pickUiText(uiLanguage, "저장", "Save")}
+            {saving
+              ? pickUiText(uiLanguage, "저장 중...", "Saving...")
+              : isDirty
+                ? pickUiText(uiLanguage, "저장", "Save")
+                : pickUiText(uiLanguage, "저장됨", "Saved")}
           </button>
         </div>
       </div>

@@ -113,11 +113,7 @@ impl AutomationBackend for PlatformBackend {
     }
 
     fn list_cameras(&self) -> Result<Vec<CameraDevice>> {
-        let output = run_powershell_json(
-            WINDOWS_CAMERA_LIST_SCRIPT,
-            &[],
-            "camera discovery",
-        )?;
+        let output = run_powershell_json(WINDOWS_CAMERA_LIST_SCRIPT, &[], "camera discovery")?;
         parse_windows_camera_devices(&output)
     }
 
@@ -574,9 +570,17 @@ fn resolve_windows_system_control(
     request: &SystemControlRequest,
 ) -> Result<(String, Vec<String>, String, String)> {
     let action = request.action.trim().to_lowercase();
-    let target = request.target.as_deref().unwrap_or_default().trim().to_lowercase();
+    let target = request
+        .target
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
     if !target.is_empty() && target != "local" && target != "localhost" && target != "." {
-        bail!("system.control target `{}` is not supported on Windows yet", request.target.as_deref().unwrap_or_default());
+        bail!(
+            "system.control target `{}` is not supported on Windows yet",
+            request.target.as_deref().unwrap_or_default()
+        );
     }
 
     match action.as_str() {
@@ -597,6 +601,25 @@ fn resolve_windows_system_control(
             vec!["/s".to_string(), "/t".to_string(), "0".to_string()],
             action,
             "Windows shutdown requested.".to_string(),
+        )),
+        "sleep" | "sleepnow" | "sleep_now" | "suspend" => Ok((
+            "powershell".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false) | Out-Null".to_string(),
+            ],
+            action,
+            "Windows sleep requested.".to_string(),
+        )),
+        "hibernate" | "hibernation" => Ok((
+            "shutdown".to_string(),
+            vec!["/h".to_string()],
+            action,
+            "Windows hibernate requested.".to_string(),
         )),
         "restart" | "reboot" => Ok((
             "shutdown".to_string(),
@@ -621,13 +644,7 @@ fn build_temp_powershell_script_path(context: &str) -> PathBuf {
         .unwrap_or(0);
     let normalized = context
         .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch
-            } else {
-                '-'
-            }
-        })
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect::<String>()
         .trim_matches('-')
         .to_string();
@@ -858,12 +875,10 @@ fn resolve_screen_output_path(output_path: Option<&str>) -> String {
                 path.to_string()
             }
         }
-        _ => {
-            env::temp_dir()
-                .join(build_generated_capture_name("yeonjang-screen", "png"))
-                .display()
-                .to_string()
-        }
+        _ => env::temp_dir()
+            .join(build_generated_capture_name("yeonjang-screen", "png"))
+            .display()
+            .to_string(),
     }
 }
 
@@ -880,12 +895,10 @@ fn resolve_camera_output_path(output_path: Option<&str>) -> String {
                 path.to_string()
             }
         }
-        _ => {
-            env::temp_dir()
-                .join(build_generated_capture_name("yeonjang-camera", "jpg"))
-                .display()
-                .to_string()
-        }
+        _ => env::temp_dir()
+            .join(build_generated_capture_name("yeonjang-camera", "jpg"))
+            .display()
+            .to_string(),
     }
 }
 
@@ -1416,11 +1429,12 @@ switch ($action) {
 mod tests {
     use super::{
         PlatformBackend, WindowsCameraCaptureHelperRequest, build_windows_modifier_key_codes,
-        normalize_windows_mouse_button_name, parse_windows_camera_devices,
-        parse_windows_camera_capture_helper_request, resolve_optional_mouse_point,
-        resolve_windows_modifier_key_code, resolve_windows_virtual_key_code,
+        normalize_windows_mouse_button_name, parse_windows_camera_capture_helper_request,
+        parse_windows_camera_devices, resolve_optional_mouse_point,
+        resolve_windows_modifier_key_code, resolve_windows_system_control,
+        resolve_windows_virtual_key_code,
     };
-    use crate::automation::AutomationBackend;
+    use crate::automation::{AutomationBackend, SystemControlRequest};
     use serde_json::json;
 
     #[test]
@@ -1507,6 +1521,58 @@ mod tests {
     fn windows_capabilities_report_camera_management() {
         let capabilities = PlatformBackend.capabilities();
         assert!(capabilities.camera_management);
+    }
+
+    #[test]
+    fn windows_capabilities_report_system_control() {
+        let capabilities = PlatformBackend.capabilities();
+        assert!(capabilities.system_control);
+    }
+
+    #[test]
+    fn resolves_sleep_system_control() {
+        let (program, args, action, message) =
+            resolve_windows_system_control(&SystemControlRequest {
+                action: "sleep".to_string(),
+                target: None,
+            })
+            .expect("sleep action should resolve");
+
+        assert_eq!(program, "powershell");
+        assert!(args.iter().any(|arg| arg.contains("SetSuspendState")));
+        assert!(args.iter().any(|arg| arg.contains("PowerState]::Suspend")));
+        assert_eq!(action, "sleep");
+        assert_eq!(message, "Windows sleep requested.");
+    }
+
+    #[test]
+    fn resolves_hibernate_system_control() {
+        let (program, args, action, message) =
+            resolve_windows_system_control(&SystemControlRequest {
+                action: "hibernate".to_string(),
+                target: None,
+            })
+            .expect("hibernate action should resolve");
+
+        assert_eq!(program, "shutdown");
+        assert_eq!(args, vec!["/h"]);
+        assert_eq!(action, "hibernate");
+        assert_eq!(message, "Windows hibernate requested.");
+    }
+
+    #[test]
+    fn rejects_remote_system_control_target() {
+        let error = resolve_windows_system_control(&SystemControlRequest {
+            action: "sleep".to_string(),
+            target: Some("remote-host".to_string()),
+        })
+        .expect_err("remote target should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("target `remote-host` is not supported")
+        );
     }
 
     #[test]
