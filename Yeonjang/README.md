@@ -15,7 +15,7 @@ The node is intended to handle local-device and operating-system level work that
 
 This initial scaffold provides:
 
-- a native `egui/eframe` desktop settings window
+- a native `iced` desktop settings window
 - a newline-delimited JSON stdio protocol
 - a request dispatcher
 - implemented methods for:
@@ -25,23 +25,34 @@ This initial scaffold provides:
   - `system.exec`
   - `application.launch` on macOS
   - `application.launch` on Windows
+  - `application.launch` on Linux
   - `camera.list` on macOS
   - `camera.capture` on macOS
   - `camera.list` on Windows
   - `camera.capture` on Windows
+  - `camera.list` on Linux
+  - `camera.capture` on Linux
   - `screen.capture` on macOS
   - `screen.capture` on Windows
+  - `screen.capture` on Linux
   - `mouse.move` on macOS
   - `mouse.click` on macOS
   - `mouse.action` move / click / double_click / button_down / button_up / scroll on macOS
   - `mouse.move` on Windows
   - `mouse.click` on Windows
   - `mouse.action` move / click / double_click / button_down / button_up / scroll on Windows
+  - `mouse.move` on Linux
+  - `mouse.click` on Linux
+  - `mouse.action` move / click / double_click / button_down / button_up / scroll on Linux
   - `keyboard.type` on macOS
   - `keyboard.action` shortcut / key_press / key_down / key_up on macOS
   - `keyboard.type` on Windows
   - `keyboard.action` shortcut / key_press / key_down / key_up on Windows
+  - `keyboard.type` on Linux
+  - `keyboard.action` shortcut / key_press / key_down / key_up on Linux
+  - `system.control` on macOS
   - `system.control` on Windows
+  - `system.control` on Linux
 
 ## Priority
 
@@ -119,8 +130,15 @@ Each response is emitted as a single JSON object per line.
 - macOS screen capture uses a Swift helper backed by `screencapture`.
 - macOS mouse actions use a CoreGraphics Swift helper and require Accessibility permission.
 - macOS keyboard input uses `System Events` for text typing and CoreGraphics events for key press / down / up actions.
+- macOS system control supports local lock, sleep, logout, restart, and shutdown requests.
 - Windows screen capture currently uses PowerShell with `System.Windows.Forms` and `System.Drawing`.
 - Windows camera capture now uses the fixed `Yeonjang --camera-capture-helper` path.
 - When `device_id` is provided on Windows, Yeonjang uses WinRT `MediaCapture` for explicit device capture.
 - When `device_id` is omitted on Windows, Yeonjang falls back to the built-in Windows camera UI.
 - Windows mouse and keyboard actions currently use PowerShell with `user32.dll` calls.
+- Windows system control supports local lock, sleep, hibernate, sign-out, restart, and shutdown requests.
+- Linux camera list uses `v4l2-ctl --list-devices` when available and also scans `/dev/video*`.
+- Linux camera capture requires either `ffmpeg` or `fswebcam` in `PATH`.
+- Linux screen capture requires one of `grim`, `gnome-screenshot`, `scrot`, or ImageMagick `import` in `PATH`; display index selection is not implemented yet on Linux.
+- Linux mouse and keyboard automation require `xdotool` in `PATH`.
+- Linux system control supports local lock, sleep, hibernate, logout, restart, and shutdown through `loginctl`, `systemctl`, `xdg-screensaver`, `gnome-session-quit`, or `shutdown` depending on the installed desktop/systemd tooling.

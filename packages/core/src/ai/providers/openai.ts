@@ -318,6 +318,73 @@ function parseSseFrame(frame: string): { event?: string | undefined; data: strin
   return event ? { event, data: dataLines.join("\n") } : { data: dataLines.join("\n") }
 }
 
+function renderFallbackMessageContent(message: Message): string {
+  if (typeof message.content === "string") {
+    return message.content.trim()
+  }
+
+  const parts: string[] = []
+  for (const block of message.content) {
+    if (block.type === "text") {
+      const text = block.text.trim()
+      if (text) parts.push(text)
+      continue
+    }
+    if (block.type === "tool_use") {
+      const input = JSON.stringify(block.input ?? {})
+      parts.push('[tool request] ' + block.name + ' ' + input)
+      continue
+    }
+    if (block.type === "tool_result") {
+      const content = block.content.trim()
+      if (content) parts.push('[tool result] ' + content)
+    }
+  }
+
+  return parts.join("\n").trim()
+}
+
+export function buildCodexOAuthFallbackPrompt(messages: Message[]): string {
+  const relevantMessages = messages.slice(-8)
+  const lines: string[] = []
+
+  for (const message of relevantMessages) {
+    const content = renderFallbackMessageContent(message)
+    if (!content) continue
+    const label = message.role === "assistant" ? "Assistant" : "User"
+    lines.push(label + ': ' + content)
+  }
+
+  return lines.join("\n\n").trim() || "Continue the conversation."
+}
+
+function isLikelyHtmlError(detail: string): boolean {
+  const normalized = detail.trim().toLowerCase()
+  return normalized.startsWith("<!doctype html")
+    || normalized.startsWith("<html")
+    || normalized.includes("</html>")
+    || normalized.includes("<body")
+}
+
+export function shouldRetryCodexOAuthWithSimplePayload(input: {
+  status: number
+  detail: string
+  hasTools: boolean
+  hasMaxOutputTokens: boolean
+  messageCount: number
+  hasStructuredConversation: boolean
+}): boolean {
+  const hasComplexPayload = input.hasTools
+    || input.hasMaxOutputTokens
+    || input.messageCount > 1
+    || input.hasStructuredConversation
+
+  if (!hasComplexPayload) return false
+  if (input.status === 401 || input.status === 403) return true
+  if (input.status === 400 || input.status === 422) return true
+  return isLikelyHtmlError(input.detail)
+}
+
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export class OpenAIProvider implements AIProvider {
@@ -341,30 +408,76 @@ export class OpenAIProvider implements AIProvider {
     const tools = params.tools && params.tools.length > 0
       ? toCodexTools(params.tools)
       : undefined
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "User-Agent": OPENAI_CODEX_USER_AGENT,
+    }
+    const baseBody = {
+      model: params.model,
+      instructions: params.system?.trim() || "You are Codex.",
+      store: false,
+      stream: true,
+    }
+    const primaryBody = {
+      ...baseBody,
+      input,
+      ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
+      ...(tools ? { tools, tool_choice: "auto" } : {}),
+    }
 
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "User-Agent": OPENAI_CODEX_USER_AGENT,
-      },
-      body: JSON.stringify({
-        model: params.model,
-        input,
-        instructions: params.system?.trim() || "You are Codex.",
-        store: false,
-        stream: true,
-        ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
-        ...(tools ? { tools, tool_choice: "auto" } : {}),
-      }),
+      headers,
+      body: JSON.stringify(primaryBody),
       ...(params.signal ? { signal: params.signal } : {}),
     })
 
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).trim()
-      throw new Error(detail || `${response.status} ${response.statusText}`)
+      const shouldRetry = shouldRetryCodexOAuthWithSimplePayload({
+        status: response.status,
+        detail,
+        hasTools: Boolean(tools),
+        hasMaxOutputTokens: params.maxTokens !== undefined,
+        messageCount: params.messages.length,
+        hasStructuredConversation: params.messages.some((message) => typeof message.content !== "string"),
+      })
+
+      if (!shouldRetry) {
+        throw new Error(detail || `${response.status} ${response.statusText}`)
+      }
+
+      log.warn("chatgpt_oauth rich payload rejected; retrying with simplified prompt payload", {
+        status: response.status,
+        hasTools: Boolean(tools),
+        hasMaxOutputTokens: params.maxTokens !== undefined,
+        messageCount: params.messages.length,
+      })
+
+      const fallbackBody = {
+        ...baseBody,
+        input: [{
+          role: "user" as const,
+          content: [{
+            type: "input_text" as const,
+            text: buildCodexOAuthFallbackPrompt(params.messages),
+          }],
+        }],
+      }
+
+      response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(fallbackBody),
+        ...(params.signal ? { signal: params.signal } : {}),
+      })
+
+      if (!response.ok) {
+        const retryDetail = (await response.text().catch(() => "")).trim()
+        throw new Error(retryDetail || detail || `${response.status} ${response.statusText}`)
+      }
     }
 
     const reader = response.body?.getReader()

@@ -1,12 +1,15 @@
 import OpenAI from "openai";
 import { nextApiKey, markKeyFailure } from "../types.js";
 import { createLogger } from "../../logger/index.js";
+import { OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexBaseUrl, } from "../../auth/openai-codex-oauth.js";
 const log = createLogger("ai:openai");
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
 const TOKEN_ESTIMATE_DIVISOR = 4;
 const TOKEN_SAFETY_HEADROOM = 1_024;
 const CONTEXT_LIMITS = {
     "gpt-5": 400_000,
+    "gpt-5.4": 400_000,
+    "gpt-5.4-mini": 400_000,
     "gpt-5.1": 400_000,
     "gpt-4.1": 1_047_576,
     "gpt-4o": 128_000,
@@ -122,20 +125,415 @@ function isOfficialOpenAIBaseUrl(baseUrl) {
         return false;
     }
 }
+function makeSchemaNullable(schema) {
+    const next = { ...schema };
+    if (Array.isArray(next.type)) {
+        if (!next.type.includes("null"))
+            next.type = [...next.type, "null"];
+    }
+    else if (typeof next.type === "string") {
+        next.type = [next.type, "null"];
+    }
+    if (Array.isArray(next.enum) && !next.enum.includes(null)) {
+        next.enum = [...next.enum, null];
+    }
+    return next;
+}
+function normalizeCodexSchema(schema) {
+    const normalized = { ...schema };
+    if (schema.type === "object" && schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
+        const properties = Object.entries(schema.properties).reduce((acc, [key, value]) => {
+            if (value && typeof value === "object" && !Array.isArray(value)) {
+                acc[key] = normalizeCodexSchema(value);
+            }
+            else {
+                acc[key] = value;
+            }
+            return acc;
+        }, {});
+        const originalRequired = new Set(Array.isArray(schema.required) ? schema.required.filter((item) => typeof item === "string") : []);
+        for (const key of Object.keys(properties)) {
+            if (!originalRequired.has(key)) {
+                const value = properties[key];
+                if (value && typeof value === "object" && !Array.isArray(value)) {
+                    properties[key] = makeSchemaNullable(value);
+                }
+            }
+        }
+        normalized.properties = properties;
+        normalized.required = Object.keys(properties);
+        normalized.additionalProperties = false;
+        return normalized;
+    }
+    if (schema.type === "array" && schema.items && typeof schema.items === "object" && !Array.isArray(schema.items)) {
+        normalized.items = normalizeCodexSchema(schema.items);
+        return normalized;
+    }
+    return normalized;
+}
+function stripNullishValues(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => stripNullishValues(item));
+    }
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value)
+            .filter(([, item]) => item !== null && item !== undefined)
+            .map(([key, item]) => [key, stripNullishValues(item)]));
+    }
+    return value;
+}
+function toCodexInput(messages) {
+    const result = [];
+    for (const msg of messages) {
+        if (typeof msg.content === "string") {
+            result.push({
+                role: msg.role,
+                content: [{
+                        type: msg.role === "assistant" ? "output_text" : "input_text",
+                        text: msg.content,
+                    }],
+            });
+            continue;
+        }
+        const textParts = [];
+        const toolBlocks = [];
+        for (const block of msg.content) {
+            if (block.type === "text") {
+                textParts.push(block.text);
+                continue;
+            }
+            if (block.type === "tool_use" && msg.role === "assistant") {
+                toolBlocks.push({
+                    type: "function_call",
+                    call_id: block.id,
+                    name: block.name,
+                    arguments: JSON.stringify(block.input ?? {}),
+                });
+                continue;
+            }
+            if (block.type === "tool_result" && msg.role === "user") {
+                toolBlocks.push({
+                    type: "function_call_output",
+                    call_id: block.tool_use_id,
+                    output: block.content,
+                });
+            }
+        }
+        if (textParts.length > 0) {
+            result.push({
+                role: msg.role,
+                content: [{
+                        type: msg.role === "assistant" ? "output_text" : "input_text",
+                        text: textParts.join("\n"),
+                    }],
+            });
+        }
+        result.push(...toolBlocks);
+    }
+    return result;
+}
+function toCodexTools(tools) {
+    return tools.map((tool) => ({
+        type: "function",
+        name: tool.name,
+        description: tool.description,
+        parameters: normalizeCodexSchema(tool.input_schema),
+        strict: true,
+    }));
+}
+function parseSseFrame(frame) {
+    const lines = frame.split(/\r?\n/);
+    let event;
+    const dataLines = [];
+    for (const line of lines) {
+        if (line.startsWith("event:")) {
+            event = line.slice("event:".length).trim();
+            continue;
+        }
+        if (line.startsWith("data:")) {
+            dataLines.push(line.slice("data:".length).trim());
+        }
+    }
+    if (dataLines.length === 0)
+        return null;
+    return event ? { event, data: dataLines.join("\n") } : { data: dataLines.join("\n") };
+}
+function renderFallbackMessageContent(message) {
+    if (typeof message.content === "string") {
+        return message.content.trim();
+    }
+    const parts = [];
+    for (const block of message.content) {
+        if (block.type === "text") {
+            const text = block.text.trim();
+            if (text)
+                parts.push(text);
+            continue;
+        }
+        if (block.type === "tool_use") {
+            const input = JSON.stringify(block.input ?? {});
+            parts.push('[tool request] ' + block.name + ' ' + input);
+            continue;
+        }
+        if (block.type === "tool_result") {
+            const content = block.content.trim();
+            if (content)
+                parts.push('[tool result] ' + content);
+        }
+    }
+    return parts.join("\n").trim();
+}
+export function buildCodexOAuthFallbackPrompt(messages) {
+    const relevantMessages = messages.slice(-8);
+    const lines = [];
+    for (const message of relevantMessages) {
+        const content = renderFallbackMessageContent(message);
+        if (!content)
+            continue;
+        const label = message.role === "assistant" ? "Assistant" : "User";
+        lines.push(label + ': ' + content);
+    }
+    return lines.join("\n\n").trim() || "Continue the conversation.";
+}
+function isLikelyHtmlError(detail) {
+    const normalized = detail.trim().toLowerCase();
+    return normalized.startsWith("<!doctype html")
+        || normalized.startsWith("<html")
+        || normalized.includes("</html>")
+        || normalized.includes("<body");
+}
+export function shouldRetryCodexOAuthWithSimplePayload(input) {
+    const hasComplexPayload = input.hasTools
+        || input.hasMaxOutputTokens
+        || input.messageCount > 1
+        || input.hasStructuredConversation;
+    if (!hasComplexPayload)
+        return false;
+    if (input.status === 401 || input.status === 403)
+        return true;
+    if (input.status === 400 || input.status === 422)
+        return true;
+    return isLikelyHtmlError(input.detail);
+}
 // ─── Provider ────────────────────────────────────────────────────────────────
 export class OpenAIProvider {
     profile;
     baseUrl;
+    oauthConfig;
     id = "openai";
     supportedModels = Object.keys(CONTEXT_LIMITS);
-    constructor(profile, baseUrl) {
+    constructor(profile, baseUrl, oauthConfig) {
         this.profile = profile;
         this.baseUrl = baseUrl;
+        this.oauthConfig = oauthConfig;
     }
     maxContextTokens(model) {
         return CONTEXT_LIMITS[model] ?? 128_000;
     }
+    async *chatWithCodexOAuth(params) {
+        const { accessToken } = await readOpenAICodexAccessToken(this.oauthConfig);
+        const url = `${resolveOpenAICodexBaseUrl(this.baseUrl)}${OPENAI_CODEX_RESPONSES_PATH}`;
+        const input = toCodexInput(params.messages);
+        const tools = params.tools && params.tools.length > 0
+            ? toCodexTools(params.tools)
+            : undefined;
+        const headers = {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            "User-Agent": OPENAI_CODEX_USER_AGENT,
+        };
+        const baseBody = {
+            model: params.model,
+            instructions: params.system?.trim() || "You are Codex.",
+            store: false,
+            stream: true,
+        };
+        const primaryBody = {
+            ...baseBody,
+            input,
+            ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
+            ...(tools ? { tools, tool_choice: "auto" } : {}),
+        };
+        let response = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(primaryBody),
+            ...(params.signal ? { signal: params.signal } : {}),
+        });
+        if (!response.ok) {
+            const detail = (await response.text().catch(() => "")).trim();
+            const shouldRetry = shouldRetryCodexOAuthWithSimplePayload({
+                status: response.status,
+                detail,
+                hasTools: Boolean(tools),
+                hasMaxOutputTokens: params.maxTokens !== undefined,
+                messageCount: params.messages.length,
+                hasStructuredConversation: params.messages.some((message) => typeof message.content !== "string"),
+            });
+            if (!shouldRetry) {
+                throw new Error(detail || `${response.status} ${response.statusText}`);
+            }
+            log.warn("chatgpt_oauth rich payload rejected; retrying with simplified prompt payload", {
+                status: response.status,
+                hasTools: Boolean(tools),
+                hasMaxOutputTokens: params.maxTokens !== undefined,
+                messageCount: params.messages.length,
+            });
+            const fallbackBody = {
+                ...baseBody,
+                input: [{
+                        role: "user",
+                        content: [{
+                                type: "input_text",
+                                text: buildCodexOAuthFallbackPrompt(params.messages),
+                            }],
+                    }],
+            };
+            response = await fetch(url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(fallbackBody),
+                ...(params.signal ? { signal: params.signal } : {}),
+            });
+            if (!response.ok) {
+                const retryDetail = (await response.text().catch(() => "")).trim();
+                throw new Error(retryDetail || detail || `${response.status} ${response.statusText}`);
+            }
+        }
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error("ChatGPT Codex 응답 스트림을 열지 못했습니다.");
+        }
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let inputTokens = 0;
+        let outputTokens = 0;
+        const functionCalls = new Map();
+        const emitFrame = async (frame) => {
+            const parsed = parseSseFrame(frame);
+            if (!parsed?.data || parsed.data === "[DONE]")
+                return [];
+            const payload = JSON.parse(parsed.data);
+            const type = typeof payload.type === "string" ? payload.type : parsed.event;
+            if (!type)
+                return [];
+            switch (type) {
+                case "response.output_text.delta": {
+                    const delta = typeof payload.delta === "string" ? payload.delta : "";
+                    return delta ? [{ type: "text_delta", delta }] : [];
+                }
+                case "response.output_item.added": {
+                    const item = payload.item;
+                    if (!item || item.type !== "function_call")
+                        return [];
+                    const itemId = typeof item.id === "string" ? item.id : "";
+                    functionCalls.set(itemId, {
+                        itemId,
+                        callId: typeof item.call_id === "string" ? item.call_id : itemId,
+                        name: typeof item.name === "string" ? item.name : "",
+                        args: typeof item.arguments === "string" ? item.arguments : "",
+                    });
+                    return [];
+                }
+                case "response.function_call_arguments.delta": {
+                    const itemId = typeof payload.item_id === "string" ? payload.item_id : "";
+                    const delta = typeof payload.delta === "string" ? payload.delta : "";
+                    if (!itemId || !delta)
+                        return [];
+                    const current = functionCalls.get(itemId) ?? { itemId, callId: itemId, name: "", args: "" };
+                    current.args += delta;
+                    functionCalls.set(itemId, current);
+                    return [];
+                }
+                case "response.output_item.done": {
+                    const item = payload.item;
+                    if (!item || item.type !== "function_call")
+                        return [];
+                    const itemId = typeof item.id === "string" ? item.id : "";
+                    const current = functionCalls.get(itemId) ?? {
+                        itemId,
+                        callId: typeof item.call_id === "string" ? item.call_id : itemId,
+                        name: typeof item.name === "string" ? item.name : "",
+                        args: "",
+                    };
+                    if (typeof item.arguments === "string" && item.arguments.trim()) {
+                        current.args = item.arguments;
+                    }
+                    if (typeof item.call_id === "string" && item.call_id.trim()) {
+                        current.callId = item.call_id;
+                    }
+                    if (typeof item.name === "string" && item.name.trim()) {
+                        current.name = item.name;
+                    }
+                    functionCalls.delete(itemId);
+                    let parsedInput = {};
+                    try {
+                        parsedInput = stripNullishValues(current.args ? JSON.parse(current.args) : {});
+                    }
+                    catch {
+                        parsedInput = {};
+                    }
+                    return [{
+                            type: "tool_use",
+                            id: current.callId || current.itemId,
+                            name: current.name,
+                            input: parsedInput,
+                        }];
+                }
+                case "response.completed": {
+                    const responseObject = payload.response;
+                    const usage = responseObject?.usage;
+                    inputTokens = typeof usage?.input_tokens === "number" ? usage.input_tokens : inputTokens;
+                    outputTokens = typeof usage?.output_tokens === "number" ? usage.output_tokens : outputTokens;
+                    return [];
+                }
+                case "response.failed":
+                case "response.incomplete": {
+                    const responseObject = payload.response;
+                    const error = responseObject?.error;
+                    const detail = typeof error?.message === "string"
+                        ? error.message
+                        : JSON.stringify(payload);
+                    throw new Error(detail);
+                }
+                default:
+                    return [];
+            }
+        };
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            buffer += decoder.decode(value, { stream: true });
+            let boundary = buffer.indexOf("\n\n");
+            while (boundary >= 0) {
+                const frame = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                const chunks = await emitFrame(frame);
+                for (const chunk of chunks)
+                    yield chunk;
+                boundary = buffer.indexOf("\n\n");
+            }
+        }
+        if (buffer.trim()) {
+            const chunks = await emitFrame(buffer);
+            for (const chunk of chunks)
+                yield chunk;
+        }
+        yield {
+            type: "message_stop",
+            usage: {
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+            },
+        };
+    }
     async *chat(params) {
+        if (this.oauthConfig) {
+            yield* this.chatWithCodexOAuth(params);
+            return;
+        }
         const apiKey = nextApiKey(this.profile);
         if (!apiKey)
             throw new Error("No available OpenAI API keys (all on cooldown)");

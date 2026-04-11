@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import JSON5 from "json5";
 import { getConfig, reloadConfig } from "../../config/index.js";
-import { getProvider, getDefaultModel } from "../../ai/index.js";
+import { getProvider, getDefaultModel, resetAIProviderCache } from "../../ai/index.js";
 import { PATHS } from "../../config/paths.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";

@@ -141,6 +141,7 @@ vite.config.ts.timestamp-*
 
 
 .design/
+.tasks/
 .claude/
 .DS_Store
 .env

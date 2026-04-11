@@ -935,11 +935,15 @@ export function SetupPage() {
               ) : null}
               {hasEditableCurrentStep && !isDone ? (
                 <button
-                  onClick={() => void persistCurrentStep()}
-                  disabled={!canSaveCurrentStep}
-                  className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => { if (!currentStepDirty || saving) return; void persistCurrentStep() }}
+                  disabled={saving || !currentValidation.valid}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${currentStepDirty ? "border-stone-200 bg-white text-stone-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}
                 >
-                  {pickUiText(uiLanguage, "저장", "Save")}
+                  {saving
+                    ? pickUiText(uiLanguage, "저장 중...", "Saving...")
+                    : currentStepDirty
+                      ? pickUiText(uiLanguage, "저장", "Save")
+                      : pickUiText(uiLanguage, "저장됨", "Saved")}
                 </button>
               ) : null}
               {isReview ? (

@@ -254,6 +254,43 @@ export function buildExecutionRecoveryPrompt(params: {
   ].filter(Boolean).join("\n\n")
 }
 
+export function summarizeRawErrorForUser(message: string | undefined): string {
+  const normalized = (message ?? "")
+    .replace(/\r\n?/g, "\n")
+    .trim()
+
+  if (!normalized) return ""
+
+  if (/(<!doctype\s+html|<html\b|<head\b|<body\b|<meta\b|<title\b|<script\b)/i.test(normalized)) {
+    if (/(\b403\b|forbidden|unauthorized|access denied|cloudflare|challenge|auth)/i.test(normalized)) {
+      return "인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다."
+    }
+    if (/(\b404\b|page not found|not found)/i.test(normalized)) {
+      return "요청한 경로를 찾지 못해 서버가 HTML 오류 페이지를 반환했습니다."
+    }
+    return "서버가 처리 가능한 API 응답 대신 HTML 오류 페이지를 반환했습니다."
+  }
+
+  if (/no available openai api keys/i.test(normalized)) {
+    return "현재 사용할 수 있는 API 키 또는 인증 자격이 없습니다."
+  }
+  if (/(\b403\b|forbidden|unauthorized|access denied|cloudflare|challenge|auth)/i.test(normalized)) {
+    return "인증 또는 접근 차단 문제로 모델 호출이 실패했습니다."
+  }
+  if (/(\b404\b|page not found|not found)/i.test(normalized)) {
+    return "요청한 모델 또는 API 경로를 찾지 못했습니다."
+  }
+  if (/(\b429\b|rate limit|too many requests)/i.test(normalized)) {
+    return "요청 한도 또는 호출 빈도 제한 때문에 잠시 후 다시 시도해야 합니다."
+  }
+  if (/(timeout|timed out|deadline exceeded|시간 초과)/i.test(normalized)) {
+    return "응답 시간이 초과되었습니다."
+  }
+
+  const firstLine = normalized.split(/\n+/)[0]?.trim() ?? normalized
+  return firstLine.length > 220 ? `${firstLine.slice(0, 217)}...` : firstLine
+}
+
 export function buildAiErrorRecoveryPrompt(params: {
   originalRequest: string
   previousResult: string
@@ -271,7 +308,7 @@ export function buildAiErrorRecoveryPrompt(params: {
     `원래 사용자 요청: ${params.originalRequest}`,
     `복구 요약: ${params.summary}`,
     `오류 분석: ${params.reason}`,
-    `원본 오류: ${params.message}`,
+    summarizeRawErrorForUser(params.message) ? `오류 세부: ${summarizeRawErrorForUser(params.message)}` : "",
     params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
     avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
     params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
@@ -316,7 +353,7 @@ export function buildWorkerRuntimeErrorRecoveryPrompt(params: {
     `원래 사용자 요청: ${params.originalRequest}`,
     `복구 요약: ${params.summary}`,
     `오류 분석: ${params.reason}`,
-    `원본 오류: ${params.message}`,
+    summarizeRawErrorForUser(params.message) ? `오류 세부: ${summarizeRawErrorForUser(params.message)}` : "",
     params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
     avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
     params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",

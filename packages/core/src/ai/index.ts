@@ -9,29 +9,50 @@ import type { AuthProfile, AIProvider } from "./types.js"
 
 const profiles = new Map<string, AuthProfile>()
 const providers = new Map<string, AIProvider>()
+const providerFingerprints = new Map<string, string>()
 
 function buildProfile(apiKeys: string[]): AuthProfile {
   return { apiKeys, currentKeyIndex: 0, cooldowns: new Map() }
 }
 
 function buildOpenAICompatibleProfile(
-  providerId: "openai" | "ollama" | "custom",
+  providerId: "openai" | "ollama" | "llama" | "custom",
   apiKey: string | undefined,
 ): AuthProfile {
   if (apiKey) return buildProfile([apiKey])
   if (providerId === "ollama") return buildProfile(["nobie-local"])
+  if (providerId === "llama") return buildProfile(["nobie-llama"])
   if (providerId === "custom") return buildProfile(["nobie-custom"])
   return buildProfile([])
 }
 
 function normalizeOpenAICompatibleEndpoint(
-  providerId: "openai" | "ollama" | "custom",
+  providerId: "openai" | "ollama" | "llama" | "custom",
   endpoint: string | undefined,
 ): string | undefined {
   const normalized = endpoint?.trim()
   if (!normalized) return undefined
   if (providerId !== "ollama") return normalized
   return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`
+}
+
+function buildProviderFingerprint(connection: AIConnectionConfig): string {
+  const providerId = connection.provider.trim()
+  const authMode = connection.auth?.mode ?? "api_key"
+  const endpoint = providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom"
+    ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint) ?? ""
+    : connection.endpoint?.trim() ?? ""
+  const model = connection.model.trim()
+  const oauthAuthFilePath = connection.auth?.oauthAuthFilePath?.trim() ?? ""
+  const clientId = connection.auth?.clientId?.trim() ?? ""
+  const apiKeyFingerprint = connection.auth?.apiKey?.trim() ? "api-key:set" : "api-key:empty"
+  return [providerId, authMode, endpoint, model, oauthAuthFilePath, clientId, apiKeyFingerprint].join("|")
+}
+
+export function resetAIProviderCache(): void {
+  providers.clear()
+  profiles.clear()
+  providerFingerprints.clear()
 }
 
 export function getActiveAIConnection(config = getConfig()): AIConnectionConfig {
@@ -61,7 +82,7 @@ function hasConfiguredConnection(connection = getActiveAIConnection()): boolean 
     return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
   }
 
-  if (providerId === "ollama" || providerId === "custom") {
+  if (providerId === "ollama" || providerId === "llama" || providerId === "custom") {
     return Boolean(connection.endpoint?.trim())
   }
 
@@ -87,6 +108,7 @@ export function getProvider(providerId?: string): AIProvider {
   const connection = getActiveAIConnection()
   const activeProviderId = detectAvailableProvider()
   const requestedProviderId = providerId?.trim() ?? ""
+  const currentFingerprint = buildProviderFingerprint(connection)
 
   if (!activeProviderId) {
     throw new Error("No configured AI backend is available. Connect an AI in settings first.")
@@ -96,7 +118,13 @@ export function getProvider(providerId?: string): AIProvider {
     throw new Error(`Only the configured active AI backend can be used. Active backend: "${activeProviderId}".`)
   }
 
-  if (providers.has(activeProviderId)) return providers.get(activeProviderId)!
+  if (providers.has(activeProviderId) && providerFingerprints.get(activeProviderId) === currentFingerprint) {
+    return providers.get(activeProviderId)!
+  }
+
+  providers.delete(activeProviderId)
+  profiles.delete(activeProviderId)
+  providerFingerprints.set(activeProviderId, currentFingerprint)
 
   if (activeProviderId === "anthropic") {
     const apiKey = connection.auth?.apiKey?.trim()
@@ -152,7 +180,7 @@ export function shouldForceReasoningMode(providerId: string, model: string): boo
   const connection = getActiveAIConnection()
   const endpoint = connection.endpoint?.trim() ?? ""
 
-  if (providerId === "ollama") return true
+  if (providerId === "ollama" || providerId === "llama") return true
   if (LLAMA_MODEL_PATTERN.test(model)) return true
   if (OLLAMA_BASEURL_PATTERN.test(endpoint)) return true
 

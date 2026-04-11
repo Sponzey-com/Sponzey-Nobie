@@ -42,7 +42,7 @@ describe("run finalization helpers", () => {
     expect(message).toContain("현재까지 결과:")
     expect(message).toContain("남은 항목:")
     expect(message).toContain("중단 사유:")
-    expect(message).toContain("원본 오류:")
+    expect(message).toContain("오류 세부:")
     expect(message).toContain("claude exited with code 1")
   })
 

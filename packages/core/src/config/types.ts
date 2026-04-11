@@ -5,6 +5,7 @@ export type AIConnectionProvider =
   | "anthropic"
   | "gemini"
   | "ollama"
+  | "llama"
   | "custom"
   | ""
 

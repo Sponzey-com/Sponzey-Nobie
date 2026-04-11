@@ -297,7 +297,9 @@ fn run_connection_loop(
     }
 
     if stop_requested.load(Ordering::SeqCst) {
-        let _ = event_tx.send(RuntimeEvent::Disconnected("requested disconnect".to_string()));
+        let _ = event_tx.send(RuntimeEvent::Disconnected(
+            "requested disconnect".to_string(),
+        ));
         return false;
     }
 

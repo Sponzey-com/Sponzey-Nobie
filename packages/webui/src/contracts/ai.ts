@@ -83,7 +83,7 @@ export function isBuiltinBackendId(id: string): boolean {
 
 export const AI_PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string }> = [
   { value: "ollama", label: "Ollama" },
-  { value: "llama", label: "llama" },
+  { value: "llama", label: "Llama" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "gemini", label: "Gemini" },

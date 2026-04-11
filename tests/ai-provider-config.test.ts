@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { detectAvailableProvider, getDefaultModel, getProvider } from "../packages/core/src/ai/index.ts"
+import { detectAvailableProvider, getDefaultModel, getProvider, resetAIProviderCache } from "../packages/core/src/ai/index.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 
 const tempDirs: string[] = []
@@ -23,6 +23,7 @@ afterEach(() => {
   if (previousCodexHome === undefined) delete process.env["CODEX_HOME"]
   else process.env["CODEX_HOME"] = previousCodexHome
   reloadConfig()
+  resetAIProviderCache()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -209,5 +210,58 @@ describe("ai provider configuration", () => {
 
     const provider = getProvider() as { baseUrl?: string }
     expect(provider.baseUrl).toBe("http://127.0.0.1:11434/v1")
+  })
+
+  it("rebuilds the openai provider when auth mode switches to chatgpt oauth", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+
+    const authFilePath = join(stateDir, "codex-auth.json")
+    writeFileSync(authFilePath, JSON.stringify({ accessToken: "test" }), "utf-8")
+
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-5.4",
+            endpoint: "https://api.openai.com/v1",
+            auth: {
+              mode: "api_key",
+              apiKey: "sk-test"
+            }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+    resetAIProviderCache()
+
+    const apiKeyProvider = getProvider() as { oauthConfig?: { authFilePath?: string } }
+    expect(apiKeyProvider.oauthConfig).toBeUndefined()
+
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-5.4",
+            endpoint: "https://chatgpt.com/backend-api/codex",
+            auth: {
+              mode: "chatgpt_oauth",
+              oauthAuthFilePath: ${JSON.stringify(authFilePath)}
+            }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+
+    const oauthProvider = getProvider() as { oauthConfig?: { authFilePath?: string } }
+    expect(oauthProvider).not.toBe(apiKeyProvider)
+    expect(oauthProvider.oauthConfig?.authFilePath).toBe(authFilePath)
   })
 })

@@ -3,6 +3,7 @@ import { dirname } from "node:path"
 import { randomBytes } from "node:crypto"
 import JSON5 from "json5"
 import { getConfig, PATHS, reloadConfig, type NobieConfig } from "../config/index.js"
+import { resetAIProviderCache } from "../ai/index.js"
 import { DEFAULT_CONFIG } from "../config/types.js"
 import {
   buildMcpSetupDraft,
@@ -267,6 +268,7 @@ function writeRawConfig(raw: JsonObject): void {
   ensureParentDir(PATHS.configFile)
   writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
   reloadConfig()
+  resetAIProviderCache()
 }
 
 function defaultSetupState(): SetupState {
@@ -355,7 +357,7 @@ function hasConfiguredConnection(config: NobieConfig, providerType: AIBackendCar
     return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
   }
 
-  if (providerType === "ollama" || providerType === "custom") {
+  if (providerType === "ollama" || providerType === "llama" || providerType === "custom") {
     return Boolean(connection.endpoint?.trim())
   }
 
@@ -374,6 +376,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
     : undefined
   const geminiEndpoint = isActiveConnection(config, "gemini") ? connection.endpoint?.trim() || undefined : undefined
   const ollamaEndpoint = isActiveConnection(config, "ollama") ? connection.endpoint?.trim() || undefined : undefined
+  const llamaEndpoint = isActiveConnection(config, "llama") ? connection.endpoint?.trim() || undefined : undefined
 
   return [
     {
@@ -431,18 +434,21 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
     },
     {
       id: "provider:llama_cpp",
-      label: "로컬 경량 추론",
+      label: "Llama",
       kind: "provider",
       providerType: "llama",
       authMode: "api_key",
-      credentials: {},
+      credentials: {
+        apiKey: isActiveConnection(config, "llama") ? (connection.auth?.apiKey ?? "") : "",
+      },
       local: true,
-      enabled: false,
+      enabled: hasConfiguredConnection(config, "llama"),
       availableModels: [],
-      defaultModel: "",
-      status: "planned",
+      defaultModel: isActiveConnection(config, "llama") ? connection.model : "",
+      status: hasConfiguredConnection(config, "llama") ? "ready" : "planned",
       summary: "",
       tags: ["local", "private_local"],
+      ...(llamaEndpoint ? { endpoint: llamaEndpoint } : {}),
     },
     {
       id: "provider:anthropic",
@@ -773,11 +779,12 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
   }
 
   const activeBackend = enabledBackends[0]
+  const persistedProviderType = activeBackend?.providerType
   rawAi.connection = activeBackend
     ? {
-        provider: activeBackend.providerType,
+        provider: persistedProviderType,
         model: activeBackend.defaultModel.trim(),
-        endpoint: activeBackend.providerType === "openai" && activeBackend.authMode === "chatgpt_oauth"
+        endpoint: persistedProviderType === "openai" && activeBackend.authMode === "chatgpt_oauth"
           ? resolveOpenAICodexBaseUrl(activeBackend.endpoint)
           : activeBackend.endpoint?.trim() || undefined,
         auth: {
