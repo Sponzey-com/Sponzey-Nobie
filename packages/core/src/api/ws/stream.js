@@ -17,6 +17,7 @@ function broadcast(data) {
 function setupEventForwarding() {
     eventBus.on("agent.start", (e) => broadcast({ type: "agent.start", ...e }));
     eventBus.on("agent.stream", (e) => broadcast({ type: "agent.stream", ...e }));
+    eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }));
     eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }));
     eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }));
     eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }));
@@ -40,6 +41,8 @@ function setupEventForwarding() {
         log.info(`approval.resolved runId=${e.runId} decision=${e.decision} tool=${e.toolName}`);
         broadcast({ type: "approval.resolved", ...e });
     });
+    eventBus.on("schedule.created", (e) => broadcast({ type: "schedule.created", ...e }));
+    eventBus.on("schedule.cancelled", (e) => broadcast({ type: "schedule.cancelled", ...e }));
     eventBus.on("schedule.run.start", (e) => broadcast({ type: "schedule.run.start", ...e }));
     eventBus.on("schedule.run.complete", (e) => broadcast({ type: "schedule.run.complete", ...e }));
     eventBus.on("schedule.run.failed", (e) => broadcast({ type: "schedule.run.failed", ...e }));
@@ -71,12 +74,13 @@ export function registerWsRoute(app) {
                             : "deny";
                     const resolve = pendingApprovals.get(msg.runId);
                     if (resolve) {
-                        resolve(decision);
+                        resolve(decision, "user");
                         pendingApprovals.delete(msg.runId);
                         eventBus.emit("approval.resolved", {
                             runId: msg.runId,
                             decision,
                             toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+                            reason: "user",
                         });
                     }
                     else if (resolvePendingInteraction(msg.runId, decision)) {
@@ -85,6 +89,7 @@ export function registerWsRoute(app) {
                             runId: msg.runId,
                             decision,
                             toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+                            reason: "user",
                         });
                     }
                     else {

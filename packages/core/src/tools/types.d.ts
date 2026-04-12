@@ -2,12 +2,24 @@ export type RiskLevel = "safe" | "moderate" | "dangerous";
 export interface ToolContext {
     sessionId: string;
     runId: string;
+    requestGroupId?: string;
     workDir: string;
     userMessage: string;
+    source: "webui" | "cli" | "telegram" | "slack";
     allowWebAccess: boolean;
     onProgress: (message: string) => void;
     signal: AbortSignal;
 }
+export interface ArtifactDeliveryResultDetails {
+    kind: "artifact_delivery";
+    channel: "telegram" | "webui" | "slack";
+    filePath: string;
+    caption?: string;
+    mimeType?: string;
+    size: number;
+    source: ToolContext["source"];
+}
+export declare function isArtifactDeliveryResultDetails(value: unknown): value is ArtifactDeliveryResultDetails;
 export interface ToolResult {
     success: boolean;
     output: string;
@@ -24,6 +36,7 @@ export interface AgentTool<TParams = unknown> {
     };
     riskLevel: RiskLevel;
     requiresApproval: boolean;
+    availableSources?: ToolContext["source"][];
     execute(params: TParams, ctx: ToolContext): Promise<ToolResult>;
 }
 export type AnyTool = AgentTool<any>;

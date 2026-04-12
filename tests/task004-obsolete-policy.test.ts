@@ -7,15 +7,15 @@ function readRepoFile(path: string): string {
 
 describe("task004 obsolete policy guard", () => {
   it("keeps process documents synced with task/delivery/completion policy", () => {
-    expect(readRepoFile("process.md")).toContain("## 10. 문서 동기화 규칙")
-    expect(readRepoFile("analyse.md")).toContain("## 전환 이후 확인 규칙")
-    expect(readRepoFile("result.md")).toContain("## 10. 문서 동기화와 소멸 정책")
+    expect(readRepoFile(".tasks/task004.md")).toContain("문서 동기화 완료")
+    expect(readRepoFile("packages/core/src/runs/source.md")).toContain("lineageRootRunId")
+    expect(readRepoFile("packages/webui/src/pages/source.md")).toContain("`/api/tasks` projection")
   })
 
   it("keeps task projection and monitor route as the primary user-facing path", () => {
     expect(readRepoFile("packages/core/src/api/routes/runs.ts")).toContain('"/api/tasks"')
     expect(readRepoFile("packages/webui/src/pages/RunsPage.tsx")).toContain("buildTaskMonitorCards(tasks, runs, text)")
-    expect(readRepoFile("packages/webui/src/pages/ChatPage.tsx")).toContain("buildTaskMonitorCards(sessionTasks, sessionRuns, text)")
+    expect(readRepoFile("packages/webui/src/pages/ChatPage.tsx")).toContain("resolvePendingInteractionForSession")
   })
 
   it("does not reintroduce webui fallback or request-group regroup dead paths", () => {

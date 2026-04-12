@@ -1,0 +1,1 @@
+{"version":3,"file":"chunk-delivery.d.ts","sourceRoot":"","sources":["../../../src/api/ws/chunk-delivery.ts"],"names":[],"mappings":"AAIA,OAAO,KAAK,EAAwB,uBAAuB,EAAE,MAAM,wBAAwB,CAAA;AA6B3F,wBAAgB,+BAA+B,CAAC,MAAM,EAAE;IACtD,SAAS,EAAE,MAAM,CAAA;IACjB,KAAK,EAAE,MAAM,CAAA;CACd,GAAG,uBAAuB,CA+D1B"}

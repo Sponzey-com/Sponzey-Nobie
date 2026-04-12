@@ -1,21 +1,20 @@
 /**
- * Mouse control tools. Uses @nut-tree/nut-js when available.
- * Dynamic import allows graceful failure if package not installed.
+ * Mouse control tools.
+ * Requires Yeonjang for execution.
  */
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
+import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
 const MOVE_DELAY_MS = 500;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getNutMouse() {
-    // Try both common package names
-    for (const pkg of ["@nut-tree-fork/nut-js", "@nut-tree/nut-js"]) {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const mod = await import(pkg);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-            return mod;
-        }
-        catch { /* try next */ }
-    }
-    throw new Error("@nut-tree/nut-js not installed. Run: pnpm add @nut-tree-fork/nut-js");
+function yeonjangRequiredFailure(method) {
+    return {
+        success: false,
+        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+        error: "YEONJANG_REQUIRED",
+        details: {
+            requiredExecutor: "yeonjang",
+            requiredMethod: method,
+        },
+    };
 }
 export const mouseMoveTool = {
     name: "mouse_move",
@@ -25,23 +24,39 @@ export const mouseMoveTool = {
         properties: {
             x: { type: "number", description: "X 좌표 (픽셀)" },
             y: { type: "number", description: "Y 좌표 (픽셀)" },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
         },
         required: ["x", "y"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
-    execute: async (params) => {
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const { mouse, Point } = await getNutMouse();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            await mouse.move([new Point(params.x, params.y)]);
-            return { success: true, output: `마우스를 (${params.x}, ${params.y})로 이동했습니다.` };
+            if (await canYeonjangHandleMethod("mouse.move", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("mouse.move", { x: params.x, y: params.y }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.moved,
+                    output: remote.message || `마우스를 (${params.x}, ${params.y})로 이동했습니다.`,
+                    details: { via: "yeonjang", x: remote.x, y: remote.y },
+                    ...(remote.moved ? {} : { error: "remote_mouse_move_failed" }),
+                };
+            }
         }
-        catch (err) {
-            return { success: false, output: `마우스 이동 실패: ${err instanceof Error ? err.message : String(err)}` };
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 마우스 이동 실패: ${message}`, error: message };
+            }
         }
+        return yeonjangRequiredFailure("mouse.move");
     },
 };
 export const mouseClickTool = {
@@ -58,34 +73,114 @@ export const mouseClickTool = {
                 description: "클릭할 마우스 버튼 (기본: left)",
             },
             double: { type: "boolean", description: "더블 클릭 여부 (기본: false)" },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
         },
         required: ["x", "y"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
-    execute: async (params) => {
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const { mouse, Point, Button } = await getNutMouse();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            await mouse.move([new Point(params.x, params.y)]);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            const btn = params.button === "right" ? Button.RIGHT : params.button === "middle" ? Button.MIDDLE : Button.LEFT;
-            if (params.double) {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-                await mouse.doubleClick(btn);
+            if (await canYeonjangHandleMethod("mouse.click", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("mouse.click", {
+                    x: params.x,
+                    y: params.y,
+                    ...(params.button ? { button: params.button } : {}),
+                    ...(params.double ? { double: params.double } : {}),
+                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.clicked,
+                    output: remote.message || `(${params.x}, ${params.y}) 클릭 완료`,
+                    details: { via: "yeonjang", x: remote.x, y: remote.y, button: remote.button, double: remote.double },
+                    ...(remote.clicked ? {} : { error: "remote_mouse_click_failed" }),
+                };
             }
-            else {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-                await mouse.click(btn);
+        }
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 마우스 클릭 실패: ${message}`, error: message };
             }
-            const action = params.double ? "더블 클릭" : "클릭";
-            return { success: true, output: `(${params.x}, ${params.y}) ${action} 완료` };
         }
-        catch (err) {
-            return { success: false, output: `마우스 클릭 실패: ${err instanceof Error ? err.message : String(err)}` };
+        return yeonjangRequiredFailure("mouse.click");
+    },
+};
+export const mouseActionTool = {
+    name: "mouse_action",
+    description: "마우스 액션을 실행합니다. move, click, double_click, button_down, button_up, scroll을 지원합니다.",
+    parameters: {
+        type: "object",
+        properties: {
+            action: {
+                type: "string",
+                enum: ["move", "click", "double_click", "button_down", "button_up", "scroll"],
+                description: "실행할 마우스 액션",
+            },
+            x: { type: "number", description: "X 좌표 (선택)" },
+            y: { type: "number", description: "Y 좌표 (선택)" },
+            button: {
+                type: "string",
+                enum: ["left", "right", "middle"],
+                description: "대상 버튼 (기본: left)",
+            },
+            deltaX: { type: "number", description: "가로 스크롤 값" },
+            deltaY: { type: "number", description: "세로 스크롤 값" },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
+        },
+        required: ["action"],
+    },
+    riskLevel: "moderate",
+    requiresApproval: true,
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
+        await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
+        try {
+            if (await canYeonjangHandleMethod("mouse.action", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("mouse.action", {
+                    action: params.action,
+                    ...(typeof params.x === "number" ? { x: params.x } : {}),
+                    ...(typeof params.y === "number" ? { y: params.y } : {}),
+                    ...(params.button ? { button: params.button } : {}),
+                    ...(typeof params.deltaX === "number" ? { delta_x: params.deltaX } : {}),
+                    ...(typeof params.deltaY === "number" ? { delta_y: params.deltaY } : {}),
+                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.accepted,
+                    output: remote.message || `마우스 액션 실행: ${params.action}`,
+                    details: {
+                        via: "yeonjang",
+                        action: remote.action,
+                        x: remote.x,
+                        y: remote.y,
+                        button: remote.button,
+                        deltaX: remote.delta_x,
+                        deltaY: remote.delta_y,
+                    },
+                    ...(remote.accepted ? {} : { error: "remote_mouse_action_failed" }),
+                };
+            }
         }
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 마우스 액션 실패: ${message}`, error: message };
+            }
+        }
+        return yeonjangRequiredFailure("mouse.action");
     },
 };
 //# sourceMappingURL=mouse.js.map

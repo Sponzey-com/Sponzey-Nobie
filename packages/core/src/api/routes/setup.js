@@ -1,4 +1,5 @@
 import { authMiddleware } from "../middleware/auth.js";
+import { stopActiveSlackChannel } from "../../channels/slack/runtime.js";
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
 import { testMcpServerConnection, testSkillPath } from "../../control-plane/setup-extensions.js";
 import { buildSetupDraft, completeSetup, createSetupChecks, createTransientAuthToken, discoverModelsFromEndpoint, readSetupState, resetSetupEnvironment, saveSetupDraft, } from "../../control-plane/index.js";
@@ -20,6 +21,9 @@ export function registerSetupRoute(app) {
         const providerType = ["openai", "ollama", "llama", "anthropic", "gemini", "custom"].includes(String(req.body?.providerType))
             ? req.body?.providerType
             : "custom";
+        const authMode = ["api_key", "chatgpt_oauth"].includes(String(req.body?.authMode))
+            ? req.body?.authMode
+            : "api_key";
         const credentials = {};
         if (req.body?.credentials?.apiKey?.trim())
             credentials.apiKey = req.body.credentials.apiKey.trim();
@@ -27,11 +31,14 @@ export function registerSetupRoute(app) {
             credentials.username = req.body.credentials.username.trim();
         if (req.body?.credentials?.password?.trim())
             credentials.password = req.body.credentials.password.trim();
+        if (req.body?.credentials?.oauthAuthFilePath?.trim()) {
+            credentials.oauthAuthFilePath = req.body.credentials.oauthAuthFilePath.trim();
+        }
         if (!endpoint) {
             return reply.status(400).send({ ok: false, error: "endpoint is required" });
         }
         try {
-            const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials);
+            const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials, authMode);
             return { ok: true, ...result };
         }
         catch (error) {
@@ -71,6 +78,51 @@ export function registerSetupRoute(app) {
             });
         }
     });
+    app.post("/api/setup/test-slack", { preHandler: authMiddleware }, async (req, reply) => {
+        const botToken = req.body?.botToken?.trim();
+        const appToken = req.body?.appToken?.trim();
+        if (!botToken) {
+            return reply.status(400).send({ ok: false, message: "Slack Bot Token이 비어 있습니다." });
+        }
+        if (!appToken) {
+            return reply.status(400).send({ ok: false, message: "Slack App Token이 비어 있습니다." });
+        }
+        try {
+            const authResponse = await fetch("https://slack.com/api/auth.test", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${botToken}` },
+            });
+            const authPayload = await authResponse.json();
+            if (!authResponse.ok || authPayload.ok !== true) {
+                return reply.status(400).send({
+                    ok: false,
+                    message: authPayload.error ?? "Slack Bot Token 연결에 실패했습니다.",
+                });
+            }
+            const socketResponse = await fetch("https://slack.com/api/apps.connections.open", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${appToken}` },
+            });
+            const socketPayload = await socketResponse.json();
+            if (!socketResponse.ok || socketPayload.ok !== true || !socketPayload.url) {
+                return reply.status(400).send({
+                    ok: false,
+                    message: socketPayload.error ?? "Slack App Token 연결에 실패했습니다.",
+                });
+            }
+            const label = authPayload.team || authPayload.user || "Slack";
+            return {
+                ok: true,
+                message: `Slack 연결 성공: ${label}. 아직 반응이 없다면 Slack 앱에 Event Subscriptions(app_mention, message.im)과 Socket Mode가 켜져 있고, 봇이 대상 채널에 초대되었는지 확인해 주세요.`,
+            };
+        }
+        catch (error) {
+            return reply.status(400).send({
+                ok: false,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    });
     app.post("/api/setup/test-mcp-server", { preHandler: authMiddleware }, async (req, reply) => {
         const server = req.body?.server;
         if (!server || typeof server !== "object") {
@@ -93,6 +145,7 @@ export function registerSetupRoute(app) {
         return { token: createTransientAuthToken() };
     });
     app.post("/api/setup/reset", { preHandler: authMiddleware }, async () => {
+        stopActiveSlackChannel();
         stopActiveTelegramChannel();
         return resetSetupEnvironment();
     });

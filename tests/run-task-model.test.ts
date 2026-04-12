@@ -34,6 +34,7 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
     ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
     ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
+    ...(overrides.promptSourceSnapshot ? { promptSourceSnapshot: overrides.promptSourceSnapshot } : {}),
   }
 }
 
@@ -457,6 +458,62 @@ describe("buildTaskModels", () => {
       awaitingApproval: true,
       awaitingUser: false,
       deliveryStatus: "not_requested",
+    })
+  })
+
+  it("surfaces continuity and operational diagnostics for a task lineage", () => {
+    const task = buildTaskModels([
+      makeRun({
+        id: "run-diagnostics",
+        requestGroupId: "task-diagnostics",
+        prompt: "외부 모니터 화면 캡처",
+        status: "awaiting_approval",
+        summary: "화면 캡처 승인을 기다리고 있습니다.",
+        recentEvents: [
+          { id: "evt-diagnostics-1", at: 1, label: "prompt_ms=12ms" },
+          { id: "evt-diagnostics-2", at: 2, label: "memory_total_ms=5ms" },
+          { id: "evt-diagnostics-3", at: 3, label: "복구 재시도 1/2" },
+        ],
+        promptSourceSnapshot: {
+          assemblyVersion: 3,
+          sources: [
+            { sourceId: "identity" },
+            { sourceId: "soul" },
+          ],
+        },
+      }),
+    ], [
+      {
+        lineageRootRunId: "task-diagnostics",
+        lastGoodState: "screen_capture 승인 요청",
+        pendingApprovals: ["approval:screen_capture"],
+        pendingDelivery: ["slack:file:/tmp/screen.png"],
+        failedRecoveryKey: "delivery:screen_capture",
+        failureKind: "delivery",
+        recoveryBudget: "delivery 1/2",
+        status: "awaiting_approval",
+        updatedAt: 20,
+      },
+    ])[0]
+
+    expect(task?.continuity).toMatchObject({
+      lineageRootRunId: "task-diagnostics",
+      lastGoodState: "screen_capture 승인 요청",
+      pendingApprovals: ["approval:screen_capture"],
+      pendingDelivery: ["slack:file:/tmp/screen.png"],
+      failedRecoveryKey: "delivery:screen_capture",
+      failureKind: "delivery",
+      recoveryBudget: "delivery 1/2",
+      status: "awaiting_approval",
+    })
+    expect(task?.diagnostics).toEqual({
+      promptSourceIds: ["identity", "soul"],
+      promptSourceVersion: "assembly:3",
+      latencyEvents: ["prompt_ms=12ms", "memory_total_ms=5ms"],
+      memoryEvents: ["memory_total_ms=5ms"],
+      recoveryEvents: ["복구 재시도 1/2"],
+      lastRecoveryKey: "delivery:screen_capture",
+      recoveryBudget: "delivery 1/2",
     })
   })
 })

@@ -71,23 +71,6 @@ export function getMessagesForRun(sessionId, runId) {
        ORDER BY created_at ASC`)
         .all(sessionId, runId);
 }
-function buildMemoryScopeWhere(filters) {
-    const clauses = [
-        "memory_scope = 'global'",
-        "memory_scope IS NULL",
-        "memory_scope = ''",
-    ];
-    const values = [];
-    if (filters?.sessionId) {
-        clauses.push("(memory_scope = 'session' AND session_id = ?)");
-        values.push(filters.sessionId);
-    }
-    if (filters?.runId) {
-        clauses.push("(memory_scope = 'task' AND run_id = ?)");
-        values.push(filters.runId);
-    }
-    return { whereSql: `(${clauses.join(" OR ")})`, values };
-}
 export function insertAuditLog(log) {
     const id = crypto.randomUUID();
     getDb()
@@ -97,36 +80,347 @@ export function insertAuditLog(log) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, log.timestamp, log.session_id, log.source, log.tool_name, log.params, log.output, log.result, log.duration_ms, log.approval_required, log.approved_by);
 }
+export function insertChannelMessageRef(ref) {
+    const id = crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO channel_message_refs
+       (id, source, session_id, root_run_id, request_group_id, external_chat_id, external_thread_id, external_message_id, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, ref.source, ref.session_id, ref.root_run_id, ref.request_group_id, ref.external_chat_id, ref.external_thread_id, ref.external_message_id, ref.role, ref.created_at);
+    return id;
+}
+export function findChannelMessageRef(params) {
+    const withThread = params.externalThreadId
+        ? getDb()
+            .prepare(`SELECT *
+           FROM channel_message_refs
+           WHERE source = ?
+             AND external_chat_id = ?
+             AND external_message_id = ?
+             AND (external_thread_id = ? OR external_thread_id IS NULL)
+           ORDER BY created_at DESC
+           LIMIT 1`)
+            .get(params.source, params.externalChatId, params.externalMessageId, params.externalThreadId)
+        : undefined;
+    if (withThread)
+        return withThread;
+    return getDb()
+        .prepare(`SELECT *
+       FROM channel_message_refs
+       WHERE source = ?
+         AND external_chat_id = ?
+         AND external_message_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`)
+        .get(params.source, params.externalChatId, params.externalMessageId);
+}
+export function upsertPromptSources(sources) {
+    if (sources.length === 0)
+        return;
+    const now = Date.now();
+    const db = getDb();
+    const insert = db.prepare(`INSERT INTO prompt_sources
+     (source_id, locale, path, version, priority, enabled, is_required, usage_scope, checksum, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_id, locale) DO UPDATE SET
+       path = excluded.path,
+       version = excluded.version,
+       priority = excluded.priority,
+       enabled = CASE WHEN excluded.is_required = 1 THEN 1 ELSE prompt_sources.enabled END,
+       is_required = excluded.is_required,
+       usage_scope = excluded.usage_scope,
+       checksum = excluded.checksum,
+       updated_at = excluded.updated_at`);
+    const tx = db.transaction(() => {
+        for (const source of sources) {
+            insert.run(source.sourceId, source.locale, source.path, source.version, source.priority, source.enabled ? 1 : 0, source.required ? 1 : 0, source.usageScope, source.checksum, now);
+        }
+    });
+    tx();
+}
+export function updateRunPromptSourceSnapshot(runId, snapshot) {
+    getDb()
+        .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(snapshot), Date.now(), runId);
+}
+export function getPromptSourceStates() {
+    return getDb()
+        .prepare(`SELECT source_id AS sourceId, locale, enabled
+       FROM prompt_sources`)
+        .all()
+        .map((row) => ({
+        sourceId: row.sourceId,
+        locale: row.locale,
+        enabled: row.enabled === 1,
+    }));
+}
+function resolveMemoryOwnerId(scope, ownerId) {
+    if (scope === "global")
+        return ownerId?.trim() || "global";
+    const normalized = ownerId?.trim();
+    if (!normalized) {
+        throw new Error(`${scope} memory requires an owner id`);
+    }
+    return normalized;
+}
+function toJsonOrNull(value) {
+    return value ? JSON.stringify(value) : null;
+}
+export function storeMemoryDocument(input) {
+    const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId);
+    const db = getDb();
+    const now = Date.now();
+    const existing = db
+        .prepare(`SELECT id FROM memory_documents WHERE scope = ? AND owner_id = ? AND checksum = ? LIMIT 1`)
+        .get(input.scope, ownerId, input.checksum);
+    if (existing) {
+        const chunks = db
+            .prepare(`SELECT id FROM memory_chunks WHERE document_id = ? ORDER BY ordinal ASC`)
+            .all(existing.id);
+        return { documentId: existing.id, chunkIds: chunks.map((chunk) => chunk.id), deduplicated: true };
+    }
+    const documentId = crypto.randomUUID();
+    const chunkIds = [];
+    const insertDocument = db.prepare(`INSERT INTO memory_documents
+     (id, scope, owner_id, source_type, source_ref, title, raw_text, checksum, metadata_json, archived_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`);
+    const insertChunk = db.prepare(`INSERT INTO memory_chunks
+     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertChunkFts = db.prepare(`INSERT INTO memory_chunks_fts(rowid, content, metadata_json)
+     SELECT rowid, content, metadata_json FROM memory_chunks WHERE id = ?`);
+    const insertIndexJob = db.prepare(`INSERT INTO memory_index_jobs (id, document_id, status, retry_count, created_at, updated_at)
+     VALUES (?, ?, 'pending', 0, ?, ?)`);
+    const tx = db.transaction(() => {
+        insertDocument.run(documentId, input.scope, ownerId, input.sourceType, input.sourceRef ?? null, input.title ?? null, input.rawText, input.checksum, toJsonOrNull(input.metadata), now, now);
+        for (const chunk of input.chunks) {
+            const chunkId = crypto.randomUUID();
+            chunkIds.push(chunkId);
+            insertChunk.run(chunkId, documentId, input.scope, ownerId, chunk.ordinal, chunk.tokenEstimate, chunk.content, chunk.checksum, toJsonOrNull(chunk.metadata), now, now);
+            insertChunkFts.run(chunkId);
+        }
+        insertIndexJob.run(crypto.randomUUID(), documentId, now, now);
+    });
+    tx();
+    return { documentId, chunkIds, deduplicated: false };
+}
+export function insertMemoryEmbeddingIfMissing(input) {
+    const id = crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT OR IGNORE INTO memory_embeddings
+       (id, chunk_id, provider, model, dimensions, text_checksum, vector, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.chunkId, input.provider, input.model, input.dimensions, input.textChecksum, input.vector, Date.now());
+    const existing = getDb()
+        .prepare(`SELECT id FROM memory_embeddings
+       WHERE provider = ? AND model = ? AND dimensions = ? AND text_checksum = ?`)
+        .get(input.provider, input.model, input.dimensions, input.textChecksum);
+    return existing?.id ?? id;
+}
+export function rebuildMemorySearchIndexes() {
+    getDb().exec(`
+    INSERT INTO memory_fts(memory_fts) VALUES('rebuild');
+    INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES('rebuild');
+  `);
+}
+export function markMemoryIndexJobCompleted(documentId) {
+    getDb()
+        .prepare(`UPDATE memory_index_jobs SET status = 'completed', updated_at = ? WHERE document_id = ?`)
+        .run(Date.now(), documentId);
+}
+export function markMemoryIndexJobFailed(documentId, error) {
+    getDb()
+        .prepare(`UPDATE memory_index_jobs
+       SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
+       WHERE document_id = ?`)
+        .run(error, Date.now(), documentId);
+}
+export function recordMemoryAccessLog(input) {
+    const id = crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO memory_access_log
+       (id, run_id, session_id, request_group_id, document_id, chunk_id, query, result_source, score, latency_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, input.documentId ?? null, input.chunkId ?? null, input.query, input.resultSource, input.score ?? null, input.latencyMs ?? null, Date.now());
+    return id;
+}
+export function enqueueMemoryWritebackCandidate(input) {
+    const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId);
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    getDb()
+        .prepare(`INSERT INTO memory_writeback_queue
+       (id, scope, owner_id, source_type, content, metadata_json, status, retry_count, last_error, run_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, ?)`)
+        .run(id, input.scope, ownerId, input.sourceType, input.content, toJsonOrNull(input.metadata), input.runId ?? null, now, now);
+    return id;
+}
+export function upsertSessionSnapshot(input) {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    getDb()
+        .prepare(`INSERT INTO session_snapshots
+       (id, session_id, snapshot_version, summary, preserved_facts, active_task_ids, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, snapshot_version) DO UPDATE SET
+         summary = excluded.summary,
+         preserved_facts = excluded.preserved_facts,
+         active_task_ids = excluded.active_task_ids,
+         updated_at = excluded.updated_at`)
+        .run(id, input.sessionId, input.summary, JSON.stringify(input.preservedFacts ?? []), JSON.stringify(input.activeTaskIds ?? []), now, now);
+    const row = getDb()
+        .prepare(`SELECT id FROM session_snapshots WHERE session_id = ? AND snapshot_version = 1 LIMIT 1`)
+        .get(input.sessionId);
+    return row?.id ?? id;
+}
+export function upsertTaskContinuity(input) {
+    const hasField = (key) => Object.prototype.hasOwnProperty.call(input, key);
+    getDb()
+        .prepare(`INSERT INTO task_continuity
+       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state, pending_approvals, pending_delivery,
+        last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(lineage_root_run_id) DO UPDATE SET
+         parent_run_id = COALESCE(excluded.parent_run_id, task_continuity.parent_run_id),
+         handoff_summary = COALESCE(excluded.handoff_summary, task_continuity.handoff_summary),
+         last_good_state = COALESCE(excluded.last_good_state, task_continuity.last_good_state),
+         pending_approvals = COALESCE(excluded.pending_approvals, task_continuity.pending_approvals),
+         pending_delivery = COALESCE(excluded.pending_delivery, task_continuity.pending_delivery),
+         last_tool_receipt = COALESCE(excluded.last_tool_receipt, task_continuity.last_tool_receipt),
+         last_delivery_receipt = COALESCE(excluded.last_delivery_receipt, task_continuity.last_delivery_receipt),
+         failed_recovery_key = COALESCE(excluded.failed_recovery_key, task_continuity.failed_recovery_key),
+         failure_kind = COALESCE(excluded.failure_kind, task_continuity.failure_kind),
+         recovery_budget = COALESCE(excluded.recovery_budget, task_continuity.recovery_budget),
+         continuity_status = COALESCE(excluded.continuity_status, task_continuity.continuity_status),
+         updated_at = excluded.updated_at`)
+        .run(input.lineageRootRunId, input.parentRunId ?? null, input.handoffSummary ?? null, input.lastGoodState ?? null, hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null, hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null, input.lastToolReceipt ?? null, input.lastDeliveryReceipt ?? null, input.failedRecoveryKey ?? null, input.failureKind ?? null, input.recoveryBudget ?? null, input.status ?? null, Date.now());
+}
+function parseContinuityStringArray(value) {
+    if (!value)
+        return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed)
+            ? parsed.filter((item) => typeof item === "string" && item.trim().length > 0)
+            : [];
+    }
+    catch {
+        return [];
+    }
+}
+function mapTaskContinuity(row) {
+    return {
+        lineageRootRunId: row.lineage_root_run_id,
+        ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
+        ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
+        ...(row.last_good_state ? { lastGoodState: row.last_good_state } : {}),
+        pendingApprovals: parseContinuityStringArray(row.pending_approvals),
+        pendingDelivery: parseContinuityStringArray(row.pending_delivery),
+        ...(row.last_tool_receipt ? { lastToolReceipt: row.last_tool_receipt } : {}),
+        ...(row.last_delivery_receipt ? { lastDeliveryReceipt: row.last_delivery_receipt } : {}),
+        ...(row.failed_recovery_key ? { failedRecoveryKey: row.failed_recovery_key } : {}),
+        ...(row.failure_kind ? { failureKind: row.failure_kind } : {}),
+        ...(row.recovery_budget ? { recoveryBudget: row.recovery_budget } : {}),
+        ...(row.continuity_status ? { status: row.continuity_status } : {}),
+        updatedAt: row.updated_at,
+    };
+}
+export function getTaskContinuity(lineageRootRunId) {
+    const row = getDb()
+        .prepare(`SELECT * FROM task_continuity WHERE lineage_root_run_id = ?`)
+        .get(lineageRootRunId);
+    return row ? mapTaskContinuity(row) : undefined;
+}
+export function listTaskContinuityForLineages(lineageRootRunIds) {
+    const ids = [...new Set(lineageRootRunIds.filter((value) => value.trim().length > 0))];
+    if (ids.length === 0)
+        return [];
+    const placeholders = ids.map(() => "?").join(", ");
+    return getDb()
+        .prepare(`SELECT * FROM task_continuity WHERE lineage_root_run_id IN (${placeholders})`)
+        .all(...ids)
+        .map(mapTaskContinuity);
+}
 export function insertMemoryItem(item) {
+    if (item.scope === "task" && !item.runId && !item.requestGroupId) {
+        throw new Error("task memory requires a runId or requestGroupId");
+    }
     const id = crypto.randomUUID();
     const now = Date.now();
     const db = getDb();
-    db.prepare(`INSERT INTO memory_items
-      (id, content, tags, source, memory_scope, session_id, run_id, request_group_id, type, importance, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, item.content, JSON.stringify(item.tags ?? []), "agent", item.scope ?? (item.runId ? "task" : item.sessionId ? "session" : "global"), item.sessionId ?? null, item.runId ?? null, item.requestGroupId ?? null, item.type ?? "user_fact", item.importance ?? "medium", now, now);
+    db.prepare(`INSERT INTO memory_items (id, content, tags, source, memory_scope, session_id, run_id, request_group_id, type, importance, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, item.content, JSON.stringify(item.tags ?? []), "agent", item.scope ?? "global", item.sessionId ?? null, item.runId ?? null, item.requestGroupId ?? null, item.type ?? "user_fact", item.importance ?? "medium", now, now);
     // Sync into FTS index
     db.prepare(`INSERT INTO memory_fts(rowid, content, tags)
      SELECT rowid, content, tags FROM memory_items WHERE id = ?`).run(id);
     return id;
 }
-export function searchMemoryItems(query, limit = 5, filters) {
-    const scopeFilter = buildMemoryScopeWhere(filters);
-    return getDb()
-        .prepare(`SELECT m.* FROM memory_fts f
-       JOIN memory_items m ON m.rowid = f.rowid
-       WHERE memory_fts MATCH ?
-         AND ${scopeFilter.whereSql}
-       ORDER BY rank
-       LIMIT ?`)
-        .all(query, ...scopeFilter.values, limit);
+function buildMemoryScopeWhere(filters, alias = "m") {
+    const prefix = alias ? `${alias}.` : "";
+    const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`];
+    const values = [];
+    if (filters?.sessionId) {
+        clauses.push(`(${prefix}memory_scope = 'session' AND ${prefix}session_id = ?)`);
+        values.push(filters.sessionId);
+    }
+    const taskOwners = [filters?.requestGroupId, filters?.runId].filter((value) => Boolean(value));
+    if (taskOwners.length > 0) {
+        const placeholders = taskOwners.map(() => "?").join(", ");
+        clauses.push(`(${prefix}memory_scope = 'task' AND (${prefix}request_group_id IN (${placeholders}) OR ${prefix}run_id IN (${placeholders})))`);
+        values.push(...taskOwners, ...taskOwners);
+    }
+    return {
+        clause: `(${clauses.join(" OR ")})`,
+        values,
+    };
 }
-export function getRecentMemoryItems(limit = 10, filters) {
-    const scopeFilter = buildMemoryScopeWhere(filters);
+function sanitizeMemoryFtsQuery(query) {
+    const terms = query
+        .normalize("NFKC")
+        .match(/[\p{L}\p{N}_]+/gu)
+        ?.map((term) => term.trim())
+        .filter(Boolean)
+        .slice(0, 12) ?? [];
+    return terms.length > 0 ? terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ") : null;
+}
+function escapeMemoryLike(query) {
+    return query.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+export function searchMemoryItems(query, limit = 5, filters) {
+    const scope = buildMemoryScopeWhere(filters);
+    const sanitized = sanitizeMemoryFtsQuery(query);
+    if (sanitized) {
+        try {
+            return getDb()
+                .prepare(`SELECT m.* FROM memory_fts f
+           JOIN memory_items m ON m.rowid = f.rowid
+           WHERE memory_fts MATCH ?
+             AND ${scope.clause}
+           ORDER BY rank
+           LIMIT ?`)
+                .all(sanitized, ...scope.values, limit);
+        }
+        catch {
+            // Fall through to LIKE search when MATCH rejects special input or the FTS table is unavailable.
+        }
+    }
+    const likeScope = buildMemoryScopeWhere(filters, "");
+    const pattern = `%${escapeMemoryLike(query.normalize("NFKC").trim())}%`;
     return getDb()
         .prepare(`SELECT * FROM memory_items
-       WHERE ${scopeFilter.whereSql}
+       WHERE content LIKE ? ESCAPE '\\'
+         AND ${likeScope.clause}
+       ORDER BY updated_at DESC
+       LIMIT ?`)
+        .all(pattern, ...likeScope.values, limit);
+}
+export function getRecentMemoryItems(limit = 10, filters) {
+    const scope = buildMemoryScopeWhere(filters, "");
+    return getDb()
+        .prepare(`SELECT * FROM memory_items
+       WHERE ${scope.clause}
        ORDER BY updated_at DESC LIMIT ?`)
-        .all(...scopeFilter.values, limit);
+        .all(...scope.values, limit);
 }
 export function markMessagesCompressed(ids, summaryId) {
     if (!ids.length)
@@ -153,11 +447,22 @@ export function getSchedule(id) {
        FROM schedules s WHERE s.id = ?`)
         .get(id);
 }
+export function getSchedulesForSession(sessionId, enabledOnly = false) {
+    const enabledClause = enabledOnly ? "AND s.enabled = 1" : "";
+    return getDb()
+        .prepare(`SELECT s.*,
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+       FROM schedules s
+       WHERE s.target_session_id = ?
+       ${enabledClause}
+       ORDER BY s.created_at DESC`)
+        .all(sessionId);
+}
 export function insertSchedule(s) {
     getDb()
-        .prepare(`INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(s.id, s.name, s.cron_expression, s.prompt, s.enabled, s.target_channel, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at);
+        .prepare(`INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(s.id, s.name, s.cron_expression, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at);
 }
 export function updateSchedule(id, fields) {
     const sets = [];

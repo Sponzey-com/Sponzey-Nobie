@@ -340,6 +340,226 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_items_run_scope ON memory_items(run_id, memory_scope, updated_at DESC)`)
     },
   },
+  {
+    version: 13,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS prompt_sources (
+          source_id TEXT NOT NULL,
+          locale TEXT NOT NULL,
+          path TEXT NOT NULL,
+          version TEXT NOT NULL,
+          priority INTEGER NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          is_required INTEGER NOT NULL DEFAULT 0,
+          usage_scope TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (source_id, locale)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_sources_usage_priority
+          ON prompt_sources(usage_scope, priority, source_id, locale);
+      `)
+
+      const rootRunColumns = db.prepare(`PRAGMA table_info(root_runs)`).all() as Array<{ name: string }>
+      if (!rootRunColumns.some((column) => column.name === "prompt_source_snapshot")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN prompt_source_snapshot TEXT`)
+      }
+    },
+  },
+  {
+    version: 14,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_documents (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL CHECK(scope IN ('global', 'session', 'task', 'artifact', 'diagnostic')),
+          owner_id TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          source_ref TEXT,
+          title TEXT,
+          raw_text TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          metadata_json TEXT,
+          archived_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_documents_scope_owner_checksum
+          ON memory_documents(scope, owner_id, checksum);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_documents_scope_owner
+          ON memory_documents(scope, owner_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_chunks (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK(scope IN ('global', 'session', 'task', 'artifact', 'diagnostic')),
+          owner_id TEXT NOT NULL,
+          ordinal INTEGER NOT NULL,
+          token_estimate INTEGER NOT NULL,
+          content TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES memory_documents(id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_chunks_document_ordinal
+          ON memory_chunks(document_id, ordinal);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_chunks_scope_owner
+          ON memory_chunks(scope, owner_id, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_chunks_checksum
+          ON memory_chunks(checksum);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts
+          USING fts5(content, metadata_json, content='memory_chunks', content_rowid='rowid');
+
+        CREATE TABLE IF NOT EXISTS memory_embeddings (
+          id TEXT PRIMARY KEY,
+          chunk_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          text_checksum TEXT NOT NULL,
+          vector BLOB NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (chunk_id) REFERENCES memory_chunks(id) ON DELETE CASCADE,
+          UNIQUE(provider, model, dimensions, text_checksum)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_embeddings_chunk
+          ON memory_embeddings(chunk_id);
+
+        CREATE TABLE IF NOT EXISTS memory_index_jobs (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'indexing', 'failed', 'completed')),
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES memory_documents(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_status
+          ON memory_index_jobs(status, updated_at ASC);
+
+        CREATE TABLE IF NOT EXISTS memory_access_log (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          session_id TEXT,
+          request_group_id TEXT,
+          document_id TEXT,
+          chunk_id TEXT,
+          query TEXT NOT NULL,
+          result_source TEXT NOT NULL,
+          score REAL,
+          latency_ms INTEGER,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES memory_documents(id) ON DELETE SET NULL,
+          FOREIGN KEY (chunk_id) REFERENCES memory_chunks(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_access_log_run
+          ON memory_access_log(run_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_writeback_queue (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL CHECK(scope IN ('global', 'session', 'task', 'artifact', 'diagnostic')),
+          owner_id TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          metadata_json TEXT,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'writing', 'failed', 'completed', 'discarded')),
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          run_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_writeback_queue_status
+          ON memory_writeback_queue(status, updated_at ASC);
+
+        CREATE TABLE IF NOT EXISTS session_snapshots (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          snapshot_version INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          preserved_facts TEXT,
+          active_task_ids TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_session
+          ON session_snapshots(session_id, updated_at DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_snapshots_session_version
+          ON session_snapshots(session_id, snapshot_version);
+
+        CREATE TABLE IF NOT EXISTS task_continuity (
+          lineage_root_run_id TEXT PRIMARY KEY,
+          parent_run_id TEXT,
+          handoff_summary TEXT,
+          last_good_state TEXT,
+          pending_approvals TEXT,
+          pending_delivery TEXT,
+          updated_at INTEGER NOT NULL
+        );
+      `)
+    },
+  },
+  {
+    version: 15,
+    up(db) {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_memory_documents_checksum;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_documents_scope_owner_checksum
+          ON memory_documents(scope, owner_id, checksum);
+      `)
+    },
+  },
+  {
+    version: 16,
+    up(db) {
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_snapshots_session_version
+          ON session_snapshots(session_id, snapshot_version);
+      `)
+    },
+  },
+  {
+    version: 17,
+    up(db) {
+      const continuityColumns = db.prepare(`PRAGMA table_info(task_continuity)`).all() as Array<{ name: string }>
+      if (!continuityColumns.some((column) => column.name === "last_tool_receipt")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN last_tool_receipt TEXT`)
+      }
+      if (!continuityColumns.some((column) => column.name === "last_delivery_receipt")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN last_delivery_receipt TEXT`)
+      }
+      if (!continuityColumns.some((column) => column.name === "failed_recovery_key")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN failed_recovery_key TEXT`)
+      }
+      if (!continuityColumns.some((column) => column.name === "failure_kind")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN failure_kind TEXT`)
+      }
+      if (!continuityColumns.some((column) => column.name === "recovery_budget")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN recovery_budget TEXT`)
+      }
+      if (!continuityColumns.some((column) => column.name === "continuity_status")) {
+        db.exec(`ALTER TABLE task_continuity ADD COLUMN continuity_status TEXT`)
+      }
+    },
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

@@ -3,6 +3,7 @@ interface AppLaunchParams {
     app: string;
     args?: string[];
     background?: boolean;
+    extensionId?: string;
 }
 interface AppListParams {
     filter?: string;

@@ -1,16 +1,17 @@
 import { Bot } from "grammy";
-import { InputFile } from "grammy";
 import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
-import { cancelRootRun } from "../../runs/store.js";
-import { startRootRun } from "../../runs/start.js";
+import { cancelRootRun, getRootRun } from "../../runs/store.js";
+import { startIngressRun } from "../../runs/ingress.js";
 import { isAllowedUser } from "./auth.js";
-import { resolveSessionKey, getOrCreateTelegramSession, newSession } from "./session.js";
+import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js";
 import { TypingIndicator } from "./typing.js";
 import { TelegramResponder } from "./responder.js";
 import { FileHandler } from "./file-handler.js";
 import { registerCommands } from "./commands.js";
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js";
+import { findChannelMessageRef, getSession, insertChannelMessageRef } from "../../db/index.js";
+import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js";
 import { setTelegramRuntimeError } from "./runtime.js";
 const log = createLogger("channel:telegram");
 export class TelegramChannel {
@@ -30,31 +31,72 @@ export class TelegramChannel {
         return resolveSessionKey(chatId, threadId);
     }
     newSession(sessionKey) {
-        const runId = this.runningRuns.get(sessionKey);
-        if (runId) {
-            cancelRootRun(runId);
+        const runIds = this.runningRuns.get(sessionKey);
+        if (runIds) {
+            for (const runId of runIds) {
+                cancelRootRun(runId);
+            }
             this.runningRuns.delete(sessionKey);
         }
         const sessionId = newSession(sessionKey);
         this.sessionIds.set(sessionKey, sessionId);
     }
     abortSession(sessionKey) {
-        const runId = this.runningRuns.get(sessionKey);
-        if (runId === undefined)
+        const runIds = this.runningRuns.get(sessionKey);
+        if (!runIds || runIds.size === 0)
             return false;
-        const cancelled = cancelRootRun(runId);
+        let cancelledAny = false;
+        for (const runId of runIds) {
+            const cancelled = cancelRootRun(runId);
+            cancelledAny = cancelledAny || cancelled !== undefined;
+        }
         this.runningRuns.delete(sessionKey);
-        return cancelled !== undefined;
+        return cancelledAny;
     }
     getRunningCount() {
-        return this.runningRuns.size;
+        return [...this.runningRuns.values()].reduce((sum, runIds) => sum + runIds.size, 0);
     }
     getSessionStatus(sessionKey) {
+        const runIds = this.runningRuns.get(sessionKey);
+        const latestRunId = runIds ? [...runIds][runIds.size - 1] : undefined;
         return {
             sessionId: this.sessionIds.get(sessionKey),
-            runId: this.runningRuns.get(sessionKey),
-            running: this.runningRuns.has(sessionKey),
+            runId: latestRunId,
+            running: Boolean(runIds && runIds.size > 0),
         };
+    }
+    addSessionRun(sessionKey, runId) {
+        const existing = this.runningRuns.get(sessionKey);
+        if (existing) {
+            existing.add(runId);
+            return;
+        }
+        this.runningRuns.set(sessionKey, new Set([runId]));
+    }
+    removeSessionRun(sessionKey, runId) {
+        const existing = this.runningRuns.get(sessionKey);
+        if (!existing)
+            return;
+        existing.delete(runId);
+        if (existing.size === 0) {
+            this.runningRuns.delete(sessionKey);
+        }
+    }
+    recordOutgoingMessageRef(params) {
+        const run = getRootRun(params.runId);
+        if (!run)
+            return;
+        insertChannelMessageRef({
+            source: "telegram",
+            session_id: params.sessionId,
+            root_run_id: params.runId,
+            request_group_id: run.requestGroupId,
+            external_chat_id: String(params.chatId),
+            external_thread_id: params.threadId != null ? String(params.threadId) : null,
+            external_message_id: String(params.messageId),
+            role: params.role,
+            created_at: Date.now(),
+        });
     }
     _registerHandlers() {
         this.bot.on("message", async (ctx) => {
@@ -67,12 +109,14 @@ export class TelegramChannel {
             const chatId = chat.id;
             const chatType = chat.type;
             const threadId = message.message_thread_id;
+            const replyToMessageId = message.reply_to_message?.message_id;
             if (!isAllowedUser(userId, chatType, chatId, this.config)) {
                 log.warn(`Rejected user=${userId} chat=${chatId} type=${chatType}`);
                 return;
             }
             const sessionKey = resolveSessionKey(chatId, threadId);
-            if (this.runningRuns.has(sessionKey)) {
+            const activeSessionStatus = this.getSessionStatus(sessionKey);
+            if (activeSessionStatus.running && replyToMessageId === undefined) {
                 log.warn(`Session ${sessionKey} already running, ignoring message`);
                 return;
             }
@@ -139,64 +183,58 @@ export class TelegramChannel {
                 await ctx.replyWithChatAction("typing");
             });
             typing.start();
-            let bufferedText = "";
-            const toolMessageIds = new Map();
+            let startedRunId = "";
+            const repliedTaskRef = replyToMessageId !== undefined
+                ? findChannelMessageRef({
+                    source: "telegram",
+                    externalChatId: String(chatId),
+                    externalMessageId: String(replyToMessageId),
+                    ...(threadId !== undefined ? { externalThreadId: String(threadId) } : {}),
+                })
+                : undefined;
             try {
-                const started = startRootRun({
+                if (repliedTaskRef) {
+                    const cancelled = cancelRootRun(repliedTaskRef.root_run_id);
+                    if (cancelled) {
+                        log.info(`Reply override detected for requestGroup=${repliedTaskRef.request_group_id}; previous active action cancelled before starting new reply run`);
+                    }
+                }
+                const onChunk = createTelegramChunkDeliveryHandler({
+                    responder,
+                    sessionId,
+                    chatId,
+                    ...(threadId !== undefined ? { threadId } : {}),
+                    getRunId: () => startedRunId || undefined,
+                    recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
+                    logError: (message) => log.error(message),
+                });
+                const { started, receipt } = startIngressRun({
                     message: text,
                     sessionId,
+                    ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
                     model: undefined,
                     source: "telegram",
-                    onChunk: async (chunk) => {
-                        if (chunk.type === "text") {
-                            bufferedText += chunk.delta;
-                        }
-                        else if (chunk.type === "tool_start") {
-                            const msgId = await responder.sendToolStatus(chunk.toolName);
-                            toolMessageIds.set(chunk.toolName, msgId);
-                        }
-                        else if (chunk.type === "tool_end") {
-                            const msgId = toolMessageIds.get(chunk.toolName);
-                            if (msgId !== undefined) {
-                                await responder.updateToolStatus(msgId, chunk.toolName, chunk.success);
-                                toolMessageIds.delete(chunk.toolName);
-                            }
-                            if (chunk.output.startsWith("FILE_SEND:")) {
-                                const rest = chunk.output.slice("FILE_SEND:".length);
-                                const colonIdx = rest.indexOf(":");
-                                if (colonIdx !== -1) {
-                                    const filePath = rest.slice(0, colonIdx);
-                                    const caption = rest.slice(colonIdx + 1) || undefined;
-                                    try {
-                                        await this.bot.api.sendDocument(chatId, new InputFile(filePath), caption !== undefined
-                                            ? (threadId !== undefined
-                                                ? { caption, message_thread_id: threadId }
-                                                : { caption })
-                                            : (threadId !== undefined
-                                                ? { message_thread_id: threadId }
-                                                : {}));
-                                    }
-                                    catch (err) {
-                                        const msg = err instanceof Error ? err.message : String(err);
-                                        log.error(`Failed to send file: ${msg}`);
-                                    }
-                                }
-                            }
-                        }
-                        else if (chunk.type === "done") {
-                            if (bufferedText) {
-                                await responder.sendFinalResponse(bufferedText);
-                                bufferedText = "";
-                            }
-                        }
-                        else if (chunk.type === "error") {
-                            await responder.sendError(chunk.message);
-                            bufferedText = "";
-                        }
-                    },
+                    onChunk,
                 });
-                this.runningRuns.set(sessionKey, started.runId);
-                await started.finished;
+                startedRunId = started.runId;
+                this.addSessionRun(sessionKey, started.runId);
+                if (receipt.text.trim()) {
+                    const receiptMessageId = await responder.sendReceipt(receipt.text);
+                    this.recordOutgoingMessageRef({
+                        sessionId,
+                        runId: startedRunId,
+                        chatId,
+                        ...(threadId !== undefined ? { threadId } : {}),
+                        messageId: receiptMessageId,
+                        role: "assistant",
+                    });
+                }
+                typing.stop();
+                void started.finished.finally(() => {
+                    this.removeSessionRun(sessionKey, startedRunId);
+                    clearActiveChatForSession(sessionId);
+                });
+                return;
             }
             catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
@@ -204,9 +242,10 @@ export class TelegramChannel {
                 await responder.sendError(message).catch(() => undefined);
             }
             finally {
-                typing.stop();
-                this.runningRuns.delete(sessionKey);
-                clearActiveChatForSession(sessionId);
+                if (!startedRunId) {
+                    typing.stop();
+                    clearActiveChatForSession(sessionId);
+                }
             }
         });
         registerCommands(this.bot, this);
@@ -254,6 +293,18 @@ export class TelegramChannel {
         log.info("Stopping Telegram bot...");
         void this.bot.stop();
         this.pollingTask = null;
+    }
+    async sendTextToSession(sessionId, text) {
+        const session = getSession(sessionId);
+        if (!session || session.source !== "telegram" || !session.source_id) {
+            throw new Error(`Telegram session ${sessionId} not found`);
+        }
+        const target = parseTelegramSessionKey(session.source_id);
+        if (!target) {
+            throw new Error(`Telegram session ${sessionId} has invalid source_id`);
+        }
+        const responder = new TelegramResponder(this.bot, target.chatId, target.threadId);
+        return responder.sendFinalResponse(text);
     }
 }
 //# sourceMappingURL=bot.js.map

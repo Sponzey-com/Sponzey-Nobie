@@ -8,6 +8,7 @@ import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
 import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
 import { TaskFailurePanel } from "../components/runs/TaskFailurePanel"
 import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliveryStatus } from "../lib/task-monitor"
+import type { TaskMonitorCard } from "../lib/task-monitor"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useRunsStore } from "../stores/runs"
 
@@ -40,6 +41,71 @@ function TaskMonitorBadges({
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("결과 전달", "Result delivery")} {deliveryLabel}
       </span>
+    </div>
+  )
+}
+
+function TaskDiagnosticsPanel({
+  card,
+  text,
+  displayText,
+}: {
+  card: TaskMonitorCard
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+}) {
+  const diagnostics = card.diagnostics
+  const continuity = card.continuity
+  const hasDetails = Boolean(
+    diagnostics
+    || continuity?.lastGoodState
+    || continuity?.pendingApprovals.length
+    || continuity?.pendingDelivery.length
+    || continuity?.failedRecoveryKey,
+  )
+  if (!hasDetails) return null
+
+  const promptSourceLabel = diagnostics?.promptSourceIds.length
+    ? diagnostics.promptSourceIds.join(", ")
+    : text("기록 없음", "Not recorded")
+  const latencyLabel = diagnostics?.latencyEvents.length
+    ? diagnostics.latencyEvents.join(" · ")
+    : text("기록 없음", "Not recorded")
+  const pendingApprovalLabel = continuity?.pendingApprovals.length
+    ? continuity.pendingApprovals.join(", ")
+    : text("없음", "None")
+  const pendingDeliveryLabel = continuity?.pendingDelivery.length
+    ? continuity.pendingDelivery.join(", ")
+    : text("없음", "None")
+
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+      <div className="text-xs font-semibold text-stone-500">{text("운영 진단", "Operational diagnostics")}</div>
+      <div className="mt-3 grid gap-3 text-xs leading-5 text-stone-600 md:grid-cols-2">
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("프롬프트 출처", "Prompt sources")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(promptSourceLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("응답 지연 기록", "Latency trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(latencyLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("대기 중인 승인", "Pending approvals")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(pendingApprovalLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("대기 중인 전달", "Pending delivery")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(pendingDeliveryLabel)}</div>
+        </div>
+      </div>
+      {continuity?.lastGoodState || continuity?.failedRecoveryKey || diagnostics?.recoveryEvents.length ? (
+        <div className="mt-3 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs leading-5 text-stone-600">
+          {continuity?.lastGoodState ? <div>{text("최근 정상 상태", "Last good state")}: {displayText(continuity.lastGoodState)}</div> : null}
+          {continuity?.failedRecoveryKey ? <div>{text("반복 중단 키", "Duplicate stop key")}: {displayText(continuity.failedRecoveryKey)}</div> : null}
+          {diagnostics?.recoveryEvents.length ? <div>{text("복구 기록", "Recovery trace")}: {displayText(diagnostics.recoveryEvents.join(" · "))}</div> : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -184,6 +250,13 @@ export function RunsPage() {
                         artifact={selectedCard.delivery.artifact}
                         title={text("전달된 파일", "Delivered file")}
                         text={text}
+                      />
+                    ) : null}
+                    {selectedCard ? (
+                      <TaskDiagnosticsPanel
+                        card={selectedCard}
+                        text={text}
+                        displayText={displayText}
                       />
                     ) : null}
                     <div className="grid gap-3 md:grid-cols-3">

@@ -4,12 +4,19 @@ import { getConfig, reloadConfig } from "../../config/index.js";
 import { getProvider, getDefaultModel, resetAIProviderCache } from "../../ai/index.js";
 import { PATHS } from "../../config/paths.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
+import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js";
+import { startChannels } from "../../channels/index.js";
+import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js";
+import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js";
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
+import { getVectorBackendStatus } from "../../memory/embedding.js";
 function buildLegacySettingsSnapshot() {
     const cfg = getConfig();
     const telegramChannel = getActiveTelegramChannel();
+    const slackChannel = getActiveSlackChannel();
+    const telegramRuntime = getTelegramRuntimeStatus();
+    const slackRuntime = getSlackRuntimeStatus();
     const connection = cfg.ai.connection;
     return {
         ai: {
@@ -32,6 +39,10 @@ function buildLegacySettingsSnapshot() {
             webProvider: cfg.search.web?.provider ?? "duckduckgo",
             webMaxResults: cfg.search.web?.maxResults ?? 5,
         },
+        memory: {
+            searchMode: cfg.memory.searchMode ?? "fts",
+            vectorBackend: getVectorBackendStatus(),
+        },
         webui: {
             port: cfg.webui.port,
             host: cfg.webui.host,
@@ -44,6 +55,24 @@ function buildLegacySettingsSnapshot() {
             allowedUserIds: cfg.telegram?.allowedUserIds ?? [],
             allowedGroupIds: cfg.telegram?.allowedGroupIds ?? [],
             isRunning: telegramChannel !== null,
+            runtime: telegramRuntime,
+        },
+        slack: {
+            enabled: cfg.slack?.enabled ?? false,
+            hasBotToken: Boolean(cfg.slack?.botToken),
+            hasAppToken: Boolean(cfg.slack?.appToken),
+            allowedUserIds: cfg.slack?.allowedUserIds ?? [],
+            allowedChannelIds: cfg.slack?.allowedChannelIds ?? [],
+            isRunning: slackChannel !== null,
+            runtime: slackRuntime,
+        },
+        mqtt: {
+            enabled: cfg.mqtt.enabled,
+            host: cfg.mqtt.host,
+            port: cfg.mqtt.port,
+            username: cfg.mqtt.username,
+            hasPassword: Boolean(cfg.mqtt.password),
+            allowAnonymous: cfg.mqtt.allowAnonymous,
         },
     };
 }
@@ -61,6 +90,15 @@ export function registerSettingsRoute(app) {
     app.get("/api/settings", { preHandler: authMiddleware }, async () => {
         return buildSettingsResponse();
     });
+    app.get("/api/settings/mqtt/runtime", { preHandler: authMiddleware }, async () => {
+        return {
+            extensions: getMqttExtensionSnapshots(),
+            logs: getMqttExchangeLogs(),
+        };
+    });
+    app.post("/api/settings/mqtt/extensions/:extensionId/disconnect", { preHandler: authMiddleware }, async (req) => {
+        return disconnectMqttExtension(req.params.extensionId);
+    });
     app.put("/api/settings", { preHandler: authMiddleware }, async (req, reply) => {
         const body = req.body;
         if (body &&
@@ -70,6 +108,12 @@ export function registerSettingsRoute(app) {
             typeof body.draft === "object") {
             const payload = body;
             const saved = saveSetupDraft(payload.draft, payload.state);
+            try {
+                await restartMqttBrokerFromConfig();
+            }
+            catch {
+                // The config save itself succeeded. Runtime issues are exposed through MQTT status/capabilities.
+            }
             return reply.status(200).send({
                 ok: true,
                 draft: saved.draft,
@@ -87,8 +131,10 @@ export function registerSettingsRoute(app) {
                 // start from an empty object when the file is unreadable
             }
         }
-        if (body.ai && typeof body.ai === "object") {
-            const ai = body.ai;
+        const aiBody = body.ai && typeof body.ai === "object"
+            ? body.ai
+            : null;
+        if (aiBody) {
             if (!raw.ai)
                 raw.ai = {};
             const rawAi = raw.ai;
@@ -100,14 +146,14 @@ export function registerSettingsRoute(app) {
                 : {};
             rawAi.connection = {
                 ...currentConnection,
-                ...(typeof ai.provider === "string" ? { provider: ai.provider.trim() } : {}),
-                ...(typeof ai.model === "string" ? { model: ai.model.trim() } : {}),
-                ...(typeof ai.endpoint === "string" ? { endpoint: ai.endpoint.trim() } : {}),
+                ...(typeof aiBody.provider === "string" ? { provider: aiBody.provider.trim() } : {}),
+                ...(typeof aiBody.model === "string" ? { model: aiBody.model.trim() } : {}),
+                ...(typeof aiBody.endpoint === "string" ? { endpoint: aiBody.endpoint.trim() } : {}),
                 auth: {
                     ...currentAuth,
-                    ...(typeof ai.authMode === "string" ? { mode: ai.authMode } : {}),
-                    ...(typeof ai.apiKey === "string" ? { apiKey: ai.apiKey } : {}),
-                    ...(typeof ai.oauthAuthFilePath === "string" ? { oauthAuthFilePath: ai.oauthAuthFilePath.trim() } : {}),
+                    ...(typeof aiBody.authMode === "string" ? { mode: aiBody.authMode } : {}),
+                    ...(typeof aiBody.apiKey === "string" ? { apiKey: aiBody.apiKey } : {}),
+                    ...(typeof aiBody.oauthAuthFilePath === "string" ? { oauthAuthFilePath: aiBody.oauthAuthFilePath.trim() } : {}),
                 },
             };
             delete rawAi.providers;
@@ -170,14 +216,45 @@ export function registerSettingsRoute(app) {
             if (Array.isArray(tg.allowedGroupIds))
                 rawTg.allowedGroupIds = tg.allowedGroupIds;
         }
+        if (body.mqtt && typeof body.mqtt === "object") {
+            const mqtt = body.mqtt;
+            if (!raw.mqtt)
+                raw.mqtt = {};
+            const rawMqtt = raw.mqtt;
+            if (typeof mqtt.enabled === "boolean")
+                rawMqtt.enabled = mqtt.enabled;
+            if (typeof mqtt.host === "string")
+                rawMqtt.host = mqtt.host.trim();
+            if (typeof mqtt.port === "number")
+                rawMqtt.port = Math.max(1, Math.min(65535, Math.floor(mqtt.port)));
+            if (typeof mqtt.username === "string")
+                rawMqtt.username = mqtt.username.trim();
+            if (typeof mqtt.password === "string")
+                rawMqtt.password = mqtt.password;
+            rawMqtt.allowAnonymous = false;
+        }
         writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8");
         const reloaded = reloadConfig();
+        resetAIProviderCache();
         updateActiveRunsMaxDelegationTurns(reloaded.orchestration.maxDelegationTurns);
+        try {
+            await restartMqttBrokerFromConfig();
+        }
+        catch {
+            // The config save succeeded; runtime failure is surfaced by MQTT status/capabilities.
+        }
         return reply.status(200).send({ ok: true, ...buildSettingsResponse() });
     });
     app.post("/api/settings/reset", { preHandler: authMiddleware }, async () => {
+        stopActiveSlackChannel();
         stopActiveTelegramChannel();
         const snapshot = resetSetupEnvironment();
+        try {
+            await restartMqttBrokerFromConfig();
+        }
+        catch {
+            // Keep returning the reset snapshot even when MQTT runtime restart fails.
+        }
         return {
             ok: true,
             ...snapshot,
@@ -186,6 +263,13 @@ export function registerSettingsRoute(app) {
     });
     app.post("/api/settings/reload", { preHandler: authMiddleware }, async () => {
         reloadConfig();
+        resetAIProviderCache();
+        try {
+            await restartMqttBrokerFromConfig();
+        }
+        catch {
+            // Keep returning the reloaded snapshot even when MQTT runtime restart fails.
+        }
         return { ok: true, ...buildSettingsResponse() };
     });
     app.post("/api/settings/telegram/restart", { preHandler: authMiddleware }, async (_req, reply) => {
@@ -209,6 +293,31 @@ export function registerSettingsRoute(app) {
         }
         catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            setTelegramRuntimeError(message);
+            return reply.status(500).send({ ok: false, error: message });
+        }
+    });
+    app.post("/api/settings/channels/restart", { preHandler: authMiddleware }, async (_req, reply) => {
+        const cfg = reloadConfig();
+        try {
+            stopActiveSlackChannel();
+            stopActiveTelegramChannel();
+            setSlackRuntimeError(null);
+            setTelegramRuntimeError(null);
+            const hasTelegramConfig = Boolean(cfg.telegram?.botToken);
+            const hasSlackConfig = Boolean(cfg.slack?.botToken && cfg.slack?.appToken);
+            if ((cfg.telegram?.enabled && !hasTelegramConfig) || (cfg.slack?.enabled && !hasSlackConfig)) {
+                return reply.status(400).send({
+                    ok: false,
+                    error: "활성화된 채널의 필수 토큰이 비어 있습니다.",
+                });
+            }
+            await startChannels();
+            return { ok: true, status: "started" };
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            setSlackRuntimeError(message);
             setTelegramRuntimeError(message);
             return reply.status(500).send({ ok: false, error: message });
         }

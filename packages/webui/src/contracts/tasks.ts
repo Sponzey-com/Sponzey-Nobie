@@ -124,6 +124,32 @@ export interface TaskMonitorModel {
   deliveryStatus: TaskDeliveryStatus
 }
 
+export interface TaskContinuityModel {
+  lineageRootRunId: string
+  parentRunId?: string
+  handoffSummary?: string
+  lastGoodState?: string
+  pendingApprovals: string[]
+  pendingDelivery: string[]
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  failedRecoveryKey?: string
+  failureKind?: string
+  recoveryBudget?: string
+  status?: string
+  updatedAt: number
+}
+
+export interface TaskDiagnosticsModel {
+  promptSourceIds: string[]
+  promptSourceVersion?: string
+  latencyEvents: string[]
+  memoryEvents: string[]
+  recoveryEvents: string[]
+  lastRecoveryKey?: string
+  recoveryBudget?: string
+}
+
 export interface TaskModel {
   id: string
   requestGroupId: string
@@ -145,5 +171,7 @@ export interface TaskModel {
   failure?: TaskFailureModel
   checklist: TaskChecklistModel
   monitor: TaskMonitorModel
+  continuity?: TaskContinuityModel
+  diagnostics?: TaskDiagnosticsModel
   activities: TaskActivityModel[]
 }

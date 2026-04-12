@@ -3,6 +3,7 @@ import { dirname } from "node:path"
 import BetterSqlite3 from "better-sqlite3"
 import { PATHS } from "../config/index.js"
 import { runMigrations } from "./migrations.js"
+import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js"
 
 let _db: BetterSqlite3.Database | null = null
 
@@ -81,6 +82,57 @@ export interface DbChannelMessageRef {
   external_message_id: string
   role: string
   created_at: number
+}
+
+export interface DbPromptSource {
+  source_id: string
+  locale: string
+  path: string
+  version: string
+  priority: number
+  enabled: number
+  is_required: number
+  usage_scope: string
+  checksum: string
+  updated_at: number
+}
+
+export interface DbTaskContinuity {
+  lineage_root_run_id: string
+  parent_run_id: string | null
+  handoff_summary: string | null
+  last_good_state: string | null
+  pending_approvals: string | null
+  pending_delivery: string | null
+  last_tool_receipt: string | null
+  last_delivery_receipt: string | null
+  failed_recovery_key: string | null
+  failure_kind: string | null
+  recovery_budget: string | null
+  continuity_status: string | null
+  updated_at: number
+}
+
+export interface TaskContinuitySnapshot {
+  lineageRootRunId: string
+  parentRunId?: string
+  handoffSummary?: string
+  lastGoodState?: string
+  pendingApprovals: string[]
+  pendingDelivery: string[]
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  failedRecoveryKey?: string
+  failureKind?: string
+  recoveryBudget?: string
+  status?: string
+  updatedAt: number
+}
+
+interface PromptSourceStateRow {
+  sourceId: string
+  locale: "ko" | "en"
+  enabled: 0 | 1
 }
 
 export function insertSession(session: Omit<DbSession, "token_count">): void {
@@ -254,7 +306,66 @@ export function findChannelMessageRef(params: {
     .get(params.source, params.externalChatId, params.externalMessageId)
 }
 
+export function upsertPromptSources(sources: PromptSourceMetadata[]): void {
+  if (sources.length === 0) return
+  const now = Date.now()
+  const db = getDb()
+  const insert = db.prepare(
+    `INSERT INTO prompt_sources
+     (source_id, locale, path, version, priority, enabled, is_required, usage_scope, checksum, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_id, locale) DO UPDATE SET
+       path = excluded.path,
+       version = excluded.version,
+       priority = excluded.priority,
+       enabled = CASE WHEN excluded.is_required = 1 THEN 1 ELSE prompt_sources.enabled END,
+       is_required = excluded.is_required,
+       usage_scope = excluded.usage_scope,
+       checksum = excluded.checksum,
+       updated_at = excluded.updated_at`,
+  )
+  const tx = db.transaction(() => {
+    for (const source of sources) {
+      insert.run(
+        source.sourceId,
+        source.locale,
+        source.path,
+        source.version,
+        source.priority,
+        source.enabled ? 1 : 0,
+        source.required ? 1 : 0,
+        source.usageScope,
+        source.checksum,
+        now,
+      )
+    }
+  })
+  tx()
+}
+
+export function updateRunPromptSourceSnapshot(runId: string, snapshot: PromptSourceSnapshot): void {
+  getDb()
+    .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(snapshot), Date.now(), runId)
+}
+
+export function getPromptSourceStates(): PromptSourceState[] {
+  return getDb()
+    .prepare<[], PromptSourceStateRow>(
+      `SELECT source_id AS sourceId, locale, enabled
+       FROM prompt_sources`,
+    )
+    .all()
+    .map((row) => ({
+      sourceId: row.sourceId,
+      locale: row.locale,
+      enabled: row.enabled === 1,
+    }))
+}
+
 // ── Memory Items ───────────────────────────────────────────────────────────
+
+export type MemoryScope = "global" | "session" | "task" | "artifact" | "diagnostic"
 
 export interface DbMemoryItem {
   id: string
@@ -272,6 +383,414 @@ export interface DbMemoryItem {
   updated_at: number
 }
 
+export interface DbMemoryDocument {
+  id: string
+  scope: MemoryScope
+  owner_id: string
+  source_type: string
+  source_ref: string | null
+  title: string | null
+  raw_text: string
+  checksum: string
+  metadata_json: string | null
+  archived_at: number | null
+  created_at: number
+  updated_at: number
+}
+
+export interface DbMemoryChunk {
+  id: string
+  document_id: string
+  scope: MemoryScope
+  owner_id: string
+  ordinal: number
+  token_estimate: number
+  content: string
+  checksum: string
+  metadata_json: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface DbMemoryChunkSearchRow extends DbMemoryChunk {
+  document_title: string | null
+  document_source_type: string
+  document_source_ref: string | null
+  document_metadata_json: string | null
+  score: number
+}
+
+export interface StoreMemoryDocumentInput {
+  scope: MemoryScope
+  ownerId?: string
+  sourceType: string
+  sourceRef?: string
+  title?: string
+  rawText: string
+  checksum: string
+  metadata?: Record<string, unknown>
+  chunks: Array<{
+    ordinal: number
+    tokenEstimate: number
+    content: string
+    checksum: string
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface StoreMemoryDocumentResult {
+  documentId: string
+  chunkIds: string[]
+  deduplicated: boolean
+}
+
+export interface MemorySearchFilters {
+  sessionId?: string
+  runId?: string
+  requestGroupId?: string
+  includeArtifact?: boolean
+  includeDiagnostic?: boolean
+}
+
+function resolveMemoryOwnerId(scope: MemoryScope, ownerId: string | undefined): string {
+  if (scope === "global") return ownerId?.trim() || "global"
+  const normalized = ownerId?.trim()
+  if (!normalized) {
+    throw new Error(`${scope} memory requires an owner id`)
+  }
+  return normalized
+}
+
+function toJsonOrNull(value: Record<string, unknown> | undefined): string | null {
+  return value ? JSON.stringify(value) : null
+}
+
+export function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemoryDocumentResult {
+  const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId)
+  const db = getDb()
+  const now = Date.now()
+  const existing = db
+    .prepare<[string, string, string], { id: string }>(
+      `SELECT id FROM memory_documents WHERE scope = ? AND owner_id = ? AND checksum = ? LIMIT 1`,
+    )
+    .get(input.scope, ownerId, input.checksum)
+  if (existing) {
+    const chunks = db
+      .prepare<[string], { id: string }>(`SELECT id FROM memory_chunks WHERE document_id = ? ORDER BY ordinal ASC`)
+      .all(existing.id)
+    return { documentId: existing.id, chunkIds: chunks.map((chunk) => chunk.id), deduplicated: true }
+  }
+
+  const documentId = crypto.randomUUID()
+  const chunkIds: string[] = []
+  const insertDocument = db.prepare(
+    `INSERT INTO memory_documents
+     (id, scope, owner_id, source_type, source_ref, title, raw_text, checksum, metadata_json, archived_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+  )
+  const insertChunk = db.prepare(
+    `INSERT INTO memory_chunks
+     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  const insertChunkFts = db.prepare(
+    `INSERT INTO memory_chunks_fts(rowid, content, metadata_json)
+     SELECT rowid, content, metadata_json FROM memory_chunks WHERE id = ?`,
+  )
+  const insertIndexJob = db.prepare(
+    `INSERT INTO memory_index_jobs (id, document_id, status, retry_count, created_at, updated_at)
+     VALUES (?, ?, 'pending', 0, ?, ?)`,
+  )
+
+  const tx = db.transaction(() => {
+    insertDocument.run(
+      documentId,
+      input.scope,
+      ownerId,
+      input.sourceType,
+      input.sourceRef ?? null,
+      input.title ?? null,
+      input.rawText,
+      input.checksum,
+      toJsonOrNull(input.metadata),
+      now,
+      now,
+    )
+
+    for (const chunk of input.chunks) {
+      const chunkId = crypto.randomUUID()
+      chunkIds.push(chunkId)
+      insertChunk.run(
+        chunkId,
+        documentId,
+        input.scope,
+        ownerId,
+        chunk.ordinal,
+        chunk.tokenEstimate,
+        chunk.content,
+        chunk.checksum,
+        toJsonOrNull(chunk.metadata),
+        now,
+        now,
+      )
+      insertChunkFts.run(chunkId)
+    }
+
+    insertIndexJob.run(crypto.randomUUID(), documentId, now, now)
+  })
+  tx()
+
+  return { documentId, chunkIds, deduplicated: false }
+}
+
+export function insertMemoryEmbeddingIfMissing(input: {
+  chunkId: string
+  provider: string
+  model: string
+  dimensions: number
+  textChecksum: string
+  vector: Buffer
+}): string {
+  const id = crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO memory_embeddings
+       (id, chunk_id, provider, model, dimensions, text_checksum, vector, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, input.chunkId, input.provider, input.model, input.dimensions, input.textChecksum, input.vector, Date.now())
+  const existing = getDb()
+    .prepare<[string, string, number, string], { id: string }>(
+      `SELECT id FROM memory_embeddings
+       WHERE provider = ? AND model = ? AND dimensions = ? AND text_checksum = ?`,
+    )
+    .get(input.provider, input.model, input.dimensions, input.textChecksum)
+  return existing?.id ?? id
+}
+
+export function rebuildMemorySearchIndexes(): void {
+  getDb().exec(`
+    INSERT INTO memory_fts(memory_fts) VALUES('rebuild');
+    INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES('rebuild');
+  `)
+}
+
+export function markMemoryIndexJobCompleted(documentId: string): void {
+  getDb()
+    .prepare(`UPDATE memory_index_jobs SET status = 'completed', updated_at = ? WHERE document_id = ?`)
+    .run(Date.now(), documentId)
+}
+
+export function markMemoryIndexJobFailed(documentId: string, error: string): void {
+  getDb()
+    .prepare(
+      `UPDATE memory_index_jobs
+       SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
+       WHERE document_id = ?`,
+    )
+    .run(error, Date.now(), documentId)
+}
+
+export function recordMemoryAccessLog(input: {
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  documentId?: string
+  chunkId?: string
+  query: string
+  resultSource: string
+  score?: number
+  latencyMs?: number
+}): string {
+  const id = crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO memory_access_log
+       (id, run_id, session_id, request_group_id, document_id, chunk_id, query, result_source, score, latency_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId ?? null,
+      input.sessionId ?? null,
+      input.requestGroupId ?? null,
+      input.documentId ?? null,
+      input.chunkId ?? null,
+      input.query,
+      input.resultSource,
+      input.score ?? null,
+      input.latencyMs ?? null,
+      Date.now(),
+    )
+  return id
+}
+
+export function enqueueMemoryWritebackCandidate(input: {
+  scope: MemoryScope
+  ownerId?: string
+  sourceType: string
+  content: string
+  metadata?: Record<string, unknown>
+  runId?: string
+}): string {
+  const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId)
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  getDb()
+    .prepare(
+      `INSERT INTO memory_writeback_queue
+       (id, scope, owner_id, source_type, content, metadata_json, status, retry_count, last_error, run_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.scope,
+      ownerId,
+      input.sourceType,
+      input.content,
+      toJsonOrNull(input.metadata),
+      input.runId ?? null,
+      now,
+      now,
+    )
+  return id
+}
+
+export function upsertSessionSnapshot(input: {
+  sessionId: string
+  summary: string
+  preservedFacts?: string[]
+  activeTaskIds?: string[]
+}): string {
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  getDb()
+    .prepare(
+      `INSERT INTO session_snapshots
+       (id, session_id, snapshot_version, summary, preserved_facts, active_task_ids, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, snapshot_version) DO UPDATE SET
+         summary = excluded.summary,
+         preserved_facts = excluded.preserved_facts,
+         active_task_ids = excluded.active_task_ids,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      id,
+      input.sessionId,
+      input.summary,
+      JSON.stringify(input.preservedFacts ?? []),
+      JSON.stringify(input.activeTaskIds ?? []),
+      now,
+      now,
+    )
+  const row = getDb()
+    .prepare<[string], { id: string }>(
+      `SELECT id FROM session_snapshots WHERE session_id = ? AND snapshot_version = 1 LIMIT 1`,
+    )
+    .get(input.sessionId)
+  return row?.id ?? id
+}
+
+export function upsertTaskContinuity(input: {
+  lineageRootRunId: string
+  parentRunId?: string
+  handoffSummary?: string
+  lastGoodState?: string
+  pendingApprovals?: string[]
+  pendingDelivery?: string[]
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  failedRecoveryKey?: string
+  failureKind?: string
+  recoveryBudget?: string
+  status?: string
+}): void {
+  const hasField = (key: keyof typeof input): boolean => Object.prototype.hasOwnProperty.call(input, key)
+  getDb()
+    .prepare(
+      `INSERT INTO task_continuity
+       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state, pending_approvals, pending_delivery,
+        last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(lineage_root_run_id) DO UPDATE SET
+         parent_run_id = COALESCE(excluded.parent_run_id, task_continuity.parent_run_id),
+         handoff_summary = COALESCE(excluded.handoff_summary, task_continuity.handoff_summary),
+         last_good_state = COALESCE(excluded.last_good_state, task_continuity.last_good_state),
+         pending_approvals = COALESCE(excluded.pending_approvals, task_continuity.pending_approvals),
+         pending_delivery = COALESCE(excluded.pending_delivery, task_continuity.pending_delivery),
+         last_tool_receipt = COALESCE(excluded.last_tool_receipt, task_continuity.last_tool_receipt),
+         last_delivery_receipt = COALESCE(excluded.last_delivery_receipt, task_continuity.last_delivery_receipt),
+         failed_recovery_key = COALESCE(excluded.failed_recovery_key, task_continuity.failed_recovery_key),
+         failure_kind = COALESCE(excluded.failure_kind, task_continuity.failure_kind),
+         recovery_budget = COALESCE(excluded.recovery_budget, task_continuity.recovery_budget),
+         continuity_status = COALESCE(excluded.continuity_status, task_continuity.continuity_status),
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      input.lineageRootRunId,
+      input.parentRunId ?? null,
+      input.handoffSummary ?? null,
+      input.lastGoodState ?? null,
+      hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null,
+      hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null,
+      input.lastToolReceipt ?? null,
+      input.lastDeliveryReceipt ?? null,
+      input.failedRecoveryKey ?? null,
+      input.failureKind ?? null,
+      input.recoveryBudget ?? null,
+      input.status ?? null,
+      Date.now(),
+    )
+}
+
+function parseContinuityStringArray(value: string | null): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function mapTaskContinuity(row: DbTaskContinuity): TaskContinuitySnapshot {
+  return {
+    lineageRootRunId: row.lineage_root_run_id,
+    ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
+    ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
+    ...(row.last_good_state ? { lastGoodState: row.last_good_state } : {}),
+    pendingApprovals: parseContinuityStringArray(row.pending_approvals),
+    pendingDelivery: parseContinuityStringArray(row.pending_delivery),
+    ...(row.last_tool_receipt ? { lastToolReceipt: row.last_tool_receipt } : {}),
+    ...(row.last_delivery_receipt ? { lastDeliveryReceipt: row.last_delivery_receipt } : {}),
+    ...(row.failed_recovery_key ? { failedRecoveryKey: row.failed_recovery_key } : {}),
+    ...(row.failure_kind ? { failureKind: row.failure_kind } : {}),
+    ...(row.recovery_budget ? { recoveryBudget: row.recovery_budget } : {}),
+    ...(row.continuity_status ? { status: row.continuity_status } : {}),
+    updatedAt: row.updated_at,
+  }
+}
+
+export function getTaskContinuity(lineageRootRunId: string): TaskContinuitySnapshot | undefined {
+  const row = getDb()
+    .prepare<[string], DbTaskContinuity>(`SELECT * FROM task_continuity WHERE lineage_root_run_id = ?`)
+    .get(lineageRootRunId)
+  return row ? mapTaskContinuity(row) : undefined
+}
+
+export function listTaskContinuityForLineages(lineageRootRunIds: string[]): TaskContinuitySnapshot[] {
+  const ids = [...new Set(lineageRootRunIds.filter((value) => value.trim().length > 0))]
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => "?").join(", ")
+  return getDb()
+    .prepare<unknown[], DbTaskContinuity>(`SELECT * FROM task_continuity WHERE lineage_root_run_id IN (${placeholders})`)
+    .all(...ids)
+    .map(mapTaskContinuity)
+}
+
 export function insertMemoryItem(item: {
   content: string
   tags?: string[]
@@ -282,6 +801,9 @@ export function insertMemoryItem(item: {
   type?: string
   importance?: string
 }): string {
+  if (item.scope === "task" && !item.runId && !item.requestGroupId) {
+    throw new Error("task memory requires a runId or requestGroupId")
+  }
   const id = crypto.randomUUID()
   const now = Date.now()
   const db = getDb()
@@ -313,18 +835,22 @@ export function insertMemoryItem(item: {
 function buildMemoryScopeWhere(filters?: {
   sessionId?: string
   runId?: string
-}): { clause: string; values: string[] } {
-  const clauses = [`m.memory_scope = 'global'`, `m.memory_scope IS NULL`, `m.memory_scope = ''`]
+  requestGroupId?: string
+}, alias = "m"): { clause: string; values: string[] } {
+  const prefix = alias ? `${alias}.` : ""
+  const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`]
   const values: string[] = []
 
   if (filters?.sessionId) {
-    clauses.push(`(m.memory_scope = 'session' AND m.session_id = ?)`)
+    clauses.push(`(${prefix}memory_scope = 'session' AND ${prefix}session_id = ?)`)
     values.push(filters.sessionId)
   }
 
-  if (filters?.runId) {
-    clauses.push(`(m.memory_scope = 'task' AND m.run_id = ?)`)
-    values.push(filters.runId)
+  const taskOwners = [filters?.requestGroupId, filters?.runId].filter((value): value is string => Boolean(value))
+  if (taskOwners.length > 0) {
+    const placeholders = taskOwners.map(() => "?").join(", ")
+    clauses.push(`(${prefix}memory_scope = 'task' AND (${prefix}request_group_id IN (${placeholders}) OR ${prefix}run_id IN (${placeholders})))`)
+    values.push(...taskOwners, ...taskOwners)
   }
 
   return {
@@ -333,28 +859,63 @@ function buildMemoryScopeWhere(filters?: {
   }
 }
 
+function sanitizeMemoryFtsQuery(query: string): string | null {
+  const terms = query
+    .normalize("NFKC")
+    .match(/[\p{L}\p{N}_]+/gu)
+    ?.map((term) => term.trim())
+    .filter(Boolean)
+    .slice(0, 12) ?? []
+  return terms.length > 0 ? terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ") : null
+}
+
+function escapeMemoryLike(query: string): string {
+  return query.replace(/[\\%_]/g, (match) => `\\${match}`)
+}
+
 export function searchMemoryItems(query: string, limit = 5, filters?: {
   sessionId?: string
   runId?: string
+  requestGroupId?: string
 }): DbMemoryItem[] {
   const scope = buildMemoryScopeWhere(filters)
+  const sanitized = sanitizeMemoryFtsQuery(query)
+  if (sanitized) {
+    try {
+      return getDb()
+        .prepare<unknown[], DbMemoryItem>(
+          `SELECT m.* FROM memory_fts f
+           JOIN memory_items m ON m.rowid = f.rowid
+           WHERE memory_fts MATCH ?
+             AND ${scope.clause}
+           ORDER BY rank
+           LIMIT ?`,
+        )
+        .all(sanitized, ...scope.values, limit)
+    } catch {
+      // Fall through to LIKE search when MATCH rejects special input or the FTS table is unavailable.
+    }
+  }
+
+  const likeScope = buildMemoryScopeWhere(filters, "")
+  const pattern = `%${escapeMemoryLike(query.normalize("NFKC").trim())}%`
   return getDb()
     .prepare<unknown[], DbMemoryItem>(
-      `SELECT m.* FROM memory_fts f
-       JOIN memory_items m ON m.rowid = f.rowid
-       WHERE memory_fts MATCH ?
-         AND ${scope.clause}
-       ORDER BY rank
+      `SELECT * FROM memory_items
+       WHERE content LIKE ? ESCAPE '\\'
+         AND ${likeScope.clause}
+       ORDER BY updated_at DESC
        LIMIT ?`,
     )
-    .all(query, ...scope.values, limit)
+    .all(pattern, ...likeScope.values, limit)
 }
 
 export function getRecentMemoryItems(limit = 10, filters?: {
   sessionId?: string
   runId?: string
+  requestGroupId?: string
 }): DbMemoryItem[] {
-  const scope = buildMemoryScopeWhere(filters)
+  const scope = buildMemoryScopeWhere(filters, "")
   return getDb()
     .prepare<unknown[], DbMemoryItem>(
       `SELECT * FROM memory_items

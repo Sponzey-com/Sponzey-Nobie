@@ -1,0 +1,44 @@
+import type { ExecutionLoopRuntimeState } from "./execution-profile.js";
+import type { RootRunDriverDependencies } from "./root-run-driver.js";
+import type { RootLoopDependencies, RootLoopParams } from "./root-loop.js";
+import type { FinalizationSource } from "./finalization.js";
+import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
+import type { AgentContextMode } from "../agent/index.js";
+import type { AIProvider } from "../ai/index.js";
+import type { ReconnectRequestGroupSelection } from "./store.js";
+import type { TaskProfile } from "./types.js";
+import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { RunChunkDeliveryHandler } from "./delivery.js";
+export declare function prepareRootLoopLaunch(params: {
+    runId: string;
+    sessionId: string;
+    requestGroupId: string;
+    source: FinalizationSource;
+    onChunk: RunChunkDeliveryHandler | undefined;
+    controller: AbortController;
+    message: string;
+    currentModel: string | undefined;
+    currentProviderId: string | undefined;
+    currentProvider: AIProvider | undefined;
+    currentTargetId: string | undefined;
+    currentTargetLabel: string | undefined;
+    workDir: string;
+    skipIntake?: boolean;
+    immediateCompletionText?: string;
+    reconnectNeedsClarification: boolean;
+    reconnectTargetTitle?: string;
+    reconnectSelection?: ReconnectRequestGroupSelection;
+    queuedBehindRequestGroupRun: boolean;
+    activeWorkerRuntime: WorkerRuntimeTarget | undefined;
+    workerSessionId?: string;
+    toolsEnabled?: boolean;
+    isRootRequest: boolean;
+    contextMode: AgentContextMode;
+    taskProfile: TaskProfile;
+    syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
+    defaultMaxDelegationTurns: number;
+}, dependencies: RootRunDriverDependencies, executionLoopRuntime: ExecutionLoopRuntimeState): {
+    rootLoopParams: RootLoopParams;
+    rootLoopDependencies: RootLoopDependencies;
+};
+//# sourceMappingURL=root-loop-launch.d.ts.map

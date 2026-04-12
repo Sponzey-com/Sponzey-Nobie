@@ -4,15 +4,19 @@
  */
 // ── Null (no-op) provider ────────────────────────────────────────────────────
 export class NullEmbeddingProvider {
+    providerId = "none";
+    modelId = "none";
     dimensions = 0;
     async embed() { return []; }
     async batchEmbed(texts) { return texts.map(() => []); }
 }
 // ── Ollama provider ──────────────────────────────────────────────────────────
 export class OllamaEmbeddingProvider {
+    providerId = "ollama";
     dimensions;
     baseUrl;
     model;
+    get modelId() { return this.model; }
     constructor(opts = {}) {
         this.baseUrl = opts.baseUrl ?? "http://localhost:11434";
         this.model = opts.model ?? "nomic-embed-text";
@@ -35,9 +39,11 @@ export class OllamaEmbeddingProvider {
 }
 // ── Voyage AI provider ───────────────────────────────────────────────────────
 export class VoyageEmbeddingProvider {
+    providerId = "voyage";
     dimensions;
     apiKey;
     model;
+    get modelId() { return this.model; }
     constructor(opts) {
         this.apiKey = opts.apiKey;
         this.model = opts.model ?? "voyage-3";
@@ -66,10 +72,12 @@ export class VoyageEmbeddingProvider {
 }
 // ── OpenAI-compatible provider ───────────────────────────────────────────────
 export class OpenAIEmbeddingProvider {
+    providerId = "openai";
     dimensions;
     apiKey;
     model;
     baseUrl;
+    get modelId() { return this.model; }
     constructor(opts) {
         this.apiKey = opts.apiKey;
         this.model = opts.model ?? "text-embedding-3-small";
@@ -133,6 +141,16 @@ export function getEmbeddingProvider() {
 /** Reset provider singleton (e.g., after config reload) */
 export function resetEmbeddingProvider() {
     _provider = null;
+}
+export function getEmbeddingCacheKey(provider, textChecksum) {
+    return `${provider.providerId}:${provider.modelId}:${provider.dimensions}:${textChecksum}`;
+}
+export function getVectorBackendStatus() {
+    const provider = getEmbeddingProvider();
+    if (provider.dimensions <= 0) {
+        return { available: false, backend: "none", reason: "embedding provider is not configured" };
+    }
+    return { available: true, backend: "in_process_blob" };
 }
 /** Encode float32 array to Buffer for SQLite BLOB storage */
 export function encodeEmbedding(vec) {

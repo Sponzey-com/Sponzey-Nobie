@@ -1,10 +1,11 @@
 import { type SetupDraft } from "../control-plane/index.js";
 import { type AIProvider } from "../ai/index.js";
-import { type WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface RouteActionInput {
     preferredTarget?: string | undefined;
     taskProfile?: string | undefined;
     fallbackModel?: string | undefined;
+    avoidTargets?: string[] | undefined;
 }
 export interface ResolvedRunRoute {
     targetId?: string;

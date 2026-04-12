@@ -117,12 +117,11 @@ describe("external recovery planning", () => {
     expect(plan.routeEventLabel).toContain("기본 추론 경로")
     expect(plan.nextMessage).toContain("[Worker Runtime Error Recovery]")
     expect(plan.nextMessage).toContain("실패한 접근 방식: 외부 작업 세션 / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("다시 사용 금지 대상:")
-    expect(plan.nextMessage).toContain("- worker:internal_ai")
-    expect(plan.nextMessage).toContain("우선 검토할 다른 경로: 기본 AI 추론 경로")
+    expect(plan.nextMessage).toContain("같은 AI 연결(외부 작업 세션)과 같은 대상")
+    expect(plan.nextMessage).not.toContain("다시 사용 금지 대상:")
   })
 
-  it("applies reroute when another target is available", () => {
+  it("keeps recovery on the same AI connection even when another target is proposed", () => {
     const plan = planExternalRecovery({
       kind: "ai",
       taskProfile: "general_chat",
@@ -153,13 +152,11 @@ describe("external recovery planning", () => {
       },
     })
 
-    expect(plan.routeChanged).toBe(true)
-    expect(plan.nextState.targetLabel).toBe("Anthropic")
-    expect(plan.routeEventLabel).toContain("AI 복구 경로 전환")
+    expect(plan.routeChanged).toBe(false)
+    expect(plan.nextState.targetLabel).toBe("OpenAI")
+    expect(plan.routeEventLabel).toBeUndefined()
     expect(plan.nextMessage).toContain("실패한 접근 방식: OpenAI / openai / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("다시 사용 금지 대상:")
-    expect(plan.nextMessage).toContain("- provider:openai")
-    expect(plan.nextMessage).toContain("우선 검토할 다른 경로: Anthropic")
-    expect(plan.nextMessage).toContain("금지 대상과 같은 방법은 다시 선택하지 마세요")
+    expect(plan.nextMessage).toContain("같은 AI 연결(OpenAI)과 같은 대상")
+    expect(plan.nextMessage).not.toContain("Anthropic")
   })
 })

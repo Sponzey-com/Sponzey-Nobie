@@ -146,5 +146,7 @@ export async function runRecoveryEntryPass(
 
       return { kind: "continue" }
     },
+  }, {
+    appendRunEvent: dependencies.appendRunEvent,
   })
 }

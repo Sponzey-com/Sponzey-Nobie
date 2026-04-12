@@ -120,7 +120,7 @@ describe("run action execution helpers", () => {
       taskProfile: "operations",
     })
 
-    expect(prompt).toContain("[Task Intake Bridge]")
+    expect(prompt).toContain("[Task Execution Brief]")
     expect(prompt).toContain("[target]")
     expect(prompt).toContain("[to]")
     expect(prompt).toContain("[checklist]")

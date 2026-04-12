@@ -207,6 +207,7 @@ export function buildStartRootRunDriverDependencies(params: {
       logInfo: params.logInfo,
       logWarn: params.logWarn,
       logError: params.logError,
+      appendRunEvent,
     }),
     getSyntheticApprovalAlreadyApproved: () => params.syntheticApprovalScopes.has(params.runId),
     onBootstrapInfo: (message, payload) => {

@@ -1,5 +1,6 @@
 import { displayHomePath } from "./delivery.js"
 import type { AssistantTextDeliveryOutcome, DeliverySource } from "./delivery.js"
+import { sanitizeUserFacingError } from "./error-sanitizer.js"
 
 export interface FailedCommandTool {
   toolName: string
@@ -141,6 +142,7 @@ export function buildDirectArtifactDeliveryRecoveryPrompt(params: {
     alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
     "설명, 권한 안내, 수동 해결 방법 제시만으로 완료 처리하지 마세요.",
     "결과물 자체를 실제로 전달하거나, 전달이 불가능하면 다른 실행 경로를 찾아 계속 진행하세요.",
+    "전달 채널은 현재 사용자 요청이 들어온 채널로 고정하세요. 사용자가 Slack에서 요청했다면 Telegram 전달 도구를 쓰지 말고, Telegram 요청도 Slack 전달 경로로 바꾸지 마세요.",
     "도구 목록을 다시 확인하고, 적절한 Yeonjang 도구나 전달 도구를 우선 사용하세요.",
     "사용자가 요청한 결과물 자체가 실제로 전달되기 전에는 완료라고 말하지 마세요.",
     "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
@@ -177,6 +179,8 @@ export function describeAssistantTextDeliveryFailure(params: {
       ? "텔레그램"
       : params.source === "webui"
         ? "WebUI"
+        : params.source === "slack"
+          ? "Slack"
         : "CLI"
 
   if (!params.outcome.hasDeliveryFailure) {
@@ -255,40 +259,7 @@ export function buildExecutionRecoveryPrompt(params: {
 }
 
 export function summarizeRawErrorForUser(message: string | undefined): string {
-  const normalized = (message ?? "")
-    .replace(/\r\n?/g, "\n")
-    .trim()
-
-  if (!normalized) return ""
-
-  if (/(<!doctype\s+html|<html\b|<head\b|<body\b|<meta\b|<title\b|<script\b)/i.test(normalized)) {
-    if (/(\b403\b|forbidden|unauthorized|access denied|cloudflare|challenge|auth)/i.test(normalized)) {
-      return "인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다."
-    }
-    if (/(\b404\b|page not found|not found)/i.test(normalized)) {
-      return "요청한 경로를 찾지 못해 서버가 HTML 오류 페이지를 반환했습니다."
-    }
-    return "서버가 처리 가능한 API 응답 대신 HTML 오류 페이지를 반환했습니다."
-  }
-
-  if (/no available openai api keys/i.test(normalized)) {
-    return "현재 사용할 수 있는 API 키 또는 인증 자격이 없습니다."
-  }
-  if (/(\b403\b|forbidden|unauthorized|access denied|cloudflare|challenge|auth)/i.test(normalized)) {
-    return "인증 또는 접근 차단 문제로 모델 호출이 실패했습니다."
-  }
-  if (/(\b404\b|page not found|not found)/i.test(normalized)) {
-    return "요청한 모델 또는 API 경로를 찾지 못했습니다."
-  }
-  if (/(\b429\b|rate limit|too many requests)/i.test(normalized)) {
-    return "요청 한도 또는 호출 빈도 제한 때문에 잠시 후 다시 시도해야 합니다."
-  }
-  if (/(timeout|timed out|deadline exceeded|시간 초과)/i.test(normalized)) {
-    return "응답 시간이 초과되었습니다."
-  }
-
-  const firstLine = normalized.split(/\n+/)[0]?.trim() ?? normalized
-  return firstLine.length > 220 ? `${firstLine.slice(0, 217)}...` : firstLine
+  return message?.trim() ? sanitizeUserFacingError(message).userMessage : ""
 }
 
 export function buildAiErrorRecoveryPrompt(params: {
@@ -440,9 +411,6 @@ function inferGenericExecutionAlternatives(toolNames: string[]): RecoveryAlterna
 
 function inferDirectArtifactDeliveryAlternatives(source: DeliverySource): RecoveryAlternative[] {
   const alternatives: RecoveryAlternative[] = [{ kind: "same_channel_retry", label: "같은 채널 재전송 시도" }]
-  if (source !== "telegram") {
-    alternatives.push({ kind: "other_channel", label: "다른 전달 채널 전환 검토" })
-  }
   alternatives.push({ kind: "other_tool", label: "다른 전달 도구 또는 다른 실행 경로 검토" })
   return alternatives
 }

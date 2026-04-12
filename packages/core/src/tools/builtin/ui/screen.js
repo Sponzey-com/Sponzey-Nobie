@@ -2,59 +2,219 @@
  * Screen capture tools.
  * Uses @nut-tree/nut-js when available, falls back to platform CLI tools.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
-const execFileAsync = promisify(execFile);
-async function captureScreenToBase64() {
-    const tmpPath = join(tmpdir(), `nobie-screen-${Date.now()}.png`);
-    const platform = process.platform;
-    if (platform === "darwin") {
-        await execFileAsync("screencapture", ["-x", tmpPath]);
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
+import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
+import { PATHS } from "../../../config/index.js";
+const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60_000;
+function extensionFromMimeType(mimeType) {
+    switch ((mimeType ?? "").toLowerCase()) {
+        case "image/jpeg":
+        case "image/jpg":
+            return "jpg";
+        case "image/webp":
+            return "webp";
+        case "image/png":
+        default:
+            return "png";
     }
-    else if (platform === "linux") {
-        await execFileAsync("import", ["-window", "root", tmpPath]);
+}
+function saveInlineScreenCapture(base64, mimeType) {
+    const artifactsDir = join(PATHS.stateDir, "artifacts", "screens");
+    mkdirSync(artifactsDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filePath = join(artifactsDir, `screen-capture-${timestamp}.${extensionFromMimeType(mimeType)}`);
+    writeFileSync(filePath, Buffer.from(base64, "base64"));
+    return filePath;
+}
+function validateYeonjangBinaryResult(remote) {
+    if (!remote.base64_data) {
+        throw new Error("연장 screen.capture 응답에 바이너리(base64_data)가 없습니다.");
     }
-    else if (platform === "win32") {
-        await execFileAsync("powershell", [
-            "-Command",
-            `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bmp.Size); $bmp.Save('${tmpPath}')`,
-        ]);
+    if (remote.transfer_encoding && remote.transfer_encoding !== "base64") {
+        throw new Error(`연장 screen.capture 응답 전달 형식이 base64가 아닙니다: ${remote.transfer_encoding}`);
     }
-    else {
-        throw new Error(`Unsupported platform: ${platform}`);
+    return remote.base64_data;
+}
+function yeonjangRequiredFailure(method) {
+    return {
+        success: false,
+        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+        error: "YEONJANG_REQUIRED",
+        details: {
+            requiredExecutor: "yeonjang",
+            requiredMethod: method,
+        },
+    };
+}
+function classifyYeonjangScreenCaptureFailure(message) {
+    if (/(getdirectoryname|output path is empty|argumentexception|directory name is invalid)/i.test(message)
+        || /디렉터리 이름이 올바르지|경로 처리/.test(message)) {
+        return {
+            code: "YEONJANG_SCREEN_CAPTURE_PATH_BUG",
+            output: [
+                'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.',
+                '이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.',
+                'Windows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+            ].join('\n'),
+            details: {
+                via: "yeonjang",
+                stopAfterFailure: true,
+                failureKind: "path_bug",
+            },
+        };
     }
-    const data = readFileSync(tmpPath);
-    try {
-        unlinkSync(tmpPath);
+    if (/(응답 시간이 초과되었습니다|연결 시간이 초과되었습니다|timed out|timeout)/i.test(message)) {
+        return {
+            code: "YEONJANG_SCREEN_CAPTURE_TIMEOUT",
+            output: [
+                '연장의 화면 캡처가 제한 시간 안에 끝나지 않았습니다.',
+                'Windows Yeonjang을 다시 시작한 뒤 다시 시도해 주세요.',
+            ].join('\n'),
+            details: {
+                via: "yeonjang",
+                stopAfterFailure: true,
+                failureKind: "timeout",
+            },
+        };
     }
-    catch { /* ignore */ }
-    return data.toString("base64");
+    return {
+        code: "YEONJANG_SCREEN_CAPTURE_REMOTE_FAILURE",
+        output: `Yeonjang 화면 캡처 실패: ${message}`,
+        details: {
+            via: "yeonjang",
+            stopAfterFailure: true,
+            failureKind: "remote_failure",
+        },
+    };
+}
+function resolveRequestedDisplay(display, userMessage) {
+    if (typeof display === "number" && Number.isInteger(display) && display >= 0)
+        return display;
+    if (typeof display === "string") {
+        const trimmed = display.trim().toLowerCase();
+        if (/^\d+$/.test(trimmed))
+            return Number.parseInt(trimmed, 10);
+        if (trimmed === "main" || trimmed === "primary")
+            return 0;
+        if (trimmed === "secondary" || trimmed === "external")
+            return 1;
+    }
+    const trimmedMessage = userMessage.trim();
+    const koreanOrdinal = trimmedMessage.match(/(\d+)\s*(?:번째|번)\s*(?:모니터|디스플레이|화면)/u);
+    if (koreanOrdinal) {
+        const ordinal = Number.parseInt(koreanOrdinal[1] ?? "", 10);
+        if (Number.isInteger(ordinal) && ordinal > 0)
+            return ordinal - 1;
+    }
+    const englishOrdinal = trimmedMessage.match(/\b(\d+)(?:st|nd|rd|th)?\s+(?:monitor|display|screen)\b/i);
+    if (englishOrdinal) {
+        const ordinal = Number.parseInt(englishOrdinal[1] ?? "", 10);
+        if (Number.isInteger(ordinal) && ordinal > 0)
+            return ordinal - 1;
+    }
+    if (/(외부\s*모니터|서브\s*모니터|보조\s*모니터|두\s*번째\s*모니터|두번째\s*모니터)/u.test(trimmedMessage))
+        return 1;
+    if (/\b(?:second|secondary|external)\s+(?:monitor|display|screen)\b/i.test(trimmedMessage))
+        return 1;
+    if (/(메인\s*모니터|주\s*모니터|기본\s*모니터)/u.test(trimmedMessage))
+        return 0;
+    if (/\b(?:main|primary)\s+(?:monitor|display|screen)\b/i.test(trimmedMessage))
+        return 0;
+    return undefined;
+}
+async function captureScreenViaYeonjang(params) {
+    const remote = await invokeYeonjangMethod("screen.capture", {
+        inline_base64: true,
+        ...(params.display !== undefined ? { display: params.display } : {}),
+    }, { timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS, ...(params.extensionId ? { extensionId: params.extensionId } : {}) });
+    return {
+        base64: validateYeonjangBinaryResult(remote),
+        remote,
+    };
 }
 export const screenCaptureTool = {
     name: "screen_capture",
-    description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 화면 내용을 분석할 때 사용하세요.",
+    description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 특정 모니터를 캡처하려면 display를 지정하세요. 예: 메인 모니터=0, 두 번째 모니터=1.",
     parameters: {
         type: "object",
-        properties: {},
+        properties: {
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
+            display: {
+                type: "integer",
+                description: "캡처할 모니터 인덱스. 0은 메인, 1은 두 번째 모니터입니다. 사용자가 특정 모니터를 지목한 경우 지정합니다.",
+            },
+        },
         required: [],
     },
     riskLevel: "safe",
     requiresApproval: false,
-    execute: async () => {
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
+        const display = resolveRequestedDisplay(params.display, ctx.userMessage);
         try {
-            const base64 = await captureScreenToBase64();
-            return {
-                success: true,
-                output: `[스크린샷 캡처 완료 — base64 PNG, ${Math.round(base64.length / 1024)}KB]\ndata:image/png;base64,${base64.slice(0, 100)}…`,
-                details: { base64, mimeType: "image/png" },
-            };
+            if (await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
+                const { base64, remote } = await captureScreenViaYeonjang({
+                    ...(extensionId ? { extensionId } : {}),
+                    ...(display !== undefined ? { display } : {}),
+                });
+                const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type);
+                const localFileSize = statSync(localSavedPath).size;
+                const artifactChannel = ctx.source === "webui" || ctx.source === "telegram" || ctx.source === "slack"
+                    ? ctx.source
+                    : null;
+                const artifactDetails = artifactChannel && localSavedPath
+                    ? {
+                        kind: "artifact_delivery",
+                        channel: artifactChannel,
+                        filePath: localSavedPath,
+                        mimeType: remote.mime_type ?? "image/png",
+                        size: localFileSize,
+                        source: ctx.source,
+                    }
+                    : undefined;
+                return {
+                    success: true,
+                    output: `Yeonjang 스크린샷 캡처 완료.\n로컬 저장: ${localSavedPath}`,
+                    details: {
+                        via: "yeonjang",
+                        fileName: remote.file_name,
+                        fileExtension: remote.file_extension,
+                        mimeType: remote.mime_type ?? "image/png",
+                        sizeBytes: remote.size_bytes,
+                        transferEncoding: "base64",
+                        localSavedPath,
+                        localFileSize,
+                        ...(display !== undefined ? { display } : {}),
+                        ...(artifactDetails ?? {}),
+                    },
+                };
+            }
         }
-        catch (err) {
-            return { success: false, output: `화면 캡처 실패: ${err instanceof Error ? err.message : String(err)}` };
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                const classified = classifyYeonjangScreenCaptureFailure(message);
+                return {
+                    success: false,
+                    output: classified.output,
+                    error: classified.code,
+                    details: {
+                        ...classified.details,
+                        ...(extensionId ? { extensionId } : {}),
+                    },
+                };
+            }
         }
+        return yeonjangRequiredFailure("screen.capture");
     },
 };
 export const screenFindTextTool = {
@@ -64,17 +224,31 @@ export const screenFindTextTool = {
         type: "object",
         properties: {
             text: { type: "string", description: "찾을 텍스트" },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
         },
         required: ["text"],
     },
     riskLevel: "safe",
     requiresApproval: false,
     execute: async (params) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: params.text,
+        });
         try {
+            if (!await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
+                return yeonjangRequiredFailure("screen.capture");
+            }
             const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`);
             const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`);
-            const base64 = await captureScreenToBase64();
+            const { base64 } = await captureScreenViaYeonjang(extensionId ? { extensionId } : {});
             writeFileSync(tmpPng, Buffer.from(base64, "base64"));
+            const { execFile } = await import("node:child_process");
+            const { promisify } = await import("node:util");
+            const execFileAsync = promisify(execFile);
             await execFileAsync("tesseract", [tmpPng, tmpTxt, "-l", "eng+kor"]);
             const ocrText = readFileSync(`${tmpTxt}.txt`, "utf8");
             try {
@@ -94,6 +268,9 @@ export const screenFindTextTool = {
             };
         }
         catch (err) {
+            if (isYeonjangUnavailableError(err)) {
+                return yeonjangRequiredFailure("screen.capture");
+            }
             return { success: false, output: `텍스트 검색 실패: ${err instanceof Error ? err.message : String(err)}` };
         }
     },
