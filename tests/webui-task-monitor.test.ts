@@ -180,14 +180,14 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.duplicateExecutionRisk).toBe(true)
     expect(cards[0]?.checklist.items.map((item) => item.label)).toEqual([
       "요청 확인",
-      "실행",
-      "전달",
+      "실행 진행",
+      "결과 전달",
       "완료 확인",
     ])
     expect(cards[0]?.checklist.completedCount).toBe(1)
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "루트 작업 · 사용자 요청",
-      "루트 작업 · 후속 시도",
+      "기본 실행 · 사용자 요청",
+      "기본 실행 · 후속 시도",
     ])
   })
 
@@ -244,8 +244,8 @@ describe("webui task monitor helper", () => {
     ], text)
 
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "루트 작업 · 사용자 요청",
-      "서브 에이전트 · 후속 시도",
+      "기본 실행 · 사용자 요청",
+      "후속 실행 · 후속 시도",
     ])
     expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })

@@ -30,6 +30,7 @@ interface RootRunRow {
   can_cancel: number
   created_at: number
   updated_at: number
+  prompt_source_snapshot: string | null
 }
 
 interface RunStepRow {
@@ -158,8 +159,19 @@ function mapEvent(row: RunEventRow): RunEvent {
   }
 }
 
+function parsePromptSourceSnapshot(value: string | null): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function hydrateRun(row: RootRunRow): RootRun {
   const db = getDb()
+  const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot)
   const steps = db
     .prepare<[string], RunStepRow>(
       `SELECT run_id, step_key, title, step_index, status, summary, started_at, finished_at
@@ -205,6 +217,7 @@ function hydrateRun(row: RootRunRow): RootRun {
     updatedAt: row.updated_at,
     steps,
     recentEvents,
+    ...(promptSourceSnapshot ? { promptSourceSnapshot } : {}),
   }
 }
 

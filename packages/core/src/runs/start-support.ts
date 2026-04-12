@@ -1,4 +1,4 @@
-import { getDb, getSession, insertSession } from "../db/index.js"
+import { enqueueMemoryWritebackCandidate, getDb, getSession, insertSession, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js"
 import { createLogger } from "../logger/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import {
@@ -18,6 +18,7 @@ import {
   buildRunSuccessJournalRecord,
   safeInsertRunJournalRecord,
 } from "./journaling.js"
+import { condenseMemoryText } from "../memory/journal.js"
 import type { FinalizationSource } from "./finalization.js"
 import type { LoopDirective } from "./loop-directive.js"
 import {
@@ -172,6 +173,24 @@ export function rememberRunInstruction(params: {
   safeInsertRunJournalRecord(buildRunInstructionJournalRecord(params), {
     onError: (message) => log.warn(message),
   })
+  safeEnqueueWriteback({
+    scope: "task",
+    ownerId: params.requestGroupId,
+    sourceType: "instruction",
+    content: params.message,
+    runId: params.runId,
+    metadata: {
+      sessionId: params.sessionId,
+      source: params.source,
+      durableFact: false,
+    },
+  })
+  safeUpsertTaskContinuity({
+    lineageRootRunId: params.requestGroupId,
+    ...(params.runId !== params.requestGroupId ? { parentRunId: params.runId } : {}),
+    handoffSummary: condenseMemoryText(params.message, 280),
+    lastGoodState: "instruction_received",
+  })
 }
 
 export function rememberRunSuccess(params: {
@@ -182,12 +201,41 @@ export function rememberRunSuccess(params: {
   summary: string
 }): void {
   const run = getRootRun(params.runId)
+  const requestGroupId = run?.requestGroupId
   safeInsertRunJournalRecord(buildRunSuccessJournalRecord({
     ...params,
-    ...(run?.requestGroupId ? { requestGroupId: run.requestGroupId } : {}),
+    ...(requestGroupId ? { requestGroupId } : {}),
   }), {
     onError: (message) => log.warn(message),
   })
+  const summary = condenseMemoryText(params.summary || params.text, 360)
+  if (summary) {
+    safeEnqueueWriteback({
+      scope: "session",
+      ownerId: params.sessionId,
+      sourceType: "success",
+      content: summary,
+      runId: params.runId,
+      metadata: {
+        requestGroupId,
+        source: params.source,
+        durableFact: false,
+      },
+    })
+    safeUpsertSessionSnapshot({
+      sessionId: params.sessionId,
+      summary,
+      activeTaskIds: requestGroupId ? [requestGroupId] : [],
+    })
+    if (requestGroupId) {
+      safeUpsertTaskContinuity({
+        lineageRootRunId: requestGroupId,
+        ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+        lastGoodState: summary,
+      })
+    }
+  }
 }
 
 export function rememberRunFailure(params: {
@@ -199,12 +247,61 @@ export function rememberRunFailure(params: {
   title?: string
 }): void {
   const run = getRootRun(params.runId)
+  const requestGroupId = run?.requestGroupId
   safeInsertRunJournalRecord(buildRunFailureJournalRecord({
     ...params,
-    ...(run?.requestGroupId ? { requestGroupId: run.requestGroupId } : {}),
+    ...(requestGroupId ? { requestGroupId } : {}),
   }), {
     onError: (message) => log.warn(message),
   })
+  const detail = condenseMemoryText(params.detail || params.summary, 480)
+  if (detail) {
+    safeEnqueueWriteback({
+      scope: "diagnostic",
+      ownerId: requestGroupId ?? params.runId,
+      sourceType: params.title || "failure",
+      content: detail,
+      runId: params.runId,
+      metadata: {
+        sessionId: params.sessionId,
+        requestGroupId,
+        source: params.source,
+        durableFact: false,
+      },
+    })
+    if (requestGroupId) {
+      safeUpsertTaskContinuity({
+        lineageRootRunId: requestGroupId,
+        ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+        lastGoodState: `failure: ${detail}`,
+      })
+    }
+  }
+}
+
+function safeEnqueueWriteback(input: Parameters<typeof enqueueMemoryWritebackCandidate>[0]): void {
+  try {
+    enqueueMemoryWritebackCandidate(input)
+  } catch (error) {
+    log.warn(`memory writeback enqueue failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function safeUpsertSessionSnapshot(input: Parameters<typeof upsertSessionSnapshot>[0]): void {
+  try {
+    upsertSessionSnapshot(input)
+  } catch (error) {
+    log.warn(`session snapshot upsert failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function safeUpsertTaskContinuity(input: Parameters<typeof upsertTaskContinuity>[0]): void {
+  try {
+    upsertTaskContinuity(input)
+  } catch (error) {
+    log.warn(`task continuity upsert failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 export async function runFilesystemVerificationSubtask(params: {

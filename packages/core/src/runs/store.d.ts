@@ -1,11 +1,15 @@
-import type { RootRun, RunContextMode, RunStatus, RunStepStatus, TaskProfile } from "./types.js";
+import type { RootRun, RunContextMode, RunScope, RunStatus, RunStepStatus, TaskProfile } from "./types.js";
 export declare function listRootRuns(limit?: number): RootRun[];
 export declare function listActiveRootRuns(limit?: number): RootRun[];
+export declare function listActiveSessionRequestGroups(sessionId: string, excludingRunId?: string): RootRun[];
 export declare function listRunsForActiveRequestGroups(limitGroups?: number, limitRuns?: number): RootRun[];
+export declare function listRunsForRecentRequestGroups(limitGroups?: number, limitRuns?: number): RootRun[];
 export declare function recoverActiveRunsOnStartup(): RootRun[];
 export declare function getRootRun(runId: string): RootRun | undefined;
 export declare function listRequestGroupRuns(requestGroupId: string): RootRun[];
 export declare function hasActiveRequestGroupRuns(requestGroupId: string): boolean;
+export declare function isReusableRequestGroup(requestGroupId: string): boolean;
+export declare function getRequestGroupDelegationTurnCount(requestGroupId: string): number;
 export interface ReconnectRequestGroupSelection {
     best?: RootRun;
     candidates: RootRun[];
@@ -24,6 +28,10 @@ export declare function createRootRun(params: {
     id: string;
     sessionId: string;
     requestGroupId?: string;
+    lineageRootRunId?: string;
+    parentRunId?: string;
+    runScope?: RunScope;
+    handoffSummary?: string;
     prompt: string;
     source: RootRun["source"];
     taskProfile?: TaskProfile;
@@ -33,6 +41,7 @@ export declare function createRootRun(params: {
     workerSessionId?: string;
     contextMode?: RunContextMode;
     maxDelegationTurns?: number;
+    delegationTurnCount?: number;
 }): RootRun;
 export declare function appendRunEvent(runId: string, label: string): void;
 export declare function updateRunSummary(runId: string, summary: string): RootRun | undefined;
@@ -42,5 +51,17 @@ export declare function updateActiveRunsMaxDelegationTurns(maxDelegationTurns: n
 export declare function setRunStepStatus(runId: string, stepKey: string, status: RunStepStatus, summary: string): RootRun | undefined;
 export declare function bindActiveRunController(runId: string, controller: AbortController): void;
 export declare function clearActiveRunController(runId: string): void;
-export declare function cancelRootRun(runId: string): RootRun | undefined;
+interface CancelRootRunOptions {
+    eventLabel?: string;
+    stepSummary?: string;
+    runSummary?: string;
+}
+export declare function cancelRootRun(runId: string, options?: CancelRootRunOptions): RootRun | undefined;
+export declare function deleteRunHistory(runId: string): {
+    deletedRunCount: number;
+} | undefined;
+export declare function clearHistoricalRunHistory(): {
+    deletedRunCount: number;
+};
+export {};
 //# sourceMappingURL=store.d.ts.map

@@ -1,6 +1,7 @@
 import { basename, extname, relative, resolve, sep } from "node:path"
 import { homedir } from "node:os"
 import { PATHS } from "../config/index.js"
+import type { TaskContinuitySnapshot } from "../db/index.js"
 import type { RootRun, RunStatus } from "./types.js"
 
 export type TaskAttemptKind =
@@ -127,6 +128,32 @@ export interface TaskMonitorModel {
   deliveryStatus: TaskDeliveryStatus
 }
 
+export interface TaskContinuityModel {
+  lineageRootRunId: string
+  parentRunId?: string
+  handoffSummary?: string
+  lastGoodState?: string
+  pendingApprovals: string[]
+  pendingDelivery: string[]
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  failedRecoveryKey?: string
+  failureKind?: string
+  recoveryBudget?: string
+  status?: string
+  updatedAt: number
+}
+
+export interface TaskDiagnosticsModel {
+  promptSourceIds: string[]
+  promptSourceVersion?: string
+  latencyEvents: string[]
+  memoryEvents: string[]
+  recoveryEvents: string[]
+  lastRecoveryKey?: string
+  recoveryBudget?: string
+}
+
 export interface TaskModel {
   id: string
   requestGroupId: string
@@ -148,6 +175,8 @@ export interface TaskModel {
   failure?: TaskFailureModel
   checklist: TaskChecklistModel
   monitor: TaskMonitorModel
+  continuity?: TaskContinuityModel
+  diagnostics?: TaskDiagnosticsModel
   activities: TaskActivityModel[]
 }
 
@@ -537,6 +566,78 @@ function buildTaskMonitor(
   }
 }
 
+function mapContinuitySnapshot(snapshot: TaskContinuitySnapshot | undefined): TaskContinuityModel | undefined {
+  if (!snapshot) return undefined
+  return {
+    lineageRootRunId: snapshot.lineageRootRunId,
+    ...(snapshot.parentRunId ? { parentRunId: snapshot.parentRunId } : {}),
+    ...(snapshot.handoffSummary ? { handoffSummary: snapshot.handoffSummary } : {}),
+    ...(snapshot.lastGoodState ? { lastGoodState: snapshot.lastGoodState } : {}),
+    pendingApprovals: snapshot.pendingApprovals,
+    pendingDelivery: snapshot.pendingDelivery,
+    ...(snapshot.lastToolReceipt ? { lastToolReceipt: snapshot.lastToolReceipt } : {}),
+    ...(snapshot.lastDeliveryReceipt ? { lastDeliveryReceipt: snapshot.lastDeliveryReceipt } : {}),
+    ...(snapshot.failedRecoveryKey ? { failedRecoveryKey: snapshot.failedRecoveryKey } : {}),
+    ...(snapshot.failureKind ? { failureKind: snapshot.failureKind } : {}),
+    ...(snapshot.recoveryBudget ? { recoveryBudget: snapshot.recoveryBudget } : {}),
+    ...(snapshot.status ? { status: snapshot.status } : {}),
+    updatedAt: snapshot.updatedAt,
+  }
+}
+
+function extractPromptSourceIds(snapshot: Record<string, unknown> | undefined): string[] {
+  const sources = Array.isArray(snapshot?.sources) ? snapshot.sources : []
+  return sources
+    .map((source) => {
+      if (!source || typeof source !== "object") return undefined
+      const candidate = source as { sourceId?: unknown }
+      return typeof candidate.sourceId === "string" && candidate.sourceId.trim() ? candidate.sourceId.trim() : undefined
+    })
+    .filter((value): value is string => Boolean(value))
+}
+
+function extractPromptSourceVersion(snapshot: Record<string, unknown> | undefined): string | undefined {
+  const assemblyVersion = snapshot?.assemblyVersion
+  return typeof assemblyVersion === "number" ? `assembly:${assemblyVersion}` : undefined
+}
+
+function buildTaskDiagnostics(
+  orderedRuns: RootRun[],
+  latestRun: RootRun,
+  continuity: TaskContinuityModel | undefined,
+): TaskDiagnosticsModel | undefined {
+  const eventLabels = orderedRuns.flatMap((run) => run.recentEvents.map((event) => event.label.trim()).filter(Boolean))
+  const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:prompt|memory|first_chunk|preflight)[_a-z]*=\d+ms\b/i.test(label))
+  const memoryEvents = eventLabels.filter((label) => /(?:memory|메모리|vector|벡터|index)/i.test(label))
+  const recoveryEvents = eventLabels.filter((label) => /(?:recovery|복구|재시도|duplicate|반복|중단|한도)/i.test(label))
+  const promptSourceIds = extractPromptSourceIds(latestRun.promptSourceSnapshot)
+  const promptSourceVersion = extractPromptSourceVersion(latestRun.promptSourceSnapshot)
+  const lastRecoveryKey = continuity?.failedRecoveryKey
+  const recoveryBudget = continuity?.recoveryBudget
+
+  if (
+    promptSourceIds.length === 0
+    && !promptSourceVersion
+    && latencyEvents.length === 0
+    && memoryEvents.length === 0
+    && recoveryEvents.length === 0
+    && !lastRecoveryKey
+    && !recoveryBudget
+  ) {
+    return undefined
+  }
+
+  return {
+    promptSourceIds,
+    ...(promptSourceVersion ? { promptSourceVersion } : {}),
+    latencyEvents: [...new Set(latencyEvents)].slice(-8),
+    memoryEvents: [...new Set(memoryEvents)].slice(-8),
+    recoveryEvents: [...new Set(recoveryEvents)].slice(-8),
+    ...(lastRecoveryKey ? { lastRecoveryKey } : {}),
+    ...(recoveryBudget ? { recoveryBudget } : {}),
+  }
+}
+
 function getFailureDetailLines(run: RootRun, summary: string): string[] {
   const detailLines = [...run.recentEvents]
     .sort((a, b) => b.at - a.at)
@@ -789,8 +890,12 @@ function buildTaskChecklist(params: {
   }
 }
 
-export function buildTaskModels(runs: RootRun[]): TaskModel[] {
+export function buildTaskModels(
+  runs: RootRun[],
+  continuitySnapshots: TaskContinuitySnapshot[] = [],
+): TaskModel[] {
   const grouped = new Map<string, RootRun[]>()
+  const continuityByLineage = new Map(continuitySnapshots.map((snapshot) => [snapshot.lineageRootRunId, snapshot]))
   for (const run of runs) {
     const key = run.lineageRootRunId || run.requestGroupId || run.id
     const existing = grouped.get(key)
@@ -852,6 +957,8 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
     const status = computeTaskStatus({ groupRuns, attempts, delivery })
     const failure = deriveTaskFailure(orderedRuns, attempts, delivery)
     const activities = buildTaskActivities(taskId, attempts, orderedRuns)
+    const continuity = mapContinuitySnapshot(continuityByLineage.get(taskId))
+    const diagnostics = buildTaskDiagnostics(orderedRuns, latestRun, continuity)
     const checklist = buildTaskChecklist({
       attempts,
       delivery,
@@ -882,6 +989,8 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
       ...(failure ? { failure } : {}),
       checklist,
       monitor: buildTaskMonitor(attempts, recoveryAttempts, delivery),
+      ...(continuity ? { continuity } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
       activities,
     })
   }

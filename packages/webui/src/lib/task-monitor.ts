@@ -9,7 +9,9 @@ import type {
   TaskChecklistItemModel,
   TaskChecklistItemStatus,
   TaskChecklistModel,
+  TaskContinuityModel,
   TaskDeliveryStatus,
+  TaskDiagnosticsModel,
   TaskFailureModel,
   TaskModel,
 } from "../contracts/tasks"
@@ -82,6 +84,8 @@ export interface TaskMonitorCard {
   checklist: TaskMonitorChecklist
   delivery: TaskMonitorDelivery
   failure?: TaskMonitorFailure
+  continuity?: TaskContinuityModel
+  diagnostics?: TaskDiagnosticsModel
   duplicateExecutionRisk: boolean
 }
 
@@ -310,6 +314,8 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
             },
           }
         : {}),
+      ...(task.continuity ? { continuity: task.continuity } : {}),
+      ...(task.diagnostics ? { diagnostics: task.diagnostics } : {}),
       duplicateExecutionRisk: task.monitor.duplicateExecutionRisk,
     })
   }

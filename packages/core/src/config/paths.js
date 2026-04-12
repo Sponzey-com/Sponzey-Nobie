@@ -41,6 +41,9 @@ export const PATHS = {
     get dbFile() {
         return join(getStateDir(), "data.db");
     },
+    get memoryDbFile() {
+        return join(getStateDir(), "memory.db3");
+    },
     get setupStateFile() {
         return join(getStateDir(), "setup-state.json");
     },

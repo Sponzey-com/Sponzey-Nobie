@@ -2,6 +2,9 @@ import crypto from "node:crypto"
 import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
 import {
+  listTaskContinuityForLineages,
+} from "../../db/index.js"
+import {
   cancelRootRun,
   clearHistoricalRunHistory,
   deleteRunHistory,
@@ -45,7 +48,11 @@ export function registerRunsRoute(app: FastifyInstance): void {
   })
 
   app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
-    return { tasks: buildTaskModels(listRunsForRecentRequestGroups()) }
+    const runs = listRunsForRecentRequestGroups()
+    const continuity = listTaskContinuityForLineages(
+      runs.map((run) => run.lineageRootRunId || run.requestGroupId || run.id),
+    )
+    return { tasks: buildTaskModels(runs, continuity) }
   })
 
   app.get<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {

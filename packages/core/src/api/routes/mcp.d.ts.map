@@ -1,1 +1,1 @@
-{"version":3,"file":"mcp.d.ts","sourceRoot":"","sources":["mcp.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAI9C,wBAAgB,gBAAgB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAe3D"}
+{"version":3,"file":"mcp.d.ts","sourceRoot":"","sources":["../../../src/api/routes/mcp.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAI9C,wBAAgB,gBAAgB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAe3D"}

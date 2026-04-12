@@ -9,6 +9,7 @@ import type { AIProvider } from "../ai/index.js"
 import { detectAvailableProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
+import { emitStandaloneAssistantMessage } from "./finalization.js"
 import {
   executeRootRunDriver,
 } from "./root-run-driver.js"
@@ -18,7 +19,11 @@ import {
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import {
+  appendRunEvent,
+  clearActiveRunController,
   getRootRun,
+  setRunStepStatus,
+  updateRunStatus,
 } from "./store.js"
 import {
   enqueueRequestGroupExecution,
@@ -27,6 +32,8 @@ import {
 import {
   buildStartRootRunDriverDependencies,
 } from "./start-driver-dependencies.js"
+import { rememberRunFailure } from "./start-support.js"
+import { resolveStartPreflightFailure, type StartPreflightFailure } from "./preflight.js"
 
 const log = createLogger("runs:start")
 const syntheticApprovalScopes = new Set<string>()
@@ -69,6 +76,40 @@ export interface StartedRootRun {
   finished: Promise<RootRun | undefined>
 }
 
+async function failStartPreflight(params: {
+  failure: StartPreflightFailure
+  runId: string
+  sessionId: string
+  source: StartRootRunParams["source"]
+  onChunk: RunChunkDeliveryHandler | undefined
+  logWarn: (message: string) => void
+}): Promise<RootRun | undefined> {
+  appendRunEvent(params.runId, params.failure.eventLabel)
+  setRunStepStatus(params.runId, "executing", "failed", params.failure.userMessage)
+  updateRunStatus(params.runId, "failed", params.failure.summary, false)
+  rememberRunFailure({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    source: params.source,
+    summary: params.failure.summary,
+    detail: params.failure.userMessage,
+    title: params.failure.code,
+  })
+  await emitStandaloneAssistantMessage({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    text: params.failure.userMessage,
+    source: params.source,
+    onChunk: params.onChunk,
+    dependencies: {
+      appendRunEvent,
+      onDeliveryError: (message) => params.logWarn(message),
+    },
+  })
+  clearActiveRunController(params.runId)
+  return getRootRun(params.runId)
+}
+
 export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const runId = params.runId ?? crypto.randomUUID()
@@ -101,6 +142,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
       hasRequestGroupExecutionQueue,
     })
+    appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)
     const { startPlan } = startLaunch
     const {
       entrySemantics,
@@ -130,6 +172,29 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       logWarn: (message) => log.warn(message),
       logError: (message, payload) => log.error(message, payload),
     })
+    const preflightFailure = resolveStartPreflightFailure({
+      source: params.source,
+      message: params.message,
+      ...(params.model ? { model: params.model } : {}),
+      ...(params.providerId ? { providerId: params.providerId } : {}),
+      ...(params.provider ? { provider: params.provider } : {}),
+      ...(params.onChunk ? { onChunk: params.onChunk } : {}),
+      ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+      ...(params.toolsEnabled === false ? { toolsEnabled: params.toolsEnabled } : {}),
+      ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
+      ...(params.targetId ? { targetId: params.targetId } : {}),
+      ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+    })
+    if (preflightFailure) {
+      return await failStartPreflight({
+        failure: preflightFailure,
+        runId,
+        sessionId,
+        source: params.source,
+        onChunk: params.onChunk,
+        logWarn: (message) => log.warn(message),
+      })
+    }
 
     return enqueueRequestGroupExecution({
       requestGroupId,
@@ -172,6 +237,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       },
     }, {
       getRootRun,
+      appendRunEvent,
       logInfo: (message, payload) => log.info(message, payload),
       logWarn: (message) => log.warn(message),
       logError: (message, payload) => log.error(message, payload),

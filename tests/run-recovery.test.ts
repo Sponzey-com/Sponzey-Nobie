@@ -62,7 +62,8 @@ describe("run recovery helpers", () => {
     expect(recovery?.summary).toContain("메신저 결과 전달")
     expect(recovery?.remainingItems[0]).toContain("결과물 자체")
     expect(recovery?.alternatives.some((alternative) => alternative.kind === "same_channel_retry")).toBe(true)
-    expect(recovery?.alternatives.some((alternative) => alternative.kind === "other_channel")).toBe(true)
+    expect(recovery?.alternatives.some((alternative) => alternative.kind === "other_channel")).toBe(false)
+    expect(recovery?.alternatives.some((alternative) => alternative.kind === "other_tool")).toBe(true)
   })
 
   it("describes assistant text delivery failure by channel and stage", () => {

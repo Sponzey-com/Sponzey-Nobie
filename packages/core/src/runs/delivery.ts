@@ -1,8 +1,9 @@
 import crypto from "node:crypto"
 import { homedir } from "node:os"
 import type { AgentChunk } from "../agent/index.js"
-import { insertMessage } from "../db/index.js"
+import { insertMessage, upsertTaskContinuity } from "../db/index.js"
 import { eventBus } from "../events/index.js"
+import { getRootRun } from "./store.js"
 
 export interface SuccessfulFileDelivery {
   toolName: string
@@ -75,6 +76,30 @@ const defaultAssistantTextDeliveryDependencies: AssistantTextDeliveryDependencie
 export function displayHomePath(value: string): string {
   const home = homedir()
   return value.startsWith(home) ? value.replace(home, "~") : value
+}
+
+function rememberDeliveryContinuity(runId: string, receipt: {
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  pendingDelivery?: string[]
+  status?: string
+}): void {
+  try {
+    const run = getRootRun(runId)
+    if (!run) return
+    const lineageRootRunId = run?.lineageRootRunId ?? run?.requestGroupId ?? runId
+    upsertTaskContinuity({
+      lineageRootRunId,
+      ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+      ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+      ...(receipt.lastToolReceipt ? { lastToolReceipt: receipt.lastToolReceipt } : {}),
+      ...(receipt.lastDeliveryReceipt ? { lastDeliveryReceipt: receipt.lastDeliveryReceipt } : {}),
+      ...(receipt.pendingDelivery ? { pendingDelivery: receipt.pendingDelivery } : {}),
+      ...(receipt.status ? { status: receipt.status } : {}),
+    })
+  } catch {
+    // Continuity telemetry is best-effort and must not affect delivery.
+  }
 }
 
 export function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDelivery[]): string {
@@ -274,9 +299,17 @@ export function applyChunkDeliveryReceipt(params: {
     params.successfulFileDeliveries.push(delivery)
     if (delivery.channel === "telegram") {
       params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
+    } else if (delivery.channel === "slack") {
+      params.appendEvent(params.runId, `Slack 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
     } else {
       params.appendEvent(params.runId, `WebUI 파일 전달 완료: ${displayHomePath(delivery.filePath)}`)
     }
+    rememberDeliveryContinuity(params.runId, {
+      lastToolReceipt: `${delivery.toolName}:${delivery.channel}:${displayHomePath(delivery.filePath)}`,
+      lastDeliveryReceipt: `${delivery.channel}:${displayHomePath(delivery.filePath)}`,
+      pendingDelivery: [],
+      status: "delivered",
+    })
   }
 
   for (const delivery of params.receipt?.textDeliveries ?? []) {
@@ -292,9 +325,16 @@ export function applyChunkDeliveryReceipt(params: {
       params.appendEvent(params.runId, `텔레그램 텍스트 전달 완료`)
     } else if (delivery.channel === "webui") {
       params.appendEvent(params.runId, "WebUI 텍스트 전달 완료")
+    } else if (delivery.channel === "slack") {
+      params.appendEvent(params.runId, "Slack 텍스트 전달 완료")
     } else {
       params.appendEvent(params.runId, "CLI 텍스트 출력 완료")
     }
+    rememberDeliveryContinuity(params.runId, {
+      lastDeliveryReceipt: `${delivery.channel}:text`,
+      pendingDelivery: [],
+      status: "delivered",
+    })
   }
 }
 

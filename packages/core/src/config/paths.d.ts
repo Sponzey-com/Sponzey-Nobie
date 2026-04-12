@@ -2,6 +2,7 @@ export declare const PATHS: {
     readonly stateDir: string;
     readonly configFile: string;
     readonly dbFile: string;
+    readonly memoryDbFile: string;
     readonly setupStateFile: string;
     readonly lockFile: string;
     readonly logsDir: string;

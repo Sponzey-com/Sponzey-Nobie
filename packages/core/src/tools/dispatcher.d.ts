@@ -15,6 +15,7 @@ export declare class ToolDispatcher {
     unregister(name: string): void;
     getAll(): AnyTool[];
     get(name: string): AnyTool | undefined;
+    isToolAvailableForSource(tool: AnyTool, source: ToolContext["source"]): boolean;
     dispatch(name: string, params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
     private getInteractionGuidance;
     private shouldRequireApproval;

@@ -4,6 +4,7 @@ interface ShellExecParams {
     workDir?: string;
     timeoutSec?: number;
     env?: Record<string, string>;
+    extensionId?: string;
 }
 export declare const shellExecTool: AgentTool<ShellExecParams>;
 export {};

@@ -1,9 +1,9 @@
 import { getMqttExtensionSnapshots, type MqttExtensionSnapshot } from "../../mqtt/broker.js"
 import { DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js"
 
-const EXPLICIT_EXTENSION_ID_PATTERN = /yeonjang-[a-z0-9][w-]*/iu
-const WINDOWS_PATTERNS = [/windows?/i, /win(?:11|10)?/i, /윈도우/u]
-const MAC_PATTERNS = [/mac(?:os)?/i, /osx/i, /맥북|맥/u]
+const EXPLICIT_EXTENSION_ID_PATTERN = /\byeonjang-[a-z0-9][\w-]*\b/iu
+const WINDOWS_PATTERNS = [/\bwindows?\b/i, /\bwin(?:11|10)?\b/i, /윈도우/u]
+const MAC_PATTERNS = [/\bmac(?:os)?\b/i, /\bosx\b/i, /맥북|맥/u]
 
 function normalize(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? ""

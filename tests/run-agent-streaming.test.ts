@@ -16,8 +16,11 @@ vi.mock("../packages/core/src/db/index.js", () => ({
   getMessagesForRequestGroup: vi.fn(() => []),
   getMessagesForRequestGroupWithRunMeta: vi.fn(() => []),
   getMessagesForRun: (...args: unknown[]) => getMessagesForRunMock(...args),
+  getPromptSourceStates: vi.fn(() => []),
   insertMemoryItem: vi.fn(),
   markMessagesCompressed: vi.fn(),
+  updateRunPromptSourceSnapshot: vi.fn(),
+  upsertPromptSources: vi.fn(),
 }))
 
 vi.mock("../packages/core/src/memory/store.js", () => ({
@@ -26,7 +29,8 @@ vi.mock("../packages/core/src/memory/store.js", () => ({
 
 vi.mock("../packages/core/src/memory/nobie-md.js", () => ({
   loadNobieMd: vi.fn(() => ""),
-  loadSysPropMd: vi.fn(() => ""),
+  loadPromptSourceRegistry: vi.fn(() => []),
+  loadSystemPromptSourceAssembly: vi.fn(() => null),
 }))
 
 vi.mock("../packages/core/src/instructions/merge.js", () => ({
@@ -70,7 +74,7 @@ describe("runAgent streaming policy", () => {
       type: "ai_recovery",
       summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
       reason: "인증 또는 접근 차단 문제 때문에 모델 호출이 실패했습니다.",
-      message: "403 forbidden",
+      message: "인증 또는 접근 차단 문제로 요청이 실패했습니다.",
     }])
   })
 
@@ -527,12 +531,13 @@ describe("runAgent streaming policy", () => {
     }
 
     expect(getMessagesForRunMock).toHaveBeenCalledWith("session-handoff", "run-handoff")
-    expect(buildMemoryContextMock).toHaveBeenCalledWith({
+    expect(buildMemoryContextMock).toHaveBeenCalledWith(expect.objectContaining({
       query: "후속 작업 진행",
       sessionId: "session-handoff",
       requestGroupId: "group-handoff",
       runId: "run-handoff",
-    })
+      budget: expect.objectContaining({ maxChunks: 3 }),
+    }))
     expect(chunks).toEqual([
       { type: "text", delta: "handoff ok" },
       { type: "done", totalTokens: 2 },

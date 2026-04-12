@@ -15,6 +15,27 @@ function describeDiagnosticReason(run: RootRun): string {
   return latest || run.summary
 }
 
+function describePromptSourceSnapshot(run: RootRun): string | null {
+  const rawSources = run.promptSourceSnapshot?.sources
+  if (!Array.isArray(rawSources)) return null
+
+  const labels = rawSources
+    .map((source) => {
+      if (!source || typeof source !== "object") return null
+      const item = source as Record<string, unknown>
+      const sourceId = typeof item.sourceId === "string" ? item.sourceId : null
+      const version = typeof item.version === "string" ? item.version : null
+      const checksum = typeof item.checksum === "string" ? item.checksum.slice(0, 8) : null
+      if (!sourceId) return null
+      if (version) return `${sourceId}@${version}`
+      if (checksum) return `${sourceId}#${checksum}`
+      return sourceId
+    })
+    .filter((value): value is string => Boolean(value))
+
+  return labels.length > 0 ? labels.join(", ") : null
+}
+
 function InfoRow({
   label,
   value,
@@ -32,6 +53,7 @@ function InfoRow({
 
 export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraContent?: ReactNode }) {
   const { text, displayText, formatTime, language } = useUiI18n()
+  const promptSourceSummary = describePromptSourceSnapshot(run)
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -71,6 +93,12 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
               label={text("실행 대상", "Execution target")}
               value={run.targetLabel || run.targetId || text("실행 대상 미선정", "No target selected")}
             />
+            {promptSourceSummary ? (
+              <InfoRow
+                label={text("프롬프트 소스", "Prompt sources")}
+                value={promptSourceSummary}
+              />
+            ) : null}
           </div>
         </div>
 

@@ -1,0 +1,68 @@
+export function applyStartInitialization(params, dependencies) {
+    dependencies.rememberRunInstruction({
+        runId: params.runId,
+        sessionId: params.sessionId,
+        requestGroupId: params.requestGroupId,
+        source: params.source,
+        message: params.message,
+    });
+    dependencies.bindActiveRunController(params.runId, params.controller);
+    const interruptedWorkerRunCount = params.workerSessionId
+        ? dependencies.interruptOrphanWorkerSessionRuns({
+            requestGroupId: params.requestGroupId,
+            workerSessionId: params.workerSessionId,
+            keepRunId: params.runId,
+        }).length
+        : 0;
+    const queuedBehindRequestGroupRun = params.requestGroupExecutionQueueActive;
+    dependencies.setRunStepStatus(params.runId, "received", "completed", "요청을 받았습니다.");
+    dependencies.setRunStepStatus(params.runId, "classified", "completed", "일반 채팅 요청으로 분류했습니다.");
+    dependencies.setRunStepStatus(params.runId, "target_selected", "completed", params.targetLabel?.trim()
+        ? `${params.targetLabel.trim()} 대상을 선택했습니다.`
+        : params.model?.trim()
+            ? `${params.model.trim()} 모델을 선택했습니다.`
+            : "기본 실행 대상을 선택했습니다.");
+    if (queuedBehindRequestGroupRun) {
+        dependencies.setRunStepStatus(params.runId, "executing", "pending", "같은 요청의 이전 작업이 끝나길 기다리는 중입니다.");
+        dependencies.updateRunStatus(params.runId, "queued", "같은 요청의 이전 작업이 끝나길 기다리는 중입니다.", true);
+        dependencies.appendRunEvent(params.runId, "같은 요청 그룹의 이전 작업 대기");
+    }
+    else {
+        dependencies.setRunStepStatus(params.runId, "executing", "running", "응답을 생성 중입니다.");
+        dependencies.updateRunStatus(params.runId, "running", "응답을 생성 중입니다.", true);
+        dependencies.appendRunEvent(params.runId, "실행 시작");
+    }
+    if (params.reconnectTargetTitle && params.requestGroupId !== params.runId) {
+        dependencies.appendRunEvent(params.runId, `기존 요청 그룹 재연결: ${params.reconnectTargetTitle}`);
+        dependencies.updateRunSummary(params.runId, `기존 요청 "${params.reconnectTargetTitle}" 작업 흐름에 이어서 연결합니다.`);
+    }
+    if (params.originRunId) {
+        dependencies.appendRunEvent(params.runId, `예약 등록 run 연결: ${params.originRunId}`);
+    }
+    if (params.originRequestGroupId) {
+        dependencies.appendRunEvent(params.runId, `예약 등록 request-group 연결: ${params.originRequestGroupId}`);
+    }
+    if (params.shouldReconnectGroup && params.reconnectCandidateCount === 0) {
+        dependencies.appendRunEvent(params.runId, "재사용 가능한 기존 태스크 후보가 없어 새 태스크로 시작합니다.");
+    }
+    if (params.requestedClosedRequestGroup) {
+        dependencies.appendRunEvent(params.runId, "완료/실패/취소된 기존 태스크는 재사용하지 않고 새 태스크로 시작합니다.");
+    }
+    if (params.workerSessionId) {
+        if (params.reusableWorkerSessionRun) {
+            dependencies.appendRunEvent(params.runId, `기존 작업 세션 재사용: ${params.workerSessionId}`);
+        }
+        else {
+            dependencies.appendRunEvent(params.runId, `새 작업 세션 생성: ${params.workerSessionId}`);
+        }
+        dependencies.appendRunEvent(params.runId, `작업 세션 연결: ${params.workerSessionId}`);
+        if (interruptedWorkerRunCount > 0) {
+            dependencies.appendRunEvent(params.runId, `이전 작업 세션 잔여 실행 ${interruptedWorkerRunCount}건 정리`);
+        }
+    }
+    return {
+        queuedBehindRequestGroupRun,
+        interruptedWorkerRunCount,
+    };
+}
+//# sourceMappingURL=start-initialization.js.map

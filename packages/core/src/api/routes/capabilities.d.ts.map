@@ -1,1 +1,1 @@
-{"version":3,"file":"capabilities.d.ts","sourceRoot":"","sources":["capabilities.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAI9C,wBAAgB,yBAAyB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAepE"}
+{"version":3,"file":"capabilities.d.ts","sourceRoot":"","sources":["../../../src/api/routes/capabilities.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAI9C,wBAAgB,yBAAyB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAepE"}

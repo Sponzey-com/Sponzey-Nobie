@@ -11,6 +11,17 @@ export type AgentChunk = {
     toolName: string;
     success: boolean;
     output: string;
+    details?: unknown;
+} | {
+    type: "execution_recovery";
+    toolNames: string[];
+    summary: string;
+    reason: string;
+} | {
+    type: "ai_recovery";
+    summary: string;
+    reason: string;
+    message: string;
 } | {
     type: "done";
     totalTokens: number;
@@ -18,9 +29,10 @@ export type AgentChunk = {
     type: "error";
     message: string;
 };
-export type AgentContextMode = "full" | "isolated" | "request_group";
+export type AgentContextMode = "full" | "isolated" | "request_group" | "handoff";
 export interface RunAgentParams {
     userMessage: string;
+    memorySearchQuery?: string | undefined;
     sessionId?: string | undefined;
     requestGroupId?: string | undefined;
     runId?: string | undefined;
@@ -29,7 +41,7 @@ export interface RunAgentParams {
     provider?: AIProvider | undefined;
     systemPrompt?: string | undefined;
     workDir?: string | undefined;
-    source?: "webui" | "cli" | "telegram" | undefined;
+    source?: "webui" | "cli" | "telegram" | "slack" | undefined;
     signal?: AbortSignal | undefined;
     toolsEnabled?: boolean | undefined;
     contextMode?: AgentContextMode | undefined;

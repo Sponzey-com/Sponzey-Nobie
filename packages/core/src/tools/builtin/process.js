@@ -1,11 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
-// ─── System process deny list ─────────────────────────────────────────────────
-const PROTECTED_NAMES = new Set([
-    "init", "systemd", "launchd", "kernel_task", "kthreadd",
-    "ksoftirqd", "migration", "watchdog",
-]);
+function yeonjangRequiredFailure(reason) {
+    return {
+        success: false,
+        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. ${reason}`,
+        error: "YEONJANG_REQUIRED",
+        details: {
+            requiredExecutor: "yeonjang",
+        },
+    };
+}
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 async function getProcesses() {
     const platform = process.platform;
@@ -127,78 +132,13 @@ export const processKillTool = {
     riskLevel: "dangerous",
     requiresApproval: true,
     async execute(params) {
-        const { pid, name, signal = "SIGTERM" } = params;
-        if (!pid && !name) {
-            return { success: false, output: "pid 또는 name 중 하나는 반드시 지정해야 합니다." };
-        }
-        // Self-protection
-        if (pid === process.pid) {
-            return { success: false, output: "스폰지 노비 · Sponzey Nobie 자신을 종료할 수 없습니다." };
-        }
-        let procs;
-        try {
-            procs = await getProcesses();
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { success: false, output: `프로세스 목록 조회 실패: ${msg}`, error: msg };
-        }
-        let targets;
-        if (pid != null) {
-            targets = procs.filter((p) => p.pid === pid);
-            if (targets.length === 0) {
-                return { success: false, output: `PID ${pid}를 찾을 수 없습니다.` };
-            }
-        }
-        else {
-            targets = procs.filter((p) => p.name === name);
-            if (targets.length === 0) {
-                return { success: false, output: `프로세스 "${name}"을 찾을 수 없습니다.` };
-            }
-        }
-        // Check protected
-        const protectedTargets = targets.filter((p) => PROTECTED_NAMES.has(p.name) || p.pid === process.pid);
-        if (protectedTargets.length > 0) {
-            return {
-                success: false,
-                output: `보호된 시스템 프로세스를 종료할 수 없습니다: ${protectedTargets.map((p) => p.name).join(", ")}`,
-            };
-        }
-        const results = [];
-        for (const proc of targets) {
-            try {
-                process.kill(proc.pid, signal);
-                // For SIGTERM, wait briefly and check if still alive
-                if (signal === "SIGTERM") {
-                    await new Promise((r) => setTimeout(r, 2000));
-                    try {
-                        process.kill(proc.pid, 0); // check existence
-                        // Still alive — send SIGKILL
-                        process.kill(proc.pid, "SIGKILL");
-                        results.push(`PID ${proc.pid} (${proc.name}): SIGTERM 후 SIGKILL로 강제 종료`);
-                    }
-                    catch {
-                        results.push(`PID ${proc.pid} (${proc.name}): SIGTERM으로 정상 종료`);
-                    }
-                }
-                else {
-                    results.push(`PID ${proc.pid} (${proc.name}): SIGKILL 전송`);
-                }
-            }
-            catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                if (msg.includes("EPERM")) {
-                    results.push(`PID ${proc.pid} (${proc.name}): 권한 없음 (root 프로세스)`);
-                }
-                else if (msg.includes("ESRCH")) {
-                    results.push(`PID ${proc.pid} (${proc.name}): 이미 종료됨`);
-                }
-                else {
-                    results.push(`PID ${proc.pid} (${proc.name}): 실패 — ${msg}`);
-                }
-            }
-        }
-        return { success: true, output: results.join("\n") };
+        const targetDescription = params.pid != null
+            ? `PID ${params.pid}`
+            : params.name
+                ? `프로세스 "${params.name}"`
+                : "대상 프로세스";
+        const signalLabel = params.signal ?? "SIGTERM";
+        return yeonjangRequiredFailure(`${targetDescription} 종료(${signalLabel})는 현재 코어 로컬 경로에서 금지되어 있습니다.`);
     },
 };
 //# sourceMappingURL=process.js.map

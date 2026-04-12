@@ -99,6 +99,41 @@ describe("runs delivery helpers", () => {
     expect(appendEvent).toHaveBeenCalledWith("run-1", "WebUI 파일 전달 완료: /tmp/result.png")
   })
 
+  it("records slack artifact delivery receipts without relabeling them as webui", () => {
+    const appendEvent = vi.fn()
+    const deliveries: SuccessfulFileDelivery[] = []
+    const textDeliveries: SuccessfulTextDelivery[] = []
+    const receipt = {
+      artifactDeliveries: [
+        {
+          toolName: "screen_capture",
+          channel: "slack" as const,
+          filePath: "/tmp/slack-result.png",
+          caption: "메인 화면 캡처",
+        },
+      ],
+      textDeliveries: [
+        {
+          channel: "slack" as const,
+          text: "완료",
+          messageIds: ["172345.000100"],
+        },
+      ],
+    }
+
+    applyChunkDeliveryReceipt({
+      runId: "run-1",
+      receipt,
+      successfulFileDeliveries: deliveries,
+      successfulTextDeliveries: textDeliveries,
+      appendEvent,
+    })
+
+    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("Slack 파일 전달 완료: /tmp/slack-result.png")
+    expect(appendEvent).toHaveBeenNthCalledWith(1, "run-1", "Slack 파일 전달 완료: /tmp/slack-result.png")
+    expect(appendEvent).toHaveBeenNthCalledWith(2, "run-1", "Slack 텍스트 전달 완료")
+  })
+
   it("records telegram text delivery receipts separately from artifact delivery", () => {
     const appendEvent = vi.fn()
     const deliveries: SuccessfulFileDelivery[] = []
