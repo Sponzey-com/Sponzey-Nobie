@@ -7,6 +7,14 @@ export interface IngressReceipt {
   text: string
 }
 
+export interface IngressExternalIdentity {
+  source: StartRootRunParams["source"]
+  sessionId: string
+  externalChatId?: string | number | undefined
+  externalThreadId?: string | number | undefined
+  externalMessageId?: string | number | undefined
+}
+
 export interface StartedIngressRun {
   requestId: string
   sessionId: string
@@ -18,6 +26,20 @@ export interface StartedIngressRun {
 export interface ResolvedIngressStartParams extends StartRootRunParams {
   runId: string
   sessionId: string
+}
+
+function normalizeIngressIdentityPart(value: string | number | undefined): string {
+  return value == null ? "-" : String(value).trim() || "-"
+}
+
+export function buildIngressDedupeKey(identity: IngressExternalIdentity): string {
+  return [
+    identity.source,
+    identity.sessionId,
+    normalizeIngressIdentityPart(identity.externalChatId),
+    normalizeIngressIdentityPart(identity.externalThreadId),
+    normalizeIngressIdentityPart(identity.externalMessageId),
+  ].join(":")
 }
 
 function detectIngressReceiptLanguage(message: string): IngressReceiptLanguage {

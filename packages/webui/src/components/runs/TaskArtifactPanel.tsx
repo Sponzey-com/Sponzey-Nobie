@@ -16,6 +16,7 @@ export function TaskArtifactPanel(params: {
   const { artifact, title, text } = params
   const artifactUrl = artifact.url ? resolveArtifactUrl(artifact.url) : ""
   const isImage = typeof artifact.mimeType === "string" && artifact.mimeType.startsWith("image/")
+  const downloadUrl = artifact.url ? resolveArtifactUrl(`${artifact.url}${artifact.url.includes("?") ? "&" : "?"}download=1`) : ""
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
@@ -34,9 +35,10 @@ export function TaskArtifactPanel(params: {
         <div className="px-4 py-3">
           {artifactUrl ? (
             <a
-              href={artifactUrl}
+              href={downloadUrl || artifactUrl}
               target="_blank"
               rel="noreferrer"
+              download
               className="text-sm font-medium text-blue-700 underline"
             >
               {artifact.fileName}
@@ -45,7 +47,9 @@ export function TaskArtifactPanel(params: {
             <div className="text-sm font-medium text-stone-900">{artifact.fileName}</div>
           )}
           <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
-            {artifact.filePath}
+            {artifactUrl
+              ? text("안전한 WebUI 링크로 제공됩니다.", "Available through a safe WebUI link.")
+              : text("직접 표시 가능한 WebUI 링크가 없습니다.", "No direct WebUI link is available.")}
           </div>
           {!artifactUrl ? (
             <div className="mt-2 text-xs text-amber-700">

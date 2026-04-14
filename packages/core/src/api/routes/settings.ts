@@ -5,17 +5,20 @@ import { getConfig, reloadConfig } from "../../config/index.js"
 import { getProvider, getDefaultModel, resetAIProviderCache } from "../../ai/index.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
-import { getActiveSlackChannel, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
+import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import { startChannels } from "../../channels/index.js"
-import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
+import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js"
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
+import { getVectorBackendStatus } from "../../memory/embedding.js"
 
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
   const telegramChannel = getActiveTelegramChannel()
   const slackChannel = getActiveSlackChannel()
+  const telegramRuntime = getTelegramRuntimeStatus()
+  const slackRuntime = getSlackRuntimeStatus()
   const connection = cfg.ai.connection
   return {
     ai: {
@@ -38,6 +41,10 @@ function buildLegacySettingsSnapshot() {
       webProvider: cfg.search.web?.provider ?? "duckduckgo",
       webMaxResults: cfg.search.web?.maxResults ?? 5,
     },
+    memory: {
+      searchMode: cfg.memory.searchMode ?? "fts",
+      vectorBackend: getVectorBackendStatus(),
+    },
     webui: {
       port: cfg.webui.port,
       host: cfg.webui.host,
@@ -50,6 +57,7 @@ function buildLegacySettingsSnapshot() {
       allowedUserIds: cfg.telegram?.allowedUserIds ?? [],
       allowedGroupIds: cfg.telegram?.allowedGroupIds ?? [],
       isRunning: telegramChannel !== null,
+      runtime: telegramRuntime,
     },
     slack: {
       enabled: cfg.slack?.enabled ?? false,
@@ -58,6 +66,7 @@ function buildLegacySettingsSnapshot() {
       allowedUserIds: cfg.slack?.allowedUserIds ?? [],
       allowedChannelIds: cfg.slack?.allowedChannelIds ?? [],
       isRunning: slackChannel !== null,
+      runtime: slackRuntime,
     },
     mqtt: {
       enabled: cfg.mqtt.enabled,

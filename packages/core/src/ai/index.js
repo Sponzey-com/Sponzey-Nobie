@@ -159,3 +159,4 @@ export function shouldForceReasoningMode(providerId, model) {
         return true;
     return false;
 }
+//# sourceMappingURL=index.js.map

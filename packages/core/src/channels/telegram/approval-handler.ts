@@ -14,6 +14,7 @@ interface PendingApproval {
   requesterId: number
   toolName: string
   kind: ApprovalKind
+  timeout?: ReturnType<typeof setTimeout> | null
 }
 
 interface ActiveChat {
@@ -31,6 +32,7 @@ const activeChatRefs = new Map<string, number>()
 
 // Most recent active chat (for single-user cases when we don't have sessionId in event)
 let latestActiveChat: ActiveChat | undefined
+let detachTelegramApprovalRequestListener: (() => void) | null = null
 
 export function setActiveChatForSession(
   sessionId: string,
@@ -56,7 +58,8 @@ export function clearActiveChatForSession(sessionId: string): void {
 }
 
 export function registerApprovalHandler(bot: Bot): void {
-  eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
+  detachTelegramApprovalRequestListener?.()
+  detachTelegramApprovalRequestListener = eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
     const run = getRootRun(runId)
     if (run?.source !== "telegram") {
       return
@@ -97,15 +100,6 @@ export function registerApprovalHandler(bot: Bot): void {
       return
     }
 
-    pending.set(runId, {
-      resolve,
-      chatId: target.chatId,
-      messageId: sentMsgId,
-      requesterId: target.userId,
-      toolName,
-      kind,
-    })
-
     const timeout =
       kind === "screen_confirmation"
         ? null
@@ -128,18 +122,14 @@ export function registerApprovalHandler(bot: Bot): void {
             entry.resolve("deny", "timeout")
           }, 60_000)
 
-    // Store timeout reference so we can clear it
-    const origResolve = resolve
     pending.set(runId, {
-      resolve: (decision) => {
-        if (timeout) clearTimeout(timeout)
-        origResolve(decision)
-      },
+      resolve,
       chatId: target.chatId,
       messageId: sentMsgId,
       requesterId: target.userId,
       toolName,
       kind,
+      timeout,
     })
   })
 
@@ -173,6 +163,7 @@ export function registerApprovalHandler(bot: Bot): void {
       return
     }
 
+    if (entry.timeout) clearTimeout(entry.timeout)
     pending.delete(runId)
 
     const decision: ApprovalDecision =
@@ -219,4 +210,16 @@ export function registerApprovalHandler(bot: Bot): void {
     eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" })
     entry.resolve(decision, "user")
   })
+}
+
+export function resetTelegramApprovalStateForTest(): void {
+  detachTelegramApprovalRequestListener?.()
+  detachTelegramApprovalRequestListener = null
+  for (const entry of pending.values()) {
+    if (entry.timeout) clearTimeout(entry.timeout)
+  }
+  pending.clear()
+  activeChats.clear()
+  activeChatRefs.clear()
+  latestActiveChat = undefined
 }

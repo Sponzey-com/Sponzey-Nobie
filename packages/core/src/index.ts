@@ -57,7 +57,33 @@ export type { MergedInstructionBundle } from "./instructions/merge.js"
 
 // Memory
 export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMemories, buildMemoryContext } from "./memory/store.js"
-export { loadNobieMd, initNobieMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd } from "./memory/nobie-md.js"
+export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery } from "./memory/evaluation.js"
+export { diagnoseVectorEmbeddingRows } from "./memory/search.js"
+export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js"
+export type { MemoryRetrievalEvaluationFixture, MemoryRetrievalEvaluationMode, MemoryRetrievalEvaluationReport } from "./memory/evaluation.js"
+export type { MemoryVectorDegradedReason, MemoryVectorDiagnostic } from "./memory/search.js"
+export type { MemoryWritebackReviewAction, MemoryWritebackReviewItem, MemoryWritebackReviewResult, MemoryWritebackSafetyResult } from "./memory/writeback.js"
+export type { PromptSourceBackupResult, PromptSourceDiffResult, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceRollbackResult, PromptSourceWriteResult } from "./memory/nobie-md.js"
+export {
+  loadNobieMd,
+  initNobieMd,
+  loadWizbyMd,
+  initWizbyMd,
+  loadHowieMd,
+  initHowieMd,
+  ensurePromptSourceFiles,
+  loadFirstRunPromptSourceAssembly,
+  loadPromptSourceRegistry,
+  loadSystemPromptSourceAssembly,
+  loadSystemPromptSources,
+  dryRunPromptSourceAssembly,
+  buildPromptSourceContentDiff,
+  writePromptSourceWithBackup,
+  rollbackPromptSourceBackup,
+  checkPromptSourceLocaleParity,
+  detectPromptSourceSecretMarkers,
+  isPromptSourceContentSafe,
+} from "./memory/nobie-md.js"
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js"
 export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, VoyageEmbeddingProvider, OpenAIEmbeddingProvider } from "./memory/embedding.js"
 
@@ -81,7 +107,12 @@ export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.j
 export { startRootRun } from "./runs/start.js"
 export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js"
-export type { IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
+export { buildIngressDedupeKey } from "./runs/ingress.js"
+export type { IngressExternalIdentity, IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
+export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js"
+export type { RunCompletionOutcome, RunCompletionOutcomeInput, RunCompletionOutcomeStatus, RunFlowIdentifiers, RunFlowStatusTransitionDecision } from "./runs/flow-contract.js"
+export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js"
+export type { StartupRecoveryClassification, StartupRecoveryRunSummary, StartupRecoveryScheduleSummary, StartupRecoveryStatus, StartupRecoverySummary } from "./runs/startup-recovery.js"
 
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"
@@ -91,7 +122,8 @@ export { startServer, closeServer } from "./api/server.js"
 
 // Bootstrap: configure defaults and register built-in tools
 import { loadConfig as _loadConfig } from "./config/index.js"
-import { getDb as _getDb } from "./db/index.js"
+import { getDb as _getDb, insertAuditLog as _insertAuditLog, upsertPromptSources as _upsertPromptSources } from "./db/index.js"
+import { ensurePromptSourceFiles as _ensurePromptSourceFiles } from "./memory/nobie-md.js"
 import { recoverActiveRunsOnStartup as _recoverActiveRunsOnStartup } from "./runs/store.js"
 import { registerBuiltinTools as _registerBuiltinTools } from "./tools/index.js"
 import { startServer as _startServer } from "./api/server.js"
@@ -102,6 +134,39 @@ import { startChannels as _startChannels } from "./channels/index.js"
 export function bootstrap(): void {
   _loadConfig()
   _getDb()
+  try {
+    const promptSeed = _ensurePromptSourceFiles(process.cwd())
+    _upsertPromptSources(promptSeed.registry.map(({ content: _content, ...metadata }) => metadata))
+    _insertAuditLog({
+      timestamp: Date.now(),
+      session_id: null,
+      source: "system",
+      tool_name: "prompt_bootstrap",
+      params: JSON.stringify({ promptsDir: promptSeed.promptsDir }),
+      output: JSON.stringify({ created: promptSeed.created, existing: promptSeed.existing.length, sources: promptSeed.registry.length }),
+      result: "success",
+      duration_ms: null,
+      approval_required: 0,
+      approved_by: null,
+    })
+  } catch {
+    try {
+      _insertAuditLog({
+        timestamp: Date.now(),
+        session_id: null,
+        source: "system",
+        tool_name: "prompt_bootstrap",
+        params: null,
+        output: "Prompt bootstrap failed with a safe initialization error summary.",
+        result: "failed",
+        duration_ms: null,
+        approval_required: 0,
+        approved_by: null,
+      })
+    } catch {
+      // Keep startup alive; prompt bootstrap failures are surfaced through diagnostics when DB is available.
+    }
+  }
   _registerBuiltinTools()
 }
 

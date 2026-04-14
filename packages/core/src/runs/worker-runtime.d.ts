@@ -10,8 +10,8 @@ export interface WorkerAvailabilityOverrides {
     [kind: string]: boolean | undefined;
 }
 export declare function resolveWorkerRuntimeTarget(kind: WorkerRuntimeKind): WorkerRuntimeTarget;
-export declare function isWorkerRuntimeAvailable(kind: WorkerRuntimeKind, overrides?: WorkerAvailabilityOverrides): boolean;
-export declare function runWorkerRuntime(params: {
+export declare function isWorkerRuntimeAvailable(_kind: WorkerRuntimeKind, _overrides?: WorkerAvailabilityOverrides): boolean;
+export declare function runWorkerRuntime(_params: {
     runtime: WorkerRuntimeTarget;
     prompt: string;
     sessionId: string;

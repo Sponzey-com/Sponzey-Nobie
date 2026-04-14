@@ -153,6 +153,9 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
       pendingAssistantTracker.start(runId, incomingSessionId)
       addPendingArtifact(runId, {
         url: String(data.url ?? ""),
+        ...(typeof data.previewUrl === "string" ? { previewUrl: data.previewUrl } : {}),
+        ...(typeof data.downloadUrl === "string" ? { downloadUrl: data.downloadUrl } : {}),
+        ...(typeof data.previewable === "boolean" ? { previewable: data.previewable } : {}),
         fileName: String(data.fileName ?? ""),
         ...(typeof data.filePath === "string" ? { filePath: data.filePath } : {}),
         ...(typeof data.mimeType === "string" ? { mimeType: data.mimeType } : {}),

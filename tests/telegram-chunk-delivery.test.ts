@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
+import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+
+afterEach(() => {
+  resetArtifactDeliveryDedupeForTest()
+})
 
 describe("telegram chunk delivery helper", () => {
   it("buffers text and returns text delivery receipt on done", async () => {
@@ -77,6 +82,56 @@ describe("telegram chunk delivery helper", () => {
         messageId: 303,
       }],
     })
+    expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not send the same artifact twice for one run", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockResolvedValueOnce(303).mockResolvedValueOnce(404),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const recordOutgoingMessageRef = vi.fn()
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-duplicate-artifact",
+      recordOutgoingMessageRef,
+      logError: vi.fn(),
+    })
+    const chunk = {
+      type: "tool_end" as const,
+      toolName: "telegram_send_file",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery" as const,
+        channel: "telegram" as const,
+        filePath: "/tmp/duplicate-result.png",
+        caption: "caption",
+        size: 123,
+        source: "telegram",
+      },
+    }
+
+    const firstReceipt = await onChunk?.(chunk)
+    const secondReceipt = await onChunk?.(chunk)
+
+    expect(responder.sendFile).toHaveBeenCalledTimes(1)
+    expect(responder.sendFile).toHaveBeenCalledWith("/tmp/duplicate-result.png", "caption")
+    expect(firstReceipt).toEqual({
+      artifactDeliveries: [{
+        toolName: "telegram_send_file",
+        channel: "telegram",
+        filePath: "/tmp/duplicate-result.png",
+        caption: "caption",
+        messageId: 303,
+      }],
+    })
+    expect(secondReceipt).toBeUndefined()
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 

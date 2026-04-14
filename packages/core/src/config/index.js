@@ -306,3 +306,4 @@ export function reloadConfig() {
     return loadConfig();
 }
 export { PATHS } from "./paths.js";
+//# sourceMappingURL=index.js.map

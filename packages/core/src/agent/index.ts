@@ -5,25 +5,36 @@ import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertMemoryItem, markMessagesCompressed } from "../db/index.js"
-import { loadNobieMd, loadSysPropMd } from "../memory/nobie-md.js"
-import { buildMemoryContext } from "../memory/store.js"
-import { needsCompression, compressContext } from "../memory/compressor.js"
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js"
+import { loadNobieMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/nobie-md.js"
+import { buildMemoryContext, storeMemorySync } from "../memory/store.js"
+import { buildFlashFeedbackContext } from "../memory/flash-feedback.js"
+import { compressContext } from "../memory/compressor.js"
+import { buildSessionCompactionSnapshot, needsSessionCompaction } from "../memory/compaction.js"
+import { buildScheduleMemoryContext } from "../schedules/context.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
 import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js"
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
+import { appendRunEvent } from "../runs/store.js"
 
 const log = createLogger("agent")
 
 const MAX_TOOL_ROUNDS = 20 // prevent infinite loops
 const MAX_CONTEXT_TOKENS = 150_000
+const RECENT_UNPRUNED_MESSAGE_COUNT = 8
+const OLD_TOOL_RESULT_MAX_CHARS = 700
+const RECENT_TOOL_RESULT_MAX_CHARS = 1800
+const OLD_TEXT_MESSAGE_MAX_CHARS = 4000
+const RECENT_TEXT_MESSAGE_MAX_CHARS = 8000
 const WEB_POLICY_PATTERN = [
   /https?:\/\//i,
   /\b(web|internet|browse|browser|search|google|docs?|documentation|readme|website|site|url|link)\b/i,
   /\b(latest|recent|current|today|news|official|release(?:s| notes?)?|update(?:d|s)?)\b/i,
   /웹|인터넷|검색|브라우저|최신|최근|현재|오늘|뉴스|공식\s*문서|문서|사이트|웹사이트|링크|주소|릴리즈\s*노트|업데이트/u,
 ]
+const DIAGNOSTIC_MEMORY_PATTERN = /(diagnostic|diagnostics|debug|error|failure|failed|stack trace|로그|진단|디버그|오류|에러|실패|복구|원인|왜\s*안|안\s*돼|안돼)/i
 const EXECUTION_RECOVERY_TOOL_NAMES = new Set([
   "shell_exec",
   "app_launch",
@@ -149,6 +160,8 @@ export interface RunAgentParams {
   sessionId?: string | undefined
   requestGroupId?: string | undefined
   runId?: string | undefined
+  scheduleId?: string | undefined
+  includeScheduleMemory?: boolean | undefined
   model?: string | undefined
   providerId?: string | undefined
   provider?: AIProvider | undefined
@@ -279,10 +292,14 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model)
 
   // ── Build system prompt with NOBIE.md + memory context ────────────────
-  const sysPropPrompt = loadSysPropMd(workDir)
+  const promptStartedAt = Date.now()
+  const promptSourceRegistry = loadPromptSourceRegistry(workDir)
+  upsertPromptSources(promptSourceRegistry.map(({ content: _content, ...metadata }) => metadata))
+  const promptAssembly = loadSystemPromptSourceAssembly(workDir, "ko", getPromptSourceStates())
+  if (promptAssembly) updateRunPromptSourceSnapshot(runId, promptAssembly.snapshot)
   const baseSystemPrompt =
     params.systemPrompt
-    ?? sysPropPrompt
+    ?? promptAssembly?.text
     ?? DEFAULT_SYSTEM_PROMPT
 
   const runtimeDirective = `[Runtime]\nToday is ${new Date().toLocaleDateString()}.`
@@ -296,12 +313,46 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const instructions = loadMergedInstructions(workDir)
   const profileContext = buildUserProfilePromptContext()
   const nobieMd = loadNobieMd(workDir)
+  if (nobieMd) {
+    appendRunEvent(runId, "prompt_legacy_project_memory_loaded")
+    insertDiagnosticEvent({
+      kind: "legacy_prompt_source_used",
+      summary: "Legacy project memory was appended after prompt source registry assembly.",
+      runId,
+      sessionId,
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      detail: {
+        priority: "prompts/ registry first, legacy NOBIE.md/WIZBY.md/HOWIE.md appended as project memory context",
+        workDir,
+      },
+    })
+  }
+  appendAgentLatencyEvent(runId, "prompt_ms", Date.now() - promptStartedAt)
+
+  const memoryStartedAt = Date.now()
+  const flashFeedbackContext = buildFlashFeedbackContext({
+    sessionId,
+    limit: 4,
+    maxChars: contextMode === "isolated" ? 500 : 800,
+  })
+  const scheduleMemoryContext = params.includeScheduleMemory && params.scheduleId
+    ? buildScheduleMemoryContext({ scheduleId: params.scheduleId, maxRuns: 3 })
+    : ""
   const memoryContext = await buildMemoryContext({
     query: params.memorySearchQuery ?? params.userMessage,
     sessionId,
     runId,
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+    ...(params.includeScheduleMemory ? { includeSchedule: true } : {}),
+    ...(shouldIncludeDiagnosticMemory(params.userMessage) ? { includeDiagnostic: true } : {}),
+    budget: {
+      maxChunks: contextMode === "handoff" ? 3 : 4,
+      maxChars: contextMode === "isolated" ? 1400 : 2200,
+      maxChunkChars: 420,
+    },
   })
+  appendAgentLatencyEvent(runId, "memory_total_ms", Date.now() - memoryStartedAt)
 
   const systemPrompt = [
     baseSystemPrompt,
@@ -311,13 +362,15 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
     profileContext ? `\n${profileContext}` : "",
     nobieMd ? `\n[프로젝트 메모리]\n${nobieMd}` : "",
+    flashFeedbackContext ? `\n${flashFeedbackContext}` : "",
+    scheduleMemoryContext ? `\n${scheduleMemoryContext}` : "",
     memoryContext ? `\n${memoryContext}` : "",
   ].join("")
 
   // ── Context compression if needed ────────────────────────────────────
   let totalTokens = 0
 
-  if (needsCompression(messages, 0)) {
+  if (needsSessionCompaction(messages, totalTokens)) {
     log.info(`컨텍스트 압축 중... (messages: ${messages.length})`)
     try {
       const compressed = await compressContext(messages, priorDbMessages, provider, model)
@@ -326,8 +379,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       for (const m of compressed.messages) messages.push(m)
 
       // Persist summary to memory_items
-      const summaryId = crypto.randomUUID()
-      insertMemoryItem({
+      const summaryId = storeMemorySync({
         content: compressed.summary,
         scope: "session",
         sessionId,
@@ -339,6 +391,20 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
 
       // Mark old DB messages as compressed
       markMessagesCompressed(compressed.compressedIds, summaryId)
+      const snapshot = buildSessionCompactionSnapshot({
+        sessionId,
+        summary: compressed.summary,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      })
+      upsertSessionSnapshot(snapshot)
+      if (params.requestGroupId) {
+        upsertTaskContinuity({
+          lineageRootRunId: params.requestGroupId,
+          lastGoodState: `session_snapshot:${snapshot.summary}`,
+          status: "recoverable",
+        })
+      }
+      appendAgentLatencyEvent(runId, "compaction_snapshot", 0)
 
       log.info(`압축 완료 — ${compressed.compressedIds.length}개 메시지 → 요약 1개 + tail ${messages.length - 1}개`)
     } catch (err) {
@@ -346,7 +412,10 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     }
   }
 
+  pruneMessagesForPrompt(messages)
+
   let textBuffer = ""
+  let firstChunkRecorded = false
 
   const ctx: ToolContext = {
     sessionId,
@@ -380,6 +449,10 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         signal,
       })) {
         if (signal.aborted) break
+        if (!firstChunkRecorded) {
+          firstChunkRecorded = true
+          appendAgentLatencyEvent(runId, "first_chunk_ms", Date.now() - now)
+        }
 
         if (chunk.type === "text_delta") {
           textBuffer += chunk.delta
@@ -395,13 +468,14 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         return
       }
       const msg = err instanceof Error ? err.message : String(err)
+      const sanitized = sanitizeUserFacingError(msg)
       log.error(`AI error: ${msg}`)
       textBuffer = ""
       yield {
         type: "ai_recovery",
         summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
-        reason: describeAiErrorReason(msg),
-        message: msg,
+        reason: sanitized.reason,
+        message: sanitized.userMessage,
       }
       return
     }
@@ -579,6 +653,64 @@ function shouldStopAfterToolRound(params: {
   )
 }
 
+function appendAgentLatencyEvent(runId: string, name: string, durationMs: number): void {
+  try {
+    appendRunEvent(runId, `${name}=${Math.max(0, Math.floor(durationMs))}ms`)
+  } catch {
+    // Latency tracing must never affect model execution.
+  }
+}
+
+function shouldIncludeDiagnosticMemory(userMessage: string): boolean {
+  return DIAGNOSTIC_MEMORY_PATTERN.test(userMessage.trim())
+}
+
+function pruneMessagesForPrompt(messages: Message[]): void {
+  const recentStartIndex = Math.max(0, messages.length - RECENT_UNPRUNED_MESSAGE_COUNT)
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]
+    if (!message) continue
+    const isRecent = index >= recentStartIndex
+    const maxTextChars = isRecent ? RECENT_TEXT_MESSAGE_MAX_CHARS : OLD_TEXT_MESSAGE_MAX_CHARS
+
+    if (typeof message.content === "string") {
+      message.content = condensePromptText(message.content, maxTextChars, "message")
+      continue
+    }
+
+    message.content = message.content.map((block) => {
+      if (block.type === "text") {
+        return {
+          ...block,
+          text: condensePromptText(block.text, maxTextChars, "assistant_text"),
+        }
+      }
+      if (block.type === "tool_result") {
+        const maxToolChars = isRecent ? RECENT_TOOL_RESULT_MAX_CHARS : OLD_TOOL_RESULT_MAX_CHARS
+        return {
+          ...block,
+          content: condensePromptText(block.content, maxToolChars, "tool_result"),
+        }
+      }
+      return block
+    })
+  }
+}
+
+function condensePromptText(value: string, maxChars: number, label: string): string {
+  const normalized = value.replace(/\r/g, "").trim()
+  if (normalized.length <= maxChars) return normalized
+  const headLength = Math.max(120, Math.floor(maxChars * 0.62))
+  const tailLength = Math.max(80, maxChars - headLength - 120)
+  const head = normalized.slice(0, headLength).trimEnd()
+  const tail = normalized.slice(Math.max(headLength, normalized.length - tailLength)).trimStart()
+  return [
+    head,
+    `[${label}_pruned: original_chars=${normalized.length}]`,
+    tail,
+  ].filter(Boolean).join("\n")
+}
+
 function shouldAllowWebAccess(userMessage: string): boolean {
   const normalized = userMessage.trim()
   if (!normalized) return false
@@ -640,26 +772,7 @@ function buildExecutionRecoveryReason(failures: ExecutionRecoveryFailure[]): str
 }
 
 function describeAiErrorReason(message: string): string {
-  const normalized = message.toLowerCase()
-  if (/(timeout|timed out|time-out|시간 초과)/i.test(message)) {
-    return "모델 응답 생성 중 시간 초과가 발생했습니다."
-  }
-  if (/(rate limit|too many requests|429)/i.test(message)) {
-    return "모델 호출 빈도 제한 때문에 응답 생성이 중단되었습니다."
-  }
-  if (/(cloudflare|challenge|authentication|unauthorized|forbidden|api key|credential|401|403)/i.test(message)) {
-    return "인증 또는 접근 차단 문제 때문에 모델 호출이 실패했습니다."
-  }
-  if (/(context|token|maximum context|too long|length)/i.test(message)) {
-    return "입력 길이 또는 컨텍스트 크기 때문에 모델 호출이 실패했습니다."
-  }
-  if (/(invalid|unsupported|schema|parameter|tool)/i.test(message)) {
-    return "모델 또는 도구 호출 파라미터가 현재 실행 대상과 맞지 않아 실패했습니다."
-  }
-  if (/(network|socket|econn|connection|dns|getaddrinfo|reset|refused)/i.test(normalized)) {
-    return "네트워크 또는 연결 문제 때문에 모델 호출이 끊겼습니다."
-  }
-  return "모델 호출이 실패해서 다른 방법 또는 다른 진행 경로 검토가 필요합니다."
+  return sanitizeUserFacingError(message).reason
 }
 
 function buildToolResultContent(toolName: string, result: ToolResult): string {

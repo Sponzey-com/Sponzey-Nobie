@@ -161,7 +161,7 @@ export async function prepareStartLaunch(
     source: params.source,
     message: params.message,
     controller: params.controller,
-      requestGroupExecutionQueueActive: params.hasRequestGroupExecutionQueue(startPlan.requestGroupId),
+    requestGroupExecutionQueueActive: params.hasRequestGroupExecutionQueue(startPlan.requestGroupId),
     ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
     ...(params.model ? { model: params.model } : {}),
     ...(startPlan.reconnectTarget ? { reconnectTargetTitle: startPlan.reconnectTarget.title } : {}),

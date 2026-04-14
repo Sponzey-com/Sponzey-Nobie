@@ -10,14 +10,19 @@ export declare class TelegramChannel {
     private runningRuns;
     private sessionIds;
     private fileHandler;
+    private pollingTask;
     constructor(config: TelegramConfig);
     getSessionKey(chatId: number, threadId?: number | undefined): string;
     newSession(sessionKey: string): void;
     abortSession(sessionKey: string): boolean;
     getRunningCount(): number;
     getSessionStatus(sessionKey: string): SessionStatus;
+    private addSessionRun;
+    private removeSessionRun;
+    private recordOutgoingMessageRef;
     private _registerHandlers;
     start(): Promise<void>;
     stop(): void;
+    sendTextToSession(sessionId: string, text: string): Promise<number[]>;
 }
 //# sourceMappingURL=bot.d.ts.map

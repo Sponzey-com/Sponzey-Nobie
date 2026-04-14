@@ -4,6 +4,8 @@
  */
 
 export interface EmbeddingProvider {
+  readonly providerId: "none" | "ollama" | "voyage" | "openai"
+  readonly modelId: string
   embed(text: string): Promise<number[]>
   batchEmbed(texts: string[]): Promise<number[][]>
   dimensions: number
@@ -12,6 +14,8 @@ export interface EmbeddingProvider {
 // ── Null (no-op) provider ────────────────────────────────────────────────────
 
 export class NullEmbeddingProvider implements EmbeddingProvider {
+  readonly providerId = "none" as const
+  readonly modelId = "none"
   readonly dimensions = 0
   async embed(): Promise<number[]> { return [] }
   async batchEmbed(texts: string[]): Promise<number[][]> { return texts.map(() => []) }
@@ -20,9 +24,11 @@ export class NullEmbeddingProvider implements EmbeddingProvider {
 // ── Ollama provider ──────────────────────────────────────────────────────────
 
 export class OllamaEmbeddingProvider implements EmbeddingProvider {
+  readonly providerId = "ollama" as const
   readonly dimensions: number
   private baseUrl: string
   private model: string
+  get modelId(): string { return this.model }
 
   constructor(opts: { baseUrl?: string; model?: string; dimensions?: number } = {}) {
     this.baseUrl = opts.baseUrl ?? "http://localhost:11434"
@@ -49,9 +55,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 // ── Voyage AI provider ───────────────────────────────────────────────────────
 
 export class VoyageEmbeddingProvider implements EmbeddingProvider {
+  readonly providerId = "voyage" as const
   readonly dimensions: number
   private apiKey: string
   private model: string
+  get modelId(): string { return this.model }
 
   constructor(opts: { apiKey: string; model?: string; dimensions?: number }) {
     this.apiKey = opts.apiKey
@@ -83,10 +91,12 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 // ── OpenAI-compatible provider ───────────────────────────────────────────────
 
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
+  readonly providerId = "openai" as const
   readonly dimensions: number
   private apiKey: string
   private model: string
   private baseUrl: string
+  get modelId(): string { return this.model }
 
   constructor(opts: { apiKey: string; model?: string; baseUrl?: string; dimensions?: number }) {
     this.apiKey = opts.apiKey
@@ -156,6 +166,18 @@ export function getEmbeddingProvider(): EmbeddingProvider {
 /** Reset provider singleton (e.g., after config reload) */
 export function resetEmbeddingProvider(): void {
   _provider = null
+}
+
+export function getEmbeddingCacheKey(provider: EmbeddingProvider, textChecksum: string): string {
+  return `${provider.providerId}:${provider.modelId}:${provider.dimensions}:${textChecksum}`
+}
+
+export function getVectorBackendStatus(): { available: boolean; backend: "in_process_blob" | "none"; reason?: string } {
+  const provider = getEmbeddingProvider()
+  if (provider.dimensions <= 0) {
+    return { available: false, backend: "none", reason: "embedding provider is not configured" }
+  }
+  return { available: true, backend: "in_process_blob" }
 }
 
 /** Encode float32 array to Buffer for SQLite BLOB storage */

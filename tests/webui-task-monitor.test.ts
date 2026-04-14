@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildTaskMonitorCards, describeTaskDeliveryStatus, filterActiveTaskMonitorCards } from "../packages/webui/src/lib/task-monitor.js"
+import { buildTaskMonitorCards, describeTaskDeliveryStatus, filterActiveTaskMonitorCards, filterTaskTimelineForMode } from "../packages/webui/src/lib/task-monitor.js"
 import type { RootRun } from "../packages/webui/src/contracts/runs.js"
 import type { TaskModel } from "../packages/webui/src/contracts/tasks.js"
 
@@ -180,14 +180,14 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.duplicateExecutionRisk).toBe(true)
     expect(cards[0]?.checklist.items.map((item) => item.label)).toEqual([
       "요청 확인",
-      "실행",
-      "전달",
+      "실행 진행",
+      "결과 전달",
       "완료 확인",
     ])
     expect(cards[0]?.checklist.completedCount).toBe(1)
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "루트 작업 · 사용자 요청",
-      "루트 작업 · 후속 시도",
+      "기본 실행 · 사용자 요청",
+      "기본 실행 · 후속 시도",
     ])
   })
 
@@ -244,8 +244,8 @@ describe("webui task monitor helper", () => {
     ], text)
 
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "루트 작업 · 사용자 요청",
-      "서브 에이전트 · 후속 시도",
+      "기본 실행 · 사용자 요청",
+      "후속 실행 · 후속 시도",
     ])
     expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })
@@ -691,5 +691,43 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.representative.id).toBe("run-missing")
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.representative.prompt).toBe("오래된 태스크")
+  })
+
+  it("keeps timeline ordering stable and hides diagnostic-only events in normal mode", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "task-diagnostics",
+        requestGroupId: "task-diagnostics",
+        anchorRunId: "run-diagnostics",
+        attempts: [
+          {
+            id: "run-diagnostics",
+            taskId: "task-diagnostics",
+            requestGroupId: "task-diagnostics",
+            kind: "primary",
+            title: "Check monitor",
+            prompt: "Check monitor",
+            status: "completed",
+            summary: "done",
+            userVisible: true,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        latestAttemptId: "run-diagnostics",
+        runIds: ["run-diagnostics"],
+        activities: [
+          { id: "evt-b", taskId: "task-diagnostics", kind: "attempt.completed", at: 20, summary: "사용자 결과", attemptId: "run-diagnostics" },
+          { id: "evt-a", taskId: "task-diagnostics", kind: "attempt.completed", at: 20, summary: "memory chunk hit receipt", attemptId: "run-diagnostics" },
+          { id: "evt-c", taskId: "task-diagnostics", kind: "delivery.failed", at: 10, summary: "전달 실패", attemptId: "run-diagnostics" },
+        ],
+      }),
+    ], [
+      makeRun({ id: "run-diagnostics", requestGroupId: "task-diagnostics", prompt: "Check monitor", status: "completed" }),
+    ], text)
+
+    expect(cards[0]?.timeline.map((event) => event.id)).toEqual(["evt-a", "evt-b", "evt-c"])
+    expect(filterTaskTimelineForMode(cards[0]!.timeline, "normal").map((event) => event.id)).toEqual(["evt-b", "evt-c"])
+    expect(filterTaskTimelineForMode(cards[0]!.timeline, "diagnostic").map((event) => event.id)).toEqual(["evt-a", "evt-b", "evt-c"])
   })
 })

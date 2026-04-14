@@ -1,6 +1,7 @@
 import type { RootRun, RunStep } from "../runs/types.js";
 export type ApprovalDecision = "allow_once" | "allow_run" | "deny";
 export type ApprovalKind = "approval" | "screen_confirmation";
+export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system";
 export interface NobieEvents {
     "message.inbound": {
         source: string;
@@ -16,6 +17,18 @@ export interface NobieEvents {
         sessionId: string;
         runId: string;
         delta: string;
+    };
+    "agent.artifact": {
+        sessionId: string;
+        runId: string;
+        url: string;
+        previewUrl?: string;
+        downloadUrl?: string;
+        previewable?: boolean;
+        filePath: string;
+        fileName: string;
+        mimeType?: string;
+        caption?: string;
     };
     "agent.end": {
         sessionId: string;
@@ -82,13 +95,72 @@ export interface NobieEvents {
         params: unknown;
         kind?: ApprovalKind;
         guidance?: string;
-        resolve: (decision: ApprovalDecision) => void;
+        resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void;
     };
     "approval.resolved": {
         runId: string;
         decision: ApprovalDecision;
         toolName: string;
         kind?: ApprovalKind;
+        reason?: ApprovalResolutionReason;
+    };
+    "schedule.created": {
+        runId: string;
+        requestGroupId: string;
+        registrationKind: "one_time" | "recurring";
+        title: string;
+        task: string;
+        source: "webui" | "cli" | "telegram" | "slack";
+        scheduleText: string;
+        scheduleId?: string;
+        runAtMs?: number;
+        cron?: string;
+        targetSessionId?: string;
+        driver?: string;
+    };
+    "schedule.cancelled": {
+        runId: string;
+        requestGroupId: string;
+        cancelledScheduleIds: string[];
+        cancelledNames: string[];
+    };
+    "schedule.run.start": {
+        scheduleId: string;
+        scheduleRunId: string;
+        runId: string;
+        scheduleName: string;
+        targetChannel: string;
+        targetSessionId?: string;
+        originRunId?: string;
+        originRequestGroupId?: string;
+        trigger: string;
+    };
+    "schedule.run.complete": {
+        scheduleId: string;
+        scheduleRunId: string;
+        runId: string;
+        scheduleName: string;
+        targetChannel: string;
+        targetSessionId?: string;
+        originRunId?: string;
+        originRequestGroupId?: string;
+        trigger: string;
+        success: boolean;
+        durationMs: number;
+        summary?: string;
+    };
+    "schedule.run.failed": {
+        scheduleId: string;
+        scheduleRunId: string;
+        runId: string;
+        scheduleName: string;
+        targetChannel: string;
+        targetSessionId?: string;
+        originRunId?: string;
+        originRequestGroupId?: string;
+        trigger: string;
+        error?: string;
+        attempts: number;
     };
     "scheduler.trigger": {
         scheduleId: string;

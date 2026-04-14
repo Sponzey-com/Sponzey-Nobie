@@ -25,7 +25,7 @@ export async function compressContext(messages, dbMessages, provider, model) {
             : "[도구 호출/결과]";
         return `${role}: ${content.slice(0, 500)}`;
     }).join("\n\n");
-    // Call LLM to summarize
+    // Call the configured AI backend to summarize
     let summary = "";
     for await (const chunk of provider.chat({
         model,

@@ -8,10 +8,12 @@ export { processListTool, processKillTool } from "./builtin/process.js";
 export { appLaunchTool, appListTool } from "./builtin/app.js";
 export { memoryStoreTool, memorySearchTool, fileSemanticSearchTool } from "./builtin/memory.js";
 export { screenCaptureTool, screenFindTextTool } from "./builtin/ui/screen.js";
-export { mouseMoveTool, mouseClickTool } from "./builtin/ui/mouse.js";
-export { keyboardTypeTool, keyboardShortcutTool } from "./builtin/ui/keyboard.js";
+export { mouseMoveTool, mouseClickTool, mouseActionTool } from "./builtin/ui/mouse.js";
+export { keyboardTypeTool, keyboardShortcutTool, keyboardActionTool } from "./builtin/ui/keyboard.js";
 export { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js";
 export { windowListTool, windowFocusTool } from "./builtin/ui/window.js";
+export { yeonjangCameraListTool, yeonjangCameraCaptureTool } from "./builtin/yeonjang.js";
+export { telegramSendFileTool } from "./builtin/telegram-send.js";
 import { toolDispatcher } from "./dispatcher.js";
 import { fileReadTool, fileWriteTool, fileListTool, fileDeleteTool, filePatchTool } from "./builtin/file.js";
 import { shellExecTool } from "./builtin/shell.js";
@@ -22,10 +24,12 @@ import { processListTool, processKillTool } from "./builtin/process.js";
 import { appLaunchTool, appListTool } from "./builtin/app.js";
 import { memoryStoreTool, memorySearchTool, fileSemanticSearchTool } from "./builtin/memory.js";
 import { screenCaptureTool, screenFindTextTool } from "./builtin/ui/screen.js";
-import { mouseMoveTool, mouseClickTool } from "./builtin/ui/mouse.js";
-import { keyboardTypeTool, keyboardShortcutTool } from "./builtin/ui/keyboard.js";
+import { mouseMoveTool, mouseClickTool, mouseActionTool } from "./builtin/ui/mouse.js";
+import { keyboardTypeTool, keyboardShortcutTool, keyboardActionTool } from "./builtin/ui/keyboard.js";
 import { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js";
 import { windowListTool, windowFocusTool } from "./builtin/ui/window.js";
+import { yeonjangCameraListTool, yeonjangCameraCaptureTool } from "./builtin/yeonjang.js";
+import { telegramSendFileTool } from "./builtin/telegram-send.js";
 export function registerBuiltinTools() {
     toolDispatcher.registerAll([
         // File tools
@@ -54,12 +58,19 @@ export function registerBuiltinTools() {
         screenFindTextTool,
         mouseMoveTool,
         mouseClickTool,
+        mouseActionTool,
         keyboardTypeTool,
         keyboardShortcutTool,
+        keyboardActionTool,
         clipboardReadTool,
         clipboardWriteTool,
         windowListTool,
         windowFocusTool,
+        // Yeonjang extension
+        yeonjangCameraListTool,
+        yeonjangCameraCaptureTool,
+        // Channel delivery
+        telegramSendFileTool,
     ]);
 }
 //# sourceMappingURL=index.js.map

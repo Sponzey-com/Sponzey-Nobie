@@ -9,9 +9,11 @@ export { processListTool, processKillTool } from "./builtin/process.js";
 export { appLaunchTool, appListTool } from "./builtin/app.js";
 export { memoryStoreTool, memorySearchTool, fileSemanticSearchTool } from "./builtin/memory.js";
 export { screenCaptureTool, screenFindTextTool } from "./builtin/ui/screen.js";
-export { mouseMoveTool, mouseClickTool } from "./builtin/ui/mouse.js";
-export { keyboardTypeTool, keyboardShortcutTool } from "./builtin/ui/keyboard.js";
+export { mouseMoveTool, mouseClickTool, mouseActionTool } from "./builtin/ui/mouse.js";
+export { keyboardTypeTool, keyboardShortcutTool, keyboardActionTool } from "./builtin/ui/keyboard.js";
 export { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js";
 export { windowListTool, windowFocusTool } from "./builtin/ui/window.js";
+export { yeonjangCameraListTool, yeonjangCameraCaptureTool } from "./builtin/yeonjang.js";
+export { telegramSendFileTool } from "./builtin/telegram-send.js";
 export declare function registerBuiltinTools(): void;
 //# sourceMappingURL=index.d.ts.map

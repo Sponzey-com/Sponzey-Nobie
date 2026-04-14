@@ -47,20 +47,15 @@ async function listWindows() {
     }
     return [];
 }
-async function focusWindow(titleOrApp) {
-    const platform = process.platform;
-    if (platform === "darwin") {
-        await execFileAsync("osascript", ["-e", `tell application "${titleOrApp}" to activate`]);
-    }
-    else if (platform === "linux") {
-        await execFileAsync("wmctrl", ["-a", titleOrApp]);
-    }
-    else if (platform === "win32") {
-        await execFileAsync("powershell", [
-            "-Command",
-            `Get-Process | Where-Object {$_.MainWindowTitle -like "*${titleOrApp}*"} | Select-Object -First 1 | % { $hwnd = $_.MainWindowHandle; [void][System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer([System.Runtime.InteropServices.Marshal]::GetFunctionPointerForDelegate([Microsoft.Win32.NativeMethods]::SetForegroundWindow), [type]::GetType('System.IntPtr'))  }`,
-        ]);
-    }
+function yeonjangRequiredFailure() {
+    return {
+        success: false,
+        output: "이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 창 포커스 제어는 현재 코어 로컬 경로에서 금지되어 있습니다.",
+        error: "YEONJANG_REQUIRED",
+        details: {
+            requiredExecutor: "yeonjang",
+        },
+    };
 }
 // ── window_list ───────────────────────────────────────────────────────────
 export const windowListTool = {
@@ -101,13 +96,8 @@ export const windowFocusTool = {
     riskLevel: "moderate",
     requiresApproval: true,
     execute: async (params) => {
-        try {
-            await focusWindow(params.title);
-            return { success: true, output: `"${params.title}" 창을 포커스했습니다.` };
-        }
-        catch (err) {
-            return { success: false, output: `창 포커스 실패: ${err instanceof Error ? err.message : String(err)}` };
-        }
+        void params;
+        return yeonjangRequiredFailure();
     },
 };
 //# sourceMappingURL=window.js.map

@@ -21,6 +21,7 @@ describe("session intake queue", () => {
       logInfo: vi.fn(),
       logWarn: vi.fn(),
       logError: vi.fn(),
+      appendRunEvent: vi.fn(),
     }
 
     const first = enqueueSessionIntake({
@@ -59,6 +60,7 @@ describe("session intake queue", () => {
         requestGroupId: "group-2",
       }),
     )
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "intake_queue_waiting")
 
     deferred.resolve()
 
@@ -66,5 +68,9 @@ describe("session intake queue", () => {
     await expect(second).resolves.toBe(2)
     expect(order).toEqual(["first-start", "first-end", "second-start", "second-end"])
     expect(hasSessionIntakeQueue(sessionId)).toBe(false)
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "intake_queue_running")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "intake_queue_released")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "intake_queue_running")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "intake_queue_released")
   })
 })

@@ -14,6 +14,8 @@ import {
   type RecoveryAlternative,
 } from "./recovery.js"
 import type { FinalizationSource } from "./finalization.js"
+import { upsertTaskContinuity } from "../db/index.js"
+import { getRootRun } from "./store.js"
 
 export interface RecoveryRetryApplicationState {
   summary: string
@@ -75,6 +77,23 @@ export function applyRecoveryRetryState(
   const recoveryAlternatives = describeRecoveryAlternatives(params.state.alternatives ?? [])
   if (recoveryAlternatives) {
     eventLabels.push(recoveryAlternatives)
+  }
+  try {
+    const run = getRootRun(params.runId)
+    if (run) {
+      upsertTaskContinuity({
+        lineageRootRunId: run.lineageRootRunId ?? run.requestGroupId,
+        ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        ...(run.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+        failedRecoveryKey: `${params.state.budgetKind}:${params.state.eventLabel}`,
+        failureKind: params.state.budgetKind,
+        recoveryBudget: formatRecoveryBudgetProgress(budgetAfterUse),
+        status: "recovering",
+        lastGoodState: params.state.summary,
+      })
+    }
+  } catch {
+    // Recovery continuity is best-effort and must not block the retry path.
   }
 
   return applyRunningContinuationState({

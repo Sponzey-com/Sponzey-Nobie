@@ -22,6 +22,7 @@ describe("request-group execution queue", () => {
       logInfo: vi.fn(),
       logWarn: vi.fn(),
       logError: vi.fn(),
+      appendRunEvent: vi.fn(),
     }
 
     const first = enqueueRequestGroupExecution({
@@ -57,6 +58,7 @@ describe("request-group execution queue", () => {
         requestGroupId,
       }),
     )
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "execution_queue_waiting")
 
     firstDeferred.resolve()
     await first
@@ -64,5 +66,9 @@ describe("request-group execution queue", () => {
 
     expect(order).toEqual(["first-start", "first-end", "second-start", "second-end"])
     expect(hasRequestGroupExecutionQueue(requestGroupId)).toBe(false)
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "execution_queue_running")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "execution_queue_released")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "execution_queue_running")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "execution_queue_released")
   })
 })

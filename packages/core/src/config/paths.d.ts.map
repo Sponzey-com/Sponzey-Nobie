@@ -1,1 +1,1 @@
-{"version":3,"file":"paths.d.ts","sourceRoot":"","sources":["paths.ts"],"names":[],"mappings":"AAgCA,eAAO,MAAM,KAAK;;;;;;;;;CAyBR,CAAA"}
+{"version":3,"file":"paths.d.ts","sourceRoot":"","sources":["../../src/config/paths.ts"],"names":[],"mappings":"AAgCA,eAAO,MAAM,KAAK;;;;;;;;;;CA4BR,CAAA"}

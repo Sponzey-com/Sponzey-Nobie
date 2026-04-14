@@ -7,18 +7,28 @@ const log = createLogger("channel:telegram:approval");
 const pending = new Map();
 // Map from sessionId → active chat info (set by bot.ts before runAgent)
 export const activeChats = new Map();
+const activeChatRefs = new Map();
 // Most recent active chat (for single-user cases when we don't have sessionId in event)
 let latestActiveChat;
+let detachTelegramApprovalRequestListener = null;
 export function setActiveChatForSession(sessionId, chatId, userId, threadId) {
     const chat = { chatId, userId, ...(threadId !== undefined ? { threadId } : {}) };
     activeChats.set(sessionId, chat);
+    activeChatRefs.set(sessionId, (activeChatRefs.get(sessionId) ?? 0) + 1);
     latestActiveChat = chat;
 }
 export function clearActiveChatForSession(sessionId) {
+    const remaining = (activeChatRefs.get(sessionId) ?? 1) - 1;
+    if (remaining > 0) {
+        activeChatRefs.set(sessionId, remaining);
+        return;
+    }
+    activeChatRefs.delete(sessionId);
     activeChats.delete(sessionId);
 }
 export function registerApprovalHandler(bot) {
-    eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
+    detachTelegramApprovalRequestListener?.();
+    detachTelegramApprovalRequestListener = eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
         const run = getRootRun(runId);
         if (run?.source !== "telegram") {
             return;
@@ -26,38 +36,32 @@ export function registerApprovalHandler(bot) {
         const target = (run ? activeChats.get(run.sessionId) : undefined) ?? latestActiveChat;
         if (target === undefined) {
             log.warn(`approval.request for runId=${runId} but no active chat — auto-denying`);
-            resolve("deny");
+            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" });
+            resolve("deny", "system");
             return;
         }
         const paramsStr = JSON.stringify(params, null, 2).slice(0, 300);
-        const text = `${kind === "screen_confirmation" ? "🖥️ *화면 조작 준비 확인*" : "🔐 *도구 실행 승인 요청*"}\n\n` +
-            `도구: \`${toolName}\`\n` +
-            `파라미터:\n\`\`\`\n${paramsStr}\n\`\`\`\n\n` +
+        const text = `${kind === "screen_confirmation" ? "🖥️ 화면 조작 준비 확인" : "🔐 도구 실행 승인 요청"}\n\n` +
+            `도구: ${toolName}\n` +
+            `파라미터:\n${paramsStr}\n\n` +
             `${guidance ? `${guidance}\n\n` : ""}` +
             `${kind === "screen_confirmation" ? "준비가 끝났으면 계속 진행할 수 있습니다." : "허용하시겠습니까?"}`;
         let sentMsgId;
         try {
             const keyboard = buildApprovalKeyboard(runId);
             const sendOpts = target.threadId !== undefined
-                ? { parse_mode: "Markdown", reply_markup: keyboard, message_thread_id: target.threadId }
-                : { parse_mode: "Markdown", reply_markup: keyboard };
+                ? { reply_markup: keyboard, message_thread_id: target.threadId }
+                : { reply_markup: keyboard };
             const msg = await bot.api.sendMessage(target.chatId, text, sendOpts);
             sentMsgId = msg.message_id;
         }
         catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             log.error(`Failed to send approval message: ${errMsg}`);
-            resolve("deny");
+            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" });
+            resolve("deny", "system");
             return;
         }
-        pending.set(runId, {
-            resolve,
-            chatId: target.chatId,
-            messageId: sentMsgId,
-            requesterId: target.userId,
-            toolName,
-            kind,
-        });
         const timeout = kind === "screen_confirmation"
             ? null
             : setTimeout(async () => {
@@ -74,22 +78,17 @@ export function registerApprovalHandler(bot) {
                 catch {
                     // best-effort
                 }
-                eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind });
-                entry.resolve("deny");
+                eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind, reason: "timeout" });
+                entry.resolve("deny", "timeout");
             }, 60_000);
-        // Store timeout reference so we can clear it
-        const origResolve = resolve;
         pending.set(runId, {
-            resolve: (decision) => {
-                if (timeout)
-                    clearTimeout(timeout);
-                origResolve(decision);
-            },
+            resolve,
             chatId: target.chatId,
             messageId: sentMsgId,
             requesterId: target.userId,
             toolName,
             kind,
+            timeout,
         });
     });
     bot.on("callback_query:data", async (ctx) => {
@@ -116,6 +115,8 @@ export function registerApprovalHandler(bot) {
             await ctx.answerCallbackQuery("⚠️ 권한 없음: 요청자만 응답할 수 있습니다.");
             return;
         }
+        if (entry.timeout)
+            clearTimeout(entry.timeout);
         pending.delete(runId);
         const decision = approveAllMatch !== null
             ? "allow_run"
@@ -153,8 +154,20 @@ export function registerApprovalHandler(bot) {
                 : decision === "allow_once"
                     ? "🔹 이번 단계 승인"
                     : "❌ 거부 후 취소");
-        eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind });
-        entry.resolve(decision);
+        eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" });
+        entry.resolve(decision, "user");
     });
+}
+export function resetTelegramApprovalStateForTest() {
+    detachTelegramApprovalRequestListener?.();
+    detachTelegramApprovalRequestListener = null;
+    for (const entry of pending.values()) {
+        if (entry.timeout)
+            clearTimeout(entry.timeout);
+    }
+    pending.clear();
+    activeChats.clear();
+    activeChatRefs.clear();
+    latestActiveChat = undefined;
 }
 //# sourceMappingURL=approval-handler.js.map

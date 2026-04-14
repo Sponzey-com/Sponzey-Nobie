@@ -4,10 +4,9 @@ import chrome from "selenium-webdriver/chrome.js";
 import edge from "selenium-webdriver/edge.js";
 import firefox from "selenium-webdriver/firefox.js";
 const LITE_URL = "https://lite.duckduckgo.com/lite/";
-const USER_AGENT =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const PAGE_LOAD_TIMEOUT_MS = 30000;
-const RESULT_WAIT_TIMEOUT_MS = 10000;
+const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const PAGE_LOAD_TIMEOUT_MS = 30_000;
+const RESULT_WAIT_TIMEOUT_MS = 10_000;
 export class DuckDuckGoSearchProvider {
     async search(query, options) {
         const maxResults = options.maxResults ?? 10;
@@ -43,8 +42,7 @@ function decodeUddg(href) {
         if (href.startsWith("http"))
             return href;
     }
-    catch {
-    }
+    catch { /* ignore */ }
     return "";
 }
 function getBrowserSpecs() {
@@ -62,8 +60,8 @@ function getBrowserSpecs() {
     const ordered = process.platform === "win32" ? windowsOrder : defaultOrder;
     if (!preferred)
         return ordered;
-    const matched = ordered.find((spec) => spec.browser.toLowerCase() === preferred.toLowerCase()
-        || spec.label.toLowerCase() === preferred.toLowerCase());
+    const matched = ordered.find((spec) => (spec.browser.toLowerCase() === preferred.toLowerCase()
+        || spec.label.toLowerCase() === preferred.toLowerCase()));
     return matched ? [matched, ...ordered.filter((spec) => spec.browser !== matched.browser)] : ordered;
 }
 async function buildDriver(spec) {
@@ -104,6 +102,7 @@ async function searchWithSelenium(query, maxResults) {
                 await driver.wait(until.elementLocated(By.css("a.result-link")), RESULT_WAIT_TIMEOUT_MS);
             }
             catch {
+                // The final DOM can still be useful even if the result link did not appear before timeout.
             }
             const html = await driver.getPageSource();
             const results = parseWithCheerio(html, maxResults);
