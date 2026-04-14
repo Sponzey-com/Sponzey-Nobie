@@ -94,6 +94,37 @@ export interface TaskContinuitySnapshot {
     status?: string;
     updatedAt: number;
 }
+export type DbArtifactRetentionPolicy = "ephemeral" | "standard" | "permanent";
+export interface DbArtifactMetadata {
+    id: string;
+    source_run_id: string | null;
+    request_group_id: string | null;
+    owner_channel: string;
+    channel_target: string | null;
+    artifact_path: string;
+    mime_type: string;
+    size_bytes: number | null;
+    retention_policy: DbArtifactRetentionPolicy;
+    expires_at: number | null;
+    metadata_json: string | null;
+    created_at: number;
+    updated_at: number;
+    deleted_at: number | null;
+}
+export interface ArtifactMetadataInput {
+    artifactPath: string;
+    ownerChannel: string;
+    channelTarget?: string | null;
+    sourceRunId?: string | null;
+    requestGroupId?: string | null;
+    mimeType?: string;
+    sizeBytes?: number;
+    retentionPolicy?: DbArtifactRetentionPolicy;
+    expiresAt?: number | null;
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+    updatedAt?: number;
+}
 export declare function insertSession(session: Omit<DbSession, "token_count">): void;
 export declare function getSession(id: string): DbSession | undefined;
 export declare function insertMessage(msg: DbMessage): void;
@@ -112,13 +143,13 @@ export declare function findChannelMessageRef(params: {
 export declare function upsertPromptSources(sources: PromptSourceMetadata[]): void;
 export declare function updateRunPromptSourceSnapshot(runId: string, snapshot: PromptSourceSnapshot): void;
 export declare function getPromptSourceStates(): PromptSourceState[];
-export type MemoryScope = "global" | "session" | "task" | "artifact" | "diagnostic";
+export type MemoryScope = "global" | "session" | "task" | "artifact" | "diagnostic" | "long-term" | "short-term" | "schedule" | "flash-feedback";
 export interface DbMemoryItem {
     id: string;
     content: string;
     tags: string | null;
     source: string | null;
-    memory_scope: "global" | "session" | "task" | null;
+    memory_scope: MemoryScope | null;
     session_id: string | null;
     run_id: string | null;
     request_group_id: string | null;
@@ -155,6 +186,21 @@ export interface DbMemoryChunk {
     created_at: number;
     updated_at: number;
 }
+export type MemoryWritebackStatus = "pending" | "writing" | "failed" | "completed" | "discarded";
+export interface DbMemoryWritebackCandidate {
+    id: string;
+    scope: MemoryScope;
+    owner_id: string;
+    source_type: string;
+    content: string;
+    metadata_json: string | null;
+    status: MemoryWritebackStatus;
+    retry_count: number;
+    last_error: string | null;
+    run_id: string | null;
+    created_at: number;
+    updated_at: number;
+}
 export interface DbMemoryChunkSearchRow extends DbMemoryChunk {
     document_title: string | null;
     document_source_type: string;
@@ -188,6 +234,8 @@ export interface MemorySearchFilters {
     sessionId?: string;
     runId?: string;
     requestGroupId?: string;
+    scheduleId?: string;
+    includeSchedule?: boolean;
     includeArtifact?: boolean;
     includeDiagnostic?: boolean;
 }
@@ -214,6 +262,54 @@ export declare function recordMemoryAccessLog(input: {
     score?: number;
     latencyMs?: number;
 }): string;
+export declare function insertFlashFeedback(input: {
+    sessionId: string;
+    content: string;
+    runId?: string;
+    requestGroupId?: string;
+    severity?: "low" | "normal" | "high";
+    ttlMs?: number;
+    metadata?: Record<string, unknown>;
+}): string;
+export declare function upsertScheduleMemoryEntry(input: {
+    scheduleId: string;
+    prompt: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    title?: string;
+    cronExpression?: string;
+    nextRunAt?: number;
+    enabled?: boolean;
+    metadata?: Record<string, unknown>;
+}): string;
+export declare function insertArtifactReceipt(input: {
+    channel: string;
+    artifactPath: string;
+    runId?: string;
+    requestGroupId?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    deliveryReceipt?: Record<string, unknown>;
+    deliveredAt?: number;
+}): string;
+export declare function hasArtifactReceipt(input: {
+    runId: string;
+    channel: string;
+    artifactPath: string;
+}): boolean;
+export declare function insertArtifactMetadata(input: ArtifactMetadataInput): string;
+export declare function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifactMetadata | undefined;
+export declare function listExpiredArtifactMetadata(now?: number): DbArtifactMetadata[];
+export declare function markArtifactDeleted(id: string, deletedAt?: number): void;
+export declare function insertDiagnosticEvent(input: {
+    kind: string;
+    summary: string;
+    runId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    recoveryKey?: string;
+    detail?: Record<string, unknown>;
+}): string;
 export declare function enqueueMemoryWritebackCandidate(input: {
     scope: MemoryScope;
     ownerId?: string;
@@ -221,7 +317,21 @@ export declare function enqueueMemoryWritebackCandidate(input: {
     content: string;
     metadata?: Record<string, unknown>;
     runId?: string;
+    status?: MemoryWritebackStatus;
+    lastError?: string;
 }): string;
+export declare function listMemoryWritebackCandidates(input?: {
+    status?: MemoryWritebackStatus | "all";
+    limit?: number;
+}): DbMemoryWritebackCandidate[];
+export declare function getMemoryWritebackCandidate(id: string): DbMemoryWritebackCandidate | undefined;
+export declare function updateMemoryWritebackCandidate(input: {
+    id: string;
+    status: MemoryWritebackStatus;
+    content?: string;
+    metadata?: Record<string, unknown>;
+    lastError?: string | null;
+}): DbMemoryWritebackCandidate | undefined;
 export declare function upsertSessionSnapshot(input: {
     sessionId: string;
     summary: string;
@@ -247,7 +357,7 @@ export declare function listTaskContinuityForLineages(lineageRootRunIds: string[
 export declare function insertMemoryItem(item: {
     content: string;
     tags?: string[];
-    scope?: "global" | "session" | "task";
+    scope?: MemoryScope;
     sessionId?: string;
     runId?: string;
     requestGroupId?: string;
@@ -269,6 +379,7 @@ export interface DbSchedule {
     id: string;
     name: string;
     cron_expression: string;
+    timezone: string | null;
     prompt: string;
     enabled: number;
     target_channel: string;
@@ -296,10 +407,18 @@ export interface DbScheduleRun {
 export declare function getSchedules(): DbSchedule[];
 export declare function getSchedule(id: string): DbSchedule | undefined;
 export declare function getSchedulesForSession(sessionId: string, enabledOnly?: boolean): DbSchedule[];
-export declare function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at">): void;
+export declare function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone"> & {
+    timezone?: string | null;
+}): void;
 export declare function updateSchedule(id: string, fields: Partial<Omit<DbSchedule, "id" | "created_at" | "last_run_at" | "next_run_at">>): void;
 export declare function deleteSchedule(id: string): void;
 export declare function getScheduleRuns(scheduleId: string, limit: number, offset: number): DbScheduleRun[];
+export declare function listUnfinishedScheduleRuns(limit?: number): DbScheduleRun[];
+export declare function interruptUnfinishedScheduleRunsOnStartup(input?: {
+    finishedAt?: number;
+    error?: string;
+    limit?: number;
+}): DbScheduleRun[];
 export declare function countScheduleRuns(scheduleId: string): number;
 export declare function insertScheduleRun(r: DbScheduleRun): void;
 export declare function updateScheduleRun(id: string, fields: Partial<Pick<DbScheduleRun, "finished_at" | "success" | "summary" | "error">>): void;

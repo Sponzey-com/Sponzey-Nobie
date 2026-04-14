@@ -2,7 +2,9 @@ import { localAdapter } from "./adapters/local"
 import type { ControlPlaneAdapter, MqttRuntimeResponse, ResetSetupResponse, SetupChecksResponse, StatusResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse } from "./adapters/types"
 import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
+import type { ConfigExportResult, ConfigurationOperationsSnapshot, DatabaseBackupResult, MigrationDryRunResult, PromptSourceExportResult, PromptSourceImportResult } from "../contracts/config-operations"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
+import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
 import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
 import type { TaskModel } from "../contracts/tasks"
@@ -84,9 +86,90 @@ export const api = {
       `/api/instructions/active${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
+  promptSources: (workDir?: string) =>
+    request<{ workDir: string; sources: PromptSourceMetadata[] }>(
+      `/api/prompt-sources${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
+  promptSource: (sourceId: string, locale: "ko" | "en", workDir?: string) =>
+    request<{ workDir: string; source: PromptSourceDocument }>(
+      `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
+  promptSourcesDryRun: (workDir?: string, locale: "ko" | "en" = "ko") =>
+    request<{ workDir: string; locale: "ko" | "en"; dryRun: PromptSourceDryRunResult }>(
+      `/api/prompt-sources/dry-run?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
+  promptSourcesParity: (workDir?: string) =>
+    request<{ workDir: string; parity: PromptSourceLocaleParityResult }>(
+      `/api/prompt-sources/parity${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
+  writePromptSource: (sourceId: string, locale: "ko" | "en", body: { workDir?: string; content: string; createBackup?: boolean }) =>
+    request<PromptSourceWriteResult>(`/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}/write`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  rollbackPromptSource: (body: { sourcePath: string; backupPath: string }) =>
+    request<PromptSourceRollbackResult>("/api/prompt-sources/rollback", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  configOperations: (workDir?: string) =>
+    request<{ snapshot: ConfigurationOperationsSnapshot }>(
+      `/api/config/operations${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
+  configMigrationDryRun: () =>
+    request<{ dryRun: MigrationDryRunResult }>("/api/config/migrations/dry-run"),
+
+  backupDatabase: () =>
+    request<{ ok: boolean; backup: DatabaseBackupResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/backup", { method: "POST" }),
+
+  exportDatabase: () =>
+    request<{ ok: boolean; export: DatabaseBackupResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/export", { method: "POST" }),
+
+  importDatabase: (backupPath: string) =>
+    request<{ ok: boolean; import: { importedPath: string; rollbackBackup: DatabaseBackupResult; status: ConfigurationOperationsSnapshot["database"] }; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/import", {
+      method: "POST",
+      body: JSON.stringify({ backupPath }),
+    }),
+
+  exportMaskedConfig: () =>
+    request<{ ok: boolean; export: ConfigExportResult }>("/api/config/export", { method: "POST" }),
+
+  exportPromptSourcesOps: (workDir?: string) =>
+    request<{ ok: boolean; export: PromptSourceExportResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/export", {
+      method: "POST",
+      body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
+    }),
+
+  importPromptSourcesOps: (body: { exportPath: string; workDir?: string; overwrite?: boolean }) =>
+    request<{ ok: boolean; import: PromptSourceImportResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/import", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  recoverPromptSourcesOps: (workDir?: string) =>
+    request<{ ok: boolean; recovery: { promptsDir: string; created: string[]; existing: string[] }; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/recover", {
+      method: "POST",
+      body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
+    }),
+
   runs: () => request<{ runs: RootRun[] }>("/api/runs"),
 
   tasks: () => request<{ tasks: TaskModel[] }>("/api/tasks"),
+
+  runOperationsSummary: () => request<{ summary: OperationsSummary }>("/api/runs/operations/summary"),
+
+  cleanupStaleRuns: (staleMs?: number) =>
+    request<{ ok: boolean; cleanup: StaleRunCleanupResult; summary: OperationsSummary }>("/api/runs/operations/stale-cleanup", {
+      method: "POST",
+      body: JSON.stringify({ ...(staleMs ? { staleMs } : {}) }),
+    }),
 
   run: (runId: string) => request<{ run: RootRun }>(`/api/runs/${runId}`),
 
@@ -204,6 +287,15 @@ export const api = {
       nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
     }>("/api/scheduler/health"),
 
+  memoryWritebackReview: (status: "pending" | "completed" | "discarded" | "failed" | "all" = "pending") =>
+    request<{ candidates: MemoryWritebackReviewItem[] }>(`/api/memory/writeback?status=${encodeURIComponent(status)}`),
+
+  reviewMemoryWriteback: (id: string, body: { action: MemoryWritebackReviewAction; editedContent?: string; reviewerId?: string }) =>
+    request<MemoryWritebackReviewResult>(`/api/memory/writeback/${encodeURIComponent(id)}/review`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   plugins: () => request<Plugin[]>("/api/plugins"),
 
   installPlugin: (body: { name: string; version: string; description?: string; entryPath: string }) =>
@@ -222,6 +314,7 @@ export interface Schedule {
   id: string
   name: string
   cron_expression: string
+  timezone: string | null
   prompt: string
   enabled: boolean
   model: string | null
@@ -252,4 +345,86 @@ export interface Plugin {
   is_loaded: boolean
   installed_at: number
   updated_at: number
+}
+
+export type MemoryWritebackReviewAction = "approve_long_term" | "approve_edited" | "keep_session" | "discard"
+
+export interface MemoryWritebackReviewItem {
+  id: string
+  scope: string
+  ownerId: string
+  sourceType: string
+  sourceRunId?: string
+  sourceChannel?: string
+  sessionId?: string
+  requestGroupId?: string
+  confidence?: string
+  ttl?: string
+  proposedText: string
+  repeatExamples: string[]
+  blockReasons: string[]
+  status: "pending" | "writing" | "failed" | "completed" | "discarded"
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MemoryWritebackReviewResult {
+  ok: boolean
+  candidate: MemoryWritebackReviewItem
+  documentId?: string
+  action: MemoryWritebackReviewAction
+  reason?: string
+}
+
+export interface PromptSourceMetadata {
+  sourceId: string
+  locale: "ko" | "en"
+  path: string
+  version: string
+  priority: number
+  enabled: boolean
+  required: boolean
+  usageScope: string
+  checksum: string
+}
+
+export interface PromptSourceDocument extends PromptSourceMetadata {
+  content: string
+}
+
+export interface PromptSourceDryRunResult {
+  assembly: { text: string; snapshot: { diagnostics: Array<{ severity: string; code: string; sourceId: string; locale: "ko" | "en"; message: string }> } } | null
+  sourceOrder: Array<{ sourceId: string; locale: "ko" | "en"; checksum: string; version: string; path: string }>
+  totalChars: number
+  diagnostics: Array<{ severity: string; code: string; sourceId: string; locale: "ko" | "en"; message: string }>
+}
+
+export interface PromptSourceLocaleParityIssue {
+  sourceId: string
+  code: "missing_locale" | "section_mismatch"
+  locale?: "ko" | "en"
+  message: string
+}
+
+export interface PromptSourceLocaleParityResult {
+  ok: boolean
+  issues: PromptSourceLocaleParityIssue[]
+}
+
+export interface PromptSourceWriteResult {
+  backup: { backupId: string; sourceId: string; locale: "ko" | "en"; sourcePath: string; backupPath: string; checksum: string; createdAt: number } | null
+  source: PromptSourceMetadata
+  diff: {
+    beforeChecksum: string
+    afterChecksum: string
+    changed: boolean
+    lines: Array<{ kind: "unchanged" | "added" | "removed" | "changed"; beforeLine?: number; afterLine?: number; before?: string; after?: string }>
+  }
+}
+
+export interface PromptSourceRollbackResult {
+  sourcePath: string
+  backupPath: string
+  restoredChecksum: string
+  previousChecksum: string
 }

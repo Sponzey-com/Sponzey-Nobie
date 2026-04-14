@@ -25,6 +25,12 @@ Create the following sources if they do not exist.
 - `definitions`: `prompts/definitions.md`, shared terms and runtime concepts
 - `soul`: `prompts/soul.md`, long-term operating policy and completion rules
 - `planner`: `prompts/planner.md`, intake and execution-brief policy
+- `memory_policy`: `prompts/memory_policy.md`, memory injection and write policy
+- `tool_policy`: `prompts/tool_policy.md`, tool selection and execution policy
+- `recovery_policy`: `prompts/recovery_policy.md`, failure classification and recovery policy
+- `completion_policy`: `prompts/completion_policy.md`, completion decision policy
+- `output_policy`: `prompts/output_policy.md`, user-facing output and error presentation policy
+- `channel`: `prompts/channel.md`, request-channel and result-delivery boundary policy
 - `bootstrap`: `prompts/bootstrap.md`, first-run-only seed policy
 
 Each source must have at least the following metadata.

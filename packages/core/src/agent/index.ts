@@ -5,10 +5,13 @@ import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates } from "../db/index.js"
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js"
 import { loadNobieMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/nobie-md.js"
 import { buildMemoryContext, storeMemorySync } from "../memory/store.js"
-import { needsCompression, compressContext } from "../memory/compressor.js"
+import { buildFlashFeedbackContext } from "../memory/flash-feedback.js"
+import { compressContext } from "../memory/compressor.js"
+import { buildSessionCompactionSnapshot, needsSessionCompaction } from "../memory/compaction.js"
+import { buildScheduleMemoryContext } from "../schedules/context.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
@@ -157,6 +160,8 @@ export interface RunAgentParams {
   sessionId?: string | undefined
   requestGroupId?: string | undefined
   runId?: string | undefined
+  scheduleId?: string | undefined
+  includeScheduleMemory?: boolean | undefined
   model?: string | undefined
   providerId?: string | undefined
   provider?: AIProvider | undefined
@@ -308,14 +313,38 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const instructions = loadMergedInstructions(workDir)
   const profileContext = buildUserProfilePromptContext()
   const nobieMd = loadNobieMd(workDir)
+  if (nobieMd) {
+    appendRunEvent(runId, "prompt_legacy_project_memory_loaded")
+    insertDiagnosticEvent({
+      kind: "legacy_prompt_source_used",
+      summary: "Legacy project memory was appended after prompt source registry assembly.",
+      runId,
+      sessionId,
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      detail: {
+        priority: "prompts/ registry first, legacy NOBIE.md/WIZBY.md/HOWIE.md appended as project memory context",
+        workDir,
+      },
+    })
+  }
   appendAgentLatencyEvent(runId, "prompt_ms", Date.now() - promptStartedAt)
 
   const memoryStartedAt = Date.now()
+  const flashFeedbackContext = buildFlashFeedbackContext({
+    sessionId,
+    limit: 4,
+    maxChars: contextMode === "isolated" ? 500 : 800,
+  })
+  const scheduleMemoryContext = params.includeScheduleMemory && params.scheduleId
+    ? buildScheduleMemoryContext({ scheduleId: params.scheduleId, maxRuns: 3 })
+    : ""
   const memoryContext = await buildMemoryContext({
     query: params.memorySearchQuery ?? params.userMessage,
     sessionId,
     runId,
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+    ...(params.includeScheduleMemory ? { includeSchedule: true } : {}),
     ...(shouldIncludeDiagnosticMemory(params.userMessage) ? { includeDiagnostic: true } : {}),
     budget: {
       maxChunks: contextMode === "handoff" ? 3 : 4,
@@ -333,13 +362,15 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
     profileContext ? `\n${profileContext}` : "",
     nobieMd ? `\n[프로젝트 메모리]\n${nobieMd}` : "",
+    flashFeedbackContext ? `\n${flashFeedbackContext}` : "",
+    scheduleMemoryContext ? `\n${scheduleMemoryContext}` : "",
     memoryContext ? `\n${memoryContext}` : "",
   ].join("")
 
   // ── Context compression if needed ────────────────────────────────────
   let totalTokens = 0
 
-  if (needsCompression(messages, 0)) {
+  if (needsSessionCompaction(messages, totalTokens)) {
     log.info(`컨텍스트 압축 중... (messages: ${messages.length})`)
     try {
       const compressed = await compressContext(messages, priorDbMessages, provider, model)
@@ -360,6 +391,20 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
 
       // Mark old DB messages as compressed
       markMessagesCompressed(compressed.compressedIds, summaryId)
+      const snapshot = buildSessionCompactionSnapshot({
+        sessionId,
+        summary: compressed.summary,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      })
+      upsertSessionSnapshot(snapshot)
+      if (params.requestGroupId) {
+        upsertTaskContinuity({
+          lineageRootRunId: params.requestGroupId,
+          lastGoodState: `session_snapshot:${snapshot.summary}`,
+          status: "recoverable",
+        })
+      }
+      appendAgentLatencyEvent(runId, "compaction_snapshot", 0)
 
       log.info(`압축 완료 — ${compressed.compressedIds.length}개 메시지 → 요약 1개 + tail ${messages.length - 1}개`)
     } catch (err) {

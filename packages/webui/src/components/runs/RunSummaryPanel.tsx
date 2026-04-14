@@ -51,7 +51,7 @@ function InfoRow({
   )
 }
 
-export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraContent?: ReactNode }) {
+export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: { run: RootRun; extraContent?: ReactNode; diagnosticMode?: boolean }) {
   const { text, displayText, formatTime, language } = useUiI18n()
   const promptSourceSummary = describePromptSourceSnapshot(run)
 
@@ -85,15 +85,17 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
               label={text("참조 범위", "Context range")}
               value={toContextModeText(run.contextMode, language)}
             />
-            <InfoRow
-              label={text("세션 ID", "Session ID")}
-              value={run.workerSessionId || text("기본 세션", "Default session")}
-            />
+            {diagnosticMode ? (
+              <InfoRow
+                label={text("세션 ID", "Session ID")}
+                value={run.workerSessionId || text("기본 세션", "Default session")}
+              />
+            ) : null}
             <InfoRow
               label={text("실행 대상", "Execution target")}
               value={run.targetLabel || run.targetId || text("실행 대상 미선정", "No target selected")}
             />
-            {promptSourceSummary ? (
+            {diagnosticMode && promptSourceSummary ? (
               <InfoRow
                 label={text("프롬프트 소스", "Prompt sources")}
                 value={promptSourceSummary}
@@ -102,12 +104,14 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
           </div>
         </div>
 
-        <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-          <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
-          <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
-            {displayText(describeDiagnosticReason(run))}
+        {diagnosticMode ? (
+          <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
+            <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
+              {displayText(describeDiagnosticReason(run))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
           <div className="text-xs font-semibold text-stone-500">{text("최근 기록", "Recent history")}</div>

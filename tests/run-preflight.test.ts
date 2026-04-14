@@ -35,7 +35,7 @@ vi.mock("../packages/core/src/mqtt/broker.js", () => ({
   getMqttExtensionSnapshots: (...args: unknown[]) => getMqttExtensionSnapshotsMock(...args),
 }))
 
-const { resolveStartPreflightFailure } = await import("../packages/core/src/runs/preflight.ts")
+const { resolveStartContextPlan, resolveStartPreflightFailure } = await import("../packages/core/src/runs/preflight.ts")
 
 describe("start preflight", () => {
   beforeEach(() => {
@@ -141,5 +141,43 @@ describe("start preflight", () => {
         approvalTool: "screen_capture",
       },
     })).toBeNull()
+  })
+
+  it("builds a context plan before memory retrieval and execution", () => {
+    getMqttExtensionSnapshotsMock.mockReturnValueOnce([{
+      extensionId: "yeonjang-main",
+      clientId: "client-1",
+      displayName: "Yeonjang",
+      state: "connected",
+      message: null,
+      version: "0.1.0",
+      methods: ["screen.capture"],
+      lastSeenAt: 1,
+    }])
+
+    const plan = resolveStartContextPlan({
+      source: "slack",
+      message: "메인 화면 캡쳐해서 보여줘",
+      providerId: "openai",
+      model: "gpt-5",
+      onChunk: vi.fn(),
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "direct",
+        approvalRequired: true,
+        approvalTool: "screen_capture",
+      },
+    })
+
+    expect(plan.preflightFailure).toBeNull()
+    expect(plan.promptSources).toContain("channel:slack")
+    expect(plan.memoryScopes).toEqual(["short-term", "flash-feedback", "task", "artifact", "long-term"])
+    expect(plan.toolPolicy).toEqual({
+      toolsEnabled: true,
+      requiresApproval: true,
+      requiresYeonjang: true,
+    })
+    expect(plan.retrieval.vectorOptional).toBe(true)
   })
 })

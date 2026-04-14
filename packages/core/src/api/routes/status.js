@@ -6,6 +6,7 @@ import { getMqttBrokerSnapshot } from "../../mqtt/broker.js";
 import { toolDispatcher } from "../../tools/index.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getCurrentAppVersion, getUpdateSnapshot } from "../../update/service.js";
+import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js";
 const startTime = Date.now();
 export function registerStatusRoute(app) {
     app.get("/api/status", { preHandler: authMiddleware }, async () => {
@@ -25,6 +26,7 @@ export function registerStatusRoute(app) {
             orchestratorStatus: orchestrator
                 ? { status: orchestrator.status, reason: orchestrator.reason ?? null }
                 : { status: "planned", reason: "Gateway orchestrator capability가 없습니다." },
+            startupRecovery: getLastStartupRecoverySummary(),
             mcp: mcpRegistry.getSummary(),
             mqtt: getMqttBrokerSnapshot(),
             paths: {

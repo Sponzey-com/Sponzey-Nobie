@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildAiRecoveryKey,
+  buildRecoveryKey,
   summarizeRawErrorForUser,
   describeAssistantTextDeliveryFailure,
   describeRecoveryAlternatives,
@@ -31,6 +32,18 @@ describe("run recovery helpers", () => {
     expect(summary).toBe("인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.")
   })
 
+  it("sanitizes stack traces, mojibake, and delivery failures for user-facing messages", () => {
+    expect(summarizeRawErrorForUser("TypeError: boom\n    at captureScreen (/app/screen.js:10:2)")).toBe(
+      "도구 또는 실행 경로에서 오류가 발생했습니다.",
+    )
+    expect(summarizeRawErrorForUser("screen capture failed: \"1\"���� �μ��� �ִ� GetDirectoryName")).toBe(
+      "오류 출력이 깨진 인코딩으로 반환되어 원문을 표시하지 않습니다.",
+    )
+    expect(summarizeRawErrorForUser("telegram_send_file failed: 403 <html>Forbidden</html>")).toBe(
+      "인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.",
+    )
+  })
+
   it("returns a recovery candidate for unseen command failures", () => {
     const recovery = selectCommandFailureRecovery({
       failedTools: [
@@ -49,6 +62,25 @@ describe("run recovery helpers", () => {
     expect(recovery?.reason).toContain("실행 명령을 찾지 못해")
     expect(recovery?.alternatives.some((alternative) => alternative.kind === "other_tool")).toBe(true)
     expect(recovery?.alternatives.some((alternative) => alternative.kind === "other_extension")).toBe(true)
+  })
+
+  it("deduplicates command recovery by normalized error kind instead of raw output text", () => {
+    const first = selectCommandFailureRecovery({
+      failedTools: [{ toolName: "shell_exec", output: "command not found: screencapture" }],
+      commandFailureSeen: true,
+      commandRecoveredWithinSamePass: false,
+      seenKeys: new Set<string>(),
+    })
+    expect(first).not.toBeNull()
+
+    const second = selectCommandFailureRecovery({
+      failedTools: [{ toolName: "shell_exec", output: "command not found: powershell-screencap" }],
+      commandFailureSeen: true,
+      commandRecoveredWithinSamePass: false,
+      seenKeys: new Set<string>([first?.key ?? ""]),
+    })
+
+    expect(second).toBeNull()
   })
 
   it("returns a delivery recovery candidate for missing direct artifact delivery", () => {
@@ -83,7 +115,13 @@ describe("run recovery helpers", () => {
   })
 
   it("skips generic execution recovery when the same failure key was already used", () => {
-    const seenKeys = new Set<string>(["create_schedule:timeout while registering schedule"])
+    const seenKeys = new Set<string>([
+      buildRecoveryKey({
+        action: "execution_failure",
+        toolName: "create_schedule",
+        error: "timeout while registering schedule",
+      }),
+    ])
     const recovery = selectGenericExecutionRecovery({
       executionRecovery: {
         summary: "create_schedule 실패 후 다른 방법을 찾습니다.",
@@ -94,6 +132,23 @@ describe("run recovery helpers", () => {
     })
 
     expect(recovery).toBeNull()
+  })
+
+  it("keeps direct artifact delivery recovery keys channel-specific", () => {
+    const webuiRecovery = selectDirectArtifactDeliveryRecovery({
+      source: "webui",
+      successfulFileDeliveries: [],
+      seenKeys: new Set<string>(),
+    })
+    const slackRecovery = selectDirectArtifactDeliveryRecovery({
+      source: "slack",
+      successfulFileDeliveries: [],
+      seenKeys: new Set<string>([webuiRecovery?.key ?? ""]),
+    })
+
+    expect(webuiRecovery?.key).toContain("channel=webui")
+    expect(slackRecovery?.key).toContain("channel=slack")
+    expect(slackRecovery).not.toBeNull()
   })
 
   it("describes recovery alternatives and includes schedule alternatives for schedule-like failures", () => {

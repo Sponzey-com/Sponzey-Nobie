@@ -17,6 +17,7 @@ vi.mock("../packages/core/src/db/index.js", () => ({
   getMessagesForRequestGroupWithRunMeta: vi.fn(() => []),
   getMessagesForRun: (...args: unknown[]) => getMessagesForRunMock(...args),
   getPromptSourceStates: vi.fn(() => []),
+  insertDiagnosticEvent: vi.fn(),
   insertMemoryItem: vi.fn(),
   markMessagesCompressed: vi.fn(),
   updateRunPromptSourceSnapshot: vi.fn(),

@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { homedir } from "node:os";
-import { insertMessage, upsertTaskContinuity } from "../db/index.js";
+import { basename } from "node:path";
+import { recordArtifactMetadata } from "../artifacts/lifecycle.js";
+import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertDiagnosticEvent, insertMessage, upsertTaskContinuity } from "../db/index.js";
 import { eventBus } from "../events/index.js";
+import { sanitizeUserFacingError } from "./error-sanitizer.js";
 import { getRootRun } from "./store.js";
 const defaultAssistantTextDeliveryDependencies = {
     now: () => Date.now(),
@@ -12,6 +15,122 @@ const defaultAssistantTextDeliveryDependencies = {
     emitEnd: (payload) => eventBus.emit("agent.end", payload),
     writeReplyLog: (source, text) => logAssistantReply(source, text),
 };
+const MAX_COMPLETED_ARTIFACT_DELIVERY_KEYS = 2_000;
+const activeArtifactDeliveryLocks = new Map();
+const completedArtifactDeliveryKeys = new Map();
+export function buildArtifactDeliveryKey(params) {
+    return `${params.runId}:${params.channel}:${params.filePath}`;
+}
+function rememberCompletedArtifactDelivery(key) {
+    completedArtifactDeliveryKeys.set(key, Date.now());
+    if (completedArtifactDeliveryKeys.size <= MAX_COMPLETED_ARTIFACT_DELIVERY_KEYS)
+        return;
+    const oldestKey = completedArtifactDeliveryKeys.keys().next().value;
+    if (oldestKey)
+        completedArtifactDeliveryKeys.delete(oldestKey);
+}
+export async function deliverArtifactOnce(params) {
+    const runId = params.runId?.trim();
+    if (!runId)
+        return params.task();
+    const key = buildArtifactDeliveryKey({
+        runId,
+        channel: params.channel,
+        filePath: params.filePath,
+    });
+    if (!params.force && completedArtifactDeliveryKeys.has(key))
+        return undefined;
+    const run = getRootRun(runId);
+    if (!params.force && run && hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
+        rememberCompletedArtifactDelivery(key);
+        return undefined;
+    }
+    if (!params.force && run) {
+        const continuity = getTaskContinuity(run.requestGroupId);
+        const deliveryReceipts = [
+            `${params.channel}:${params.filePath}`,
+            `${params.channel}:${displayHomePath(params.filePath)}`,
+        ];
+        if (continuity?.lastDeliveryReceipt && deliveryReceipts.includes(continuity.lastDeliveryReceipt)) {
+            rememberCompletedArtifactDelivery(key);
+            return undefined;
+        }
+    }
+    const active = activeArtifactDeliveryLocks.get(key);
+    if (active) {
+        await active.catch(() => undefined);
+        return undefined;
+    }
+    const delivery = params.task()
+        .then((result) => {
+        if (result !== undefined) {
+            rememberCompletedArtifactDelivery(key);
+            if (run) {
+                try {
+                    recordArtifactMetadata({
+                        sourceRunId: runId,
+                        requestGroupId: run.requestGroupId,
+                        ownerChannel: params.channel,
+                        artifactPath: params.filePath,
+                        retentionPolicy: params.retentionPolicy ?? "standard",
+                        metadata: {
+                            dedupeKey: key,
+                            ...(params.force ? { resend: true } : {}),
+                            ...(params.forceReason ? { forceReason: params.forceReason } : {}),
+                        },
+                        ...(params.channelTarget ? { channelTarget: params.channelTarget } : {}),
+                        ...(params.mimeType ? { mimeType: params.mimeType } : {}),
+                        ...(params.sizeBytes !== undefined ? { sizeBytes: params.sizeBytes } : {}),
+                    });
+                    insertArtifactReceipt({
+                        runId,
+                        requestGroupId: run.requestGroupId,
+                        channel: params.channel,
+                        artifactPath: params.filePath,
+                        deliveredAt: Date.now(),
+                        deliveryReceipt: {
+                            dedupeKey: key,
+                            ...(params.channelTarget ? { channelTarget: params.channelTarget } : {}),
+                            ...(params.force ? { resend: true } : {}),
+                            ...(params.forceReason ? { forceReason: params.forceReason } : {}),
+                        },
+                        ...(params.mimeType ? { mimeType: params.mimeType } : {}),
+                        ...(params.sizeBytes !== undefined ? { sizeBytes: params.sizeBytes } : {}),
+                    });
+                    if (params.force) {
+                        insertDiagnosticEvent({
+                            runId,
+                            requestGroupId: run.requestGroupId,
+                            kind: "artifact_resend",
+                            summary: `artifact resent to ${params.channel}`,
+                            detail: {
+                                artifactPath: params.filePath,
+                                channel: params.channel,
+                                ...(params.channelTarget ? { channelTarget: params.channelTarget } : {}),
+                                ...(params.forceReason ? { forceReason: params.forceReason } : {}),
+                            },
+                        });
+                    }
+                }
+                catch {
+                    // Delivery already succeeded; persistence is best-effort for restart dedupe.
+                }
+            }
+        }
+        return result;
+    })
+        .finally(() => {
+        if (activeArtifactDeliveryLocks.get(key) === delivery) {
+            activeArtifactDeliveryLocks.delete(key);
+        }
+    });
+    activeArtifactDeliveryLocks.set(key, delivery);
+    return delivery;
+}
+export function resetArtifactDeliveryDedupeForTest() {
+    activeArtifactDeliveryLocks.clear();
+    completedArtifactDeliveryKeys.clear();
+}
 export function displayHomePath(value) {
     const home = homedir();
     return value.startsWith(home) ? value.replace(home, "~") : value;
@@ -49,7 +168,17 @@ export function buildSuccessfulDeliverySummary(deliveries) {
             : last.channel === "slack"
                 ? "Slack"
                 : "채널";
-    return `${channelLabel} 파일 전달 완료: ${displayHomePath(last.filePath)}`;
+    return `${channelLabel} 파일 전달 완료: ${describeArtifactForUser(last)}`;
+}
+export function describeArtifactForUser(delivery) {
+    return delivery.url?.trim() || basename(delivery.filePath);
+}
+export async function resendArtifact(params) {
+    return deliverArtifactOnce({
+        ...params,
+        force: true,
+        forceReason: params.forceReason ?? "explicit_resend",
+    });
 }
 export function resolveDeliveryOutcome(params) {
     const hasSuccessfulArtifactDelivery = params.deliveries.length > 0;
@@ -156,7 +285,9 @@ export async function deliverChunk(params) {
         return (await params.onChunk(params.chunk)) ?? undefined;
     }
     catch (error) {
-        const message = `runId=${params.runId} chunk delivery failed: ${error instanceof Error ? error.message : String(error)}`;
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`);
+        const message = `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage}`;
         params.onError?.(message);
         return undefined;
     }
@@ -181,18 +312,18 @@ export function applyChunkDeliveryReceipt(params) {
     for (const delivery of params.receipt?.artifactDeliveries ?? []) {
         const alreadyRecorded = params.successfulFileDeliveries.some((existing) => existing.channel === delivery.channel
             && existing.filePath === delivery.filePath
-            && existing.messageId === delivery.messageId);
+            && existing.toolName === delivery.toolName);
         if (alreadyRecorded)
             continue;
         params.successfulFileDeliveries.push(delivery);
         if (delivery.channel === "telegram") {
-            params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${displayHomePath(delivery.filePath)}`);
+            params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${describeArtifactForUser(delivery)}`);
         }
         else if (delivery.channel === "slack") {
-            params.appendEvent(params.runId, `Slack 파일 전달 완료: ${displayHomePath(delivery.filePath)}`);
+            params.appendEvent(params.runId, `Slack 파일 전달 완료: ${describeArtifactForUser(delivery)}`);
         }
         else {
-            params.appendEvent(params.runId, `WebUI 파일 전달 완료: ${displayHomePath(delivery.filePath)}`);
+            params.appendEvent(params.runId, `WebUI 파일 전달 완료: ${describeArtifactForUser(delivery)}`);
         }
         rememberDeliveryContinuity(params.runId, {
             lastToolReceipt: `${delivery.toolName}:${delivery.channel}:${displayHomePath(delivery.filePath)}`,

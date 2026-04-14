@@ -1,5 +1,5 @@
 import { emitAssistantTextDelivery, resolveAssistantTextDeliveryOutcome, } from "./delivery.js";
-import { describeAssistantTextDeliveryFailure, summarizeRawErrorForUser } from "./recovery.js";
+import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser } from "./recovery.js";
 export function markRunCompleted(params) {
     const executingSummary = params.executingSummary ?? params.text ?? "응답 생성을 마쳤습니다.";
     const completedSummary = params.completedSummary ?? params.text ?? "실행을 완료했습니다.";
@@ -117,6 +117,7 @@ export function buildAwaitingUserMessage(params) {
         remainingItems.length > 0 ? `남은 항목:\n- ${remainingItems.join("\n- ")}` : "",
         params.reason?.trim() ? `중단 사유: ${params.reason.trim()}` : "",
         summarizeRawErrorForUser(params.rawMessage) ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}` : "",
+        summarizeRawErrorActionHintForUser(params.rawMessage) ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}` : "",
     ].filter(Boolean);
     return lines.join("\n\n");
 }

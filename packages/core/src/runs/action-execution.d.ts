@@ -30,6 +30,7 @@ export type ScheduleActionReceipt = {
     task: string;
     cron: string;
     scheduleText: string;
+    timezone?: string;
     source: "webui" | "cli" | "telegram" | "slack";
     targetSessionId?: string;
     originRunId: string;
@@ -78,6 +79,7 @@ export interface ScheduleActionDependencies {
         title: string;
         task: string;
         cron: string;
+        timezone?: string;
         source: "webui" | "cli" | "telegram" | "slack";
         sessionId: string;
         originRunId: string;

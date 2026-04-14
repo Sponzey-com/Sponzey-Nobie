@@ -3,6 +3,7 @@ import { getSlackRuntimeStatus } from "../channels/slack/runtime.js";
 import { getTelegramRuntimeStatus } from "../channels/telegram/runtime.js";
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js";
 const YEONJANG_APPROVAL_TOOL_PATTERN = /^(screen_capture|screen_find_text|mouse_|keyboard_|shell_exec|app_launch|process_kill|window_|yeonjang_)/u;
+const SCHEDULE_MEMORY_REQUEST_PATTERN = /(?:예약|스케줄|일정|알림|schedule|scheduled|cron|reminder|alarm)/iu;
 function normalize(value) {
     return value?.trim().toLowerCase() ?? "";
 }
@@ -27,6 +28,18 @@ function requiresYeonjangRuntime(input) {
         input.workerRuntime?.label,
     ].filter(Boolean).join(" ").toLowerCase();
     return targetText.includes("yeonjang");
+}
+function resolveContextPlanMemoryScopes(input) {
+    const scopes = new Set(["short-term", "flash-feedback"]);
+    if (input.executionSemantics)
+        scopes.add("task");
+    if (input.executionSemantics?.artifactDelivery === "direct")
+        scopes.add("artifact");
+    if (input.message.trim().startsWith("[Scheduled Task]") || SCHEDULE_MEMORY_REQUEST_PATTERN.test(input.message)) {
+        scopes.add("schedule");
+    }
+    scopes.add("long-term");
+    return [...scopes];
 }
 function hasConnectedYeonjangSnapshot() {
     return getMqttExtensionSnapshots().some((snapshot) => normalize(snapshot.state) !== "offline");
@@ -87,5 +100,36 @@ export function resolveStartPreflightFailure(input) {
     return resolveChannelFailure(input)
         ?? resolveAiFailure(input)
         ?? resolveYeonjangFailure(input);
+}
+export function resolveStartContextPlan(input) {
+    const requiresApproval = Boolean(input.executionSemantics?.approvalRequired);
+    const requiresYeonjang = requiresYeonjangRuntime(input);
+    return {
+        promptSources: [
+            "definitions",
+            "identity",
+            "user",
+            "soul",
+            "planner",
+            "memory_policy",
+            "tool_policy",
+            "recovery_policy",
+            "completion_policy",
+            "output_policy",
+            `channel:${input.source}`,
+        ],
+        memoryScopes: resolveContextPlanMemoryScopes(input),
+        retrieval: {
+            ftsFirst: true,
+            vectorOptional: true,
+            maxSnippets: 8,
+        },
+        toolPolicy: {
+            toolsEnabled: input.toolsEnabled !== false,
+            requiresApproval,
+            requiresYeonjang,
+        },
+        preflightFailure: resolveStartPreflightFailure(input),
+    };
 }
 //# sourceMappingURL=preflight.js.map

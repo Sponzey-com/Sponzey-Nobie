@@ -1,6 +1,7 @@
 import { displayHomePath } from "./delivery.js"
 import type { AssistantTextDeliveryOutcome, DeliverySource } from "./delivery.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
+import type { SanitizedErrorKind } from "./error-sanitizer.js"
 
 export interface FailedCommandTool {
   toolName: string
@@ -40,12 +41,46 @@ export interface CommandFailureRecoveryCandidate extends RecoveryCandidateBase {
 
 export interface GenericExecutionRecoveryCandidate extends RecoveryCandidateBase {}
 
+export interface RecoveryKeyParts {
+  action: string
+  error: string
+  toolName?: string | undefined
+  targetId?: string | undefined
+  channel?: DeliverySource | string | undefined
+}
+
+export function buildRecoveryKey(parts: RecoveryKeyParts): string {
+  const errorKind: SanitizedErrorKind = sanitizeUserFacingError(parts.error).kind
+  return [
+    "recovery",
+    normalizeRecoveryKeyPart(parts.action || "unknown_action"),
+    `target=${normalizeRecoveryKeyPart(parts.targetId ?? "none")}`,
+    `channel=${normalizeRecoveryKeyPart(parts.channel ?? "none")}`,
+    `tool=${normalizeRecoveryKeyPart(parts.toolName ?? "none")}`,
+    `error=${normalizeRecoveryKeyPart(errorKind)}`,
+  ].join("::")
+}
+
+function normalizeRecoveryKeyPart(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96)
+  return normalized || "none"
+}
+
 export function isCommandFailureRecoveryTool(toolName: string): boolean {
   return toolName === "shell_exec" || toolName === "app_launch" || toolName === "process_kill"
 }
 
 function normalizeCommandFailureKey(toolName: string, output: string): string {
-  return `${toolName}:${output.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240)}`
+  return buildRecoveryKey({
+    action: "command_failure",
+    toolName,
+    error: output,
+  })
 }
 
 export function describeCommandFailureReason(output: string): string {
@@ -93,8 +128,11 @@ export function selectCommandFailureRecovery(params: {
 
 function normalizeExecutionRecoveryKey(toolNames: string[], reason: string): string {
   const normalizedTools = [...new Set(toolNames)].sort().join(",")
-  const normalizedReason = reason.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240)
-  return `${normalizedTools}:${normalizedReason}`
+  return buildRecoveryKey({
+    action: "execution_failure",
+    toolName: normalizedTools || "none",
+    error: reason,
+  })
 }
 
 export function selectGenericExecutionRecovery(params: {
@@ -158,7 +196,12 @@ export function selectDirectArtifactDeliveryRecovery(params: {
     .slice(-3)
     .map((delivery) => `${delivery.channel}:${displayHomePath(delivery.filePath)}`)
     .join("|")
-  const key = `direct_artifact_delivery::${deliveryFingerprint || "missing"}`
+  const key = buildRecoveryKey({
+    action: "direct_artifact_delivery",
+    channel: params.source,
+    toolName: "artifact_delivery",
+    error: deliveryFingerprint || "missing artifact delivery",
+  })
   if (params.seenKeys.has(key)) return null
 
   return {
@@ -260,6 +303,10 @@ export function buildExecutionRecoveryPrompt(params: {
 
 export function summarizeRawErrorForUser(message: string | undefined): string {
   return message?.trim() ? sanitizeUserFacingError(message).userMessage : ""
+}
+
+export function summarizeRawErrorActionHintForUser(message: string | undefined): string {
+  return message?.trim() ? (sanitizeUserFacingError(message).actionHint ?? "") : ""
 }
 
 export function buildAiErrorRecoveryPrompt(params: {

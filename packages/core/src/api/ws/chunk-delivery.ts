@@ -1,8 +1,8 @@
-import { basename, relative, sep } from "node:path"
+import { basename } from "node:path"
 import { eventBus } from "../../events/index.js"
-import { PATHS } from "../../config/index.js"
 import type { AgentChunk } from "../../agent/index.js"
-import type { ChunkDeliveryReceipt, RunChunkDeliveryHandler } from "../../runs/delivery.js"
+import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
+import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 
@@ -15,20 +15,6 @@ function isWebUiArtifactDeliveryDetails(value: unknown): value is ArtifactDelive
     && typeof candidate.filePath === "string"
     && typeof candidate.size === "number"
     && typeof candidate.source === "string"
-}
-
-function buildWebUiArtifactUrl(filePath: string): string | null {
-  const artifactsRoot = `${PATHS.stateDir}${sep}artifacts`
-  const resolvedRelative = relative(artifactsRoot, filePath)
-  if (!resolvedRelative || resolvedRelative.startsWith("..") || resolvedRelative.includes(`..${sep}`)) {
-    return null
-  }
-
-  const encodedPath = resolvedRelative
-    .split(sep)
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")
-  return `/api/artifacts/${encodedPath}`
 }
 
 export function createWebUiChunkDeliveryHandler(params: {
@@ -48,27 +34,54 @@ export function createWebUiChunkDeliveryHandler(params: {
     if (chunk.type === "tool_end") {
       const isolatedToolResponse = decideIsolatedToolResponse(chunk)
       if (isolatedToolResponse.kind === "artifact" && chunk.success && isWebUiArtifactDeliveryDetails(chunk.details)) {
-        const artifactUrl = buildWebUiArtifactUrl(chunk.details.filePath)
-        if (!artifactUrl) return
-
-        eventBus.emit("agent.artifact", {
-          sessionId: params.sessionId,
+        const details = chunk.details
+        const receipt = await deliverArtifactOnce({
           runId: params.runId,
-          url: artifactUrl,
-          filePath: chunk.details.filePath,
-          fileName: basename(chunk.details.filePath),
-          ...(chunk.details.mimeType ? { mimeType: chunk.details.mimeType } : {}),
-          ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
+          channel: "webui",
+          filePath: details.filePath,
+          channelTarget: params.sessionId,
+          sizeBytes: details.size,
+          ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+          task: async () => {
+            const artifact = buildArtifactAccessDescriptor({
+              filePath: details.filePath,
+              sizeBytes: details.size,
+              ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+            })
+            if (!artifact.ok || !artifact.url) return undefined
+
+            eventBus.emit("agent.artifact", {
+              sessionId: params.sessionId,
+              runId: params.runId,
+              url: artifact.url,
+              ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+              ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+              previewable: artifact.previewable,
+              filePath: details.filePath,
+              fileName: basename(artifact.filePath),
+              mimeType: artifact.mimeType,
+              ...(details.caption ? { caption: details.caption } : {}),
+            })
+            return {
+              artifactDeliveries: [{
+                toolName: chunk.toolName,
+                channel: "webui" as const,
+                filePath: details.filePath,
+                url: artifact.url,
+                ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+                ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+                previewable: artifact.previewable,
+                mimeType: artifact.mimeType,
+                sizeBytes: details.size,
+                ...(details.caption ? { caption: details.caption } : {}),
+              }],
+            }
+          },
         })
-        toolOwnedResponseActive = true
-        bufferedText = ""
-        return {
-          artifactDeliveries: [{
-            toolName: chunk.toolName,
-            channel: "webui",
-            filePath: chunk.details.filePath,
-            ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
-          }],
+        if (receipt) {
+          toolOwnedResponseActive = true
+          bufferedText = ""
+          return receipt
         }
       }
 

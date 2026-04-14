@@ -54,6 +54,7 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 ## Boundary Rules
 
 - Prompt sources contain policy and definitions, not secrets or runtime tokens.
+- The `prompts/` prompt source registry is the primary source for the system prompt. Legacy `NOBIE.md`, `WIZBY.md`, and `HOWIE.md` do not replace the registry; when present, they are appended afterward as project-memory context only.
 - User facts are confirmed only when directly stated or provided by trusted settings.
 - Local execution extension connection state and capability are judged by runtime preflight.
 - Completion prioritizes receipts and actual results over text claims.

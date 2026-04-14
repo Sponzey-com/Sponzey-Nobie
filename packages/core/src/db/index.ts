@@ -1,8 +1,8 @@
-import { mkdirSync } from "node:fs"
-import { dirname } from "node:path"
+import { existsSync, mkdirSync } from "node:fs"
+import { dirname, join } from "node:path"
 import BetterSqlite3 from "better-sqlite3"
 import { PATHS } from "../config/index.js"
-import { runMigrations } from "./migrations.js"
+import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js"
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js"
 
 let _db: BetterSqlite3.Database | null = null
@@ -12,11 +12,13 @@ export function getDb(): BetterSqlite3.Database {
 
   mkdirSync(dirname(PATHS.dbFile), { recursive: true })
 
+  const dbExisted = existsSync(PATHS.dbFile)
   _db = new BetterSqlite3(PATHS.dbFile)
   _db.pragma("journal_mode = WAL")
   _db.pragma("foreign_keys = ON")
   _db.pragma("synchronous = NORMAL")
 
+  if (dbExisted) createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"))
   runMigrations(_db)
   return _db
 }
@@ -127,6 +129,40 @@ export interface TaskContinuitySnapshot {
   recoveryBudget?: string
   status?: string
   updatedAt: number
+}
+
+export type DbArtifactRetentionPolicy = "ephemeral" | "standard" | "permanent"
+
+export interface DbArtifactMetadata {
+  id: string
+  source_run_id: string | null
+  request_group_id: string | null
+  owner_channel: string
+  channel_target: string | null
+  artifact_path: string
+  mime_type: string
+  size_bytes: number | null
+  retention_policy: DbArtifactRetentionPolicy
+  expires_at: number | null
+  metadata_json: string | null
+  created_at: number
+  updated_at: number
+  deleted_at: number | null
+}
+
+export interface ArtifactMetadataInput {
+  artifactPath: string
+  ownerChannel: string
+  channelTarget?: string | null
+  sourceRunId?: string | null
+  requestGroupId?: string | null
+  mimeType?: string
+  sizeBytes?: number
+  retentionPolicy?: DbArtifactRetentionPolicy
+  expiresAt?: number | null
+  metadata?: Record<string, unknown>
+  createdAt?: number
+  updatedAt?: number
 }
 
 interface PromptSourceStateRow {
@@ -365,14 +401,23 @@ export function getPromptSourceStates(): PromptSourceState[] {
 
 // ── Memory Items ───────────────────────────────────────────────────────────
 
-export type MemoryScope = "global" | "session" | "task" | "artifact" | "diagnostic"
+export type MemoryScope =
+  | "global"
+  | "session"
+  | "task"
+  | "artifact"
+  | "diagnostic"
+  | "long-term"
+  | "short-term"
+  | "schedule"
+  | "flash-feedback"
 
 export interface DbMemoryItem {
   id: string
   content: string
   tags: string | null           // JSON array
   source: string | null
-  memory_scope: "global" | "session" | "task" | null
+  memory_scope: MemoryScope | null
   session_id: string | null
   run_id: string | null
   request_group_id: string | null
@@ -408,6 +453,23 @@ export interface DbMemoryChunk {
   content: string
   checksum: string
   metadata_json: string | null
+  created_at: number
+  updated_at: number
+}
+
+export type MemoryWritebackStatus = "pending" | "writing" | "failed" | "completed" | "discarded"
+
+export interface DbMemoryWritebackCandidate {
+  id: string
+  scope: MemoryScope
+  owner_id: string
+  source_type: string
+  content: string
+  metadata_json: string | null
+  status: MemoryWritebackStatus
+  retry_count: number
+  last_error: string | null
+  run_id: string | null
   created_at: number
   updated_at: number
 }
@@ -448,12 +510,14 @@ export interface MemorySearchFilters {
   sessionId?: string
   runId?: string
   requestGroupId?: string
+  scheduleId?: string
+  includeSchedule?: boolean
   includeArtifact?: boolean
   includeDiagnostic?: boolean
 }
 
 function resolveMemoryOwnerId(scope: MemoryScope, ownerId: string | undefined): string {
-  if (scope === "global") return ownerId?.trim() || "global"
+  if (scope === "global" || scope === "long-term") return ownerId?.trim() || "global"
   const normalized = ownerId?.trim()
   if (!normalized) {
     throw new Error(`${scope} memory requires an owner id`)
@@ -625,6 +689,226 @@ export function recordMemoryAccessLog(input: {
   return id
 }
 
+export function insertFlashFeedback(input: {
+  sessionId: string
+  content: string
+  runId?: string
+  requestGroupId?: string
+  severity?: "low" | "normal" | "high"
+  ttlMs?: number
+  metadata?: Record<string, unknown>
+}): string {
+  const sessionId = input.sessionId.trim()
+  if (!sessionId) throw new Error("flash-feedback requires a session id")
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  const ttlMs = Math.max(1, input.ttlMs ?? 30 * 60 * 1000)
+  getDb()
+    .prepare(
+      `INSERT INTO flash_feedback
+       (id, session_id, run_id, request_group_id, content, severity, expires_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      sessionId,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      input.content,
+      input.severity ?? "normal",
+      now + ttlMs,
+      toJsonOrNull(input.metadata),
+      now,
+      now,
+    )
+  return id
+}
+
+export function upsertScheduleMemoryEntry(input: {
+  scheduleId: string
+  prompt: string
+  sessionId?: string
+  requestGroupId?: string
+  title?: string
+  cronExpression?: string
+  nextRunAt?: number
+  enabled?: boolean
+  metadata?: Record<string, unknown>
+}): string {
+  const scheduleId = input.scheduleId.trim()
+  if (!scheduleId) throw new Error("schedule memory requires a schedule id")
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  getDb()
+    .prepare(
+      `INSERT INTO schedule_entries
+       (id, schedule_id, session_id, request_group_id, title, prompt, cron_expression, next_run_at, enabled, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(schedule_id) DO UPDATE SET
+         session_id = excluded.session_id,
+         request_group_id = excluded.request_group_id,
+         title = excluded.title,
+         prompt = excluded.prompt,
+         cron_expression = excluded.cron_expression,
+         next_run_at = excluded.next_run_at,
+         enabled = excluded.enabled,
+         metadata_json = excluded.metadata_json,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      id,
+      scheduleId,
+      input.sessionId ?? null,
+      input.requestGroupId ?? null,
+      input.title ?? null,
+      input.prompt,
+      input.cronExpression ?? null,
+      input.nextRunAt ?? null,
+      input.enabled === false ? 0 : 1,
+      toJsonOrNull(input.metadata),
+      now,
+      now,
+    )
+  const row = getDb()
+    .prepare<[string], { id: string }>(`SELECT id FROM schedule_entries WHERE schedule_id = ? LIMIT 1`)
+    .get(scheduleId)
+  return row?.id ?? id
+}
+
+export function insertArtifactReceipt(input: {
+  channel: string
+  artifactPath: string
+  runId?: string
+  requestGroupId?: string
+  mimeType?: string
+  sizeBytes?: number
+  deliveryReceipt?: Record<string, unknown>
+  deliveredAt?: number
+}): string {
+  const id = crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO artifact_receipts
+       (id, run_id, request_group_id, channel, artifact_path, mime_type, size_bytes, delivery_receipt_json, delivered_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      input.channel,
+      input.artifactPath,
+      input.mimeType ?? null,
+      input.sizeBytes ?? null,
+      toJsonOrNull(input.deliveryReceipt),
+      input.deliveredAt ?? null,
+      Date.now(),
+    )
+  return id
+}
+
+export function hasArtifactReceipt(input: {
+  runId: string
+  channel: string
+  artifactPath: string
+}): boolean {
+  const row = getDb()
+    .prepare<[string, string, string], { id: string }>(
+      `SELECT id FROM artifact_receipts
+       WHERE run_id = ? AND channel = ? AND artifact_path = ?
+       LIMIT 1`,
+    )
+    .get(input.runId, input.channel, input.artifactPath)
+  return Boolean(row)
+}
+
+export function insertArtifactMetadata(input: ArtifactMetadataInput): string {
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  getDb()
+    .prepare(
+      `INSERT INTO artifacts
+       (id, source_run_id, request_group_id, owner_channel, channel_target, artifact_path, mime_type, size_bytes,
+        retention_policy, expires_at, metadata_json, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .run(
+      id,
+      input.sourceRunId ?? null,
+      input.requestGroupId ?? null,
+      input.ownerChannel,
+      input.channelTarget ?? null,
+      input.artifactPath,
+      input.mimeType ?? "application/octet-stream",
+      input.sizeBytes ?? null,
+      input.retentionPolicy ?? "standard",
+      input.expiresAt ?? null,
+      toJsonOrNull(input.metadata),
+      input.createdAt ?? now,
+      input.updatedAt ?? input.createdAt ?? now,
+    )
+  return id
+}
+
+export function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifactMetadata | undefined {
+  return getDb()
+    .prepare<[string], DbArtifactMetadata>(
+      `SELECT * FROM artifacts
+       WHERE artifact_path = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .get(artifactPath)
+}
+
+export function listExpiredArtifactMetadata(now: number = Date.now()): DbArtifactMetadata[] {
+  return getDb()
+    .prepare<[number], DbArtifactMetadata>(
+      `SELECT * FROM artifacts
+       WHERE expires_at IS NOT NULL
+         AND expires_at <= ?
+         AND deleted_at IS NULL
+       ORDER BY expires_at ASC`,
+    )
+    .all(now)
+}
+
+export function markArtifactDeleted(id: string, deletedAt: number = Date.now()): void {
+  getDb()
+    .prepare(`UPDATE artifacts SET deleted_at = ?, updated_at = ? WHERE id = ?`)
+    .run(deletedAt, deletedAt, id)
+}
+
+export function insertDiagnosticEvent(input: {
+  kind: string
+  summary: string
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  recoveryKey?: string
+  detail?: Record<string, unknown>
+}): string {
+  const id = crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO diagnostic_events
+       (id, run_id, session_id, request_group_id, recovery_key, kind, summary, detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId ?? null,
+      input.sessionId ?? null,
+      input.requestGroupId ?? null,
+      input.recoveryKey ?? null,
+      input.kind,
+      input.summary,
+      toJsonOrNull(input.detail),
+      Date.now(),
+    )
+  return id
+}
+
 export function enqueueMemoryWritebackCandidate(input: {
   scope: MemoryScope
   ownerId?: string
@@ -632,15 +916,18 @@ export function enqueueMemoryWritebackCandidate(input: {
   content: string
   metadata?: Record<string, unknown>
   runId?: string
+  status?: MemoryWritebackStatus
+  lastError?: string
 }): string {
   const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId)
   const id = crypto.randomUUID()
   const now = Date.now()
+  const status = input.status ?? "pending"
   getDb()
     .prepare(
       `INSERT INTO memory_writeback_queue
        (id, scope, owner_id, source_type, content, metadata_json, status, retry_count, last_error, run_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -649,11 +936,61 @@ export function enqueueMemoryWritebackCandidate(input: {
       input.sourceType,
       input.content,
       toJsonOrNull(input.metadata),
+      status,
+      input.lastError ?? null,
       input.runId ?? null,
       now,
       now,
     )
   return id
+}
+
+export function listMemoryWritebackCandidates(input: {
+  status?: MemoryWritebackStatus | "all"
+  limit?: number
+} = {}): DbMemoryWritebackCandidate[] {
+  const status = input.status ?? "pending"
+  const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)))
+  if (status === "all") {
+    return getDb()
+      .prepare<[number], DbMemoryWritebackCandidate>(
+        `SELECT * FROM memory_writeback_queue ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(limit)
+  }
+  return getDb()
+    .prepare<[MemoryWritebackStatus, number], DbMemoryWritebackCandidate>(
+      `SELECT * FROM memory_writeback_queue WHERE status = ? ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(status, limit)
+}
+
+export function getMemoryWritebackCandidate(id: string): DbMemoryWritebackCandidate | undefined {
+  return getDb()
+    .prepare<[string], DbMemoryWritebackCandidate>(`SELECT * FROM memory_writeback_queue WHERE id = ? LIMIT 1`)
+    .get(id)
+}
+
+export function updateMemoryWritebackCandidate(input: {
+  id: string
+  status: MemoryWritebackStatus
+  content?: string
+  metadata?: Record<string, unknown>
+  lastError?: string | null
+}): DbMemoryWritebackCandidate | undefined {
+  const current = getMemoryWritebackCandidate(input.id)
+  if (!current) return undefined
+  const nextContent = input.content ?? current.content
+  const nextMetadata = input.metadata !== undefined ? toJsonOrNull(input.metadata) : current.metadata_json
+  const nextLastError = Object.prototype.hasOwnProperty.call(input, "lastError") ? input.lastError ?? null : current.last_error
+  getDb()
+    .prepare(
+      `UPDATE memory_writeback_queue
+       SET status = ?, content = ?, metadata_json = ?, last_error = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(input.status, nextContent, nextMetadata, nextLastError, Date.now(), input.id)
+  return getMemoryWritebackCandidate(input.id)
 }
 
 export function upsertSessionSnapshot(input: {
@@ -794,15 +1131,21 @@ export function listTaskContinuityForLineages(lineageRootRunIds: string[]): Task
 export function insertMemoryItem(item: {
   content: string
   tags?: string[]
-  scope?: "global" | "session" | "task"
+  scope?: MemoryScope
   sessionId?: string
   runId?: string
   requestGroupId?: string
   type?: string
   importance?: string
 }): string {
+  if ((item.scope === "session" || item.scope === "short-term" || item.scope === "flash-feedback") && !item.sessionId) {
+    throw new Error(`${item.scope} memory requires a session id`)
+  }
   if (item.scope === "task" && !item.runId && !item.requestGroupId) {
     throw new Error("task memory requires a runId or requestGroupId")
+  }
+  if (item.scope === "schedule" && !item.requestGroupId) {
+    throw new Error("schedule memory requires a schedule id")
   }
   const id = crypto.randomUUID()
   const now = Date.now()
@@ -836,13 +1179,15 @@ function buildMemoryScopeWhere(filters?: {
   sessionId?: string
   runId?: string
   requestGroupId?: string
+  scheduleId?: string
+  includeSchedule?: boolean
 }, alias = "m"): { clause: string; values: string[] } {
   const prefix = alias ? `${alias}.` : ""
-  const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`]
+  const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope = 'long-term'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`]
   const values: string[] = []
 
   if (filters?.sessionId) {
-    clauses.push(`(${prefix}memory_scope = 'session' AND ${prefix}session_id = ?)`)
+    clauses.push(`(${prefix}memory_scope IN ('session', 'short-term', 'flash-feedback') AND ${prefix}session_id = ?)`)
     values.push(filters.sessionId)
   }
 
@@ -851,6 +1196,11 @@ function buildMemoryScopeWhere(filters?: {
     const placeholders = taskOwners.map(() => "?").join(", ")
     clauses.push(`(${prefix}memory_scope = 'task' AND (${prefix}request_group_id IN (${placeholders}) OR ${prefix}run_id IN (${placeholders})))`)
     values.push(...taskOwners, ...taskOwners)
+  }
+
+  if (filters?.includeSchedule && filters.scheduleId) {
+    clauses.push(`(${prefix}memory_scope = 'schedule' AND ${prefix}request_group_id = ?)`)
+    values.push(filters.scheduleId)
   }
 
   return {
@@ -943,6 +1293,7 @@ export interface DbSchedule {
   id: string
   name: string
   cron_expression: string
+  timezone: string | null
   prompt: string
   enabled: number          // 0 | 1
   target_channel: string
@@ -1004,16 +1355,17 @@ export function getSchedulesForSession(sessionId: string, enabledOnly = false): 
     .all(sessionId)
 }
 
-export function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at">): void {
+export function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone"> & { timezone?: string | null }): void {
   getDb()
     .prepare(
-      `INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       s.id,
       s.name,
       s.cron_expression,
+      s.timezone ?? null,
       s.prompt,
       s.enabled,
       s.target_channel,
@@ -1051,6 +1403,38 @@ export function getScheduleRuns(scheduleId: string, limit: number, offset: numbe
       "SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
     )
     .all(scheduleId, limit, offset)
+}
+
+export function listUnfinishedScheduleRuns(limit = 200): DbScheduleRun[] {
+  return getDb()
+    .prepare<[number], DbScheduleRun>(
+      `SELECT * FROM schedule_runs
+       WHERE finished_at IS NULL OR success IS NULL
+       ORDER BY started_at DESC
+       LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(1000, Math.floor(limit))))
+}
+
+export function interruptUnfinishedScheduleRunsOnStartup(input: {
+  finishedAt?: number
+  error?: string
+  limit?: number
+} = {}): DbScheduleRun[] {
+  const rows = listUnfinishedScheduleRuns(input.limit ?? 200)
+  if (!rows.length) return []
+  const finishedAt = input.finishedAt ?? Date.now()
+  const error = input.error ?? "Interrupted by daemon restart; not retried automatically."
+  const update = getDb().prepare<[number, string, string]>(
+    `UPDATE schedule_runs
+     SET finished_at = ?, success = 0, error = COALESCE(error, ?)
+     WHERE id = ? AND (finished_at IS NULL OR success IS NULL)`,
+  )
+  const tx = getDb().transaction(() => {
+    for (const row of rows) update.run(finishedAt, error, row.id)
+  })
+  tx()
+  return rows
 }
 
 export function countScheduleRuns(scheduleId: string): number {

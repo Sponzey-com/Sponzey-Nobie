@@ -17,7 +17,10 @@ export { discoverInstructionChain } from "./instructions/discovery.js";
 export { loadMergedInstructions } from "./instructions/merge.js";
 // Memory
 export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMemories, buildMemoryContext } from "./memory/store.js";
-export { loadNobieMd, initNobieMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/nobie-md.js";
+export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery } from "./memory/evaluation.js";
+export { diagnoseVectorEmbeddingRows } from "./memory/search.js";
+export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js";
+export { loadNobieMd, initNobieMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, dryRunPromptSourceAssembly, buildPromptSourceContentDiff, writePromptSourceWithBackup, rollbackPromptSourceBackup, checkPromptSourceLocaleParity, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/nobie-md.js";
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js";
 export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, VoyageEmbeddingProvider, OpenAIEmbeddingProvider } from "./memory/embedding.js";
 // Plugins
@@ -32,6 +35,9 @@ export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.j
 // Runs
 export { startRootRun } from "./runs/start.js";
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js";
+export { buildIngressDedupeKey } from "./runs/ingress.js";
+export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js";
+export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js";
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
 // API server

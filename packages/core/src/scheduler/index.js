@@ -2,15 +2,16 @@ import { getSchedules, getSchedule, insertScheduleRun, updateScheduleRun } from 
 import { runAgent } from "../agent/index.js";
 import { eventBus } from "../events/index.js";
 import { createLogger } from "../logger/index.js";
-import { getNextRun, isValidCron } from "./cron.js";
+import { getNextRunForTimezone, isValidCron, normalizeScheduleTimezone } from "./cron.js";
+import { getConfig } from "../config/index.js";
 import { getActiveTelegramChannel } from "../channels/telegram/runtime.js";
 import { extractDirectChannelDeliveryText } from "../runs/scheduled.js";
 import { enqueueScheduledDelivery } from "./delivery-queue.js";
 import { resolveScheduleTickDirective } from "./tick-policy.js";
 import { enqueueScheduleExecution, hasScheduleExecutionQueue, listScheduleExecutionQueueIds, } from "./queueing.js";
 import { buildScheduleRunCompleteEvent, buildScheduleRunFailedEvent, buildScheduleRunStartEvent, } from "./lifecycle.js";
+import { computeScheduleRetryDelayMs, normalizeScheduleMaxRetries } from "./retry.js";
 const log = createLogger("scheduler");
-const RETRY_DELAY_MS = 5_000;
 class Scheduler {
     timer = null;
     start() {
@@ -40,7 +41,7 @@ class Scheduler {
                 continue;
             try {
                 const base = s.last_run_at ? new Date(s.last_run_at) : new Date(s.created_at);
-                const next = getNextRun(s.cron_expression, base);
+                const next = getNextRunForTimezone(s.cron_expression, base, resolveScheduleTimezone(s));
                 nextRuns.push({ scheduleId: s.id, name: s.name, nextRunAt: next.getTime() });
             }
             catch { /* skip */ }
@@ -62,7 +63,7 @@ class Scheduler {
                 nowMs: now,
                 queueActive: hasScheduleExecutionQueue(s.id),
                 isValidCron,
-                getNextRun,
+                getNextRun: getNextRunForTimezone,
             });
             if (directive.kind === "skip") {
                 if (directive.reason === "queue_active") {
@@ -119,7 +120,7 @@ class Scheduler {
             trigger,
         }));
         const finished = (async () => {
-            const maxRetries = schedule.max_retries ?? 3;
+            const maxRetries = normalizeScheduleMaxRetries(schedule.max_retries);
             let attempt = 0;
             let lastError = null;
             let success = false;
@@ -127,7 +128,7 @@ class Scheduler {
             while (attempt <= maxRetries) {
                 if (attempt > 0) {
                     log.info(`Schedule "${schedule.name}" retry ${attempt}/${maxRetries}`);
-                    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+                    await new Promise((r) => setTimeout(r, computeScheduleRetryDelayMs(attempt)));
                 }
                 const result = await this._execute({
                     schedule,
@@ -224,7 +225,12 @@ class Scheduler {
         try {
             for await (const chunk of runAgent({
                 userMessage: schedule.prompt,
-                sessionId: crypto.randomUUID(),
+                sessionId: `schedule:${schedule.id}:${scheduleRunId}`,
+                requestGroupId: scheduleRunId,
+                scheduleId: schedule.id,
+                includeScheduleMemory: true,
+                memorySearchQuery: schedule.prompt,
+                contextMode: "isolated",
                 model: schedule.model ?? undefined,
             })) {
                 if (chunk.type === "text")
@@ -291,6 +297,10 @@ class Scheduler {
             error: errorMsg,
         };
     }
+}
+function resolveScheduleTimezone(schedule) {
+    const config = getConfig();
+    return normalizeScheduleTimezone(schedule.timezone, config.scheduler.timezone || config.profile.timezone);
 }
 export const scheduler = new Scheduler();
 export function startScheduler() { scheduler.start(); }

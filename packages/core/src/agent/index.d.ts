@@ -36,6 +36,8 @@ export interface RunAgentParams {
     sessionId?: string | undefined;
     requestGroupId?: string | undefined;
     runId?: string | undefined;
+    scheduleId?: string | undefined;
+    includeScheduleMemory?: boolean | undefined;
     model?: string | undefined;
     providerId?: string | undefined;
     provider?: AIProvider | undefined;

@@ -26,6 +26,14 @@ export interface CommandFailureRecoveryCandidate extends RecoveryCandidateBase {
 }
 export interface GenericExecutionRecoveryCandidate extends RecoveryCandidateBase {
 }
+export interface RecoveryKeyParts {
+    action: string;
+    error: string;
+    toolName?: string | undefined;
+    targetId?: string | undefined;
+    channel?: DeliverySource | string | undefined;
+}
+export declare function buildRecoveryKey(parts: RecoveryKeyParts): string;
 export declare function isCommandFailureRecoveryTool(toolName: string): boolean;
 export declare function describeCommandFailureReason(output: string): string;
 export declare function selectCommandFailureRecovery(params: {
@@ -82,6 +90,7 @@ export declare function buildExecutionRecoveryPrompt(params: {
     alternatives?: RecoveryAlternative[];
 }): string;
 export declare function summarizeRawErrorForUser(message: string | undefined): string;
+export declare function summarizeRawErrorActionHintForUser(message: string | undefined): string;
 export declare function buildAiErrorRecoveryPrompt(params: {
     originalRequest: string;
     previousResult: string;

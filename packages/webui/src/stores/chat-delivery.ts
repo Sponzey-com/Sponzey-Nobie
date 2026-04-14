@@ -7,6 +7,9 @@ export interface ToolCall {
 
 export interface ArtifactAttachment {
   url: string
+  previewUrl?: string
+  downloadUrl?: string
+  previewable?: boolean
   fileName: string
   filePath?: string
   mimeType?: string
@@ -72,6 +75,7 @@ export function createPendingAssistantTracker() {
       if (!current) return
       const alreadyPresent = current.artifacts.some((item) =>
         item.url === artifact.url
+        && item.downloadUrl === artifact.downloadUrl
         && item.fileName === artifact.fileName
         && item.caption === artifact.caption,
       )

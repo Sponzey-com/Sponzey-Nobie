@@ -6,6 +6,7 @@ import {
 } from "../../db/index.js"
 import {
   cancelRootRun,
+  cleanupStaleRunStates,
   clearHistoricalRunHistory,
   deleteRunHistory,
   getRootRun,
@@ -14,6 +15,7 @@ import {
 } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
 import { buildTaskModels } from "../../runs/task-model.js"
+import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js"
 import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js"
 
 export async function startLocalRun(params: {
@@ -43,16 +45,46 @@ export async function startLocalRun(params: {
 }
 
 export function registerRunsRoute(app: FastifyInstance): void {
+  function listTaskSnapshot() {
+    const runs = listRunsForRecentRequestGroups()
+    const continuity = listTaskContinuityForLineages(
+      runs.map((run) => run.lineageRootRunId || run.requestGroupId || run.id),
+    )
+    const tasks = buildTaskModels(runs, continuity)
+    return { runs, tasks }
+  }
+
   app.get("/api/runs", { preHandler: authMiddleware }, async () => {
     return { runs: listRootRuns() }
   })
 
   app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
-    const runs = listRunsForRecentRequestGroups()
-    const continuity = listTaskContinuityForLineages(
-      runs.map((run) => run.lineageRootRunId || run.requestGroupId || run.id),
-    )
-    return { tasks: buildTaskModels(runs, continuity) }
+    return { tasks: listTaskSnapshot().tasks }
+  })
+
+  app.get<{ Querystring: { staleMs?: string } }>("/api/runs/operations/summary", { preHandler: authMiddleware }, async (req) => {
+    const staleMs = Number.parseInt(req.query.staleMs ?? "", 10)
+    const snapshot = listTaskSnapshot()
+    return {
+      summary: buildOperationsSummary({
+        ...snapshot,
+        staleThresholdMs: Number.isFinite(staleMs) && staleMs > 0 ? staleMs : DEFAULT_STALE_RUN_MS,
+      }),
+    }
+  })
+
+  app.post<{ Body: { staleMs?: number } }>("/api/runs/operations/stale-cleanup", { preHandler: authMiddleware }, async (req) => {
+    const staleMs = typeof req.body?.staleMs === "number" && Number.isFinite(req.body.staleMs) ? req.body.staleMs : undefined
+    const cleanup = cleanupStaleRunStates({ ...(staleMs ? { staleMs } : {}) })
+    const snapshot = listTaskSnapshot()
+    return {
+      ok: true,
+      cleanup,
+      summary: buildOperationsSummary({
+        ...snapshot,
+        staleThresholdMs: cleanup.thresholdMs,
+      }),
+    }
   })
 
   app.get<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {
@@ -100,6 +132,9 @@ export function registerRunsRoute(app: FastifyInstance): void {
   app.delete<{ Params: { id: string } }>("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {
     const result = deleteRunHistory(req.params.id)
     if (!result) return reply.status(404).send({ error: "Run not found" })
+    if (result.blockedRunCount && result.blockedRunCount > 0) {
+      return reply.status(409).send({ error: "Active run history cannot be deleted", blockedRunCount: result.blockedRunCount })
+    }
     return { ok: true, deletedRunCount: result.deletedRunCount }
   })
 }

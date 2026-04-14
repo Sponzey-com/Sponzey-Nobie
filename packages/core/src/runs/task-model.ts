@@ -1,6 +1,6 @@
-import { basename, extname, relative, resolve, sep } from "node:path"
+import { basename, resolve } from "node:path"
 import { homedir } from "node:os"
-import { PATHS } from "../config/index.js"
+import { buildArtifactApiUrls, guessArtifactMimeType } from "../artifacts/lifecycle.js"
 import type { TaskContinuitySnapshot } from "../db/index.js"
 import type { RootRun, RunStatus } from "./types.js"
 
@@ -74,7 +74,7 @@ export interface TaskDeliveryModel {
 }
 
 export interface TaskArtifactModel {
-  filePath: string
+  filePath?: string
   fileName: string
   url?: string
   mimeType?: string
@@ -146,12 +146,22 @@ export interface TaskContinuityModel {
 
 export interface TaskDiagnosticsModel {
   promptSourceIds: string[]
+  promptSources: TaskPromptSourceDiagnosticModel[]
   promptSourceVersion?: string
   latencyEvents: string[]
   memoryEvents: string[]
+  toolEvents: string[]
+  deliveryEvents: string[]
   recoveryEvents: string[]
   lastRecoveryKey?: string
   recoveryBudget?: string
+}
+
+export interface TaskPromptSourceDiagnosticModel {
+  sourceId: string
+  locale?: string
+  version?: string
+  checksum?: string
 }
 
 export interface TaskModel {
@@ -338,50 +348,32 @@ function expandDisplayPath(value: string): string {
 }
 
 function guessMimeTypeFromPath(filePath: string): string | undefined {
-  switch (extname(filePath).toLowerCase()) {
-    case ".png":
-      return "image/png"
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg"
-    case ".gif":
-      return "image/gif"
-    case ".webp":
-      return "image/webp"
-    case ".bmp":
-      return "image/bmp"
-    case ".txt":
-      return "text/plain"
-    case ".md":
-      return "text/markdown"
-    case ".json":
-      return "application/json"
-    case ".pdf":
-      return "application/pdf"
-    default:
-      return undefined
-  }
+  return guessArtifactMimeType(filePath)
 }
 
 function buildArtifactUrl(filePath: string): string | undefined {
   const expandedPath = expandDisplayPath(filePath)
-  const artifactsRoot = resolve(PATHS.stateDir, "artifacts")
-  const candidate = resolve(expandedPath)
-  if (candidate !== artifactsRoot && !candidate.startsWith(`${artifactsRoot}${sep}`)) {
-    return undefined
-  }
+  return buildArtifactApiUrls(expandedPath)?.previewUrl
+}
 
-  const encodedPath = relative(artifactsRoot, candidate)
-    .split(sep)
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")
-  return `/api/artifacts/${encodedPath}`
+function extractArtifactFromUrl(url: string): TaskArtifactModel | undefined {
+  if (!url.startsWith("/api/artifacts/")) return undefined
+  const pathWithoutQuery = url.split("?")[0] ?? url
+  const fileName = decodeURIComponent(pathWithoutQuery.split("/").filter(Boolean).at(-1) ?? "artifact")
+  const mimeType = guessMimeTypeFromPath(fileName)
+  return {
+    fileName,
+    url,
+    ...(mimeType ? { mimeType } : {}),
+  }
 }
 
 function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefined {
   const match = summary.match(/파일 전달 완료:\s*(.+)$/)
   const rawPath = match?.[1]?.trim()
   if (!rawPath) return undefined
+  const urlArtifact = extractArtifactFromUrl(rawPath)
+  if (urlArtifact) return urlArtifact
   const resolvedPath = expandDisplayPath(rawPath)
   const artifactUrl = buildArtifactUrl(resolvedPath)
   const mimeType = guessMimeTypeFromPath(resolvedPath)
@@ -586,14 +578,30 @@ function mapContinuitySnapshot(snapshot: TaskContinuitySnapshot | undefined): Ta
 }
 
 function extractPromptSourceIds(snapshot: Record<string, unknown> | undefined): string[] {
+  return extractPromptSources(snapshot).map((source) => source.sourceId)
+}
+
+function extractPromptSources(snapshot: Record<string, unknown> | undefined): TaskPromptSourceDiagnosticModel[] {
   const sources = Array.isArray(snapshot?.sources) ? snapshot.sources : []
   return sources
     .map((source) => {
       if (!source || typeof source !== "object") return undefined
-      const candidate = source as { sourceId?: unknown }
-      return typeof candidate.sourceId === "string" && candidate.sourceId.trim() ? candidate.sourceId.trim() : undefined
+      const candidate = source as {
+        sourceId?: unknown
+        locale?: unknown
+        version?: unknown
+        checksum?: unknown
+      }
+      const sourceId = typeof candidate.sourceId === "string" ? candidate.sourceId.trim() : ""
+      if (!sourceId) return undefined
+      return {
+        sourceId,
+        ...(typeof candidate.locale === "string" && candidate.locale.trim() ? { locale: candidate.locale.trim() } : {}),
+        ...(typeof candidate.version === "string" && candidate.version.trim() ? { version: candidate.version.trim() } : {}),
+        ...(typeof candidate.checksum === "string" && candidate.checksum.trim() ? { checksum: candidate.checksum.trim() } : {}),
+      }
     })
-    .filter((value): value is string => Boolean(value))
+    .filter((value): value is TaskPromptSourceDiagnosticModel => Boolean(value))
 }
 
 function extractPromptSourceVersion(snapshot: Record<string, unknown> | undefined): string | undefined {
@@ -609,8 +617,11 @@ function buildTaskDiagnostics(
   const eventLabels = orderedRuns.flatMap((run) => run.recentEvents.map((event) => event.label.trim()).filter(Boolean))
   const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:prompt|memory|first_chunk|preflight)[_a-z]*=\d+ms\b/i.test(label))
   const memoryEvents = eventLabels.filter((label) => /(?:memory|메모리|vector|벡터|index)/i.test(label))
+  const toolEvents = eventLabels.filter((label) => /(?:tool|도구|실행 도구|tool receipt|last tool|lastToolReceipt)/i.test(label))
+  const deliveryEvents = eventLabels.filter((label) => /(?:delivery|전달|telegram|slack|webui|artifact|파일 전달|last delivery|lastDeliveryReceipt)/i.test(label))
   const recoveryEvents = eventLabels.filter((label) => /(?:recovery|복구|재시도|duplicate|반복|중단|한도)/i.test(label))
   const promptSourceIds = extractPromptSourceIds(latestRun.promptSourceSnapshot)
+  const promptSources = extractPromptSources(latestRun.promptSourceSnapshot)
   const promptSourceVersion = extractPromptSourceVersion(latestRun.promptSourceSnapshot)
   const lastRecoveryKey = continuity?.failedRecoveryKey
   const recoveryBudget = continuity?.recoveryBudget
@@ -620,6 +631,8 @@ function buildTaskDiagnostics(
     && !promptSourceVersion
     && latencyEvents.length === 0
     && memoryEvents.length === 0
+    && toolEvents.length === 0
+    && deliveryEvents.length === 0
     && recoveryEvents.length === 0
     && !lastRecoveryKey
     && !recoveryBudget
@@ -629,9 +642,12 @@ function buildTaskDiagnostics(
 
   return {
     promptSourceIds,
+    promptSources,
     ...(promptSourceVersion ? { promptSourceVersion } : {}),
     latencyEvents: [...new Set(latencyEvents)].slice(-8),
     memoryEvents: [...new Set(memoryEvents)].slice(-8),
+    toolEvents: [...new Set(toolEvents)].slice(-8),
+    deliveryEvents: [...new Set(deliveryEvents)].slice(-8),
     recoveryEvents: [...new Set(recoveryEvents)].slice(-8),
     ...(lastRecoveryKey ? { lastRecoveryKey } : {}),
     ...(recoveryBudget ? { recoveryBudget } : {}),

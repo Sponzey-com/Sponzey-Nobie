@@ -34,6 +34,77 @@ export interface CronFields {
   weekdays: Set<number>
 }
 
+interface ZonedDateParts {
+  year: number
+  month: number
+  day: number
+  hour: number
+  minute: number
+  weekday: number
+}
+
+const zonedFormatterCache = new Map<string, Intl.DateTimeFormat>()
+
+function getZonedFormatter(timezone: string): Intl.DateTimeFormat {
+  const cached = zonedFormatterCache.get(timezone)
+  if (cached) return cached
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+  zonedFormatterCache.set(timezone, formatter)
+  return formatter
+}
+
+function readZonedParts(date: Date, timezone: string): ZonedDateParts {
+  const values = new Map<string, string>()
+  for (const part of getZonedFormatter(timezone).formatToParts(date)) {
+    if (part.type !== "literal") values.set(part.type, part.value)
+  }
+  const year = Number(values.get("year"))
+  const month = Number(values.get("month"))
+  const day = Number(values.get("day"))
+  const hour = Number(values.get("hour"))
+  const minute = Number(values.get("minute"))
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
+  }
+}
+
+function matchesCronFields(fields: CronFields, parts: ZonedDateParts): boolean {
+  return fields.months.has(parts.month)
+    && fields.days.has(parts.day)
+    && fields.weekdays.has(parts.weekday)
+    && fields.hours.has(parts.hour)
+    && fields.minutes.has(parts.minute)
+}
+
+export function isValidTimeZone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date())
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function normalizeScheduleTimezone(timezone?: string | null, fallback = Intl.DateTimeFormat().resolvedOptions().timeZone): string {
+  const candidate = timezone?.trim() || fallback
+  if (isValidTimeZone(candidate)) return candidate
+  if (isValidTimeZone(fallback)) return fallback
+  return "UTC"
+}
+
 export function parseCron(expr: string): CronFields {
   const parts = expr.trim().split(/\s+/)
   if (parts.length !== 5) throw new Error(`Cron expression must have 5 fields: "${expr}"`)
@@ -87,6 +158,41 @@ export function getNextRun(expr: string, from: Date = new Date()): Date {
   }
 
   throw new Error(`No matching time found for cron: "${expr}"`)
+}
+
+export function getNextRunInTimezone(expr: string, from: Date = new Date(), timezone: string): Date {
+  if (!isValidTimeZone(timezone)) throw new Error(`Invalid timezone: ${timezone}`)
+  const fields = parseCron(expr)
+
+  const cursor = new Date(from)
+  cursor.setUTCSeconds(0)
+  cursor.setUTCMilliseconds(0)
+  cursor.setUTCMinutes(cursor.getUTCMinutes() + 1)
+
+  const limit = new Date(from)
+  limit.setUTCFullYear(limit.getUTCFullYear() + 4)
+
+  while (cursor < limit) {
+    if (matchesCronFields(fields, readZonedParts(cursor, timezone))) return new Date(cursor)
+    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1)
+  }
+
+  throw new Error(`No matching time found for cron: "${expr}" in timezone: ${timezone}`)
+}
+
+export function getNextRunForTimezone(expr: string, from: Date = new Date(), timezone?: string | null): Date {
+  return timezone?.trim()
+    ? getNextRunInTimezone(expr, from, normalizeScheduleTimezone(timezone))
+    : getNextRun(expr, from)
+}
+
+export function formatScheduleTime(valueMs: number, timezone?: string | null, locale = "ko-KR"): string {
+  const timeZone = normalizeScheduleTimezone(timezone)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(valueMs))
 }
 
 /** Human-readable description of a cron expression (Korean) */

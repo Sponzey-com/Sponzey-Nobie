@@ -65,6 +65,57 @@ export function registerApprovalFromWs(
   pendingApprovals.set(runId, resolve)
 }
 
+export interface WebUiApprovalResponseMessage {
+  type?: string
+  runId?: string
+  decision?: string
+  toolName?: string
+}
+
+export function resolveWebUiApprovalResponse(msg: WebUiApprovalResponseMessage): boolean {
+  if (msg.type !== "approval.respond" || !msg.runId) return false
+
+  log.info(
+    `approval.respond received runId=${msg.runId} decision=${typeof msg.decision === "string" ? msg.decision : "unknown"} tool=${typeof msg.toolName === "string" ? msg.toolName : "unknown"}`,
+  )
+  const decision: ApprovalDecision =
+    msg.decision === "allow_run"
+      ? "allow_run"
+      : msg.decision === "allow_once"
+        ? "allow_once"
+        : "deny"
+  const resolve = pendingApprovals.get(msg.runId)
+  if (resolve) {
+    resolve(decision, "user")
+    pendingApprovals.delete(msg.runId)
+    eventBus.emit("approval.resolved", {
+      runId: msg.runId,
+      decision,
+      toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+      reason: "user",
+    })
+    return true
+  }
+
+  if (resolvePendingInteraction(msg.runId, decision)) {
+    log.info(`approval.respond fallback resolved runId=${msg.runId} decision=${decision}`)
+    eventBus.emit("approval.resolved", {
+      runId: msg.runId,
+      decision,
+      toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
+      reason: "user",
+    })
+    return true
+  }
+
+  log.warn(`approval.respond ignored: no pending resolver for runId=${msg.runId}`)
+  return false
+}
+
+export function resetWebUiApprovalStateForTest(): void {
+  pendingApprovals.clear()
+}
+
 export function registerWsRoute(app: FastifyInstance): void {
   setupEventForwarding()
 
@@ -80,38 +131,7 @@ export function registerWsRoute(app: FastifyInstance): void {
     socket.on("message", (raw: Buffer | string) => {
       try {
         const msg = JSON.parse(raw.toString()) as { type: string; runId?: string; decision?: string; toolName?: string }
-        if (msg.type === "approval.respond" && msg.runId) {
-          log.info(
-            `approval.respond received runId=${msg.runId} decision=${typeof msg.decision === "string" ? msg.decision : "unknown"} tool=${typeof msg.toolName === "string" ? msg.toolName : "unknown"}`,
-          )
-          const decision: ApprovalDecision =
-            msg.decision === "allow_run"
-              ? "allow_run"
-              : msg.decision === "allow_once"
-                ? "allow_once"
-                : "deny"
-          const resolve = pendingApprovals.get(msg.runId)
-          if (resolve) {
-            resolve(decision, "user")
-            pendingApprovals.delete(msg.runId)
-            eventBus.emit("approval.resolved", {
-              runId: msg.runId,
-              decision,
-              toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
-              reason: "user",
-            })
-          } else if (resolvePendingInteraction(msg.runId, decision)) {
-            log.info(`approval.respond fallback resolved runId=${msg.runId} decision=${decision}`)
-            eventBus.emit("approval.resolved", {
-              runId: msg.runId,
-              decision,
-              toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
-              reason: "user",
-            })
-          } else {
-            log.warn(`approval.respond ignored: no pending resolver for runId=${msg.runId}`)
-          }
-        }
+        resolveWebUiApprovalResponse(msg)
       } catch { /* ignore malformed messages */ }
     })
 

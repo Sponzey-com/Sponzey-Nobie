@@ -1,8 +1,38 @@
-import { getSchedules, getSchedule, insertSchedule, updateSchedule, deleteSchedule, getScheduleRuns, countScheduleRuns, getScheduleStats, } from "../../db/index.js";
+import { getSchedules, getSchedule, insertSchedule, updateSchedule, deleteSchedule, getScheduleRuns, countScheduleRuns, getScheduleStats, upsertScheduleMemoryEntry, } from "../../db/index.js";
 import { runSchedule } from "../../scheduler/index.js";
-import { isValidCron, getNextRun } from "../../scheduler/cron.js";
+import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../../scheduler/cron.js";
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { getConfig } from "../../config/index.js";
+function syncScheduleMemoryEntry(input) {
+    upsertScheduleMemoryEntry({
+        scheduleId: input.id,
+        title: input.name,
+        prompt: input.prompt,
+        cronExpression: input.cronExpression,
+        enabled: input.enabled,
+        ...(typeof input.nextRunAt === "number" ? { nextRunAt: input.nextRunAt } : {}),
+        metadata: { ...(input.metadata ?? {}), ...(input.timezone ? { timezone: input.timezone } : {}) },
+    });
+}
+function resolveDefaultScheduleTimezone() {
+    const config = getConfig();
+    return normalizeScheduleTimezone(config.scheduler.timezone, config.profile.timezone);
+}
+function resolveBodyTimezone(input) {
+    const timezone = input?.trim() || resolveDefaultScheduleTimezone();
+    if (!isValidTimeZone(timezone))
+        throw new Error(`invalid timezone: ${timezone}`);
+    return normalizeScheduleTimezone(timezone);
+}
+function resolveNextRunAt(cron, baseMs, timezone) {
+    try {
+        return getNextRunForTimezone(cron, new Date(baseMs), timezone).getTime();
+    }
+    catch {
+        return null;
+    }
+}
 export function registerSchedulesRoute(app) {
     // GET /api/schedules
     app.get("/api/schedules", { preHandler: authMiddleware }, async () => {
@@ -13,7 +43,7 @@ export function registerSchedulesRoute(app) {
                 enabled: Boolean(s.enabled),
                 next_run_at: (() => {
                     try {
-                        return getNextRun(s.cron_expression, new Date(s.last_run_at ?? s.created_at)).getTime();
+                        return getNextRunForTimezone(s.cron_expression, new Date(s.last_run_at ?? s.created_at), s.timezone).getTime();
                     }
                     catch {
                         return null;
@@ -31,10 +61,17 @@ export function registerSchedulesRoute(app) {
             return reply.status(400).send({ error: "prompt is required" });
         if (!cron?.trim() || !isValidCron(cron))
             return reply.status(400).send({ error: "invalid cron expression" });
+        let timezone;
+        try {
+            timezone = resolveBodyTimezone(req.body.timezone);
+        }
+        catch {
+            return reply.status(400).send({ error: "invalid timezone" });
+        }
         const now = Date.now();
         const id = crypto.randomUUID();
         insertSchedule({
-            id, name, cron_expression: cron, prompt,
+            id, name, cron_expression: cron, timezone, prompt,
             enabled: enabled ? 1 : 0,
             target_channel: "agent",
             target_session_id: null,
@@ -46,6 +83,16 @@ export function registerSchedulesRoute(app) {
             timeout_sec: 300,
             created_at: now,
             updated_at: now,
+        });
+        syncScheduleMemoryEntry({
+            id,
+            name,
+            cronExpression: cron,
+            timezone,
+            prompt,
+            enabled,
+            nextRunAt: resolveNextRunAt(cron, now, timezone),
+            metadata: { source: "webui" },
         });
         reconcileScheduleExecution(id);
         return reply.status(201).send({ id });
@@ -66,13 +113,36 @@ export function registerSchedulesRoute(app) {
         const { name, cron, prompt, model, enabled } = req.body;
         if (cron && !isValidCron(cron))
             return reply.status(400).send({ error: "invalid cron expression" });
+        let timezone;
+        if (req.body.timezone !== undefined) {
+            try {
+                timezone = resolveBodyTimezone(req.body.timezone);
+            }
+            catch {
+                return reply.status(400).send({ error: "invalid timezone" });
+            }
+        }
         updateSchedule(id, {
             ...(name !== undefined && { name }),
             ...(cron !== undefined && { cron_expression: cron }),
+            ...(timezone !== undefined && { timezone }),
             ...(prompt !== undefined && { prompt }),
             ...(model !== undefined && { model }),
             ...(enabled !== undefined && { enabled: enabled ? 1 : 0 }),
         });
+        const updated = getSchedule(id);
+        if (updated) {
+            syncScheduleMemoryEntry({
+                id,
+                name: updated.name,
+                cronExpression: updated.cron_expression,
+                timezone: updated.timezone,
+                prompt: updated.prompt,
+                enabled: updated.enabled === 1,
+                nextRunAt: resolveNextRunAt(updated.cron_expression, updated.last_run_at ?? updated.created_at, updated.timezone),
+                metadata: { source: "webui", updatedBy: "api" },
+            });
+        }
         reconcileScheduleExecution(id);
         return { ok: true };
     });
@@ -82,6 +152,16 @@ export function registerSchedulesRoute(app) {
         if (!s)
             return reply.status(404).send({ error: "Not found" });
         removeManagedScheduleExecution(req.params.id);
+        syncScheduleMemoryEntry({
+            id: s.id,
+            name: s.name,
+            cronExpression: s.cron_expression,
+            timezone: s.timezone,
+            prompt: s.prompt,
+            enabled: false,
+            nextRunAt: null,
+            metadata: { source: "webui", deletedAt: Date.now() },
+        });
         deleteSchedule(req.params.id);
         return { ok: true };
     });
@@ -112,9 +192,20 @@ export function registerSchedulesRoute(app) {
         const s = getSchedule(req.params.id);
         if (!s)
             return reply.status(404).send({ error: "Not found" });
-        updateSchedule(req.params.id, { enabled: s.enabled ? 0 : 1 });
+        const enabled = !s.enabled;
+        updateSchedule(req.params.id, { enabled: enabled ? 1 : 0 });
+        syncScheduleMemoryEntry({
+            id: s.id,
+            name: s.name,
+            cronExpression: s.cron_expression,
+            timezone: s.timezone,
+            prompt: s.prompt,
+            enabled,
+            nextRunAt: enabled ? resolveNextRunAt(s.cron_expression, s.last_run_at ?? s.created_at, s.timezone) : null,
+            metadata: { source: "webui", toggledAt: Date.now() },
+        });
         reconcileScheduleExecution(req.params.id);
-        return { ok: true, enabled: !s.enabled };
+        return { ok: true, enabled };
     });
     // GET /api/schedules/:id/stats
     app.get("/api/schedules/:id/stats", { preHandler: authMiddleware }, async (req, reply) => {

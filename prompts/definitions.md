@@ -54,6 +54,7 @@
 ## 경계 규칙
 
 - prompt source는 정책과 정의를 담고, secret과 runtime token을 담지 않는다.
+- `prompts/` prompt source registry가 기본 시스템 프롬프트의 주 출처다. legacy `NOBIE.md`, `WIZBY.md`, `HOWIE.md`는 registry를 대체하지 않고, 존재할 때만 프로젝트 메모리 context로 뒤에 덧붙인다.
 - 사용자 정보는 확인된 값만 확정한다.
 - 로컬 실행 확장 연결 상태와 capability는 runtime preflight에서 판단한다.
 - 완료는 텍스트 주장보다 receipt와 실제 결과를 우선한다.

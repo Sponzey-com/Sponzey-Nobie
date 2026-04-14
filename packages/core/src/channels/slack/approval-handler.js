@@ -62,6 +62,14 @@ export function registerSlackApprovalHandler(messenger) {
         });
     });
 }
+export function resetSlackApprovalStateForTest() {
+    detachSlackApprovalRequestListener?.();
+    detachSlackApprovalRequestListener = null;
+    activeConversations.clear();
+    activeConversationRefs.clear();
+    pendingApprovals.clear();
+    latestActiveConversation = undefined;
+}
 function resolveSlackApproval(params) {
     const pending = pendingApprovals.get(params.runId);
     if (!pending)

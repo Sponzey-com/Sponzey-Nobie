@@ -24,11 +24,17 @@ function createPromptFixture(): string {
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
   for (const filename of [
+    "definitions.md",
     "identity.md",
     "user.md",
-    "definitions.md",
     "soul.md",
     "planner.md",
+    "memory_policy.md",
+    "tool_policy.md",
+    "recovery_policy.md",
+    "completion_policy.md",
+    "output_policy.md",
+    "channel.md",
     "bootstrap.md",
   ]) {
     writeFileSync(join(promptsDir, filename), `# ${filename}\n\n${filename} content`, "utf-8")
@@ -48,29 +54,45 @@ afterEach(() => {
 })
 
 describe("prompt source registry", () => {
-  it("loads all prompt sources but excludes bootstrap and planner from default runtime assembly", () => {
+  it("loads prompt sources and excludes only bootstrap from default runtime assembly", () => {
     const root = createPromptFixture()
 
     const registry = loadPromptSourceRegistry(root)
     expect(registry.map((source) => source.sourceId)).toEqual([
+      "definitions",
       "identity",
       "user",
-      "definitions",
       "soul",
       "planner",
+      "memory_policy",
+      "tool_policy",
+      "recovery_policy",
+      "completion_policy",
+      "output_policy",
+      "channel",
       "bootstrap",
     ])
 
     const assembly = loadSystemPromptSourceAssembly(root)
     expect(assembly?.snapshot.sources.map((source) => source.sourceId)).toEqual([
+      "definitions",
       "identity",
       "user",
-      "definitions",
       "soul",
+      "planner",
+      "memory_policy",
+      "tool_policy",
+      "recovery_policy",
+      "completion_policy",
+      "output_policy",
+      "channel",
     ])
+    expect(assembly?.snapshot.diagnostics).toEqual([])
+    expect(assembly?.text).toContain("definitions.md content")
     expect(assembly?.text).toContain("identity.md content")
     expect(assembly?.text).toContain("soul.md content")
-    expect(assembly?.text).not.toContain("planner.md content")
+    expect(assembly?.text).toContain("planner.md content")
+    expect(assembly?.text).toContain("output_policy.md content")
     expect(assembly?.text).not.toContain("bootstrap.md content")
     expect(assembly?.snapshot.sources.every((source) => source.checksum.length === 64)).toBe(true)
   })
@@ -87,6 +109,33 @@ describe("prompt source registry", () => {
     expect(identity?.enabled).toBe(false)
   })
 
+  it("excludes disabled optional runtime sources from the assembly", () => {
+    const root = createPromptFixture()
+
+    const assembly = loadSystemPromptSourceAssembly(root, "ko", [
+      { sourceId: "output_policy", locale: "ko", enabled: false },
+    ])
+
+    expect(assembly?.snapshot.sources.map((source) => source.sourceId)).not.toContain("output_policy")
+    expect(assembly?.text).not.toContain("output_policy.md content")
+  })
+
+  it("records a diagnostic when a required runtime source is missing", () => {
+    const root = createPromptFixture()
+    rmSync(join(root, "prompts", "definitions.md"), { force: true })
+
+    const assembly = loadSystemPromptSourceAssembly(root)
+
+    expect(assembly?.snapshot.sources.map((source) => source.sourceId)).not.toContain("definitions")
+    expect(assembly?.snapshot.diagnostics).toContainEqual({
+      severity: "error",
+      code: "required_prompt_source_missing",
+      sourceId: "definitions",
+      locale: "ko",
+      message: "Required prompt source 'definitions' is missing for runtime assembly.",
+    })
+  })
+
   it("reuses cached runtime prompt assembly when source checksums and states do not change", () => {
     const root = createPromptFixture()
 
@@ -101,11 +150,19 @@ describe("prompt source registry", () => {
     tempDirs.push(root)
 
     const first = ensurePromptSourceFiles(root)
+    expect(first.created).toContain("definitions.md")
     expect(first.created).toContain("identity.md")
     expect(first.created).toContain("user.md")
-    expect(first.created).toContain("definitions.md")
+    expect(first.created).toContain("planner.md")
+    expect(first.created).toContain("memory_policy.md")
+    expect(first.created).toContain("tool_policy.md")
+    expect(first.created).toContain("recovery_policy.md")
+    expect(first.created).toContain("completion_policy.md")
+    expect(first.created).toContain("output_policy.md")
+    expect(first.created).toContain("channel.md")
     expect(first.created).toContain("bootstrap.md")
     expect(existsSync(join(first.promptsDir, "user.md.en"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "output_policy.md.en"))).toBe(true)
 
     const userPromptPath = join(first.promptsDir, "user.md")
     writeFileSync(userPromptPath, "# 사용자\n\n- 선호 이름: custom-user-edit\n", "utf-8")
@@ -123,6 +180,7 @@ describe("prompt source registry", () => {
 
     expect(runtime?.snapshot.sources.map((source) => source.sourceId)).not.toContain("bootstrap")
     expect(firstRun?.snapshot.sources.map((source) => source.sourceId)).toEqual(["bootstrap"])
+    expect(firstRun?.snapshot.diagnostics).toEqual([])
     expect(firstRun?.text).toContain("bootstrap.md content")
   })
 
@@ -144,7 +202,7 @@ describe("prompt source registry", () => {
 
     bootstrap()
     const firstCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count
-    expect(firstCount).toBe(12)
+    expect(firstCount).toBe(24)
     expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "ko")).toBe(true)
 
     bootstrap()

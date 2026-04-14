@@ -1,9 +1,16 @@
 import type { AgentChunk } from "../agent/index.js";
+import { type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js";
 import { insertMessage } from "../db/index.js";
 export interface SuccessfulFileDelivery {
     toolName: string;
     channel: "telegram" | "webui" | "slack";
     filePath: string;
+    url?: string;
+    previewUrl?: string;
+    downloadUrl?: string;
+    previewable?: boolean;
+    mimeType?: string;
+    sizeBytes?: number;
     caption?: string;
     messageId?: number;
 }
@@ -25,6 +32,18 @@ export interface DeliveryOutcome {
 }
 export type RunChunkDeliveryHandler = ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | void> | ChunkDeliveryReceipt | void) | undefined;
 export type DeliverySource = "webui" | "cli" | "telegram" | "slack";
+export interface ArtifactDeliveryOnceParams<T> {
+    runId?: string | undefined;
+    channel: SuccessfulFileDelivery["channel"];
+    filePath: string;
+    channelTarget?: string | undefined;
+    mimeType?: string | undefined;
+    sizeBytes?: number | undefined;
+    retentionPolicy?: ArtifactRetentionPolicy | undefined;
+    force?: boolean | undefined;
+    forceReason?: string | undefined;
+    task: () => Promise<T>;
+}
 export interface AssistantTextDeliveryReceipt {
     persisted: boolean;
     textDelivered: boolean;
@@ -58,8 +77,17 @@ interface AssistantTextDeliveryDependencies {
     }) => void;
     writeReplyLog: (source: DeliverySource, text: string) => void;
 }
+export declare function buildArtifactDeliveryKey(params: {
+    runId: string;
+    channel: SuccessfulFileDelivery["channel"];
+    filePath: string;
+}): string;
+export declare function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<T>): Promise<T | undefined>;
+export declare function resetArtifactDeliveryDedupeForTest(): void;
 export declare function displayHomePath(value: string): string;
 export declare function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDelivery[]): string;
+export declare function describeArtifactForUser(delivery: Pick<SuccessfulFileDelivery, "filePath" | "url">): string;
+export declare function resendArtifact<T>(params: Omit<ArtifactDeliveryOnceParams<T>, "force">): Promise<T | undefined>;
 export declare function resolveDeliveryOutcome(params: {
     wantsDirectArtifactDelivery: boolean;
     deliveries: SuccessfulFileDelivery[];

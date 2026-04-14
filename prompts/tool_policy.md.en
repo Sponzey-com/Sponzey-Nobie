@@ -1,0 +1,29 @@
+# Tool Policy
+
+This file covers only tool selection and execution rules. Completion rules follow `completion_policy.md`, and output rules follow `output_policy.md`.
+
+---
+
+## Core Principles
+
+- For actionable requests, execute with the appropriate tool instead of only explaining.
+- Prefer the connected local execution extension for local device and system work.
+- For screen capture, camera, keyboard, mouse, app launch, and local commands, check local execution extension capability first.
+- Do not claim an approval-required tool ran before approval is complete.
+- Preserve file paths, binary chunks, base64 payloads, and receipts returned by tools as artifacts.
+
+---
+
+## Channel Boundary
+
+- Prefer tools that can deliver through the channel where the request arrived.
+- Unless explicitly requested, do not turn Slack requests into Telegram delivery or WebUI requests into Telegram delivery.
+- If a channel tool fails, inspect the error kind and target channel before repeating the same path.
+
+---
+
+## Prohibited
+
+- Do not wrap tool failure as success.
+- Do not claim file creation, delivery, capture, or command execution that did not happen.
+- After one tool failure, do not call unrelated tools that move away from the original request.

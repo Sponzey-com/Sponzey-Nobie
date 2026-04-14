@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type MqttRuntimeResponse } from "../api/client"
+import { api, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
-import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
@@ -20,6 +19,7 @@ import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { UpdatePanel } from "../components/UpdatePanel"
 import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
 import { type AIBackendCard, type NewAIBackendInput } from "../contracts/ai"
+import type { ConfigurationOperationsSnapshot, MigrationDryRunResult } from "../contracts/config-operations"
 import type { SetupDraft } from "../contracts/setup"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import { useCapabilitiesStore } from "../stores/capabilities"
@@ -28,6 +28,40 @@ import { useUiI18n } from "../lib/ui-i18n"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
 type TabId = "backends" | "security" | "channels" | "mqtt" | "remote" | "advanced"
+
+interface OperationsDiagnosticsSnapshot {
+  memorySearchMode: string
+  vectorAvailable: boolean
+  vectorBackend: string
+  vectorReason: string
+  schedulerRunning: boolean
+  activeJobs: number
+  nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {}
+}
+
+function normalizeOperationsDiagnostics(settings: Record<string, unknown>, schedulerHealth: {
+  running?: boolean
+  activeJobs?: number
+  nextRuns?: Array<{ scheduleId: string; name: string; nextRunAt: number }>
+}): OperationsDiagnosticsSnapshot {
+  const legacy = readRecord(settings.legacy)
+  const memory = readRecord(settings.memory ?? legacy.memory)
+  const vectorBackend = readRecord(memory.vectorBackend)
+
+  return {
+    memorySearchMode: typeof memory.searchMode === "string" ? memory.searchMode : "fts",
+    vectorAvailable: vectorBackend.available === true,
+    vectorBackend: typeof vectorBackend.backend === "string" ? vectorBackend.backend : "none",
+    vectorReason: typeof vectorBackend.reason === "string" ? vectorBackend.reason : "",
+    schedulerRunning: schedulerHealth.running === true,
+    activeJobs: typeof schedulerHealth.activeJobs === "number" ? schedulerHealth.activeJobs : 0,
+    nextRuns: Array.isArray(schedulerHealth.nextRuns) ? schedulerHealth.nextRuns : [],
+  }
+}
 
 function cloneDraft(draft: SetupDraft): SetupDraft {
   return JSON.parse(JSON.stringify(draft)) as SetupDraft
@@ -61,6 +95,21 @@ export function SettingsPage() {
   const [mqttRuntimeLoading, setMqttRuntimeLoading] = useState(false)
   const [mqttRuntimeError, setMqttRuntimeError] = useState("")
   const [disconnectingExtensionId, setDisconnectingExtensionId] = useState<string | null>(null)
+  const [operationsDiagnostics, setOperationsDiagnostics] = useState<OperationsDiagnosticsSnapshot | null>(null)
+  const [operationsDiagnosticsLoading, setOperationsDiagnosticsLoading] = useState(false)
+  const [operationsDiagnosticsError, setOperationsDiagnosticsError] = useState("")
+  const [configOperationsSnapshot, setConfigOperationsSnapshot] = useState<ConfigurationOperationsSnapshot | null>(null)
+  const [configOperationsLoading, setConfigOperationsLoading] = useState(false)
+  const [configOperationsError, setConfigOperationsError] = useState("")
+  const [configMigrationDryRun, setConfigMigrationDryRun] = useState<MigrationDryRunResult | null>(null)
+  const [configOperationResult, setConfigOperationResult] = useState("")
+  const [promptImportPath, setPromptImportPath] = useState("")
+  const [dbImportPath, setDbImportPath] = useState("")
+  const [memoryReviewItems, setMemoryReviewItems] = useState<MemoryWritebackReviewItem[]>([])
+  const [memoryReviewLoading, setMemoryReviewLoading] = useState(false)
+  const [memoryReviewError, setMemoryReviewError] = useState("")
+  const [memoryReviewActionId, setMemoryReviewActionId] = useState<string | null>(null)
+  const [memoryReviewEdits, setMemoryReviewEdits] = useState<Record<string, string>>({})
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const { text, displayText } = useUiI18n()
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -99,6 +148,46 @@ export function SettingsPage() {
     }
   }, [])
 
+  const loadOperationsDiagnostics = useCallback(async () => {
+    setOperationsDiagnosticsLoading(true)
+    try {
+      const [settings, schedulerHealth] = await Promise.all([api.settings(), api.schedulerHealth()])
+      setOperationsDiagnostics(normalizeOperationsDiagnostics(settings, schedulerHealth))
+      setOperationsDiagnosticsError("")
+    } catch (error) {
+      setOperationsDiagnosticsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setOperationsDiagnosticsLoading(false)
+    }
+  }, [])
+
+  const loadConfigOperations = useCallback(async () => {
+    setConfigOperationsLoading(true)
+    try {
+      const result = await api.configOperations()
+      setConfigOperationsSnapshot(result.snapshot)
+      setConfigOperationsError("")
+    } catch (error) {
+      setConfigOperationsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConfigOperationsLoading(false)
+    }
+  }, [])
+
+  const loadMemoryWritebackReview = useCallback(async () => {
+    setMemoryReviewLoading(true)
+    try {
+      const result = await api.memoryWritebackReview("pending")
+      setMemoryReviewItems(result.candidates)
+      setMemoryReviewEdits(Object.fromEntries(result.candidates.map((candidate) => [candidate.id, candidate.proposedText])))
+      setMemoryReviewError("")
+    } catch (error) {
+      setMemoryReviewError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMemoryReviewLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (tab !== "mqtt") return
     void loadMqttRuntime()
@@ -107,6 +196,90 @@ export function SettingsPage() {
     }, 3000)
     return () => window.clearInterval(timer)
   }, [tab, editorVersion, loadMqttRuntime])
+
+  useEffect(() => {
+    if (tab !== "advanced") return
+    void loadOperationsDiagnostics()
+    void loadConfigOperations()
+    void loadMemoryWritebackReview()
+  }, [tab, editorVersion, loadConfigOperations, loadMemoryWritebackReview, loadOperationsDiagnostics])
+
+  const handleConfigAction = useCallback(async (action: "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport") => {
+    setConfigOperationsLoading(true)
+    setConfigOperationsError("")
+    try {
+      if (action === "dryRun") {
+        const result = await api.configMigrationDryRun()
+        setConfigMigrationDryRun(result.dryRun)
+        setConfigOperationResult(result.dryRun.userMessage)
+        return
+      }
+      if (action === "dbBackup") {
+        const result = await api.backupDatabase()
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`DB backup: ${result.backup.backupPath}`)
+        return
+      }
+      if (action === "dbExport") {
+        const result = await api.exportDatabase()
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`DB export: ${result.export.backupPath}`)
+        return
+      }
+      if (action === "configExport") {
+        const result = await api.exportMaskedConfig()
+        setConfigOperationResult(`Masked config export: ${result.export.exportPath}`)
+        return
+      }
+      if (action === "promptExport") {
+        const result = await api.exportPromptSourcesOps()
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`Prompt source export: ${result.export.exportPath}`)
+        return
+      }
+      if (action === "promptRecover") {
+        const result = await api.recoverPromptSourcesOps()
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`Prompt source recovery: ${result.recovery.created.length} created, ${result.recovery.existing.length} existing`)
+        return
+      }
+      if (action === "promptImport") {
+        if (!promptImportPath.trim()) throw new Error("prompt source export 경로를 입력해 주세요.")
+        const confirmed = window.confirm("기존 prompt source를 덮어쓰지 않고 누락된 항목만 가져옵니다. 계속할까요?")
+        if (!confirmed) return
+        const result = await api.importPromptSourcesOps({ exportPath: promptImportPath.trim(), overwrite: false })
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`Prompt source import: ${result.import.imported.length} imported, ${result.import.skipped.length} skipped`)
+        return
+      }
+      if (action === "dbImport") {
+        if (!dbImportPath.trim()) throw new Error("DB backup 경로를 입력해 주세요.")
+        const confirmed = window.confirm("현재 DB를 rollback backup으로 남긴 뒤 가져온 DB로 교체합니다. 계속할까요?")
+        if (!confirmed) return
+        const result = await api.importDatabase(dbImportPath.trim())
+        setConfigOperationsSnapshot(result.snapshot)
+        setConfigOperationResult(`DB import complete. Rollback backup: ${result.import.rollbackBackup.backupPath}`)
+      }
+    } catch (error) {
+      setConfigOperationsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConfigOperationsLoading(false)
+    }
+  }, [dbImportPath, promptImportPath])
+
+  const handleMemoryReviewAction = useCallback(async (candidateId: string, action: MemoryWritebackReviewAction) => {
+    setMemoryReviewActionId(candidateId)
+    try {
+      const editedContent = action === "approve_edited" ? memoryReviewEdits[candidateId] : undefined
+      await api.reviewMemoryWriteback(candidateId, { action, ...(editedContent ? { editedContent } : {}) })
+      await loadMemoryWritebackReview()
+      setMemoryReviewError("")
+    } catch (error) {
+      setMemoryReviewError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMemoryReviewActionId(null)
+    }
+  }, [loadMemoryWritebackReview, memoryReviewEdits])
 
   const tabs = useMemo(
     () => [
@@ -377,13 +550,38 @@ export function SettingsPage() {
       case "advanced":
         return (
           <div className="space-y-4">
+            <OperationsDiagnosticsPanel
+              snapshot={operationsDiagnostics}
+              loading={operationsDiagnosticsLoading}
+              error={operationsDiagnosticsError}
+              onRefresh={() => void loadOperationsDiagnostics()}
+            />
+            <ConfigMigrationPanel
+              snapshot={configOperationsSnapshot}
+              dryRun={configMigrationDryRun}
+              loading={configOperationsLoading}
+              error={configOperationsError}
+              result={configOperationResult}
+              promptImportPath={promptImportPath}
+              dbImportPath={dbImportPath}
+              onPromptImportPathChange={setPromptImportPath}
+              onDbImportPathChange={setDbImportPath}
+              onRefresh={() => void loadConfigOperations()}
+              onAction={(action) => void handleConfigAction(action)}
+            />
+            <MemoryWritebackReviewPanel
+              candidates={memoryReviewItems}
+              edits={memoryReviewEdits}
+              loading={memoryReviewLoading}
+              error={memoryReviewError}
+              actionId={memoryReviewActionId}
+              onRefresh={() => void loadMemoryWritebackReview()}
+              onEdit={(candidateId, value) => setMemoryReviewEdits((current) => ({ ...current, [candidateId]: value }))}
+              onAction={(candidateId, action) => void handleMemoryReviewAction(candidateId, action)}
+            />
             <UpdatePanel />
             <McpServersPanel />
             <ActiveInstructionsPanel />
-            <PlannedState
-              title={text("고급 제어", "Advanced Controls")}
-              description={text("고급 메모리와 시맨틱 검색 제어는 준비 중입니다.", "Advanced memory and semantic search controls are coming soon.")}
-            />
           </div>
         )
     }
@@ -550,6 +748,398 @@ function RuntimeNotice({
     <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
       <div className="text-sm font-semibold">{title}</div>
       <div className="mt-1 text-sm leading-6">{displayText(message)}</div>
+    </div>
+  )
+}
+
+function MemoryWritebackReviewPanel({
+  candidates,
+  edits,
+  loading,
+  error,
+  actionId,
+  onRefresh,
+  onEdit,
+  onAction,
+}: {
+  candidates: MemoryWritebackReviewItem[]
+  edits: Record<string, string>
+  loading: boolean
+  error: string
+  actionId: string | null
+  onRefresh: () => void
+  onEdit: (candidateId: string, value: string) => void
+  onAction: (candidateId: string, action: MemoryWritebackReviewAction) => void
+}) {
+  const { text, displayText } = useUiI18n()
+
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("장기 기억 검토", "Long-term memory review")}</div>
+          <p className="mt-1 text-sm leading-6 text-stone-600">
+            {text(
+              "승인한 후보만 장기 기억 검색에 들어갑니다. raw 오류와 민감 정보는 차단 또는 마스킹됩니다.",
+              "Only approved candidates enter long-term memory retrieval. Raw errors and sensitive data are blocked or masked.",
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? text("불러오는 중", "Loading") : text("새로고침", "Refresh")}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 space-y-3">
+        {candidates.length === 0 && !loading ? (
+          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-6 text-sm text-stone-500">
+            {text("검토 대기 중인 기억 후보가 없습니다.", "There are no memory candidates waiting for review.")}
+          </div>
+        ) : null}
+        {candidates.map((candidate) => {
+          const blocked = candidate.blockReasons.length > 0
+          const busy = actionId === candidate.id
+          return (
+            <div key={candidate.id} className="rounded-2xl border border-stone-200 bg-white p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                    <span className="rounded-full bg-stone-100 px-2 py-1 font-semibold text-stone-700">{candidate.sourceType}</span>
+                    <span>{candidate.scope}</span>
+                    {candidate.confidence ? <span>{text("신뢰도", "confidence")}: {candidate.confidence}</span> : null}
+                    {candidate.ttl ? <span>TTL: {candidate.ttl}</span> : null}
+                  </div>
+                  <div className="mt-2 text-xs leading-5 text-stone-500">
+                    {candidate.sourceRunId ? <span>run: {candidate.sourceRunId} </span> : null}
+                    {candidate.sourceChannel ? <span>channel: {displayText(candidate.sourceChannel)} </span> : null}
+                    {candidate.sessionId ? <span>session: {candidate.sessionId} </span> : null}
+                    {candidate.requestGroupId ? <span>request: {candidate.requestGroupId}</span> : null}
+                  </div>
+                </div>
+                {blocked ? (
+                  <div className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+                    {text("차단됨", "Blocked")}: {candidate.blockReasons.join(", ")}
+                  </div>
+                ) : null}
+              </div>
+
+              <textarea
+                value={edits[candidate.id] ?? candidate.proposedText}
+                onChange={(event) => onEdit(candidate.id, event.target.value)}
+                className="mt-4 min-h-28 w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-800 outline-none focus:border-stone-400"
+              />
+
+              {candidate.repeatExamples.length ? (
+                <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-500">
+                  {text("반복 사례", "Repeat examples")}: {displayText(candidate.repeatExamples.join(" / "))}
+                </div>
+              ) : null}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onAction(candidate.id, "approve_long_term")}
+                  disabled={busy || blocked}
+                  className="rounded-xl bg-stone-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("장기 기억으로 저장", "Save as long-term")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction(candidate.id, "approve_edited")}
+                  disabled={busy || blocked || !(edits[candidate.id] ?? candidate.proposedText).trim()}
+                  className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("수정 후 저장", "Save edited")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction(candidate.id, "keep_session")}
+                  disabled={busy}
+                  className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("이번 세션만 유지", "Keep for this session")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction(candidate.id, "discard")}
+                  disabled={busy}
+                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("삭제", "Delete")}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+type ConfigOperationAction = "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport"
+
+function ConfigMigrationPanel({
+  snapshot,
+  dryRun,
+  loading,
+  error,
+  result,
+  promptImportPath,
+  dbImportPath,
+  onPromptImportPathChange,
+  onDbImportPathChange,
+  onRefresh,
+  onAction,
+}: {
+  snapshot: ConfigurationOperationsSnapshot | null
+  dryRun: MigrationDryRunResult | null
+  loading: boolean
+  error: string
+  result: string
+  promptImportPath: string
+  dbImportPath: string
+  onPromptImportPathChange: (value: string) => void
+  onDbImportPathChange: (value: string) => void
+  onRefresh: () => void
+  onAction: (action: ConfigOperationAction) => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const database = snapshot?.database
+  const pendingVersions = dryRun?.willApply.map((migration) => migration.version) ?? database?.pendingVersions ?? []
+
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("설정/마이그레이션 백업", "Config, migration, backup")}</div>
+          <p className="mt-1 text-sm leading-6 text-stone-600">
+            {text(
+              "DB migration version, prompt source checksum, secret masking export, backup/import를 운영 화면에서 확인합니다.",
+              "Inspect DB migration version, prompt source checksums, masked exports, backup, and import from the operations screen.",
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? text("확인 중", "Checking") : text("새로고침", "Refresh")}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+      {result ? (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">
+          {displayText(result)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("DB 버전", "DB version")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{database ? `${database.currentVersion} / ${database.latestVersion}` : "-"}</div>
+          <div className={`mt-1 text-xs ${database?.upToDate ? "text-emerald-700" : "text-amber-700"}`}>
+            {database?.upToDate ? text("최신", "Up to date") : text("확인 필요", "Needs check")}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("적용 대기", "Pending")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{pendingVersions.length}</div>
+          <div className="mt-1 break-all text-xs text-stone-500">{pendingVersions.length ? pendingVersions.join(", ") : text("없음", "none")}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("프롬프트 소스", "Prompt sources")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.promptSources.count ?? 0}</div>
+          <div className="mt-1 break-all text-xs text-stone-500">{snapshot?.promptSources.workDir ?? "-"}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("설정 파일", "Config file")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.config.exists ? text("있음", "exists") : text("없음", "missing")}</div>
+          <div className="mt-1 break-all text-xs text-stone-500">{snapshot?.config.configPath ?? "-"}</div>
+        </div>
+      </div>
+
+      {dryRun ? (
+        <div className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-xs font-semibold text-stone-500">{text("Migration dry-run", "Migration dry-run")}</div>
+          <div className="mt-2 text-sm leading-6 text-stone-700">{displayText(dryRun.userMessage)}</div>
+          {dryRun.warnings.length ? <div className="mt-2 text-xs leading-5 text-amber-700">{displayText(dryRun.warnings.join(" / "))}</div> : null}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {[
+          ["dryRun", text("Migration dry-run", "Migration dry-run")],
+          ["dbBackup", text("DB 백업", "Back up DB")],
+          ["dbExport", text("DB 내보내기", "Export DB")],
+          ["configExport", text("설정 내보내기", "Export config")],
+          ["promptExport", text("프롬프트 내보내기", "Export prompts")],
+          ["promptRecover", text("프롬프트 복구", "Recover prompts")],
+        ].map(([action, label]) => (
+          <button
+            key={action}
+            type="button"
+            onClick={() => onAction(action as ConfigOperationAction)}
+            disabled={loading}
+            className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        <div className="rounded-2xl border border-stone-200 bg-white p-4">
+          <label className="text-xs font-semibold text-stone-500">{text("Prompt source export 경로", "Prompt source export path")}</label>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={promptImportPath}
+              onChange={(event) => onPromptImportPathChange(event.target.value)}
+              className="min-w-0 flex-1 rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
+              placeholder="/path/to/prompt-sources-export.json"
+            />
+            <button
+              type="button"
+              onClick={() => onAction("promptImport")}
+              disabled={loading}
+              className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {text("가져오기", "Import")}
+            </button>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white p-4">
+          <label className="text-xs font-semibold text-stone-500">{text("DB backup 경로", "DB backup path")}</label>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={dbImportPath}
+              onChange={(event) => onDbImportPathChange(event.target.value)}
+              className="min-w-0 flex-1 rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
+              placeholder="/path/to/db-backup.sqlite3"
+            />
+            <button
+              type="button"
+              onClick={() => onAction("dbImport")}
+              disabled={loading}
+              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {text("DB 가져오기", "Import DB")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {snapshot?.promptSources.versions.length ? (
+        <div className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-xs font-semibold text-stone-500">{text("Prompt source versions", "Prompt source versions")}</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {snapshot.promptSources.versions.slice(0, 12).map((source) => (
+              <div key={`${source.sourceId}-${source.locale}`} className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
+                <div className="font-semibold text-stone-900">{source.sourceId}:{source.locale}</div>
+                <div className="mt-1 break-all">{source.version}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function OperationsDiagnosticsPanel({
+  snapshot,
+  loading,
+  error,
+  onRefresh,
+}: {
+  snapshot: OperationsDiagnosticsSnapshot | null
+  loading: boolean
+  error: string
+  onRefresh: () => void
+}) {
+  const { text, displayText } = useUiI18n()
+
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("운영 진단", "Operational diagnostics")}</div>
+          <p className="mt-1 text-sm leading-6 text-stone-600">
+            {text(
+              "메모리 검색, 벡터 백엔드, 예약 작업 상태를 일반 설정과 분리해 확인합니다.",
+              "Inspect memory search, vector backend, and schedule status separately from general settings.",
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? text("확인 중", "Checking") : text("새로고침", "Refresh")}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("메모리 검색", "Memory search")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.memorySearchMode ?? "fts"}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("벡터 백엔드", "Vector backend")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.vectorBackend ?? "none"}</div>
+          <div className={`mt-1 text-xs ${snapshot?.vectorAvailable ? "text-emerald-700" : "text-amber-700"}`}>
+            {snapshot?.vectorAvailable ? text("사용 가능", "Available") : displayText(snapshot?.vectorReason || text("FTS로 폴백", "Falling back to FTS"))}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("스케줄러", "Scheduler")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.schedulerRunning ? text("실행 중", "Running") : text("중지됨", "Stopped")}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("활성 예약", "Active jobs")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.activeJobs ?? 0}</div>
+        </div>
+      </div>
+
+      {snapshot?.nextRuns.length ? (
+        <div className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-xs font-semibold text-stone-500">{text("예약된 다음 실행", "Upcoming schedule runs")}</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {snapshot.nextRuns.slice(0, 6).map((item) => (
+              <div key={`${item.scheduleId}-${item.nextRunAt}`} className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
+                <div className="font-semibold text-stone-900">{displayText(item.name)}</div>
+                <div className="mt-1">{new Date(item.nextRunAt).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -1,17 +1,20 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { PATHS } from "../config/index.js";
-import { runMigrations } from "./migrations.js";
+import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
 let _db = null;
 export function getDb() {
     if (_db)
         return _db;
     mkdirSync(dirname(PATHS.dbFile), { recursive: true });
+    const dbExisted = existsSync(PATHS.dbFile);
     _db = new BetterSqlite3(PATHS.dbFile);
     _db.pragma("journal_mode = WAL");
     _db.pragma("foreign_keys = ON");
     _db.pragma("synchronous = NORMAL");
+    if (dbExisted)
+        createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"));
     runMigrations(_db);
     return _db;
 }
@@ -155,7 +158,7 @@ export function getPromptSourceStates() {
     }));
 }
 function resolveMemoryOwnerId(scope, ownerId) {
-    if (scope === "global")
+    if (scope === "global" || scope === "long-term")
         return ownerId?.trim() || "global";
     const normalized = ownerId?.trim();
     if (!normalized) {
@@ -244,16 +247,147 @@ export function recordMemoryAccessLog(input) {
         .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, input.documentId ?? null, input.chunkId ?? null, input.query, input.resultSource, input.score ?? null, input.latencyMs ?? null, Date.now());
     return id;
 }
+export function insertFlashFeedback(input) {
+    const sessionId = input.sessionId.trim();
+    if (!sessionId)
+        throw new Error("flash-feedback requires a session id");
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const ttlMs = Math.max(1, input.ttlMs ?? 30 * 60 * 1000);
+    getDb()
+        .prepare(`INSERT INTO flash_feedback
+       (id, session_id, run_id, request_group_id, content, severity, expires_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, sessionId, input.runId ?? null, input.requestGroupId ?? null, input.content, input.severity ?? "normal", now + ttlMs, toJsonOrNull(input.metadata), now, now);
+    return id;
+}
+export function upsertScheduleMemoryEntry(input) {
+    const scheduleId = input.scheduleId.trim();
+    if (!scheduleId)
+        throw new Error("schedule memory requires a schedule id");
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    getDb()
+        .prepare(`INSERT INTO schedule_entries
+       (id, schedule_id, session_id, request_group_id, title, prompt, cron_expression, next_run_at, enabled, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(schedule_id) DO UPDATE SET
+         session_id = excluded.session_id,
+         request_group_id = excluded.request_group_id,
+         title = excluded.title,
+         prompt = excluded.prompt,
+         cron_expression = excluded.cron_expression,
+         next_run_at = excluded.next_run_at,
+         enabled = excluded.enabled,
+         metadata_json = excluded.metadata_json,
+         updated_at = excluded.updated_at`)
+        .run(id, scheduleId, input.sessionId ?? null, input.requestGroupId ?? null, input.title ?? null, input.prompt, input.cronExpression ?? null, input.nextRunAt ?? null, input.enabled === false ? 0 : 1, toJsonOrNull(input.metadata), now, now);
+    const row = getDb()
+        .prepare(`SELECT id FROM schedule_entries WHERE schedule_id = ? LIMIT 1`)
+        .get(scheduleId);
+    return row?.id ?? id;
+}
+export function insertArtifactReceipt(input) {
+    const id = crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO artifact_receipts
+       (id, run_id, request_group_id, channel, artifact_path, mime_type, size_bytes, delivery_receipt_json, delivered_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.requestGroupId ?? null, input.channel, input.artifactPath, input.mimeType ?? null, input.sizeBytes ?? null, toJsonOrNull(input.deliveryReceipt), input.deliveredAt ?? null, Date.now());
+    return id;
+}
+export function hasArtifactReceipt(input) {
+    const row = getDb()
+        .prepare(`SELECT id FROM artifact_receipts
+       WHERE run_id = ? AND channel = ? AND artifact_path = ?
+       LIMIT 1`)
+        .get(input.runId, input.channel, input.artifactPath);
+    return Boolean(row);
+}
+export function insertArtifactMetadata(input) {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    getDb()
+        .prepare(`INSERT INTO artifacts
+       (id, source_run_id, request_group_id, owner_channel, channel_target, artifact_path, mime_type, size_bytes,
+        retention_policy, expires_at, metadata_json, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
+        .run(id, input.sourceRunId ?? null, input.requestGroupId ?? null, input.ownerChannel, input.channelTarget ?? null, input.artifactPath, input.mimeType ?? "application/octet-stream", input.sizeBytes ?? null, input.retentionPolicy ?? "standard", input.expiresAt ?? null, toJsonOrNull(input.metadata), input.createdAt ?? now, input.updatedAt ?? input.createdAt ?? now);
+    return id;
+}
+export function getLatestArtifactMetadataByPath(artifactPath) {
+    return getDb()
+        .prepare(`SELECT * FROM artifacts
+       WHERE artifact_path = ?
+       ORDER BY created_at DESC
+       LIMIT 1`)
+        .get(artifactPath);
+}
+export function listExpiredArtifactMetadata(now = Date.now()) {
+    return getDb()
+        .prepare(`SELECT * FROM artifacts
+       WHERE expires_at IS NOT NULL
+         AND expires_at <= ?
+         AND deleted_at IS NULL
+       ORDER BY expires_at ASC`)
+        .all(now);
+}
+export function markArtifactDeleted(id, deletedAt = Date.now()) {
+    getDb()
+        .prepare(`UPDATE artifacts SET deleted_at = ?, updated_at = ? WHERE id = ?`)
+        .run(deletedAt, deletedAt, id);
+}
+export function insertDiagnosticEvent(input) {
+    const id = crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO diagnostic_events
+       (id, run_id, session_id, request_group_id, recovery_key, kind, summary, detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, input.recoveryKey ?? null, input.kind, input.summary, toJsonOrNull(input.detail), Date.now());
+    return id;
+}
 export function enqueueMemoryWritebackCandidate(input) {
     const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId);
     const id = crypto.randomUUID();
     const now = Date.now();
+    const status = input.status ?? "pending";
     getDb()
         .prepare(`INSERT INTO memory_writeback_queue
        (id, scope, owner_id, source_type, content, metadata_json, status, retry_count, last_error, run_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, ?)`)
-        .run(id, input.scope, ownerId, input.sourceType, input.content, toJsonOrNull(input.metadata), input.runId ?? null, now, now);
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`)
+        .run(id, input.scope, ownerId, input.sourceType, input.content, toJsonOrNull(input.metadata), status, input.lastError ?? null, input.runId ?? null, now, now);
     return id;
+}
+export function listMemoryWritebackCandidates(input = {}) {
+    const status = input.status ?? "pending";
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)));
+    if (status === "all") {
+        return getDb()
+            .prepare(`SELECT * FROM memory_writeback_queue ORDER BY updated_at DESC LIMIT ?`)
+            .all(limit);
+    }
+    return getDb()
+        .prepare(`SELECT * FROM memory_writeback_queue WHERE status = ? ORDER BY updated_at DESC LIMIT ?`)
+        .all(status, limit);
+}
+export function getMemoryWritebackCandidate(id) {
+    return getDb()
+        .prepare(`SELECT * FROM memory_writeback_queue WHERE id = ? LIMIT 1`)
+        .get(id);
+}
+export function updateMemoryWritebackCandidate(input) {
+    const current = getMemoryWritebackCandidate(input.id);
+    if (!current)
+        return undefined;
+    const nextContent = input.content ?? current.content;
+    const nextMetadata = input.metadata !== undefined ? toJsonOrNull(input.metadata) : current.metadata_json;
+    const nextLastError = Object.prototype.hasOwnProperty.call(input, "lastError") ? input.lastError ?? null : current.last_error;
+    getDb()
+        .prepare(`UPDATE memory_writeback_queue
+       SET status = ?, content = ?, metadata_json = ?, last_error = ?, updated_at = ?
+       WHERE id = ?`)
+        .run(input.status, nextContent, nextMetadata, nextLastError, Date.now(), input.id);
+    return getMemoryWritebackCandidate(input.id);
 }
 export function upsertSessionSnapshot(input) {
     const id = crypto.randomUUID();
@@ -342,8 +476,14 @@ export function listTaskContinuityForLineages(lineageRootRunIds) {
         .map(mapTaskContinuity);
 }
 export function insertMemoryItem(item) {
+    if ((item.scope === "session" || item.scope === "short-term" || item.scope === "flash-feedback") && !item.sessionId) {
+        throw new Error(`${item.scope} memory requires a session id`);
+    }
     if (item.scope === "task" && !item.runId && !item.requestGroupId) {
         throw new Error("task memory requires a runId or requestGroupId");
+    }
+    if (item.scope === "schedule" && !item.requestGroupId) {
+        throw new Error("schedule memory requires a schedule id");
     }
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -357,10 +497,10 @@ export function insertMemoryItem(item) {
 }
 function buildMemoryScopeWhere(filters, alias = "m") {
     const prefix = alias ? `${alias}.` : "";
-    const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`];
+    const clauses = [`${prefix}memory_scope = 'global'`, `${prefix}memory_scope = 'long-term'`, `${prefix}memory_scope IS NULL`, `${prefix}memory_scope = ''`];
     const values = [];
     if (filters?.sessionId) {
-        clauses.push(`(${prefix}memory_scope = 'session' AND ${prefix}session_id = ?)`);
+        clauses.push(`(${prefix}memory_scope IN ('session', 'short-term', 'flash-feedback') AND ${prefix}session_id = ?)`);
         values.push(filters.sessionId);
     }
     const taskOwners = [filters?.requestGroupId, filters?.runId].filter((value) => Boolean(value));
@@ -368,6 +508,10 @@ function buildMemoryScopeWhere(filters, alias = "m") {
         const placeholders = taskOwners.map(() => "?").join(", ");
         clauses.push(`(${prefix}memory_scope = 'task' AND (${prefix}request_group_id IN (${placeholders}) OR ${prefix}run_id IN (${placeholders})))`);
         values.push(...taskOwners, ...taskOwners);
+    }
+    if (filters?.includeSchedule && filters.scheduleId) {
+        clauses.push(`(${prefix}memory_scope = 'schedule' AND ${prefix}request_group_id = ?)`);
+        values.push(filters.scheduleId);
     }
     return {
         clause: `(${clauses.join(" OR ")})`,
@@ -460,9 +604,9 @@ export function getSchedulesForSession(sessionId, enabledOnly = false) {
 }
 export function insertSchedule(s) {
     getDb()
-        .prepare(`INSERT INTO schedules (id, name, cron_expression, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(s.id, s.name, s.cron_expression, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at);
+        .prepare(`INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(s.id, s.name, s.cron_expression, s.timezone ?? null, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at);
 }
 export function updateSchedule(id, fields) {
     const sets = [];
@@ -483,6 +627,30 @@ export function getScheduleRuns(scheduleId, limit, offset) {
     return getDb()
         .prepare("SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?")
         .all(scheduleId, limit, offset);
+}
+export function listUnfinishedScheduleRuns(limit = 200) {
+    return getDb()
+        .prepare(`SELECT * FROM schedule_runs
+       WHERE finished_at IS NULL OR success IS NULL
+       ORDER BY started_at DESC
+       LIMIT ?`)
+        .all(Math.max(1, Math.min(1000, Math.floor(limit))));
+}
+export function interruptUnfinishedScheduleRunsOnStartup(input = {}) {
+    const rows = listUnfinishedScheduleRuns(input.limit ?? 200);
+    if (!rows.length)
+        return [];
+    const finishedAt = input.finishedAt ?? Date.now();
+    const error = input.error ?? "Interrupted by daemon restart; not retried automatically.";
+    const update = getDb().prepare(`UPDATE schedule_runs
+     SET finished_at = ?, success = 0, error = COALESCE(error, ?)
+     WHERE id = ? AND (finished_at IS NULL OR success IS NULL)`);
+    const tx = getDb().transaction(() => {
+        for (const row of rows)
+            update.run(finishedAt, error, row.id);
+    });
+    tx();
+    return rows;
 }
 export function countScheduleRuns(scheduleId) {
     return getDb()

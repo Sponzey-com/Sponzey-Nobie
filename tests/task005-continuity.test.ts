@@ -1,13 +1,17 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   closeDb,
   getTaskContinuity,
+  insertArtifactReceipt,
+  insertSession,
   listTaskContinuityForLineages,
   upsertTaskContinuity,
 } from "../packages/core/src/db/index.js"
+import { deliverArtifactOnce, resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.ts"
+import { createRootRun, getRootRun, recoverActiveRunsOnStartup, updateRunStatus } from "../packages/core/src/runs/store.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 
 const tempDirs: string[] = []
@@ -28,6 +32,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetArtifactDeliveryDedupeForTest()
   closeDb()
   if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
   else process.env["NOBIE_STATE_DIR"] = previousStateDir
@@ -92,5 +97,85 @@ describe("task005 continuity persistence", () => {
     expect(listTaskContinuityForLineages(["lineage-1", "missing"]).map((item) => item.lineageRootRunId)).toEqual([
       "lineage-1",
     ])
+  })
+
+  it("recovers pending approval state after process restart", () => {
+    insertSession({
+      id: "session-approval",
+      source: "webui",
+      source_id: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      summary: null,
+    })
+    createRootRun({
+      id: "run-approval",
+      sessionId: "session-approval",
+      requestGroupId: "group-approval",
+      prompt: "화면 캡처",
+      source: "webui",
+    })
+    updateRunStatus("run-approval", "awaiting_approval", "screen_capture 승인 대기", true)
+
+    const recovered = recoverActiveRunsOnStartup()
+    const run = getRootRun("run-approval")
+    const continuity = getTaskContinuity("group-approval")
+
+    expect(recovered.map((item) => item.id)).toContain("run-approval")
+    expect(run?.status).toBe("awaiting_approval")
+    expect(continuity).toMatchObject({
+      lineageRootRunId: "group-approval",
+      status: "awaiting_approval",
+      pendingApprovals: ["approval:run-approval"],
+      pendingDelivery: [],
+    })
+  })
+
+  it("marks already delivered runs completed on startup without another artifact send", async () => {
+    insertSession({
+      id: "session-delivered",
+      source: "slack",
+      source_id: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      summary: null,
+    })
+    createRootRun({
+      id: "run-delivered",
+      sessionId: "session-delivered",
+      requestGroupId: "group-delivered",
+      prompt: "메인 화면 캡처해서 보여줘",
+      source: "slack",
+    })
+    upsertTaskContinuity({
+      lineageRootRunId: "group-delivered",
+      lastDeliveryReceipt: "slack:/tmp/screen.png",
+      pendingDelivery: [],
+      status: "delivered",
+    })
+    insertArtifactReceipt({
+      runId: "run-delivered",
+      requestGroupId: "group-delivered",
+      channel: "slack",
+      artifactPath: "/tmp/screen.png",
+      deliveredAt: Date.now(),
+    })
+
+    const recovered = recoverActiveRunsOnStartup()
+    const deliveryTask = vi.fn(async () => "sent")
+    const delivery = await deliverArtifactOnce({
+      runId: "run-delivered",
+      channel: "slack",
+      filePath: "/tmp/screen.png",
+      task: deliveryTask,
+    })
+    const run = getRootRun("run-delivered")
+    const continuity = getTaskContinuity("group-delivered")
+
+    expect(recovered.map((item) => item.id)).toContain("run-delivered")
+    expect(run?.status).toBe("completed")
+    expect(continuity?.status).toBe("delivered")
+    expect(delivery).toBeUndefined()
+    expect(deliveryTask).not.toHaveBeenCalled()
   })
 })
