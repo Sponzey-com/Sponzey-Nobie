@@ -1,4 +1,4 @@
-import type { RunChunkDeliveryHandler } from "../../runs/delivery.js";
+import { type RunChunkDeliveryHandler } from "../../runs/delivery.js";
 export declare function createWebUiChunkDeliveryHandler(params: {
     sessionId: string;
     runId: string;

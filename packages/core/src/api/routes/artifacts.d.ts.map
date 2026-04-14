@@ -1,1 +1,1 @@
-{"version":3,"file":"artifacts.d.ts","sourceRoot":"","sources":["../../../src/api/routes/artifacts.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAmC9C,wBAAgB,sBAAsB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAwBjE"}
+{"version":3,"file":"artifacts.d.ts","sourceRoot":"","sources":["../../../src/api/routes/artifacts.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAa9C,wBAAgB,sBAAsB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CA0CjE"}

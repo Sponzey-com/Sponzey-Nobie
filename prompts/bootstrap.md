@@ -25,6 +25,12 @@
 - `definitions`: `prompts/definitions.md`, 공통 용어와 런타임 개념 정의
 - `soul`: `prompts/soul.md`, 장기 운영 정책과 완료 기준
 - `planner`: `prompts/planner.md`, 요청 구조화와 실행 브리프 정책
+- `memory_policy`: `prompts/memory_policy.md`, 메모리 주입과 기록 정책
+- `tool_policy`: `prompts/tool_policy.md`, 도구 선택과 실행 정책
+- `recovery_policy`: `prompts/recovery_policy.md`, 실패 분류와 복구 정책
+- `completion_policy`: `prompts/completion_policy.md`, 완료 판정 정책
+- `output_policy`: `prompts/output_policy.md`, 사용자-facing 출력과 오류 표시 정책
+- `channel`: `prompts/channel.md`, 요청 채널과 결과 전달 경계 정책
 - `bootstrap`: `prompts/bootstrap.md`, 최초 실행 전용 seed 정책
 
 각 source에는 최소한 다음 metadata를 기록한다.

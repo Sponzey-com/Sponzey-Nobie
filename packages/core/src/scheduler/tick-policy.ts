@@ -2,7 +2,7 @@ import type { DbSchedule } from "../db/index.js"
 
 type ScheduleTickSource = Pick<
   DbSchedule,
-  "id" | "name" | "enabled" | "execution_driver" | "cron_expression" | "created_at" | "last_run_at"
+  "id" | "name" | "enabled" | "execution_driver" | "cron_expression" | "timezone" | "created_at" | "last_run_at"
 >
 
 export type ScheduleTickDirective =
@@ -14,7 +14,7 @@ export function resolveScheduleTickDirective(params: {
   nowMs: number
   queueActive: boolean
   isValidCron: (cron: string) => boolean
-  getNextRun: (cron: string, base: Date) => Date
+  getNextRun: (cron: string, base: Date, timezone?: string | null) => Date
 }): ScheduleTickDirective {
   const { schedule, nowMs, queueActive, isValidCron, getNextRun } = params
 
@@ -37,7 +37,7 @@ export function resolveScheduleTickDirective(params: {
   try {
     const baseTimestamp = schedule.last_run_at ?? schedule.created_at ?? nowMs
     const base = new Date(baseTimestamp)
-    const nextRun = getNextRun(schedule.cron_expression, base)
+    const nextRun = getNextRun(schedule.cron_expression, base, schedule.timezone)
 
     if (nextRun.getTime() > nowMs) {
       return { kind: "skip", reason: "not_due" }

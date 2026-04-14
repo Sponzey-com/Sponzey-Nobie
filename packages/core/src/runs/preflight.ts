@@ -8,6 +8,31 @@ import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { FinalizationSource } from "./finalization.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
+export type ContextMemoryScope =
+  | "short-term"
+  | "long-term"
+  | "schedule"
+  | "flash-feedback"
+  | "task"
+  | "artifact"
+  | "diagnostic"
+
+export interface StartContextPlan {
+  promptSources: string[]
+  memoryScopes: ContextMemoryScope[]
+  retrieval: {
+    ftsFirst: boolean
+    vectorOptional: boolean
+    maxSnippets: number
+  }
+  toolPolicy: {
+    toolsEnabled: boolean
+    requiresApproval: boolean
+    requiresYeonjang: boolean
+  }
+  preflightFailure: StartPreflightFailure | null
+}
+
 export interface StartPreflightFailure {
   code:
     | "ai_connection_unavailable"
@@ -35,6 +60,8 @@ export interface StartPreflightInput {
 
 const YEONJANG_APPROVAL_TOOL_PATTERN =
   /^(screen_capture|screen_find_text|mouse_|keyboard_|shell_exec|app_launch|process_kill|window_|yeonjang_)/u
+const SCHEDULE_MEMORY_REQUEST_PATTERN =
+  /(?:예약|스케줄|일정|알림|schedule|scheduled|cron|reminder|alarm)/iu
 
 function normalize(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? ""
@@ -63,6 +90,17 @@ function requiresYeonjangRuntime(input: StartPreflightInput): boolean {
     input.workerRuntime?.label,
   ].filter(Boolean).join(" ").toLowerCase()
   return targetText.includes("yeonjang")
+}
+
+function resolveContextPlanMemoryScopes(input: StartPreflightInput): ContextMemoryScope[] {
+  const scopes = new Set<ContextMemoryScope>(["short-term", "flash-feedback"])
+  if (input.executionSemantics) scopes.add("task")
+  if (input.executionSemantics?.artifactDelivery === "direct") scopes.add("artifact")
+  if (input.message.trim().startsWith("[Scheduled Task]") || SCHEDULE_MEMORY_REQUEST_PATTERN.test(input.message)) {
+    scopes.add("schedule")
+  }
+  scopes.add("long-term")
+  return [...scopes]
 }
 
 function hasConnectedYeonjangSnapshot(): boolean {
@@ -130,4 +168,37 @@ export function resolveStartPreflightFailure(input: StartPreflightInput): StartP
   return resolveChannelFailure(input)
     ?? resolveAiFailure(input)
     ?? resolveYeonjangFailure(input)
+}
+
+export function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan {
+  const requiresApproval = Boolean(input.executionSemantics?.approvalRequired)
+  const requiresYeonjang = requiresYeonjangRuntime(input)
+
+  return {
+    promptSources: [
+      "definitions",
+      "identity",
+      "user",
+      "soul",
+      "planner",
+      "memory_policy",
+      "tool_policy",
+      "recovery_policy",
+      "completion_policy",
+      "output_policy",
+      `channel:${input.source}`,
+    ],
+    memoryScopes: resolveContextPlanMemoryScopes(input),
+    retrieval: {
+      ftsFirst: true,
+      vectorOptional: true,
+      maxSnippets: 8,
+    },
+    toolPolicy: {
+      toolsEnabled: input.toolsEnabled !== false,
+      requiresApproval,
+      requiresYeonjang,
+    },
+    preflightFailure: resolveStartPreflightFailure(input),
+  }
 }

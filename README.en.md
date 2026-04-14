@@ -151,6 +151,7 @@ Currently implemented in the monitor:
 - Separate handling for approval, cancellation, failure, and delivery failure
 - Split between user-facing task cards and internal debug attempts
 - `/api/tasks` snapshot model and WebUI task monitoring
+- Run detail diagnostics show prompt sources, memory/vector traces, recovery keys, tool receipts, and delivery receipts
 
 ### 8. Scheduling `(Implemented)`
 
@@ -160,6 +161,21 @@ Schedule registration and schedule execution are tracked as separate tasks and r
 - recurring schedules
 - schedule lifecycle events
 - lineage with `scheduleId`, `scheduleRunId`, `originRunId`, and `originRequestGroupId`
+- The WebUI schedule screen separates schedule lists, scheduler status, and recent schedule run history from the normal activity monitor
+
+### 9. Prompts and Memory Diagnostics `(Implemented)`
+
+Nobie does not keep every rule inside one growing system prompt. It assembles role-specific prompt sources from `prompts/`.
+
+- `identity`, `user`, `definitions`, `soul`, `planner`
+- `channel`, `tool_policy`, `memory_policy`, `recovery_policy`, `completion_policy`, `output_policy`
+- Each run keeps a prompt source id, version, and checksum snapshot
+
+Memory is split by purpose-specific scopes.
+
+- `short-term`, `long-term`, `task`, `schedule`, `flash-feedback`, `artifact`, `diagnostic`
+- Vector search is optional. If an embedding provider is missing or fails, Nobie falls back to FTS search.
+- The Advanced Settings screen shows memory search mode, vector backend, and scheduler state.
 
 ## Internal Process Structure
 

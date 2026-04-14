@@ -1,4 +1,16 @@
 import { startRootRun } from "./start.js";
+function normalizeIngressIdentityPart(value) {
+    return value == null ? "-" : String(value).trim() || "-";
+}
+export function buildIngressDedupeKey(identity) {
+    return [
+        identity.source,
+        identity.sessionId,
+        normalizeIngressIdentityPart(identity.externalChatId),
+        normalizeIngressIdentityPart(identity.externalThreadId),
+        normalizeIngressIdentityPart(identity.externalMessageId),
+    ].join(":");
+}
 function detectIngressReceiptLanguage(message) {
     const hangulCount = (message.match(/[가-힣]/gu) ?? []).length;
     const latinCount = (message.match(/[A-Za-z]/g) ?? []).length;

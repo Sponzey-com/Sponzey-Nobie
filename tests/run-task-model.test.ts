@@ -473,12 +473,14 @@ describe("buildTaskModels", () => {
           { id: "evt-diagnostics-1", at: 1, label: "prompt_ms=12ms" },
           { id: "evt-diagnostics-2", at: 2, label: "memory_total_ms=5ms" },
           { id: "evt-diagnostics-3", at: 3, label: "복구 재시도 1/2" },
+          { id: "evt-diagnostics-4", at: 4, label: "tool receipt: screen_capture ok" },
+          { id: "evt-diagnostics-5", at: 5, label: "Slack 파일 전달 완료: /tmp/screen.png" },
         ],
         promptSourceSnapshot: {
           assemblyVersion: 3,
           sources: [
-            { sourceId: "identity" },
-            { sourceId: "soul" },
+            { sourceId: "identity", locale: "ko", version: "v1", checksum: "1234567890abcdef" },
+            { sourceId: "soul", locale: "ko", version: "v2", checksum: "abcdef1234567890" },
           ],
         },
       }),
@@ -508,9 +510,15 @@ describe("buildTaskModels", () => {
     })
     expect(task?.diagnostics).toEqual({
       promptSourceIds: ["identity", "soul"],
+      promptSources: [
+        { sourceId: "identity", locale: "ko", version: "v1", checksum: "1234567890abcdef" },
+        { sourceId: "soul", locale: "ko", version: "v2", checksum: "abcdef1234567890" },
+      ],
       promptSourceVersion: "assembly:3",
       latencyEvents: ["prompt_ms=12ms", "memory_total_ms=5ms"],
       memoryEvents: ["memory_total_ms=5ms"],
+      toolEvents: ["tool receipt: screen_capture ok"],
+      deliveryEvents: ["Slack 파일 전달 완료: /tmp/screen.png"],
       recoveryEvents: ["복구 재시도 1/2"],
       lastRecoveryKey: "delivery:screen_capture",
       recoveryBudget: "delivery 1/2",

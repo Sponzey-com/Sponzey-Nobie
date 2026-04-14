@@ -95,8 +95,8 @@ describe("runs delivery helpers", () => {
         caption: "메인 화면 캡처",
       },
     ])
-    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("WebUI 파일 전달 완료: /tmp/result.png")
-    expect(appendEvent).toHaveBeenCalledWith("run-1", "WebUI 파일 전달 완료: /tmp/result.png")
+    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("WebUI 파일 전달 완료: result.png")
+    expect(appendEvent).toHaveBeenCalledWith("run-1", "WebUI 파일 전달 완료: result.png")
   })
 
   it("records slack artifact delivery receipts without relabeling them as webui", () => {
@@ -129,8 +129,8 @@ describe("runs delivery helpers", () => {
       appendEvent,
     })
 
-    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("Slack 파일 전달 완료: /tmp/slack-result.png")
-    expect(appendEvent).toHaveBeenNthCalledWith(1, "run-1", "Slack 파일 전달 완료: /tmp/slack-result.png")
+    expect(buildSuccessfulDeliverySummary(deliveries)).toBe("Slack 파일 전달 완료: slack-result.png")
+    expect(appendEvent).toHaveBeenNthCalledWith(1, "run-1", "Slack 파일 전달 완료: slack-result.png")
     expect(appendEvent).toHaveBeenNthCalledWith(2, "run-1", "Slack 텍스트 전달 완료")
   })
 
@@ -166,7 +166,7 @@ describe("runs delivery helpers", () => {
     const onError = vi.fn()
     const result = await deliverChunk({
       onChunk: async () => {
-        throw new Error("boom")
+        throw new Error("boom <html><body>raw upstream page</body></html>")
       },
       chunk: { type: "text", delta: "hello" },
       runId: "run-1",
@@ -175,6 +175,10 @@ describe("runs delivery helpers", () => {
 
     expect(result).toBeUndefined()
     expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]?.[0]).toContain("runId=run-1")
+    expect(onError.mock.calls[0]?.[0]).toContain("chunk delivery failed")
+    expect(onError.mock.calls[0]?.[0]).not.toContain("<html>")
+    expect(onError.mock.calls[0]?.[0]).not.toContain("raw upstream page")
   })
 
   it("delivers a chunk and applies delivery receipts in one helper", async () => {
@@ -210,7 +214,7 @@ describe("runs delivery helpers", () => {
     expect(receipt?.artifactDeliveries).toHaveLength(1)
     expect(deliveries).toHaveLength(1)
     expect(textDeliveries).toHaveLength(1)
-    expect(appendEvent).toHaveBeenNthCalledWith(1, "run-2", "텔레그램 파일 전달 완료: /tmp/result.png")
+    expect(appendEvent).toHaveBeenNthCalledWith(1, "run-2", "텔레그램 파일 전달 완료: result.png")
     expect(appendEvent).toHaveBeenNthCalledWith(2, "run-2", "텔레그램 텍스트 전달 완료")
   })
 

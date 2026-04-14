@@ -15,7 +15,7 @@ export function resolveScheduleTickDirective(params) {
     try {
         const baseTimestamp = schedule.last_run_at ?? schedule.created_at ?? nowMs;
         const base = new Date(baseTimestamp);
-        const nextRun = getNextRun(schedule.cron_expression, base);
+        const nextRun = getNextRun(schedule.cron_expression, base, schedule.timezone);
         if (nextRun.getTime() > nowMs) {
             return { kind: "skip", reason: "not_due" };
         }

@@ -57,6 +57,13 @@ export type { MergedInstructionBundle } from "./instructions/merge.js"
 
 // Memory
 export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMemories, buildMemoryContext } from "./memory/store.js"
+export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery } from "./memory/evaluation.js"
+export { diagnoseVectorEmbeddingRows } from "./memory/search.js"
+export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js"
+export type { MemoryRetrievalEvaluationFixture, MemoryRetrievalEvaluationMode, MemoryRetrievalEvaluationReport } from "./memory/evaluation.js"
+export type { MemoryVectorDegradedReason, MemoryVectorDiagnostic } from "./memory/search.js"
+export type { MemoryWritebackReviewAction, MemoryWritebackReviewItem, MemoryWritebackReviewResult, MemoryWritebackSafetyResult } from "./memory/writeback.js"
+export type { PromptSourceBackupResult, PromptSourceDiffResult, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceRollbackResult, PromptSourceWriteResult } from "./memory/nobie-md.js"
 export {
   loadNobieMd,
   initNobieMd,
@@ -69,6 +76,11 @@ export {
   loadPromptSourceRegistry,
   loadSystemPromptSourceAssembly,
   loadSystemPromptSources,
+  dryRunPromptSourceAssembly,
+  buildPromptSourceContentDiff,
+  writePromptSourceWithBackup,
+  rollbackPromptSourceBackup,
+  checkPromptSourceLocaleParity,
   detectPromptSourceSecretMarkers,
   isPromptSourceContentSafe,
 } from "./memory/nobie-md.js"
@@ -95,7 +107,12 @@ export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.j
 export { startRootRun } from "./runs/start.js"
 export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js"
-export type { IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
+export { buildIngressDedupeKey } from "./runs/ingress.js"
+export type { IngressExternalIdentity, IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
+export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js"
+export type { RunCompletionOutcome, RunCompletionOutcomeInput, RunCompletionOutcomeStatus, RunFlowIdentifiers, RunFlowStatusTransitionDecision } from "./runs/flow-contract.js"
+export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js"
+export type { StartupRecoveryClassification, StartupRecoveryRunSummary, StartupRecoveryScheduleSummary, StartupRecoveryStatus, StartupRecoverySummary } from "./runs/startup-recovery.js"
 
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"

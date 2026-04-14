@@ -29,8 +29,11 @@ export function MessageBubble({ msg }: { msg: Message }) {
         {!isUser && msg.artifacts && msg.artifacts.length > 0 && (
           <div className="mb-2 space-y-3">
             {msg.artifacts.map((artifact, i) => {
-              const artifactUrl = resolveArtifactUrl(artifact.url)
-              const isImage = typeof artifact.mimeType === "string" && artifact.mimeType.startsWith("image/")
+              const artifactUrl = resolveArtifactUrl(artifact.previewUrl || artifact.url)
+              const downloadUrl = resolveArtifactUrl(artifact.downloadUrl || artifact.url)
+              const isImage = artifact.previewable !== false
+                && typeof artifact.mimeType === "string"
+                && artifact.mimeType.startsWith("image/")
               return (
                 <div
                   key={`${artifact.fileName}-${i}`}
@@ -48,9 +51,10 @@ export function MessageBubble({ msg }: { msg: Message }) {
                   ) : (
                     <div className="px-4 py-3 text-sm text-stone-700">
                       <a
-                        href={artifactUrl}
+                        href={downloadUrl}
                         target="_blank"
                         rel="noreferrer"
+                        download
                         className="font-medium text-blue-700 underline"
                       >
                         {artifact.fileName}
@@ -58,8 +62,11 @@ export function MessageBubble({ msg }: { msg: Message }) {
                     </div>
                   )}
                   {(artifact.caption || artifact.fileName) && (
-                    <div className="border-t border-gray-100 px-4 py-2 text-xs text-stone-500">
-                      {artifact.caption || artifact.fileName}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-4 py-2 text-xs text-stone-500">
+                      <span>{artifact.caption || artifact.fileName}</span>
+                      <a href={downloadUrl} target="_blank" rel="noreferrer" download className="font-medium text-blue-700 underline">
+                        다운로드
+                      </a>
                     </div>
                   )}
                 </div>

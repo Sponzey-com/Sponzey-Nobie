@@ -19,6 +19,8 @@ import {
   safeInsertRunJournalRecord,
 } from "./journaling.js"
 import { condenseMemoryText } from "../memory/journal.js"
+import { recordFlashFeedback } from "../memory/flash-feedback.js"
+import { buildRunWritebackCandidates, isFlashFeedback, prepareMemoryWritebackQueueInput } from "../memory/writeback.js"
 import type { FinalizationSource } from "./finalization.js"
 import type { LoopDirective } from "./loop-directive.js"
 import {
@@ -173,17 +175,25 @@ export function rememberRunInstruction(params: {
   safeInsertRunJournalRecord(buildRunInstructionJournalRecord(params), {
     onError: (message) => log.warn(message),
   })
-  safeEnqueueWriteback({
-    scope: "task",
-    ownerId: params.requestGroupId,
-    sourceType: "instruction",
-    content: params.message,
-    runId: params.runId,
-    metadata: {
+  if (isFlashFeedback(params.message)) {
+    safeRecordFlashFeedback({
+      runId: params.runId,
       sessionId: params.sessionId,
+      requestGroupId: params.requestGroupId,
       source: params.source,
-      durableFact: false,
-    },
+      content: condenseMemoryText(params.message, 480),
+    })
+  }
+  safeEnqueueWritebackCandidates({
+    runId: params.runId,
+    candidates: buildRunWritebackCandidates({
+      kind: "instruction",
+      content: params.message,
+      sessionId: params.sessionId,
+      requestGroupId: params.requestGroupId,
+      runId: params.runId,
+      source: params.source,
+    }),
   })
   safeUpsertTaskContinuity({
     lineageRootRunId: params.requestGroupId,
@@ -210,17 +220,19 @@ export function rememberRunSuccess(params: {
   })
   const summary = condenseMemoryText(params.summary || params.text, 360)
   if (summary) {
-    safeEnqueueWriteback({
-      scope: "session",
-      ownerId: params.sessionId,
-      sourceType: "success",
-      content: summary,
+    safeEnqueueWritebackCandidates({
       runId: params.runId,
-      metadata: {
-        requestGroupId,
+      candidates: buildRunWritebackCandidates({
+        kind: "success",
+        content: summary,
+        sessionId: params.sessionId,
+        ...(requestGroupId ? { requestGroupId } : {}),
+        runId: params.runId,
         source: params.source,
-        durableFact: false,
-      },
+        metadata: {
+          ...(requestGroupId ? { requestGroupId } : {}),
+        },
+      }),
     })
     safeUpsertSessionSnapshot({
       sessionId: params.sessionId,
@@ -236,6 +248,62 @@ export function rememberRunSuccess(params: {
       })
     }
   }
+}
+
+export function rememberFlashFeedback(params: {
+  runId: string
+  sessionId: string
+  source: FinalizationSource
+  text: string
+  requestGroupId?: string
+  repeatCount?: number
+}): void {
+  const content = condenseMemoryText(params.text, 480)
+  if (!content) return
+  safeRecordFlashFeedback({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    source: params.source,
+    content,
+    severity: params.repeatCount && params.repeatCount >= 2 ? "high" : "normal",
+  })
+  safeEnqueueWritebackCandidates({
+    runId: params.runId,
+    candidates: buildRunWritebackCandidates({
+      kind: "flash_feedback",
+      content,
+      sessionId: params.sessionId,
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      runId: params.runId,
+      source: params.source,
+      ...(params.repeatCount !== undefined ? { repeatCount: params.repeatCount } : {}),
+    }),
+  })
+}
+
+export function rememberToolResultWriteback(params: {
+  runId: string
+  sessionId: string
+  source: FinalizationSource
+  toolName: string
+  output: string
+  requestGroupId?: string
+}): void {
+  const content = condenseMemoryText(params.output, 480)
+  if (!content) return
+  safeEnqueueWritebackCandidates({
+    runId: params.runId,
+    candidates: buildRunWritebackCandidates({
+      kind: "tool_result",
+      content,
+      sessionId: params.sessionId,
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      runId: params.runId,
+      source: params.source,
+      toolName: params.toolName,
+    }),
+  })
 }
 
 export function rememberRunFailure(params: {
@@ -256,18 +324,19 @@ export function rememberRunFailure(params: {
   })
   const detail = condenseMemoryText(params.detail || params.summary, 480)
   if (detail) {
-    safeEnqueueWriteback({
-      scope: "diagnostic",
-      ownerId: requestGroupId ?? params.runId,
-      sourceType: params.title || "failure",
-      content: detail,
+    safeEnqueueWritebackCandidates({
       runId: params.runId,
-      metadata: {
+      candidates: buildRunWritebackCandidates({
+        kind: "failure",
+        content: detail,
         sessionId: params.sessionId,
-        requestGroupId,
+        ...(requestGroupId ? { requestGroupId } : {}),
+        runId: params.runId,
         source: params.source,
-        durableFact: false,
-      },
+        metadata: {
+          title: params.title || "failure",
+        },
+      }),
     })
     if (requestGroupId) {
       safeUpsertTaskContinuity({
@@ -280,11 +349,45 @@ export function rememberRunFailure(params: {
   }
 }
 
+function safeRecordFlashFeedback(input: {
+  runId: string
+  sessionId: string
+  source: FinalizationSource
+  content: string
+  requestGroupId?: string
+  severity?: "low" | "normal" | "high"
+}): void {
+  try {
+    recordFlashFeedback({
+      sessionId: input.sessionId,
+      content: input.content,
+      runId: input.runId,
+      ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
+      severity: input.severity ?? "high",
+      metadata: { source: input.source },
+    })
+  } catch (error) {
+    log.warn(`flash-feedback record failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 function safeEnqueueWriteback(input: Parameters<typeof enqueueMemoryWritebackCandidate>[0]): void {
   try {
-    enqueueMemoryWritebackCandidate(input)
+    enqueueMemoryWritebackCandidate(prepareMemoryWritebackQueueInput(input))
   } catch (error) {
     log.warn(`memory writeback enqueue failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function safeEnqueueWritebackCandidates(input: {
+  runId: string
+  candidates: ReturnType<typeof buildRunWritebackCandidates>
+}): void {
+  for (const candidate of input.candidates) {
+    safeEnqueueWriteback({
+      ...candidate,
+      runId: input.runId,
+    })
   }
 }
 

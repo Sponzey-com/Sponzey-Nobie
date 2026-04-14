@@ -1,6 +1,7 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js"
 import { reviewTaskCompletion } from "../agent/completion-review.js"
 import type { AIProvider } from "../ai/index.js"
+import { sanitizeUserFacingError } from "./error-sanitizer.js"
 import type { SuccessfulFileDelivery } from "./delivery.js"
 import {
   detectSyntheticApprovalRequest,
@@ -45,7 +46,8 @@ export async function runReviewPass(params: {
     ...(params.provider ? { provider: params.provider } : {}),
     ...(params.workDir ? { workDir: params.workDir } : {}),
   }).catch((error) => {
-    dependencies.onReviewError?.(error instanceof Error ? error.message : String(error))
+    const rawMessage = error instanceof Error ? error.message : String(error)
+    dependencies.onReviewError?.(sanitizeUserFacingError(rawMessage).userMessage)
     return null
   })
 

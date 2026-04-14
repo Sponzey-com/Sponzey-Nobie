@@ -7,6 +7,7 @@ export interface StoreMemoryDocumentParams {
     rawText: string;
     scope: MemoryScope;
     ownerId?: string;
+    scheduleId?: string;
     sourceType: string;
     sourceRef?: string;
     title?: string;
@@ -25,7 +26,9 @@ export declare function storeMemory(params: {
     content: string;
     tags?: string[];
     importance?: "low" | "medium" | "high";
-    scope?: "global" | "session" | "task";
+    scope?: MemoryScope;
+    ownerId?: string;
+    scheduleId?: string;
     sessionId?: string;
     requestGroupId?: string;
     runId?: string;
@@ -36,7 +39,9 @@ export declare function storeMemorySync(params: {
     content: string;
     tags?: string[];
     importance?: "low" | "medium" | "high";
-    scope?: "global" | "session" | "task";
+    scope?: MemoryScope;
+    ownerId?: string;
+    scheduleId?: string;
     sessionId?: string;
     requestGroupId?: string;
     runId?: string;
@@ -65,6 +70,8 @@ export declare function buildMemoryContext(params: {
     sessionId?: string;
     requestGroupId?: string;
     runId?: string;
+    scheduleId?: string;
+    includeSchedule?: boolean;
     includeArtifact?: boolean;
     includeDiagnostic?: boolean;
     budget?: MemoryContextBudget;

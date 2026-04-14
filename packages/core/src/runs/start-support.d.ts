@@ -35,6 +35,22 @@ export declare function rememberRunSuccess(params: {
     text: string;
     summary: string;
 }): void;
+export declare function rememberFlashFeedback(params: {
+    runId: string;
+    sessionId: string;
+    source: FinalizationSource;
+    text: string;
+    requestGroupId?: string;
+    repeatCount?: number;
+}): void;
+export declare function rememberToolResultWriteback(params: {
+    runId: string;
+    sessionId: string;
+    source: FinalizationSource;
+    toolName: string;
+    output: string;
+    requestGroupId?: string;
+}): void;
 export declare function rememberRunFailure(params: {
     runId: string;
     sessionId: string;

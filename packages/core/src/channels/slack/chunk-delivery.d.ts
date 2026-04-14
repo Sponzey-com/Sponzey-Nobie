@@ -1,4 +1,4 @@
-import type { RunChunkDeliveryHandler } from "../../runs/delivery.js";
+import { type RunChunkDeliveryHandler } from "../../runs/delivery.js";
 export interface SlackChunkResponder {
     sendToolStatus(toolName: string): Promise<string>;
     updateToolStatus(messageId: string, toolName: string, success: boolean): Promise<void>;

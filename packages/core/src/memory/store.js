@@ -39,12 +39,17 @@ function chunkMemoryText(value) {
     return chunks;
 }
 function resolveDocumentOwnerId(params) {
-    if (params.scope === "global")
+    const explicitOwnerId = params.ownerId?.trim();
+    if (explicitOwnerId)
+        return explicitOwnerId;
+    if (params.scope === "global" || params.scope === "long-term")
         return "global";
-    if (params.scope === "session")
+    if (params.scope === "session" || params.scope === "short-term" || params.scope === "flash-feedback")
         return params.sessionId;
     if (params.scope === "task")
         return params.requestGroupId ?? params.runId;
+    if (params.scope === "schedule")
+        return params.scheduleId;
     if (params.scope === "artifact")
         return params.requestGroupId ?? params.runId ?? params.sessionId;
     if (params.scope === "diagnostic")
@@ -58,7 +63,7 @@ export async function storeMemoryDocument(params) {
     const chunks = chunkMemoryText(rawText);
     const result = storeMemoryDocumentRecord({
         scope: params.scope,
-        ...(params.ownerId ? { ownerId: params.ownerId } : {}),
+        ...(params.ownerId ?? params.scheduleId ? { ownerId: params.ownerId ?? params.scheduleId } : {}),
         sourceType: params.sourceType,
         ...(params.sourceRef ? { sourceRef: params.sourceRef } : {}),
         ...(params.title ? { title: params.title } : {}),
@@ -114,9 +119,11 @@ export async function storeMemory(params) {
     const id = insertMemoryItem(params);
     const ownerId = resolveDocumentOwnerId({
         scope: params.scope ?? "global",
+        ...(params.ownerId ? { ownerId: params.ownerId } : {}),
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         ...(params.runId ? { runId: params.runId } : {}),
         ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
     });
     await storeMemoryDocument({
         rawText: params.content,
@@ -152,9 +159,11 @@ export function storeMemorySync(params) {
     const id = insertMemoryItem(params);
     const ownerId = resolveDocumentOwnerId({
         scope: params.scope ?? "global",
+        ...(params.ownerId ? { ownerId: params.ownerId } : {}),
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         ...(params.runId ? { runId: params.runId } : {}),
         ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
     });
     void storeMemoryDocument({
         rawText: params.content,
@@ -263,6 +272,8 @@ export async function buildMemoryContext(params) {
             ...(params.sessionId ? { sessionId: params.sessionId } : {}),
             ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
             ...(params.runId ? { runId: params.runId } : {}),
+            ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+            ...(params.includeSchedule ? { includeSchedule: params.includeSchedule } : {}),
             ...(params.includeArtifact ? { includeArtifact: params.includeArtifact } : {}),
             ...(params.includeDiagnostic ? { includeDiagnostic: params.includeDiagnostic } : {}),
         }),

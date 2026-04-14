@@ -1,4 +1,11 @@
 import type { RootRun, RunContextMode, RunScope, RunStatus, RunStepStatus, TaskProfile } from "./types.js";
+export interface StaleRunCleanupResult {
+    cleanedRunCount: number;
+    skippedRunCount: number;
+    cleanedRunIds: string[];
+    skippedRunIds: string[];
+    thresholdMs: number;
+}
 export declare function listRootRuns(limit?: number): RootRun[];
 export declare function listActiveRootRuns(limit?: number): RootRun[];
 export declare function listActiveSessionRequestGroups(sessionId: string, excludingRunId?: string): RootRun[];
@@ -57,8 +64,13 @@ interface CancelRootRunOptions {
     runSummary?: string;
 }
 export declare function cancelRootRun(runId: string, options?: CancelRootRunOptions): RootRun | undefined;
+export declare function cleanupStaleRunStates(options?: {
+    staleMs?: number;
+    now?: number;
+}): StaleRunCleanupResult;
 export declare function deleteRunHistory(runId: string): {
     deletedRunCount: number;
+    blockedRunCount?: number;
 } | undefined;
 export declare function clearHistoricalRunHistory(): {
     deletedRunCount: number;

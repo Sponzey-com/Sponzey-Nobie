@@ -1,4 +1,5 @@
 import { reviewTaskCompletion } from "../agent/completion-review.js";
+import { sanitizeUserFacingError } from "./error-sanitizer.js";
 import { detectSyntheticApprovalRequest, } from "./approval.js";
 export async function runReviewPass(params, dependencies) {
     const review = await dependencies.reviewTaskCompletion({
@@ -10,7 +11,8 @@ export async function runReviewPass(params, dependencies) {
         ...(params.provider ? { provider: params.provider } : {}),
         ...(params.workDir ? { workDir: params.workDir } : {}),
     }).catch((error) => {
-        dependencies.onReviewError?.(error instanceof Error ? error.message : String(error));
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        dependencies.onReviewError?.(sanitizeUserFacingError(rawMessage).userMessage);
         return null;
     });
     const syntheticApproval = detectSyntheticApprovalRequest({

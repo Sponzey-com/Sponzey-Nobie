@@ -44,6 +44,8 @@ export interface TaskMonitorTimelineItem {
   runLabel: string
 }
 
+export type TaskMonitorViewMode = "normal" | "diagnostic"
+
 export interface TaskMonitorDelivery {
   status: TaskDeliveryStatus
   channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
@@ -200,7 +202,7 @@ function buildTreeNodes(attempts: TaskMonitorAttempt[], text: TextFn): TaskMonit
 function buildTimeline(task: TaskModel, attempts: TaskMonitorAttempt[], text: TextFn): TaskMonitorTimelineItem[] {
   const labelByAttemptId = new Map(attempts.map((attempt) => [attempt.id, attempt.label]))
   return [...task.activities]
-    .sort((a, b) => b.at - a.at)
+    .sort((a, b) => (b.at - a.at) || a.id.localeCompare(b.id))
     .slice(0, 20)
     .map((activity) => ({
       id: activity.id,
@@ -325,6 +327,19 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
 
 export function filterActiveTaskMonitorCards(cards: TaskMonitorCard[]): TaskMonitorCard[] {
   return cards.filter((card) => ACTIVE_STATUSES.includes(card.representative.status))
+}
+
+export function filterTaskTimelineForMode(
+  timeline: TaskMonitorTimelineItem[],
+  mode: TaskMonitorViewMode,
+): TaskMonitorTimelineItem[] {
+  if (mode === "diagnostic") return timeline
+  return timeline.filter((item) => !isDiagnosticTimelineItem(item))
+}
+
+function isDiagnosticTimelineItem(item: TaskMonitorTimelineItem): boolean {
+  const label = `${item.runLabel}\n${item.label}`.toLowerCase()
+  return /(receipt|recovery|checksum|chunk|memory|vector|prompt source|status_transition_blocked|복구|체크섬|청크|메모리|벡터|프롬프트 출처|반복 중단 키)/i.test(label)
 }
 
 export function describeTaskDeliveryStatus(status: TaskDeliveryStatus, text: TextFn): string {

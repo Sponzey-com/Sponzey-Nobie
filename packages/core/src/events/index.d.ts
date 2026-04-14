@@ -22,6 +22,9 @@ export interface NobieEvents {
         sessionId: string;
         runId: string;
         url: string;
+        previewUrl?: string;
+        downloadUrl?: string;
+        previewable?: boolean;
         filePath: string;
         fileName: string;
         mimeType?: string;

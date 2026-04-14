@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { api } from "../api/client"
+import type { OperationsSummary } from "../contracts/operations"
 import type { RootRun } from "../contracts/runs"
 import type { TaskModel } from "../contracts/tasks"
 import { useConnectionStore } from "./connection"
@@ -10,14 +11,17 @@ interface RunsState {
   lastError: string
   runs: RootRun[]
   tasks: TaskModel[]
+  operationsSummary: OperationsSummary | null
   selectedRunId: string | null
   ensureInitialized: (force?: boolean) => Promise<void>
   refresh: () => Promise<void>
+  refreshOperations: () => Promise<void>
   selectRun: (runId: string) => void
   createRun: (message: string, sessionId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
   cancelRun: (runId: string) => Promise<void>
   deleteRunHistory: (runId: string) => Promise<void>
   clearHistoricalRunHistory: () => Promise<void>
+  cleanupStaleRuns: () => Promise<void>
   upsertRun: (run: RootRun) => void
   replaceRun: (run: RootRun) => void
 }
@@ -51,13 +55,22 @@ export const useRunsStore = create<RunsState>((set, get) => {
   let refreshTasksTimer: ReturnType<typeof setTimeout> | null = null
   let latestRunsSnapshotToken = 0
   let latestTasksSnapshotToken = 0
+  let latestOperationsSnapshotToken = 0
+
+  async function refreshOperationsSnapshot(): Promise<void> {
+    const operationsSnapshotToken = ++latestOperationsSnapshotToken
+    const response = await api.runOperationsSummary()
+    if (operationsSnapshotToken !== latestOperationsSnapshotToken) return
+    set({ operationsSummary: response.summary })
+  }
 
   async function refreshTasksSnapshot(): Promise<void> {
     const taskSnapshotToken = ++latestTasksSnapshotToken
-    const response = await api.tasks()
+    const [response, operationsResponse] = await Promise.all([api.tasks(), api.runOperationsSummary()])
     if (taskSnapshotToken !== latestTasksSnapshotToken) return
     set((state) => ({
       tasks: sortTasks(response.tasks),
+      operationsSummary: operationsResponse.summary,
       selectedRunId: resolveSelectedRunId({
         currentSelectedRunId: state.selectedRunId,
         tasks: response.tasks,
@@ -82,20 +95,27 @@ export const useRunsStore = create<RunsState>((set, get) => {
     lastError: "",
     runs: [],
     tasks: [],
+    operationsSummary: null,
     selectedRunId: null,
     ensureInitialized: async (force = false) => {
       if (!force && (get().initialized || get().loading)) return
       const runsSnapshotToken = ++latestRunsSnapshotToken
       const tasksSnapshotToken = ++latestTasksSnapshotToken
+      const operationsSnapshotToken = ++latestOperationsSnapshotToken
       set({ loading: true })
       try {
-        const [runsResponse, tasksResponse] = await Promise.all([api.runs(), api.tasks()])
-        if (runsSnapshotToken !== latestRunsSnapshotToken || tasksSnapshotToken !== latestTasksSnapshotToken) {
+        const [runsResponse, tasksResponse, operationsResponse] = await Promise.all([api.runs(), api.tasks(), api.runOperationsSummary()])
+        if (
+          runsSnapshotToken !== latestRunsSnapshotToken
+          || tasksSnapshotToken !== latestTasksSnapshotToken
+          || operationsSnapshotToken !== latestOperationsSnapshotToken
+        ) {
           return
         }
         set({
           runs: sortRuns(runsResponse.runs),
           tasks: sortTasks(tasksResponse.tasks),
+          operationsSummary: operationsResponse.summary,
           selectedRunId: resolveSelectedRunId({
             currentSelectedRunId: get().selectedRunId,
             tasks: tasksResponse.tasks,
@@ -106,7 +126,11 @@ export const useRunsStore = create<RunsState>((set, get) => {
           lastError: "",
         })
       } catch (error) {
-        if (runsSnapshotToken !== latestRunsSnapshotToken || tasksSnapshotToken !== latestTasksSnapshotToken) {
+        if (
+          runsSnapshotToken !== latestRunsSnapshotToken
+          || tasksSnapshotToken !== latestTasksSnapshotToken
+          || operationsSnapshotToken !== latestOperationsSnapshotToken
+        ) {
           return
         }
         const message = error instanceof Error ? error.message : String(error)
@@ -116,6 +140,9 @@ export const useRunsStore = create<RunsState>((set, get) => {
     },
     refresh: async () => {
       await get().ensureInitialized(true)
+    },
+    refreshOperations: async () => {
+      await refreshOperationsSnapshot()
     },
     selectRun: (runId) => set({ selectedRunId: runId }),
     createRun: async (message, sessionId) => {
@@ -137,6 +164,11 @@ export const useRunsStore = create<RunsState>((set, get) => {
     },
     clearHistoricalRunHistory: async () => {
       await api.clearHistoricalRunHistory()
+      await get().refresh()
+    },
+    cleanupStaleRuns: async () => {
+      const response = await api.cleanupStaleRuns()
+      set({ operationsSummary: response.summary })
       await get().refresh()
     },
     upsertRun: (run) =>

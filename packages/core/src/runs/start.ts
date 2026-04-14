@@ -33,7 +33,7 @@ import {
   buildStartRootRunDriverDependencies,
 } from "./start-driver-dependencies.js"
 import { rememberRunFailure } from "./start-support.js"
-import { resolveStartPreflightFailure, type StartPreflightFailure } from "./preflight.js"
+import { resolveStartContextPlan, type StartPreflightFailure } from "./preflight.js"
 
 const log = createLogger("runs:start")
 const syntheticApprovalScopes = new Set<string>()
@@ -172,7 +172,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       logWarn: (message) => log.warn(message),
       logError: (message, payload) => log.error(message, payload),
     })
-    const preflightFailure = resolveStartPreflightFailure({
+    const contextPlan = resolveStartContextPlan({
       source: params.source,
       message: params.message,
       ...(params.model ? { model: params.model } : {}),
@@ -185,6 +185,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.targetId ? { targetId: params.targetId } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
     })
+    appendRunEvent(runId, `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang ? "required" : "not_required"}`)
+    const preflightFailure = contextPlan.preflightFailure
     if (preflightFailure) {
       return await failStartPreflight({
         failure: preflightFailure,

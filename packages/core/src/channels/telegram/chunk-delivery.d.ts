@@ -1,4 +1,4 @@
-import type { RunChunkDeliveryHandler } from "../../runs/delivery.js";
+import { type RunChunkDeliveryHandler } from "../../runs/delivery.js";
 export interface TelegramChunkResponder {
     sendToolStatus(toolName: string): Promise<number>;
     updateToolStatus(messageId: number, toolName: string, success: boolean): Promise<void>;

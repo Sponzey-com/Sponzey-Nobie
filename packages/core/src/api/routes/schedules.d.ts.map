@@ -1,1 +1,1 @@
-{"version":3,"file":"schedules.d.ts","sourceRoot":"","sources":["../../../src/api/routes/schedules.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAW9C,wBAAgB,sBAAsB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CA0HjE"}
+{"version":3,"file":"schedules.d.ts","sourceRoot":"","sources":["../../../src/api/routes/schedules.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAqD9C,wBAAgB,sBAAsB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAsLjE"}

@@ -9,6 +9,7 @@ export interface SlackApprovalMessenger {
 export declare function setActiveSlackConversationForSession(sessionId: string, channelId: string, userId: string, threadTs: string): void;
 export declare function clearActiveSlackConversationForSession(sessionId: string): void;
 export declare function registerSlackApprovalHandler(messenger: SlackApprovalMessenger): void;
+export declare function resetSlackApprovalStateForTest(): void;
 export declare function handleSlackApprovalMessage(params: {
     channelId: string;
     threadTs: string;

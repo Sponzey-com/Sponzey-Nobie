@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { decideExecutionPostPassRecovery } from "../packages/core/src/runs/execution-postpass.ts"
+import { buildRecoveryKey } from "../packages/core/src/runs/recovery.ts"
 
 describe("execution post-pass recovery", () => {
   it("returns a command failure retry when an unseen failed command exists", () => {
@@ -84,7 +85,11 @@ describe("execution post-pass recovery", () => {
       commandRecoveredWithinSamePass: false,
       executionRecovery: null,
       seenCommandFailureRecoveryKeys: new Set<string>([
-        "shell_exec:command not found: screencapture",
+        buildRecoveryKey({
+          action: "command_failure",
+          toolName: "shell_exec",
+          error: "command not found: screencapture",
+        }),
       ]),
       seenExecutionRecoveryKeys: new Set<string>(),
       recoveryBudgetUsage: {
@@ -120,7 +125,11 @@ describe("execution post-pass recovery", () => {
       },
       seenCommandFailureRecoveryKeys: new Set<string>(),
       seenExecutionRecoveryKeys: new Set<string>([
-        "create_schedule:invalid schedule registration path",
+        buildRecoveryKey({
+          action: "execution_failure",
+          toolName: "create_schedule",
+          error: "invalid schedule registration path",
+        }),
       ]),
       recoveryBudgetUsage: {
         interpretation: 0,

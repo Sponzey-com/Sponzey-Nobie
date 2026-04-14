@@ -1,5 +1,5 @@
 import type { AgentChunk } from "../../agent/index.js"
-import type { ChunkDeliveryReceipt, RunChunkDeliveryHandler } from "../../runs/delivery.js"
+import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 
@@ -82,23 +82,38 @@ export function createTelegramChunkDeliveryHandler(
 
       const isolatedToolResponse = decideIsolatedToolResponse(chunk)
       if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {
-        try {
-          const sentMessageId = await context.responder.sendFile(chunk.details.filePath, chunk.details.caption)
+        const details = chunk.details
+        const receipt = await deliverArtifactOnce({
+          runId: context.getRunId(),
+          channel: "telegram",
+          filePath: details.filePath,
+          channelTarget: `${context.chatId}${context.threadId !== undefined ? `:${context.threadId}` : ""}`,
+          sizeBytes: details.size,
+          ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+          task: async () => {
+            try {
+              const sentMessageId = await context.responder.sendFile(details.filePath, details.caption)
+              recordIfRunPresent(sentMessageId, "assistant")
+              return {
+                artifactDeliveries: [{
+                  toolName: chunk.toolName,
+                  channel: "telegram" as const,
+                  filePath: details.filePath,
+                  ...(details.caption ? { caption: details.caption } : {}),
+                  messageId: sentMessageId,
+                }],
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              context.logError(`Failed to send file: ${message}`)
+              return undefined
+            }
+          },
+        })
+        if (receipt) {
           toolOwnedResponseActive = true
           bufferedText = ""
-          recordIfRunPresent(sentMessageId, "assistant")
-          return {
-            artifactDeliveries: [{
-              toolName: chunk.toolName,
-              channel: "telegram",
-              filePath: chunk.details.filePath,
-              ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
-              messageId: sentMessageId,
-            }],
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          context.logError(`Failed to send file: ${message}`)
+          return receipt
         }
       }
 

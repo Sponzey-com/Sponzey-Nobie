@@ -1,3 +1,4 @@
+import { deliverArtifactOnce } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
 function isArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
@@ -46,23 +47,38 @@ export function createSlackChunkDeliveryHandler(context) {
             }
             const isolatedToolResponse = decideIsolatedToolResponse(chunk);
             if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {
-                try {
-                    const sentMessageId = await context.responder.sendFile(chunk.details.filePath, chunk.details.caption);
+                const details = chunk.details;
+                const receipt = await deliverArtifactOnce({
+                    runId: context.getRunId(),
+                    channel: "slack",
+                    filePath: details.filePath,
+                    channelTarget: `${context.channelId}:${context.threadTs}`,
+                    sizeBytes: details.size,
+                    ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+                    task: async () => {
+                        try {
+                            const sentMessageId = await context.responder.sendFile(details.filePath, details.caption);
+                            recordIfRunPresent(sentMessageId, "assistant");
+                            return {
+                                artifactDeliveries: [{
+                                        toolName: chunk.toolName,
+                                        channel: "slack",
+                                        filePath: details.filePath,
+                                        ...(details.caption ? { caption: details.caption } : {}),
+                                    }],
+                            };
+                        }
+                        catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            context.logError(`Failed to send Slack file: ${message}`);
+                            return undefined;
+                        }
+                    },
+                });
+                if (receipt) {
                     toolOwnedResponseActive = true;
                     bufferedText = "";
-                    recordIfRunPresent(sentMessageId, "assistant");
-                    return {
-                        artifactDeliveries: [{
-                                toolName: chunk.toolName,
-                                channel: "slack",
-                                filePath: chunk.details.filePath,
-                                ...(chunk.details.caption ? { caption: chunk.details.caption } : {}),
-                            }],
-                    };
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    context.logError(`Failed to send Slack file: ${message}`);
+                    return receipt;
                 }
             }
             if (isolatedToolResponse.kind === "text" && isolatedToolResponse.text) {

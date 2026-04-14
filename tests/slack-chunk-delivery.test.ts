@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
+import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+
+afterEach(() => {
+  resetArtifactDeliveryDedupeForTest()
+})
 
 describe("slack chunk delivery helper", () => {
   it("buffers assistant text and returns text delivery receipt on done", async () => {
@@ -77,6 +82,56 @@ describe("slack chunk delivery helper", () => {
         caption: "메인 화면",
       }],
     })
+    expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not send the same artifact twice for one Slack run", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockResolvedValueOnce("slack-file-ts-1").mockResolvedValueOnce("slack-file-ts-2"),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const recordOutgoingMessageRef = vi.fn()
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-duplicate",
+      getRunId: () => "run-slack-duplicate-artifact",
+      recordOutgoingMessageRef,
+      logError: vi.fn(),
+    })
+    const chunk = {
+      type: "tool_end" as const,
+      toolName: "screen_capture",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery" as const,
+        channel: "slack" as const,
+        filePath: "/tmp/slack-duplicate-result.png",
+        caption: "메인 화면",
+        size: 123,
+        source: "slack",
+      },
+    }
+
+    const firstReceipt = await onChunk?.(chunk)
+    const secondReceipt = await onChunk?.(chunk)
+
+    expect(responder.sendFile).toHaveBeenCalledTimes(1)
+    expect(responder.sendFile).toHaveBeenCalledWith("/tmp/slack-duplicate-result.png", "메인 화면")
+    expect(firstReceipt).toEqual({
+      artifactDeliveries: [{
+        toolName: "screen_capture",
+        channel: "slack",
+        filePath: "/tmp/slack-duplicate-result.png",
+        caption: "메인 화면",
+      }],
+    })
+    expect(secondReceipt).toBeUndefined()
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 

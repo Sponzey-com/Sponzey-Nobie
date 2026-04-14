@@ -21,6 +21,18 @@ export interface StatusResponse {
     status: "ready" | "disabled" | "planned" | "error"
     reason: string | null
   }
+  startupRecovery: {
+    createdAt: number
+    totalActiveRuns: number
+    recoveredRunCount: number
+    interruptedRunCount: number
+    awaitingApprovalCount: number
+    pendingDeliveryCount: number
+    deliveredCount: number
+    staleCount: number
+    interruptedScheduleRunCount: number
+    userFacingSummary: string
+  }
   mcp: {
     serverCount: number
     readyCount: number

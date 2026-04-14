@@ -2,10 +2,11 @@
  * Hybrid search: combines FTS (keyword) + vector (semantic) results
  * using Reciprocal Rank Fusion (RRF).
  */
-import { searchMemoryItems, getDb } from "../db/index.js";
+import { searchMemoryItems, getDb, insertDiagnosticEvent } from "../db/index.js";
 import { getEmbeddingProvider, decodeEmbedding, cosineSimilarity } from "./embedding.js";
 const RRF_K = 60; // RRF constant
 const DEFAULT_VECTOR_SEARCH_TIMEOUT_MS = 750;
+const DEFAULT_RETRIEVAL_DEGRADED_THRESHOLD_MS = 500;
 function rrfScore(rank) {
     return 1 / (RRF_K + rank + 1);
 }
@@ -15,13 +16,26 @@ function elapsedMs(startedAt) {
 function uniqueValues(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())).map((value) => value.trim()))];
 }
-function withVectorTimeout(promise, fallback, timeoutMs = DEFAULT_VECTOR_SEARCH_TIMEOUT_MS) {
+function withVectorTimeout(promise, fallback, timeoutMs = DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, onTimeout) {
     return new Promise((resolve) => {
-        const timer = setTimeout(() => resolve(fallback), timeoutMs);
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled)
+                return;
+            settled = true;
+            onTimeout?.();
+            resolve(fallback);
+        }, timeoutMs);
         promise.then((value) => {
+            if (settled)
+                return;
+            settled = true;
             clearTimeout(timer);
             resolve(value);
         }, () => {
+            if (settled)
+                return;
+            settled = true;
             clearTimeout(timer);
             resolve(fallback);
         });
@@ -29,6 +43,130 @@ function withVectorTimeout(promise, fallback, timeoutMs = DEFAULT_VECTOR_SEARCH_
 }
 function escapeLike(value) {
     return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+function parseMetadataJson(value) {
+    if (!value)
+        return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : {};
+    }
+    catch {
+        return {};
+    }
+}
+function isLongTermReviewApproved(metadata) {
+    if (metadata["approved"] === true || metadata["reviewApproved"] === true)
+        return true;
+    if (metadata["requiresReview"] === true)
+        return false;
+    return true;
+}
+function isFlashFeedbackActive(metadata, nowMs = Date.now()) {
+    const expiresAt = metadata["expiresAt"] ?? metadata["expires_at"];
+    return typeof expiresAt !== "number" || expiresAt > nowMs;
+}
+function isVisibleMemoryChunkRow(row, filters) {
+    if (row.scope === "diagnostic" && !filters?.includeDiagnostic)
+        return false;
+    if (row.scope === "artifact" && !filters?.includeArtifact)
+        return false;
+    if (row.scope === "schedule" && !filters?.includeSchedule)
+        return false;
+    const metadata = parseMetadataJson(row.document_metadata_json);
+    if (row.scope === "long-term" && !isLongTermReviewApproved(metadata))
+        return false;
+    if (row.scope === "flash-feedback" && !isFlashFeedbackActive(metadata))
+        return false;
+    return true;
+}
+function recordMemoryVectorDiagnostic(filters, diagnostic) {
+    try {
+        insertDiagnosticEvent({
+            kind: "memory_vector_degraded",
+            summary: diagnostic.summary,
+            ...(filters?.runId ? { runId: filters.runId } : {}),
+            ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
+            ...(filters?.requestGroupId ? { requestGroupId: filters.requestGroupId } : {}),
+            detail: {
+                reason: diagnostic.reason,
+                ...(diagnostic.provider ? { provider: diagnostic.provider } : {}),
+                ...(diagnostic.model ? { model: diagnostic.model } : {}),
+                ...(diagnostic.expectedDimensions !== undefined ? { expectedDimensions: diagnostic.expectedDimensions } : {}),
+                ...(diagnostic.actualDimensions !== undefined ? { actualDimensions: diagnostic.actualDimensions } : {}),
+                ...(diagnostic.candidateCount !== undefined ? { candidateCount: diagnostic.candidateCount } : {}),
+            },
+        });
+    }
+    catch {
+        // Retrieval diagnostics must never affect memory search.
+    }
+}
+function recordRetrievalLatencyDiagnostic(filters, params) {
+    if (params.latencyMs < DEFAULT_RETRIEVAL_DEGRADED_THRESHOLD_MS)
+        return;
+    try {
+        insertDiagnosticEvent({
+            kind: "memory_retrieval_degraded",
+            summary: `memory ${params.source} retrieval exceeded latency threshold`,
+            ...(filters?.runId ? { runId: filters.runId } : {}),
+            ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
+            ...(filters?.requestGroupId ? { requestGroupId: filters.requestGroupId } : {}),
+            detail: {
+                source: params.source,
+                latencyMs: params.latencyMs,
+                candidateCount: params.candidateCount,
+                thresholdMs: DEFAULT_RETRIEVAL_DEGRADED_THRESHOLD_MS,
+            },
+        });
+    }
+    catch {
+        // Diagnostic logging is best-effort.
+    }
+}
+export function diagnoseVectorEmbeddingRows(rows, provider) {
+    const diagnostics = [];
+    const pushUnique = (diagnostic) => {
+        if (diagnostics.some((entry) => entry.reason === diagnostic.reason && entry.summary === diagnostic.summary))
+            return;
+        diagnostics.push(diagnostic);
+    };
+    const modelMismatchCount = rows.filter((row) => row.provider !== provider.providerId || row.model !== provider.modelId).length;
+    if (modelMismatchCount > 0) {
+        pushUnique({
+            reason: "model_mismatch",
+            summary: "stored memory embedding provider/model differs from active provider/model",
+            provider: provider.providerId,
+            model: provider.modelId,
+            candidateCount: modelMismatchCount,
+        });
+    }
+    const dimensionMismatchCount = rows.filter((row) => row.dimensions !== provider.dimensions || (row.vector && row.vector.byteLength / 4 !== provider.dimensions)).length;
+    if (dimensionMismatchCount > 0) {
+        const actualDimensions = rows.find((row) => row.dimensions !== provider.dimensions)?.dimensions;
+        pushUnique({
+            reason: "dimension_mismatch",
+            summary: "stored memory embedding dimension differs from active provider dimension",
+            provider: provider.providerId,
+            model: provider.modelId,
+            expectedDimensions: provider.dimensions,
+            ...(actualDimensions !== undefined ? { actualDimensions } : {}),
+            candidateCount: dimensionMismatchCount,
+        });
+    }
+    const staleCount = rows.filter((row) => row.text_checksum !== row.checksum).length;
+    if (staleCount > 0) {
+        pushUnique({
+            reason: "stale_embedding",
+            summary: "stored memory embedding checksum is stale for the current chunk text",
+            provider: provider.providerId,
+            model: provider.modelId,
+            candidateCount: staleCount,
+        });
+    }
+    return diagnostics;
 }
 export function sanitizeFtsQuery(query) {
     const terms = query
@@ -43,10 +181,10 @@ export function sanitizeFtsQuery(query) {
 }
 function buildChunkScopeWhere(filters, alias = "c") {
     const prefix = alias ? `${alias}.` : "";
-    const clauses = [`${prefix}scope = 'global'`];
+    const clauses = [`${prefix}scope = 'global'`, `${prefix}scope = 'long-term'`];
     const values = [];
     if (filters?.sessionId) {
-        clauses.push(`(${prefix}scope = 'session' AND ${prefix}owner_id = ?)`);
+        clauses.push(`(${prefix}scope IN ('session', 'short-term', 'flash-feedback') AND ${prefix}owner_id = ?)`);
         values.push(filters.sessionId);
     }
     const taskOwners = uniqueValues([filters?.requestGroupId, filters?.runId]);
@@ -68,13 +206,17 @@ function buildChunkScopeWhere(filters, alias = "c") {
             values.push(...diagnosticOwners);
         }
     }
+    if (filters?.includeSchedule && filters.scheduleId) {
+        clauses.push(`(${prefix}scope = 'schedule' AND ${prefix}owner_id = ?)`);
+        values.push(filters.scheduleId);
+    }
     return { clause: `(${clauses.join(" OR ")})`, values };
 }
 function buildLegacyItemScopeWhere(filters) {
-    const clauses = ["memory_scope = 'global'", "memory_scope IS NULL", "memory_scope = ''"];
+    const clauses = ["memory_scope = 'global'", "memory_scope = 'long-term'", "memory_scope IS NULL", "memory_scope = ''"];
     const values = [];
     if (filters?.sessionId) {
-        clauses.push("(memory_scope = 'session' AND session_id = ?)");
+        clauses.push("(memory_scope IN ('session', 'short-term', 'flash-feedback') AND session_id = ?)");
         values.push(filters.sessionId);
     }
     const taskOwners = uniqueValues([filters?.requestGroupId, filters?.runId]);
@@ -82,6 +224,10 @@ function buildLegacyItemScopeWhere(filters) {
         const placeholders = taskOwners.map(() => "?").join(", ");
         clauses.push(`(memory_scope = 'task' AND (request_group_id IN (${placeholders}) OR run_id IN (${placeholders})))`);
         values.push(...taskOwners, ...taskOwners);
+    }
+    if (filters?.includeSchedule && filters.scheduleId) {
+        clauses.push("(memory_scope = 'schedule' AND request_group_id = ?)");
+        values.push(filters.scheduleId);
     }
     return { clause: `(${clauses.join(" OR ")})`, values };
 }
@@ -124,8 +270,12 @@ export function ftsChunkSearch(query, limit, filters) {
            AND ${scope.clause}
          ORDER BY score ASC
          LIMIT ?`)
-            .all(sanitized, ...scope.values, limit);
-        return mapChunkRows(rows, "fts", startedAt);
+            .all(sanitized, ...scope.values, limit * 3)
+            .filter((row) => isVisibleMemoryChunkRow(row, filters))
+            .slice(0, limit);
+        const results = mapChunkRows(rows, "fts", startedAt);
+        recordRetrievalLatencyDiagnostic(filters, { source: "fts", latencyMs: results[0]?.latencyMs ?? 0, candidateCount: rows.length });
+        return results;
     }
     catch {
         return likeChunkSearch(query, limit, filters);
@@ -149,8 +299,12 @@ export function likeChunkSearch(query, limit, filters) {
          AND ${scope.clause}
        ORDER BY c.updated_at DESC, c.ordinal ASC
        LIMIT ?`)
-        .all(pattern, ...scope.values, limit);
-    return mapChunkRows(rows, "like", startedAt);
+        .all(pattern, ...scope.values, limit * 3)
+        .filter((row) => isVisibleMemoryChunkRow(row, filters))
+        .slice(0, limit);
+    const results = mapChunkRows(rows, "like", startedAt);
+    recordRetrievalLatencyDiagnostic(filters, { source: "like", latencyMs: results[0]?.latencyMs ?? 0, candidateCount: rows.length });
+    return results;
 }
 /** Vector-only search using in-process cosine similarity */
 export async function vectorSearch(query, limit, filters) {
@@ -188,13 +342,39 @@ export async function vectorSearch(query, limit, filters) {
 export async function vectorChunkSearch(query, limit, filters) {
     const startedAt = process.hrtime.bigint();
     const provider = getEmbeddingProvider();
-    if (provider.dimensions === 0)
+    if (provider.dimensions === 0) {
+        recordMemoryVectorDiagnostic(filters, {
+            reason: "disabled",
+            summary: "memory vector backend is disabled because embedding provider is not configured",
+            provider: provider.providerId,
+            model: provider.modelId,
+            expectedDimensions: provider.dimensions,
+        });
         return [];
+    }
     let queryVec;
     try {
         queryVec = await provider.embed(query);
     }
     catch {
+        recordMemoryVectorDiagnostic(filters, {
+            reason: "provider_error",
+            summary: "memory vector embedding provider failed during query embedding",
+            provider: provider.providerId,
+            model: provider.modelId,
+            expectedDimensions: provider.dimensions,
+        });
+        return [];
+    }
+    if (queryVec.length !== provider.dimensions) {
+        recordMemoryVectorDiagnostic(filters, {
+            reason: "dimension_mismatch",
+            summary: "memory vector query embedding dimension differs from configured provider dimension",
+            provider: provider.providerId,
+            model: provider.modelId,
+            expectedDimensions: provider.dimensions,
+            actualDimensions: queryVec.length,
+        });
         return [];
     }
     const scope = buildChunkScopeWhere(filters);
@@ -208,15 +388,26 @@ export async function vectorChunkSearch(query, limit, filters) {
        JOIN memory_documents d ON d.id = c.document_id
        WHERE d.archived_at IS NULL
          AND ${scope.clause}`)
-        .all(...scope.values);
+        .all(...scope.values)
+        .filter((row) => isVisibleMemoryChunkRow(row, filters));
+    for (const diagnostic of diagnoseVectorEmbeddingRows(rows, provider)) {
+        recordMemoryVectorDiagnostic(filters, diagnostic);
+    }
+    const eligibleRows = rows.filter((row) => row.provider === provider.providerId
+        && row.model === provider.modelId
+        && row.dimensions === provider.dimensions
+        && row.text_checksum === row.checksum
+        && row.vector.byteLength / 4 === provider.dimensions);
     const latencyMs = elapsedMs(startedAt);
-    return rows
+    const results = eligibleRows
         .map((row) => {
         const score = cosineSimilarity(queryVec, decodeEmbedding(row.vector));
         return { chunk: row, score, source: "vector", chunkId: row.id, latencyMs };
     })
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
+    recordRetrievalLatencyDiagnostic(filters, { source: "vector", latencyMs, candidateCount: eligibleRows.length });
+    return results;
 }
 /** Hybrid search: RRF fusion of FTS and vector results */
 export async function hybridSearch(query, limit, filters) {
@@ -250,7 +441,12 @@ export async function hybridSearch(query, limit, filters) {
 export async function hybridChunkSearch(query, limit, filters) {
     const [ftsResults, vectorResults] = await Promise.all([
         Promise.resolve(ftsChunkSearch(query, limit * 2, filters)),
-        withVectorTimeout(vectorChunkSearch(query, limit * 2, filters), []),
+        withVectorTimeout(vectorChunkSearch(query, limit * 2, filters), [], DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, () => {
+            recordMemoryVectorDiagnostic(filters, {
+                reason: "timeout",
+                summary: "memory vector retrieval timed out and fell back to FTS results",
+            });
+        }),
     ]);
     const byId = new Map();
     for (let i = 0; i < ftsResults.length; i++) {
@@ -284,16 +480,20 @@ export async function hybridChunkSearch(query, limit, filters) {
 /** Main entry point respecting config.memory.searchMode */
 export async function searchMemoryItems2(query, limit = 5, mode, filters) {
     const resolvedMode = mode ?? "fts";
-    if (resolvedMode === "vector")
-        return vectorSearch(query, limit, filters);
+    if (resolvedMode === "vector") {
+        const vectorResults = await vectorSearch(query, limit, filters);
+        return vectorResults.length > 0 ? vectorResults : ftsSearch(query, limit, filters);
+    }
     if (resolvedMode === "hybrid")
         return hybridSearch(query, limit, filters);
     return ftsSearch(query, limit, filters);
 }
 export async function searchMemoryChunks(query, limit = 5, mode, filters) {
     const resolvedMode = mode ?? "fts";
-    if (resolvedMode === "vector")
-        return vectorChunkSearch(query, limit, filters);
+    if (resolvedMode === "vector") {
+        const vectorResults = await vectorChunkSearch(query, limit, filters);
+        return vectorResults.length > 0 ? vectorResults : ftsChunkSearch(query, limit, filters);
+    }
     if (resolvedMode === "hybrid")
         return hybridChunkSearch(query, limit, filters);
     return ftsChunkSearch(query, limit, filters);

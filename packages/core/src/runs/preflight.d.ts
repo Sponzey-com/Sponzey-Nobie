@@ -3,6 +3,22 @@ import type { TaskExecutionSemantics } from "../agent/intake.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { FinalizationSource } from "./finalization.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+export type ContextMemoryScope = "short-term" | "long-term" | "schedule" | "flash-feedback" | "task" | "artifact" | "diagnostic";
+export interface StartContextPlan {
+    promptSources: string[];
+    memoryScopes: ContextMemoryScope[];
+    retrieval: {
+        ftsFirst: boolean;
+        vectorOptional: boolean;
+        maxSnippets: number;
+    };
+    toolPolicy: {
+        toolsEnabled: boolean;
+        requiresApproval: boolean;
+        requiresYeonjang: boolean;
+    };
+    preflightFailure: StartPreflightFailure | null;
+}
 export interface StartPreflightFailure {
     code: "ai_connection_unavailable" | "ai_model_unavailable" | "channel_unavailable" | "yeonjang_unavailable";
     summary: string;
@@ -23,4 +39,5 @@ export interface StartPreflightInput {
     workerRuntime?: WorkerRuntimeTarget | undefined;
 }
 export declare function resolveStartPreflightFailure(input: StartPreflightInput): StartPreflightFailure | null;
+export declare function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan;
 //# sourceMappingURL=preflight.d.ts.map

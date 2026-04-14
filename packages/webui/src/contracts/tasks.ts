@@ -70,7 +70,7 @@ export interface TaskDeliveryModel {
 }
 
 export interface TaskArtifactModel {
-  filePath: string
+  filePath?: string
   fileName: string
   url?: string
   mimeType?: string
@@ -142,12 +142,22 @@ export interface TaskContinuityModel {
 
 export interface TaskDiagnosticsModel {
   promptSourceIds: string[]
+  promptSources: TaskPromptSourceDiagnosticModel[]
   promptSourceVersion?: string
   latencyEvents: string[]
   memoryEvents: string[]
+  toolEvents: string[]
+  deliveryEvents: string[]
   recoveryEvents: string[]
   lastRecoveryKey?: string
   recoveryBudget?: string
+}
+
+export interface TaskPromptSourceDiagnosticModel {
+  sourceId: string
+  locale?: string
+  version?: string
+  checksum?: string
 }
 
 export interface TaskModel {

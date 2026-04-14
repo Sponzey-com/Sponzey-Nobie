@@ -2,9 +2,19 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { closeDb, getDb } from "../packages/core/src/db/index.js"
+import {
+  closeDb,
+  getDb,
+  insertArtifactReceipt,
+  insertDiagnosticEvent,
+  insertFlashFeedback,
+  rebuildMemorySearchIndexes,
+  upsertScheduleMemoryEntry,
+} from "../packages/core/src/db/index.js"
 import { buildMemoryJournalContext, closeMemoryJournalDb, insertMemoryJournalRecord } from "../packages/core/src/memory/journal.js"
 import { buildMemoryContext, storeMemoryDocument } from "../packages/core/src/memory/store.ts"
+import { runMemoryRetrievalEvaluation } from "../packages/core/src/memory/evaluation.ts"
+import { diagnoseVectorEmbeddingRows, searchMemoryChunks } from "../packages/core/src/memory/search.ts"
 import { selectRequestGroupContextMessages } from "../packages/core/src/agent/request-group-context.ts"
 import { rememberRunFailure, rememberRunSuccess } from "../packages/core/src/runs/start-support.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
@@ -43,6 +53,330 @@ afterEach(() => {
 })
 
 describe("task003 memory scope guard and prompt injection", () => {
+  it("runs deterministic retrieval evaluation across FTS, vector, and hybrid modes", async () => {
+    const report = await runMemoryRetrievalEvaluation({
+      fixture: {
+        documents: [
+          {
+            id: "long-term-weather-preference",
+            text: "EVAL_DONGCHEON_WEATHER long-term weather response should use local context.",
+            scope: "long-term",
+            metadata: { requiresReview: false },
+          },
+          {
+            id: "short-term-channel-correction",
+            text: "EVAL_CHANNEL_CORRECTION Slack requests must stay in Slack threads.",
+            scope: "short-term",
+            ownerId: "session-a",
+          },
+          {
+            id: "schedule-maintenance",
+            text: "EVAL_SCHEDULE_MAINTENANCE only for the schedule worker.",
+            scope: "schedule",
+            scheduleId: "schedule-a",
+          },
+          {
+            id: "diagnostic-capture-failure",
+            text: "EVAL_DIAGNOSTIC_CAPTURE_FAILURE invalid display id detail.",
+            scope: "diagnostic",
+            ownerId: "group-a",
+          },
+        ],
+        queries: [
+          {
+            id: "long-term-hit",
+            query: "EVAL_DONGCHEON_WEATHER",
+            expectedHitDocumentIds: ["long-term-weather-preference"],
+          },
+          {
+            id: "session-hit",
+            query: "EVAL_CHANNEL_CORRECTION",
+            filters: { sessionId: "session-a" },
+            expectedHitDocumentIds: ["short-term-channel-correction"],
+          },
+          {
+            id: "schedule-hidden-by-default",
+            query: "EVAL_SCHEDULE_MAINTENANCE",
+            expectedHitDocumentIds: [],
+            unexpectedHitDocumentIds: ["schedule-maintenance"],
+          },
+          {
+            id: "diagnostic-hidden-by-default",
+            query: "EVAL_DIAGNOSTIC_CAPTURE_FAILURE",
+            filters: { requestGroupId: "group-a" },
+            expectedHitDocumentIds: [],
+            unexpectedHitDocumentIds: ["diagnostic-capture-failure"],
+          },
+        ],
+      },
+      modes: ["fts", "vector", "hybrid"],
+    })
+
+    expect(report.summary.total).toBe(12)
+    expect(report.summary.modes).toEqual(["fts", "vector", "hybrid"])
+    expect(report.queryResults.filter((result) => result.mode === "fts").every((result) => result.passed)).toBe(true)
+    expect(report.queryResults.filter((result) => result.mode === "hybrid").every((result) => result.passed)).toBe(true)
+    expect(report.queryResults.some((result) => result.mode === "vector" && result.missedDocumentIds.length > 0)).toBe(true)
+  })
+
+  it("falls back to FTS when vector backend is disabled and records degraded diagnostics", async () => {
+    await storeMemoryDocument({
+      rawText: "VECTOR_DISABLED_FALLBACK_DOC survives when vector backend is disabled",
+      scope: "long-term",
+      sourceType: "test",
+      metadata: { requiresReview: false },
+    })
+
+    const results = await searchMemoryChunks("VECTOR_DISABLED_FALLBACK_DOC", 3, "vector", {
+      sessionId: "session-a",
+      runId: "run-vector-disabled",
+      requestGroupId: "group-vector-disabled",
+    })
+
+    expect(results[0]?.chunk.content).toContain("VECTOR_DISABLED_FALLBACK_DOC")
+    expect(results[0]?.source).toBe("fts")
+
+    const diagnostic = getDb()
+      .prepare<[], { kind: string; summary: string; detail_json: string | null }>(
+        `SELECT kind, summary, detail_json FROM diagnostic_events WHERE run_id = 'run-vector-disabled' LIMIT 1`,
+      )
+      .get()
+    expect(diagnostic?.kind).toBe("memory_vector_degraded")
+    expect(diagnostic?.summary).toContain("embedding provider is not configured")
+    expect(diagnostic?.detail_json).toContain("disabled")
+  })
+
+  it("diagnoses embedding dimension, model, and stale-checksum mismatches without raw errors", () => {
+    const diagnostics = diagnoseVectorEmbeddingRows([
+      {
+        provider: "openai",
+        model: "old-model",
+        dimensions: 768,
+        text_checksum: "old-checksum",
+        checksum: "current-checksum",
+        vector: Buffer.alloc(768 * 4),
+      },
+      {
+        provider: "openai",
+        model: "text-embedding-3-small",
+        dimensions: 768,
+        text_checksum: "same-checksum",
+        checksum: "same-checksum",
+        vector: Buffer.alloc(768 * 4),
+      },
+    ], {
+      providerId: "openai",
+      modelId: "text-embedding-3-small",
+      dimensions: 1536,
+    })
+
+    expect(diagnostics.map((diagnostic) => diagnostic.reason)).toEqual([
+      "model_mismatch",
+      "dimension_mismatch",
+      "stale_embedding",
+    ])
+    expect(diagnostics.map((diagnostic) => diagnostic.summary).join("\n")).not.toMatch(/Error:|stack|<html/i)
+  })
+
+  it("creates task003 scope tables and records TTL-backed operational metadata", () => {
+    const tables = getDb()
+      .prepare<[], { name: string }>(
+        `SELECT name FROM sqlite_master
+         WHERE name IN ('flash_feedback', 'schedule_entries', 'artifact_receipts', 'diagnostic_events')
+         ORDER BY name`,
+      )
+      .all()
+      .map((row) => row.name)
+
+    expect(tables).toEqual(["artifact_receipts", "diagnostic_events", "flash_feedback", "schedule_entries"])
+
+    const before = Date.now()
+    insertFlashFeedback({
+      sessionId: "session-a",
+      runId: "run-a",
+      requestGroupId: "group-a",
+      content: "방금 지적한 채널 혼선을 다음 실행에 반영",
+      severity: "high",
+      ttlMs: 60_000,
+    })
+    upsertScheduleMemoryEntry({
+      scheduleId: "schedule-a",
+      sessionId: "session-a",
+      requestGroupId: "group-a",
+      title: "daily check",
+      prompt: "매일 확인",
+      cronExpression: "0 9 * * *",
+      nextRunAt: before + 86_400_000,
+    })
+    insertArtifactReceipt({
+      runId: "run-a",
+      requestGroupId: "group-a",
+      channel: "slack",
+      artifactPath: "/tmp/capture.png",
+      mimeType: "image/png",
+      sizeBytes: 1234,
+      deliveredAt: before,
+      deliveryReceipt: { ok: true },
+    })
+    insertDiagnosticEvent({
+      runId: "run-a",
+      sessionId: "session-a",
+      requestGroupId: "group-a",
+      recoveryKey: "screen_capture:main:invalid_display:retry",
+      kind: "tool_failure",
+      summary: "display id normalized",
+      detail: { sanitized: true },
+    })
+
+    const feedback = getDb()
+      .prepare<[], { expires_at: number; severity: string }>(`SELECT expires_at, severity FROM flash_feedback LIMIT 1`)
+      .get()
+    const schedule = getDb()
+      .prepare<[], { schedule_id: string; prompt: string }>(`SELECT schedule_id, prompt FROM schedule_entries LIMIT 1`)
+      .get()
+    const receipt = getDb()
+      .prepare<[], { channel: string; artifact_path: string; delivered_at: number | null }>(`SELECT channel, artifact_path, delivered_at FROM artifact_receipts LIMIT 1`)
+      .get()
+    const diagnostic = getDb()
+      .prepare<[], { recovery_key: string; summary: string }>(`SELECT recovery_key, summary FROM diagnostic_events LIMIT 1`)
+      .get()
+
+    expect(feedback?.severity).toBe("high")
+    expect(feedback?.expires_at).toBeGreaterThan(before)
+    expect(schedule).toEqual({ schedule_id: "schedule-a", prompt: "매일 확인" })
+    expect(receipt).toEqual({ channel: "slack", artifact_path: "/tmp/capture.png", delivered_at: before })
+    expect(diagnostic).toEqual({ recovery_key: "screen_capture:main:invalid_display:retry", summary: "display id normalized" })
+  })
+
+  it("enforces owner rules for short-term and schedule memory documents", async () => {
+    await expect(storeMemoryDocument({
+      rawText: "owner 없는 short-term memory",
+      scope: "short-term",
+      sourceType: "test",
+    })).rejects.toThrow("short-term memory requires an owner id")
+
+    await expect(storeMemoryDocument({
+      rawText: "owner 없는 schedule memory",
+      scope: "schedule",
+      sourceType: "test",
+    })).rejects.toThrow("schedule memory requires an owner id")
+
+    const flash = await storeMemoryDocument({
+      rawText: "FLASH_VISIBLE_FOR_SESSION_A",
+      scope: "flash-feedback",
+      ownerId: "session-a",
+      sourceType: "feedback",
+    })
+    const schedule = await storeMemoryDocument({
+      rawText: "SCHEDULE_VISIBLE_ONLY_FOR_SCHEDULE_A",
+      scope: "schedule",
+      scheduleId: "schedule-a",
+      sourceType: "schedule",
+    })
+
+    expect(flash.deduplicated).toBe(false)
+    expect(schedule.deduplicated).toBe(false)
+  })
+
+  it("separates long-term, session-local, schedule, artifact, and diagnostic retrieval scopes", async () => {
+    await storeMemoryDocument({
+      rawText: "LONG_TERM_VISIBLE_GLOBAL",
+      scope: "long-term",
+      sourceType: "preference",
+    })
+    await storeMemoryDocument({
+      rawText: "SHORT_TERM_VISIBLE_SESSION_A",
+      scope: "short-term",
+      ownerId: "session-a",
+      sourceType: "turn_context",
+    })
+    await storeMemoryDocument({
+      rawText: "SCHEDULE_HIDDEN_BY_DEFAULT",
+      scope: "schedule",
+      scheduleId: "schedule-a",
+      sourceType: "schedule",
+    })
+    await storeMemoryDocument({
+      rawText: "ARTIFACT_METADATA_HIDDEN_BY_DEFAULT",
+      scope: "artifact",
+      ownerId: "group-a",
+      sourceType: "artifact",
+    })
+    await storeMemoryDocument({
+      rawText: "DIAGNOSTIC_HIDDEN_BY_DEFAULT",
+      scope: "diagnostic",
+      ownerId: "group-a",
+      sourceType: "diagnostic",
+    })
+    rebuildMemorySearchIndexes()
+
+    const global = await buildMemoryContext({ query: "LONG_TERM_VISIBLE_GLOBAL", sessionId: "session-b" })
+    expect(global).toContain("LONG_TERM_VISIBLE_GLOBAL")
+
+    const hiddenSession = await buildMemoryContext({ query: "SHORT_TERM_VISIBLE_SESSION_A", sessionId: "session-b" })
+    expect(hiddenSession).not.toContain("SHORT_TERM_VISIBLE_SESSION_A")
+
+    const visibleSession = await buildMemoryContext({ query: "SHORT_TERM_VISIBLE_SESSION_A", sessionId: "session-a" })
+    expect(visibleSession).toContain("SHORT_TERM_VISIBLE_SESSION_A")
+
+    const hiddenSchedule = await buildMemoryContext({ query: "SCHEDULE_HIDDEN_BY_DEFAULT", sessionId: "session-a" })
+    expect(hiddenSchedule).not.toContain("SCHEDULE_HIDDEN_BY_DEFAULT")
+
+    const visibleSchedule = await buildMemoryContext({
+      query: "SCHEDULE_HIDDEN_BY_DEFAULT",
+      includeSchedule: true,
+      scheduleId: "schedule-a",
+    })
+    expect(visibleSchedule).toContain("SCHEDULE_HIDDEN_BY_DEFAULT")
+
+    const hiddenArtifact = await buildMemoryContext({ query: "ARTIFACT_METADATA_HIDDEN_BY_DEFAULT", requestGroupId: "group-a" })
+    expect(hiddenArtifact).not.toContain("ARTIFACT_METADATA_HIDDEN_BY_DEFAULT")
+
+    const visibleArtifact = await buildMemoryContext({
+      query: "ARTIFACT_METADATA_HIDDEN_BY_DEFAULT",
+      requestGroupId: "group-a",
+      includeArtifact: true,
+    })
+    expect(visibleArtifact).toContain("ARTIFACT_METADATA_HIDDEN_BY_DEFAULT")
+  })
+
+  it("excludes unapproved long-term candidates and expired flash-feedback from retrieval", async () => {
+    await storeMemoryDocument({
+      rawText: "LONG_TERM_REVIEW_APPROVED should be injected",
+      scope: "long-term",
+      sourceType: "durable_fact_candidate",
+      metadata: { requiresReview: false, approved: true },
+    })
+    await storeMemoryDocument({
+      rawText: "LONG_TERM_REVIEW_UNAPPROVED should stay hidden",
+      scope: "long-term",
+      sourceType: "flash_feedback_promotion_candidate",
+      metadata: { requiresReview: true, approved: false },
+    })
+    await storeMemoryDocument({
+      rawText: "FLASH_FEEDBACK_ACTIVE should be injected",
+      scope: "flash-feedback",
+      ownerId: "session-a",
+      sourceType: "flash_feedback",
+      metadata: { expiresAt: Date.now() + 60_000 },
+    })
+    await storeMemoryDocument({
+      rawText: "FLASH_FEEDBACK_EXPIRED should stay hidden",
+      scope: "flash-feedback",
+      ownerId: "session-a",
+      sourceType: "flash_feedback",
+      metadata: { expiresAt: Date.now() - 60_000 },
+    })
+
+    const longTermContext = await buildMemoryContext({ query: "LONG_TERM_REVIEW", sessionId: "session-a" })
+    expect(longTermContext).toContain("LONG_TERM_REVIEW_APPROVED")
+    expect(longTermContext).not.toContain("LONG_TERM_REVIEW_UNAPPROVED")
+
+    const flashContext = await buildMemoryContext({ query: "FLASH_FEEDBACK", sessionId: "session-a" })
+    expect(flashContext).toContain("FLASH_FEEDBACK_ACTIVE")
+    expect(flashContext).not.toContain("FLASH_FEEDBACK_EXPIRED")
+  })
+
   it("limits injected chunks and keeps diagnostic memory out unless explicitly requested", async () => {
     for (let index = 0; index < 6; index++) {
       await storeMemoryDocument({
