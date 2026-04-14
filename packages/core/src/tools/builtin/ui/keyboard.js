@@ -1,19 +1,69 @@
 /**
- * Keyboard control tools. Uses @nut-tree/nut-js when available.
+ * Keyboard control tools.
+ * Requires Yeonjang for execution.
  */
+import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
+import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
 const TYPE_DELAY_MS = 500;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getNutKeyboard() {
-    for (const pkg of ["@nut-tree-fork/nut-js", "@nut-tree/nut-js"]) {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const mod = await import(pkg);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-            return mod;
-        }
-        catch { /* try next */ }
+function yeonjangRequiredFailure(method) {
+    return {
+        success: false,
+        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
+        error: "YEONJANG_REQUIRED",
+        details: {
+            requiredExecutor: "yeonjang",
+            requiredMethod: method,
+        },
+    };
+}
+const MODIFIER_KEY_ALIASES = new Map([
+    ["leftcontrol", "control"],
+    ["rightcontrol", "control"],
+    ["control", "control"],
+    ["ctrl", "control"],
+    ["leftctrl", "control"],
+    ["rightctrl", "control"],
+    ["leftshift", "shift"],
+    ["rightshift", "shift"],
+    ["shift", "shift"],
+    ["leftalt", "alt"],
+    ["rightalt", "alt"],
+    ["alt", "alt"],
+    ["option", "alt"],
+    ["leftoption", "alt"],
+    ["rightoption", "alt"],
+    ["leftsuper", "meta"],
+    ["rightsuper", "meta"],
+    ["super", "meta"],
+    ["meta", "meta"],
+    ["cmd", "meta"],
+    ["command", "meta"],
+    ["leftcommand", "meta"],
+    ["rightcommand", "meta"],
+    ["win", "meta"],
+    ["windows", "meta"],
+]);
+function normalizeModifierKey(key) {
+    return MODIFIER_KEY_ALIASES.get(key.trim().toLowerCase()) ?? null;
+}
+function splitShortcutKeys(keys) {
+    const trimmed = keys.map((key) => key.trim()).filter(Boolean);
+    if (trimmed.length === 0) {
+        throw new Error("단축키에는 최소 한 개 이상의 키가 필요합니다.");
     }
-    throw new Error("@nut-tree/nut-js not installed. Run: pnpm add @nut-tree-fork/nut-js");
+    const nonModifierKeys = trimmed.filter((key) => normalizeModifierKey(key) === null);
+    if (nonModifierKeys.length === 0) {
+        throw new Error("단축키에는 modifier가 아닌 일반 키가 하나 필요합니다.");
+    }
+    if (nonModifierKeys.length > 1) {
+        throw new Error(`여러 일반 키를 동시에 누르는 단축키는 지원하지 않습니다: ${nonModifierKeys.join(", ")}`);
+    }
+    const primaryKey = nonModifierKeys[0];
+    const modifiers = Array.from(new Set(trimmed
+        .filter((key) => key !== primaryKey)
+        .map((key) => normalizeModifierKey(key))
+        .filter((value) => typeof value === "string")));
+    return { key: primaryKey, modifiers };
 }
 export const keyboardTypeTool = {
     name: "keyboard_type",
@@ -22,23 +72,39 @@ export const keyboardTypeTool = {
         type: "object",
         properties: {
             text: { type: "string", description: "입력할 텍스트" },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
         },
         required: ["text"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
-    execute: async (params) => {
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
         try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const { keyboard } = await getNutKeyboard();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            await keyboard.type(params.text);
-            return { success: true, output: `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"` };
+            if (await canYeonjangHandleMethod("keyboard.type", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("keyboard.type", { text: params.text }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.typed,
+                    output: remote.message || `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
+                    details: { via: "yeonjang", textLength: remote.text_len },
+                    ...(remote.typed ? {} : { error: "remote_keyboard_type_failed" }),
+                };
+            }
         }
-        catch (err) {
-            return { success: false, output: `키보드 입력 실패: ${err instanceof Error ? err.message : String(err)}` };
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 키보드 입력 실패: ${message}`, error: message };
+            }
         }
+        return yeonjangRequiredFailure("keyboard.type");
     },
 };
 export const keyboardShortcutTool = {
@@ -47,6 +113,10 @@ export const keyboardShortcutTool = {
     parameters: {
         type: "object",
         properties: {
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
             keys: {
                 type: "array",
                 items: { type: "string" },
@@ -57,28 +127,104 @@ export const keyboardShortcutTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
-    execute: async (params) => {
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
+        await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
+        const shortcut = splitShortcutKeys(params.keys);
+        try {
+            if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("keyboard.action", {
+                    action: "shortcut",
+                    key: shortcut.key,
+                    modifiers: shortcut.modifiers,
+                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.accepted,
+                    output: remote.message || `단축키 실행: ${params.keys.join("+")}`,
+                    details: {
+                        via: "yeonjang",
+                        action: remote.action,
+                        key: remote.key ?? shortcut.key,
+                        modifiers: remote.modifiers ?? shortcut.modifiers,
+                    },
+                    ...(remote.accepted ? {} : { error: "remote_keyboard_shortcut_failed" }),
+                };
+            }
+        }
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 단축키 실행 실패: ${message}`, error: message };
+            }
+        }
+        return yeonjangRequiredFailure("keyboard.action");
+    },
+};
+export const keyboardActionTool = {
+    name: "keyboard_action",
+    description: "키보드 액션을 실행합니다. type_text, shortcut, key_press, key_down, key_up을 지원합니다.",
+    parameters: {
+        type: "object",
+        properties: {
+            action: {
+                type: "string",
+                enum: ["type_text", "shortcut", "key_press", "key_down", "key_up"],
+                description: "실행할 키보드 액션",
+            },
+            text: { type: "string", description: "type_text에서 입력할 텍스트" },
+            key: { type: "string", description: "shortcut 또는 key_* 액션의 대상 키" },
+            modifiers: {
+                type: "array",
+                items: { type: "string" },
+                description: "함께 누를 modifier 키 목록",
+            },
+            extensionId: {
+                type: "string",
+                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
+            },
+        },
+        required: ["action"],
+    },
+    riskLevel: "moderate",
+    requiresApproval: true,
+    execute: async (params, ctx) => {
+        const extensionId = resolvePreferredYeonjangExtensionId({
+            requestedExtensionId: params.extensionId,
+            userMessage: ctx.userMessage,
+        });
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
         try {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            const { keyboard, Key } = await getNutKeyboard();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-            const resolvedKeys = params.keys.map((k) => {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-                const resolved = Key[k];
-                if (resolved === undefined)
-                    throw new Error(`알 수 없는 키: ${k}`);
-                return resolved;
-            });
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            await keyboard.pressKey(...resolvedKeys);
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            await keyboard.releaseKey(...resolvedKeys.reverse());
-            return { success: true, output: `단축키 실행: ${params.keys.join("+")}` };
+            if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+                const remote = await invokeYeonjangMethod("keyboard.action", {
+                    action: params.action,
+                    ...(typeof params.text === "string" ? { text: params.text } : {}),
+                    ...(typeof params.key === "string" ? { key: params.key } : {}),
+                    ...(params.modifiers?.length ? { modifiers: params.modifiers } : {}),
+                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                return {
+                    success: remote.accepted,
+                    output: remote.message || `키보드 액션 실행: ${params.action}`,
+                    details: {
+                        via: "yeonjang",
+                        action: remote.action,
+                        key: remote.key,
+                        modifiers: remote.modifiers,
+                        textLength: remote.text_len,
+                    },
+                    ...(remote.accepted ? {} : { error: "remote_keyboard_action_failed" }),
+                };
+            }
         }
-        catch (err) {
-            return { success: false, output: `단축키 실행 실패: ${err instanceof Error ? err.message : String(err)}` };
+        catch (error) {
+            if (!isYeonjangUnavailableError(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { success: false, output: `Yeonjang 키보드 액션 실패: ${message}`, error: message };
+            }
         }
+        return yeonjangRequiredFailure("keyboard.action");
     },
 };
 //# sourceMappingURL=keyboard.js.map

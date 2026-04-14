@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   enqueueRunRecovery,
   hasRunRecoveryQueue,
@@ -17,6 +17,9 @@ describe("run recovery queue", () => {
     const runId = "run-recovery-1"
     const deferred = createDeferred<void>()
     const order: string[] = []
+    const dependencies = {
+      appendRunEvent: vi.fn(),
+    }
 
     const first = enqueueRunRecovery({
       runId,
@@ -26,7 +29,7 @@ describe("run recovery queue", () => {
         order.push("first-end")
         return 1
       },
-    })
+    }, dependencies)
 
     const second = enqueueRunRecovery({
       runId,
@@ -35,13 +38,14 @@ describe("run recovery queue", () => {
         order.push("second-end")
         return 2
       },
-    })
+    }, dependencies)
 
     await Promise.resolve()
     await Promise.resolve()
 
     expect(hasRunRecoveryQueue(runId)).toBe(true)
     expect(order).toEqual(["first-start"])
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(runId, "recovery_queue_waiting")
 
     deferred.resolve()
 
@@ -49,5 +53,7 @@ describe("run recovery queue", () => {
     await expect(second).resolves.toBe(2)
     expect(order).toEqual(["first-start", "first-end", "second-start", "second-end"])
     expect(hasRunRecoveryQueue(runId)).toBe(false)
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(runId, "recovery_queue_running")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(runId, "recovery_queue_released")
   })
 })

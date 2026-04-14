@@ -1,17 +1,66 @@
+import crypto from "node:crypto";
 import { authMiddleware } from "../middleware/auth.js";
-import { cancelRootRun, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listRootRuns, } from "../../runs/store.js";
-import { startRootRun } from "../../runs/start.js";
+import { listTaskContinuityForLineages, } from "../../db/index.js";
+import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
+import { startIngressRun } from "../../runs/ingress.js";
+import { buildTaskModels } from "../../runs/task-model.js";
+import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js";
+import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js";
 export async function startLocalRun(params) {
-    const started = startRootRun(params);
+    const runId = crypto.randomUUID();
+    const sessionId = params.sessionId ?? crypto.randomUUID();
+    const { started, receipt, requestId, source } = startIngressRun({
+        ...params,
+        runId,
+        sessionId,
+        ...(params.source === "webui"
+            ? { onChunk: createWebUiChunkDeliveryHandler({ sessionId, runId }) }
+            : {}),
+    });
     return {
+        requestId,
         runId: started.runId,
-        sessionId: started.sessionId,
+        sessionId,
+        source,
         status: started.status,
+        receipt: receipt.text,
     };
 }
 export function registerRunsRoute(app) {
+    function listTaskSnapshot() {
+        const runs = listRunsForRecentRequestGroups();
+        const continuity = listTaskContinuityForLineages(runs.map((run) => run.lineageRootRunId || run.requestGroupId || run.id));
+        const tasks = buildTaskModels(runs, continuity);
+        return { runs, tasks };
+    }
     app.get("/api/runs", { preHandler: authMiddleware }, async () => {
         return { runs: listRootRuns() };
+    });
+    app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
+        return { tasks: listTaskSnapshot().tasks };
+    });
+    app.get("/api/runs/operations/summary", { preHandler: authMiddleware }, async (req) => {
+        const staleMs = Number.parseInt(req.query.staleMs ?? "", 10);
+        const snapshot = listTaskSnapshot();
+        return {
+            summary: buildOperationsSummary({
+                ...snapshot,
+                staleThresholdMs: Number.isFinite(staleMs) && staleMs > 0 ? staleMs : DEFAULT_STALE_RUN_MS,
+            }),
+        };
+    });
+    app.post("/api/runs/operations/stale-cleanup", { preHandler: authMiddleware }, async (req) => {
+        const staleMs = typeof req.body?.staleMs === "number" && Number.isFinite(req.body.staleMs) ? req.body.staleMs : undefined;
+        const cleanup = cleanupStaleRunStates({ ...(staleMs ? { staleMs } : {}) });
+        const snapshot = listTaskSnapshot();
+        return {
+            ok: true,
+            cleanup,
+            summary: buildOperationsSummary({
+                ...snapshot,
+                staleThresholdMs: cleanup.thresholdMs,
+            }),
+        };
     });
     app.get("/api/runs/:id", { preHandler: authMiddleware }, async (req, reply) => {
         const run = getRootRun(req.params.id);
@@ -56,6 +105,9 @@ export function registerRunsRoute(app) {
         const result = deleteRunHistory(req.params.id);
         if (!result)
             return reply.status(404).send({ error: "Run not found" });
+        if (result.blockedRunCount && result.blockedRunCount > 0) {
+            return reply.status(409).send({ error: "Active run history cannot be deleted", blockedRunCount: result.blockedRunCount });
+        }
         return { ok: true, deletedRunCount: result.deletedRunCount };
     });
 }

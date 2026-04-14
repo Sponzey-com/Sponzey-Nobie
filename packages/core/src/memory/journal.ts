@@ -244,9 +244,12 @@ export function searchMemoryJournal(
       scopeClauses.push(`(m.scope = 'session' AND m.session_id = ?)`)
       scopeValues.push(options.sessionId)
     }
-    if (options?.runId) {
-      scopeClauses.push(`(m.scope = 'task' AND m.run_id = ?)`)
-      scopeValues.push(options.runId)
+    const taskOwners = [options?.requestGroupId, options?.runId]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    if (taskOwners.length > 0) {
+      const placeholders = taskOwners.map(() => "?").join(", ")
+      scopeClauses.push(`(m.scope = 'task' AND (m.request_group_id IN (${placeholders}) OR m.run_id IN (${placeholders})))`)
+      scopeValues.push(...taskOwners, ...taskOwners)
     }
 
     return db

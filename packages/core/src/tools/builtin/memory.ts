@@ -69,6 +69,7 @@ export const memorySearchTool: AgentTool<MemorySearchParams> = {
     const results = await searchMemory(params.query, limit, {
       sessionId: ctx.sessionId,
       ...(ctx.runId ? { runId: ctx.runId } : {}),
+      ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
     })
     if (results.length === 0) {
       return { success: true, output: "관련 메모리를 찾을 수 없습니다." }

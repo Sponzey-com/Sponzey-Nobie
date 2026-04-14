@@ -1,9 +1,67 @@
 import { eventBus } from "../events/index.js";
-import { insertAuditLog } from "../db/index.js";
+import { insertAuditLog, upsertTaskContinuity } from "../db/index.js";
 import { createLogger } from "../logger/index.js";
 import { getConfig } from "../config/index.js";
 import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus } from "../runs/store.js";
 const log = createLogger("tools:dispatcher");
+function rememberApprovalContinuity(runId, params) {
+    try {
+        const run = getRootRun(runId);
+        if (!run)
+            return;
+        const lineageRootRunId = run?.lineageRootRunId ?? run?.requestGroupId ?? runId;
+        upsertTaskContinuity({
+            lineageRootRunId,
+            ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+            ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+            ...(params.pendingApprovals ? { pendingApprovals: params.pendingApprovals } : {}),
+            ...(params.status ? { status: params.status } : {}),
+            ...(params.lastGoodState ? { lastGoodState: params.lastGoodState } : {}),
+        });
+    }
+    catch (error) {
+        log.warn(`approval continuity update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+function describeApprovalDenial(toolName, kind, reason) {
+    if (reason === "timeout") {
+        return kind === "screen_confirmation"
+            ? {
+                eventLabel: `${toolName} 준비 확인 시간 초과`,
+                stepSummary: `${toolName} 실행 전 준비 확인 응답 시간이 지나 시스템이 요청을 중단했습니다.`,
+                runSummary: `${toolName} 준비 확인 시간이 지나 시스템이 요청을 중단했습니다.`,
+            }
+            : {
+                eventLabel: `${toolName} 승인 시간 초과`,
+                stepSummary: `${toolName} 승인 대기 시간이 지나 시스템이 요청을 중단했습니다.`,
+                runSummary: `${toolName} 승인 시간이 지나 시스템이 요청을 중단했습니다.`,
+            };
+    }
+    if (reason === "system" || reason === "abort") {
+        return kind === "screen_confirmation"
+            ? {
+                eventLabel: `${toolName} 준비 확인 중단`,
+                stepSummary: `${toolName} 실행 전 준비 확인이 시스템에 의해 중단되었습니다.`,
+                runSummary: `${toolName} 준비 확인이 시스템에 의해 중단되었습니다.`,
+            }
+            : {
+                eventLabel: `${toolName} 승인 처리 중단`,
+                stepSummary: `${toolName} 승인 처리가 시스템에 의해 중단되었습니다.`,
+                runSummary: `${toolName} 승인 처리가 시스템에 의해 중단되었습니다.`,
+            };
+    }
+    return kind === "screen_confirmation"
+        ? {
+            eventLabel: `${toolName} 준비 확인 거부`,
+            stepSummary: `${toolName} 실행 전 준비 확인이 거부되어 요청을 취소했습니다.`,
+            runSummary: `${toolName} 준비 확인이 거부되어 요청을 취소했습니다.`,
+        }
+        : {
+            eventLabel: `${toolName} 실행 거부`,
+            stepSummary: `${toolName} 실행이 거부되어 요청을 취소했습니다.`,
+            runSummary: `${toolName} 실행이 거부되어 요청을 취소했습니다.`,
+        };
+}
 export class ToolDispatcher {
     tools = new Map();
     runApprovalScopes = new Map();
@@ -59,6 +117,9 @@ export class ToolDispatcher {
     get(name) {
         return this.tools.get(name);
     }
+    isToolAvailableForSource(tool, source) {
+        return tool.availableSources == null || tool.availableSources.includes(source);
+    }
     async dispatch(name, params, ctx) {
         if ((name === "web_search" || name === "web_fetch") && !ctx.allowWebAccess) {
             return {
@@ -73,6 +134,13 @@ export class ToolDispatcher {
                 success: false,
                 output: `Unknown tool: "${name}"`,
                 error: `Tool "${name}" is not registered`,
+            };
+        }
+        if (!this.isToolAvailableForSource(tool, ctx.source)) {
+            return {
+                success: false,
+                output: `${name} 도구는 ${ctx.source} 채널에서는 사용할 수 없습니다.`,
+                error: "TOOL_SOURCE_NOT_SUPPORTED",
             };
         }
         eventBus.emit("tool.before", {
@@ -90,7 +158,7 @@ export class ToolDispatcher {
             if (decision === "deny") {
                 result = {
                     success: false,
-                    output: `Execution of "${name}" was denied by the user. The current request was cancelled.`,
+                    output: `Execution of "${name}" was denied. The current request was cancelled.`,
                     error: "denied",
                 };
                 this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, "user:deny");
@@ -117,11 +185,17 @@ export class ToolDispatcher {
         this.writeAudit(ctx, name, params, result, durationMs, approvalRequired, approvedBy);
         return result;
     }
-    getInteractionGuidance(kind) {
+    getInteractionGuidance(kind, toolName, params) {
+        const action = describeApprovalAction(toolName, params);
         if (kind === "screen_confirmation") {
-            return "대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다.";
+            return action
+                ? `${action}\n대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다.`
+                : "대상 창이 열려 있고, 원하는 위치나 입력창이 준비되었는지 확인해 주세요. 준비가 끝나면 전체 진행 또는 이번 단계만 진행을 선택할 수 있습니다.";
         }
-        return undefined;
+        if (action) {
+            return `${action}\n실행 내용을 확인한 뒤 승인하거나 취소해 주세요.`;
+        }
+        return "실행 내용을 확인한 뒤 승인하거나 취소해 주세요.";
     }
     shouldRequireApproval(tool) {
         const approvalMode = getConfig().security.approvalMode;
@@ -143,12 +217,17 @@ export class ToolDispatcher {
         const summary = kind === "screen_confirmation"
             ? `${toolName} 실행 전 화면 준비 확인을 기다립니다.`
             : `${toolName} 실행 승인을 기다립니다.`;
-        const guidance = this.getInteractionGuidance(kind);
+        const guidance = this.getInteractionGuidance(kind, toolName, params);
         log.info(`requesting ${kind} runId=${ctx.runId} tool=${toolName}`);
         this.pendingInteractionKinds.set(ctx.runId, { toolName, kind, stepKey });
         appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`);
         setRunStepStatus(ctx.runId, stepKey, "running", summary);
         updateRunStatus(ctx.runId, stepKey, summary, true);
+        rememberApprovalContinuity(ctx.runId, {
+            pendingApprovals: [`${kind}:${toolName}`],
+            status: kind === "screen_confirmation" ? "awaiting_user" : "awaiting_approval",
+            lastGoodState: summary,
+        });
         return new Promise((resolve) => {
             let resolved = false;
             const timeout = kind === "screen_confirmation"
@@ -157,8 +236,8 @@ export class ToolDispatcher {
                     if (!resolved) {
                         resolved = true;
                         log.warn(`Approval timeout for tool "${toolName}" — denying by default`);
-                        this.finishApproval(ctx.runId, toolName, "deny");
-                        eventBus.emit("approval.resolved", { runId: ctx.runId, decision: "deny", toolName, kind });
+                        this.finishApproval(ctx.runId, toolName, "deny", "timeout");
+                        eventBus.emit("approval.resolved", { runId: ctx.runId, decision: "deny", toolName, kind, reason: "timeout" });
                         resolve("deny");
                     }
                 }, 60_000);
@@ -177,12 +256,12 @@ export class ToolDispatcher {
                 params,
                 kind,
                 ...(guidance ? { guidance } : {}),
-                resolve: (decision) => {
+                resolve: (decision, reason = "user") => {
                     if (!resolved) {
                         resolved = true;
                         if (timeout)
                             clearTimeout(timeout);
-                        this.finishApproval(ctx.runId, toolName, decision);
+                        this.finishApproval(ctx.runId, toolName, decision, reason);
                         resolve(decision);
                     }
                 },
@@ -198,7 +277,7 @@ export class ToolDispatcher {
     }
     listPendingInteractions() {
         return [...this.pendingInteractionKinds.entries()].map(([runId, interaction]) => {
-            const guidance = this.getInteractionGuidance(interaction.kind);
+            const guidance = this.getInteractionGuidance(interaction.kind, interaction.toolName, {});
             if (guidance) {
                 return {
                     runId,
@@ -214,7 +293,7 @@ export class ToolDispatcher {
             };
         });
     }
-    finishApproval(runId, toolName, decision) {
+    finishApproval(runId, toolName, decision, reason = "user") {
         const interaction = this.pendingInteractionKinds.get(runId);
         const kind = interaction?.kind ?? "approval";
         const stepKey = interaction?.stepKey ?? "awaiting_approval";
@@ -230,6 +309,7 @@ export class ToolDispatcher {
             setRunStepStatus(runId, stepKey, "completed", summary);
             setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`);
             updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true);
+            rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: summary });
             return;
         }
         if (decision === "allow_once") {
@@ -239,13 +319,13 @@ export class ToolDispatcher {
                 : `${toolName} 실행을 이번 단계에 대해 허용했습니다.`);
             setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`);
             updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true);
+            rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: `${toolName} 승인 완료` });
             return;
         }
-        appendRunEvent(runId, kind === "screen_confirmation" ? `${toolName} 준비 확인 거부` : `${toolName} 실행 거부`);
-        setRunStepStatus(runId, stepKey, "cancelled", kind === "screen_confirmation"
-            ? `${toolName} 실행 전 준비 확인이 완료되지 않아 요청을 취소했습니다.`
-            : `${toolName} 실행이 거부되어 요청을 취소했습니다.`);
-        cancelRootRun(runId);
+        const denial = describeApprovalDenial(toolName, kind, reason);
+        setRunStepStatus(runId, stepKey, "cancelled", denial.stepSummary);
+        rememberApprovalContinuity(runId, { pendingApprovals: [], status: "cancelled", lastGoodState: denial.runSummary });
+        cancelRootRun(runId, denial);
     }
     writeAudit(ctx, toolName, params, result, durationMs, approvalRequired, approvedBy) {
         try {
@@ -280,6 +360,46 @@ export function resolvePendingInteraction(runId, decision) {
 export function listPendingInteractions() {
     return toolDispatcher.listPendingInteractions();
 }
+function describeApprovalAction(toolName, params) {
+    switch (toolName) {
+        case "screen_capture":
+            return "현재 화면 전체를 캡처하려고 합니다.";
+        case "screen_find_text":
+            return `현재 화면을 캡처하고 화면 안에서 텍스트를 찾으려고 합니다${typeof params.text === "string" && params.text.trim() ? `: ${params.text.trim()}` : "."}`;
+        case "shell_exec":
+            return typeof params.command === "string" && params.command.trim()
+                ? `다음 명령을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : ""}: ${params.command.trim()}`
+                : `명령을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`;
+        case "app_launch":
+            return typeof params.appName === "string" && params.appName.trim()
+                ? `애플리케이션을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : ""}: ${params.appName.trim()}`
+                : `애플리케이션을 실행하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`;
+        case "process_kill":
+            return "로컬 프로세스를 종료하려고 합니다.";
+        case "yeonjang_camera_capture":
+            return `연장을 통해 카메라 사진을 촬영하려고 합니다${typeof params.extensionId === "string" && params.extensionId.trim() ? `: ${params.extensionId.trim()}` : "."}`;
+        case "mouse_move":
+            return "마우스 포인터를 이동하려고 합니다.";
+        case "mouse_click":
+            return "마우스 클릭을 실행하려고 합니다.";
+        case "mouse_action":
+            return "마우스 액션을 자동으로 실행하려고 합니다.";
+        case "keyboard_type":
+            return "키보드 입력을 자동으로 실행하려고 합니다.";
+        case "keyboard_shortcut":
+            return "키보드 단축키를 자동으로 실행하려고 합니다.";
+        case "keyboard_action":
+            return "키보드 액션을 자동으로 실행하려고 합니다.";
+        case "window_focus":
+            return "특정 창으로 포커스를 이동하려고 합니다.";
+        case "file_delete":
+            return typeof params.path === "string" && params.path.trim()
+                ? `파일을 삭제하려고 합니다: ${params.path.trim()}`
+                : "파일을 삭제하려고 합니다.";
+        default:
+            return undefined;
+    }
+}
 const FILE_APPROVAL_TOOL_NAMES = new Set([
     "file_read",
     "file_write",
@@ -291,12 +411,19 @@ const FILE_APPROVAL_TOOL_NAMES = new Set([
 const APPROVAL_REQUIRED_TOOL_NAMES = new Set([
     ...FILE_APPROVAL_TOOL_NAMES,
     "app_launch",
+    "shell_exec",
+    "process_kill",
+    "screen_capture",
+    "screen_find_text",
+    "yeonjang_camera_capture",
 ]);
 const SCREEN_INTERACTION_TOOL_NAMES = new Set([
     "window_focus",
     "mouse_move",
     "mouse_click",
+    "mouse_action",
     "keyboard_type",
     "keyboard_shortcut",
+    "keyboard_action",
 ]);
 //# sourceMappingURL=dispatcher.js.map

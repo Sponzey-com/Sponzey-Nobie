@@ -1,28 +1,494 @@
-import { getMessages, getMessagesForRequestGroupWithRunMeta } from "../db/index.js";
+import { getMessages, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession, getSession } from "../db/index.js";
 import { getConfig } from "../config/index.js";
 import { getDefaultModel, getProvider } from "../ai/index.js";
 import { createLogger } from "../logger/index.js";
 import { buildTaskIntakeSystemPrompt } from "./intake-prompt.js";
+import { normalizeRequestForIntake } from "./request-normalizer.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { selectRequestGroupContextMessages } from "./request-group-context.js";
 import { buildUserProfilePromptContext } from "./profile-context.js";
+import { getMqttExtensionSnapshots } from "../mqtt/broker.js";
+import { describeCron } from "../scheduler/cron.js";
+import { parseTelegramSessionKey } from "../channels/telegram/session.js";
 const log = createLogger("agent:intake");
+export function defaultTaskExecutionSemantics() {
+    return {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "none",
+        approvalRequired: false,
+        approvalTool: "external_action",
+    };
+}
+export function defaultTaskStructuredRequest() {
+    return {
+        source_language: "unknown",
+        normalized_english: "",
+        target: "",
+        to: "",
+        context: [],
+        complete_condition: [],
+    };
+}
+export function parseTaskExecutionSemantics(value) {
+    if (!value || typeof value !== "object")
+        return defaultTaskExecutionSemantics();
+    const record = value;
+    return {
+        filesystemEffect: record.filesystem_effect === "mutate" ? "mutate" : "none",
+        privilegedOperation: record.privileged_operation === "required" ? "required" : "none",
+        artifactDelivery: record.artifact_delivery === "direct" ? "direct" : "none",
+        approvalRequired: record.approval_required === true,
+        approvalTool: isApprovalToolName(record.approval_tool) ? record.approval_tool : "external_action",
+    };
+}
+function inferStructuredRequestLanguage(text) {
+    const hangulCount = (text.match(/[가-힣]/gu) ?? []).length;
+    const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
+    if (hangulCount > 0 && latinCount > 0)
+        return "mixed";
+    if (hangulCount > 0)
+        return "ko";
+    if (latinCount > 0)
+        return "en";
+    return "unknown";
+}
+function normalizeStructuredText(value) {
+    return value.trim().replace(/\s+/gu, " ");
+}
+function getString(value) {
+    return typeof value === "string" ? value : undefined;
+}
+function normalizeStructuredList(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value
+        .filter((item) => typeof item === "string")
+        .map((item) => normalizeStructuredText(item))
+        .filter(Boolean);
+}
+const LITERAL_DELIVERY_PATTERNS = [
+    /^(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,
+    /^(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,
+    /^(?:say|send)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))\s+(?:in|via)\s+(?:telegram|message|messenger)$/iu,
+    /^(?:say|tell)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))$/iu,
+];
+function extractLiteralDeliveryText(text) {
+    const normalized = normalizeStructuredText(text);
+    if (!normalized)
+        return null;
+    for (const pattern of LITERAL_DELIVERY_PATTERNS) {
+        const match = normalized.match(pattern);
+        if (!match)
+            continue;
+        const candidate = match.slice(1).find((value) => typeof value === "string" && value.trim().length > 0);
+        if (!candidate)
+            continue;
+        return candidate.trim();
+    }
+    return null;
+}
+function buildStructuredRequestEnvironment(sessionId, source) {
+    const session = sessionId ? getSession(sessionId) : undefined;
+    const resolvedSource = session?.source ?? source ?? "unknown";
+    if (resolvedSource === "telegram") {
+        const parsed = session?.source_id ? parseTelegramSessionKey(session.source_id) : null;
+        if (parsed) {
+            const destination = parsed.threadId !== undefined
+                ? `telegram chat ${parsed.chatId}, thread ${parsed.threadId}`
+                : `telegram chat ${parsed.chatId}, main thread`;
+            return {
+                destination,
+                contextLines: [
+                    `Delivery destination: ${destination}`,
+                    `Execution channel: telegram session ${sessionId ?? "unknown"}`,
+                ],
+            };
+        }
+        return {
+            destination: `telegram session ${sessionId ?? "unknown"}`,
+            contextLines: [`Execution channel: telegram session ${sessionId ?? "unknown"}`],
+        };
+    }
+    if (resolvedSource === "webui") {
+        return {
+            destination: `webui session ${sessionId ?? "unknown"}`,
+            contextLines: [`Execution channel: webui session ${sessionId ?? "unknown"}`],
+        };
+    }
+    if (resolvedSource === "slack") {
+        return {
+            destination: `slack session ${sessionId ?? "unknown"}`,
+            contextLines: [`Execution channel: slack session ${sessionId ?? "unknown"}`],
+        };
+    }
+    if (resolvedSource === "cli") {
+        return {
+            destination: `cli session ${sessionId ?? "unknown"}`,
+            contextLines: [`Execution channel: cli session ${sessionId ?? "unknown"}`],
+        };
+    }
+    if (sessionId) {
+        return {
+            destination: `session ${sessionId}`,
+            contextLines: [`Execution channel: session ${sessionId}`],
+        };
+    }
+    return {
+        destination: "the active session destination",
+        contextLines: ["Execution channel: active session destination"],
+    };
+}
+function buildNormalizedEnglishSummary(request) {
+    return [
+        `Target: ${request.target}`,
+        request.to ? `To: ${request.to}` : "",
+        request.context.length > 0
+            ? `Context: ${request.context.join(" | ")}`
+            : "",
+        request.complete_condition.length > 0
+            ? `Complete condition: ${request.complete_condition.join(" | ")}`
+            : "",
+    ]
+        .filter(Boolean)
+        .join("\n");
+}
+function inferStructuredRequestTarget(userMessage, intentSummary, actionItems) {
+    for (const action of actionItems) {
+        const payload = action.payload;
+        const literalDeliveryCandidate = [
+            getString(payload.content),
+            getString(payload.task),
+            getString(payload.goal),
+            action.title,
+        ]
+            .map((value) => (typeof value === "string" ? extractLiteralDeliveryText(value) : null))
+            .find((value) => typeof value === "string" && value.trim().length > 0);
+        if (literalDeliveryCandidate) {
+            return `Deliver the exact literal text "${literalDeliveryCandidate.trim()}".`;
+        }
+        const candidates = [
+            getString(payload.goal),
+            getString(payload.task),
+            getString(payload.question),
+            getString(payload.content),
+            action.title,
+        ]
+            .map((value) => (typeof value === "string" ? normalizeStructuredText(value) : ""))
+            .filter(Boolean);
+        const firstCandidate = candidates[0];
+        if (firstCandidate)
+            return firstCandidate;
+    }
+    return normalizeStructuredText(intentSummary || userMessage);
+}
+function inferStructuredRequestTo(actionItems, scheduling, execution, environment) {
+    const replyAction = actionItems.find((action) => action.type === "reply");
+    const createScheduleAction = actionItems.find((action) => action.type === "create_schedule");
+    if (replyAction) {
+        return environment.destination;
+    }
+    if (createScheduleAction) {
+        const literalDeliveryCandidate = [
+            getString(createScheduleAction.payload.task),
+            getString(createScheduleAction.payload.goal),
+            createScheduleAction.title,
+        ]
+            .map((value) => (typeof value === "string" ? extractLiteralDeliveryText(value) : null))
+            .find((value) => typeof value === "string" && value.trim().length > 0);
+        if (literalDeliveryCandidate) {
+            return `${environment.destination} at the scheduled time`;
+        }
+    }
+    if (execution.execution_semantics.artifactDelivery === "direct") {
+        return environment.destination;
+    }
+    if (actionItems.some((action) => action.type === "ask_user")) {
+        return `the user in ${environment.destination}`;
+    }
+    if (scheduling.detected) {
+        return `${environment.destination} at the scheduled time`;
+    }
+    return "the current execution target";
+}
+function inferStructuredRequestContext(userMessage, actionItems, scheduling, environment) {
+    const contexts = [...environment.contextLines];
+    const conversationContext = normalizeStructuredText(userMessage);
+    if (conversationContext) {
+        contexts.push(`Original user request: ${conversationContext}`);
+    }
+    for (const action of actionItems) {
+        const payload = action.payload;
+        const payloadContext = getString(payload.context);
+        if (payloadContext) {
+            contexts.push(normalizeStructuredText(payloadContext));
+        }
+    }
+    if (scheduling.detected) {
+        const scheduleParts = [
+            scheduling.kind !== "none" ? `Schedule kind: ${scheduling.kind}` : "",
+            scheduling.schedule_text ? `Schedule: ${normalizeStructuredText(scheduling.schedule_text)}` : "",
+            scheduling.run_at ? `Run at: ${normalizeStructuredText(scheduling.run_at)}` : "",
+            scheduling.cron ? `Cron: ${normalizeStructuredText(scheduling.cron)}` : "",
+        ]
+            .filter(Boolean)
+            .join(" | ");
+        if (scheduleParts) {
+            contexts.push(scheduleParts);
+        }
+    }
+    return Array.from(new Set(contexts));
+}
+function inferStructuredRequestCompleteCondition(intent, actionItems, scheduling, environment) {
+    for (const action of actionItems) {
+        const payloadConditions = normalizeStructuredList(action.payload.success_criteria);
+        if (payloadConditions.length > 0)
+            return payloadConditions;
+    }
+    if (actionItems.some((action) => action.type === "create_schedule")) {
+        return [
+            "The requested schedule is saved and active.",
+            scheduling.schedule_text
+                ? `The schedule timing matches ${normalizeStructuredText(scheduling.schedule_text)}.`
+                : "The schedule timing is preserved as requested.",
+        ];
+    }
+    if (actionItems.some((action) => action.type === "cancel_schedule")) {
+        return ["The targeted active schedules are cancelled or disabled."];
+    }
+    if (actionItems.some((action) => action.type === "ask_user")) {
+        return ["The missing required information is collected before execution continues."];
+    }
+    if (actionItems.some((action) => action.type === "reply")) {
+        return [`A complete user-facing answer is returned in ${environment.destination}.`];
+    }
+    if (intent.category === "schedule_request") {
+        return ["The requested scheduled task is registered and can execute later."];
+    }
+    if (intent.category === "clarification") {
+        return ["The exact missing information is requested from the user."];
+    }
+    return [`The requested work is executed and the result is delivered in ${environment.destination}.`];
+}
+function finalizeStructuredArtifacts(params) {
+    const notes = [...params.result.notes];
+    const repairedFields = [];
+    const normalizedEnglish = normalizeStructuredText(params.structuredRequest.normalized_english)
+        || params.normalized?.normalizedEnglish
+        || buildNormalizedEnglishSummary(params.structuredRequest);
+    if (!normalizeStructuredText(params.structuredRequest.normalized_english)) {
+        repairedFields.push("normalized_english");
+    }
+    const target = normalizeStructuredText(params.structuredRequest.target)
+        || inferStructuredRequestTarget(params.userMessage, params.result.intent.summary, params.result.action_items);
+    if (!normalizeStructuredText(params.structuredRequest.target)) {
+        repairedFields.push("target");
+    }
+    const destination = normalizeStructuredText(params.structuredRequest.to)
+        || inferStructuredRequestTo(params.result.action_items, params.result.scheduling, params.result.execution, params.environment);
+    if (!normalizeStructuredText(params.structuredRequest.to)) {
+        repairedFields.push("destination");
+    }
+    const context = params.structuredRequest.context.length > 0
+        ? params.structuredRequest.context
+        : inferStructuredRequestContext(params.userMessage, params.result.action_items, params.result.scheduling, params.environment);
+    if (params.structuredRequest.context.length === 0) {
+        repairedFields.push("context");
+    }
+    const completeCondition = params.structuredRequest.complete_condition.length > 0
+        ? params.structuredRequest.complete_condition
+        : inferStructuredRequestCompleteCondition(params.result.intent, params.result.action_items, params.result.scheduling, params.environment);
+    if (params.structuredRequest.complete_condition.length === 0) {
+        repairedFields.push("complete_condition");
+    }
+    const structuredRequest = {
+        source_language: params.structuredRequest.source_language,
+        normalized_english: normalizedEnglish,
+        target,
+        to: destination,
+        context,
+        complete_condition: completeCondition,
+    };
+    const intentEnvelope = buildTaskIntentEnvelope(params.result, structuredRequest);
+    if (repairedFields.length > 0) {
+        notes.push(`intent-envelope-repaired:${repairedFields.join(",")}`);
+    }
+    notes.push("intent-envelope-validated");
+    return {
+        structuredRequest,
+        intentEnvelope,
+        notes: Array.from(new Set(notes)),
+    };
+}
+function looksLikePromissoryExecutionReceipt(message) {
+    return /(지금\s*바로\s*확인해드릴게요|확인해드릴게요|확인해볼게요|확인하겠습니다|조회해드릴게요|알려드릴게요|let me check|i(?:'| wi)ll check|checking now|looking it up|i(?:'| wi)ll look it up)/iu.test(message);
+}
+function looksLikeLiveInformationRequest(message) {
+    const normalized = message.trim();
+    if (!normalized)
+        return false;
+    const mentionsLiveTiming = /(지금|현재|오늘|실시간|latest|current|today|now)/iu.test(normalized);
+    const mentionsLookupTopic = /(날씨|weather|기온|온도|forecast|news|headline|환율|rate|주가|stock|시세)/iu.test(normalized);
+    return mentionsLiveTiming && mentionsLookupTopic;
+}
+export function promotePromissoryDirectAnswer(result, latestUserMessage) {
+    const hasNonReplyAction = result.action_items.some((item) => item.type !== "reply");
+    const shouldPromote = result.intent.category === "direct_answer"
+        && result.user_message.mode === "direct_answer"
+        && (result.execution.requires_run
+            || result.execution.requires_delegation
+            || result.execution.needs_tools
+            || result.execution.needs_web
+            || looksLikePromissoryExecutionReceipt(result.user_message.text)
+            || looksLikeLiveInformationRequest(latestUserMessage));
+    if (!shouldPromote)
+        return result;
+    const retainedActions = result.action_items.filter((item) => item.type !== "reply");
+    const actionItems = retainedActions.length > 0
+        ? retainedActions
+        : [{
+                id: "run-task-promoted-from-intake",
+                type: "run_task",
+                title: result.structured_request.target || result.intent.summary || "요청 실행",
+                priority: "normal",
+                reason: "직접 답변이 아니라 실제 후속 실행이 필요한 요청입니다.",
+                payload: {
+                    goal: result.structured_request.normalized_english || result.structured_request.target || result.intent.summary,
+                    context: result.structured_request.context.join("\n"),
+                    task_profile: inferTaskProfileFromTask(latestUserMessage),
+                    preferred_target: result.execution.suggested_target || "auto",
+                    success_criteria: result.structured_request.complete_condition,
+                    constraints: [],
+                },
+            }];
+    return {
+        ...result,
+        intent: {
+            ...result.intent,
+            category: "task_intake",
+        },
+        user_message: {
+            mode: "accepted_receipt",
+            text: result.user_message.text,
+        },
+        action_items: actionItems,
+        execution: {
+            ...result.execution,
+            requires_run: true,
+            needs_web: result.execution.needs_web || looksLikeLiveInformationRequest(latestUserMessage),
+        },
+        notes: Array.from(new Set([...result.notes, "promissory-direct-answer-promoted"])),
+    };
+}
+function buildTaskIntentEnvelope(result, structuredRequest) {
+    return {
+        intent_type: result.intent.category,
+        source_language: structuredRequest.source_language,
+        normalized_english: structuredRequest.normalized_english,
+        target: structuredRequest.target,
+        destination: structuredRequest.to,
+        context: structuredRequest.context,
+        complete_condition: structuredRequest.complete_condition,
+        schedule_spec: result.scheduling,
+        execution_semantics: result.execution.execution_semantics,
+        delivery_mode: result.execution.execution_semantics.artifactDelivery,
+        requires_approval: result.execution.execution_semantics.approvalRequired,
+        approval_tool: result.execution.execution_semantics.approvalTool,
+        preferred_target: result.execution.suggested_target,
+        needs_tools: result.execution.needs_tools,
+        needs_web: result.execution.needs_web,
+    };
+}
+function synthesizeStructuredRequest(userMessage, result, environment, normalized) {
+    const base = {
+        source_language: normalized?.sourceLanguage ?? inferStructuredRequestLanguage(userMessage),
+        target: inferStructuredRequestTarget(userMessage, result.intent.summary, result.action_items),
+        to: inferStructuredRequestTo(result.action_items, result.scheduling, result.execution, environment),
+        context: inferStructuredRequestContext(userMessage, result.action_items, result.scheduling, environment),
+        complete_condition: inferStructuredRequestCompleteCondition(result.intent, result.action_items, result.scheduling, environment),
+    };
+    return {
+        ...base,
+        normalized_english: normalized?.normalizedEnglish || buildNormalizedEnglishSummary(base),
+    };
+}
+function parseTaskStructuredRequest(value, fallbackUserMessage, fallbackResult, environment, normalized) {
+    if (!value || typeof value !== "object") {
+        return synthesizeStructuredRequest(fallbackUserMessage, fallbackResult, environment, normalized);
+    }
+    const record = value;
+    const sourceLanguage = isStructuredRequestLanguage(record.source_language)
+        ? record.source_language
+        : normalized?.sourceLanguage ?? inferStructuredRequestLanguage(fallbackUserMessage);
+    const target = normalizeStructuredText(typeof record.target === "string" ? record.target : "");
+    const to = normalizeStructuredText(typeof record.to === "string" ? record.to : "");
+    const context = normalizeStructuredList(record.context);
+    const completeCondition = normalizeStructuredList(record.complete_condition);
+    const request = {
+        source_language: sourceLanguage,
+        target: target || inferStructuredRequestTarget(fallbackUserMessage, fallbackResult.intent.summary, fallbackResult.action_items),
+        to: to || inferStructuredRequestTo(fallbackResult.action_items, fallbackResult.scheduling, fallbackResult.execution, environment),
+        context: context.length > 0
+            ? context
+            : inferStructuredRequestContext(fallbackUserMessage, fallbackResult.action_items, fallbackResult.scheduling, environment),
+        complete_condition: completeCondition.length > 0
+            ? completeCondition
+            : inferStructuredRequestCompleteCondition(fallbackResult.intent, fallbackResult.action_items, fallbackResult.scheduling, environment),
+    };
+    const normalizedEnglish = typeof record.normalized_english === "string"
+        ? normalizeStructuredText(record.normalized_english)
+        : "";
+    return {
+        ...request,
+        normalized_english: normalizedEnglish || normalized?.normalizedEnglish || buildNormalizedEnglishSummary(request),
+    };
+}
+function withStructuredRequest(userMessage, result, environment, normalized) {
+    const artifacts = finalizeStructuredArtifacts({
+        userMessage,
+        result,
+        environment,
+        structuredRequest: synthesizeStructuredRequest(userMessage, result, environment, normalized),
+        ...(normalized ? { normalized } : {}),
+    });
+    return {
+        ...result,
+        notes: artifacts.notes,
+        structured_request: artifacts.structuredRequest,
+        intent_envelope: artifacts.intentEnvelope,
+    };
+}
 export async function analyzeTaskIntake(params) {
     const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns;
-    const heuristic = detectRelativeScheduleRequest(params.userMessage, Date.now(), maxDelegationTurns);
-    if (heuristic) {
-        log.info("relative schedule heuristic matched", {
-            sessionId: params.sessionId ?? null,
-            category: heuristic.intent.category,
-            schedule: heuristic.scheduling.schedule_text,
-            runAt: heuristic.scheduling.run_at ?? null,
-            actions: heuristic.action_items.map((item) => item.type),
-        });
-        return heuristic;
+    const environment = buildStructuredRequestEnvironment(params.sessionId, params.source);
+    const normalized = normalizeRequestForIntake(params.userMessage);
+    const intakeMessage = normalized.normalizedEnglish || params.userMessage;
+    const deterministicIntakeAllowed = looksLikeSlashCommand(params.userMessage);
+    if (deterministicIntakeAllowed) {
+        const scheduleManagement = detectSessionScheduleManagementRequest(intakeMessage, params.sessionId, maxDelegationTurns, environment, params.userMessage, normalized);
+        if (scheduleManagement) {
+            log.info("schedule management heuristic matched", {
+                sessionId: params.sessionId ?? null,
+                category: scheduleManagement.intent.category,
+                actions: scheduleManagement.action_items.map((item) => item.type),
+            });
+            return scheduleManagement;
+        }
+        const heuristic = detectRelativeScheduleRequest(intakeMessage, Date.now(), maxDelegationTurns, environment, params.userMessage, normalized);
+        if (heuristic) {
+            log.info("relative schedule heuristic matched", {
+                sessionId: params.sessionId ?? null,
+                category: heuristic.intent.category,
+                schedule: heuristic.scheduling.schedule_text,
+                runAt: heuristic.scheduling.run_at ?? null,
+                actions: heuristic.action_items.map((item) => item.type),
+            });
+            return heuristic;
+        }
     }
     const model = params.model ?? getDefaultModel();
     const provider = getProvider();
-    const context = buildConversationContext(params.sessionId, params.requestGroupId, params.userMessage);
+    const context = buildConversationContext(params.sessionId, params.requestGroupId, params.userMessage, normalized.normalizedEnglish, params.source);
     const instructions = loadMergedInstructions(params.workDir ?? process.cwd());
     const profileContext = buildUserProfilePromptContext();
     log.debug("starting intake analysis", {
@@ -59,7 +525,7 @@ export async function analyzeTaskIntake(params) {
         if (chunk.type === "text_delta")
             raw += chunk.delta;
     }
-    const parsed = parseTaskIntakeResult(raw, maxDelegationTurns);
+    const parsed = parseTaskIntakeResult(raw, maxDelegationTurns, params.userMessage, environment, normalized);
     log.debug("finished intake analysis", {
         sessionId: params.sessionId ?? null,
         parsed: parsed == null
@@ -73,13 +539,193 @@ export async function analyzeTaskIntake(params) {
     });
     return parsed;
 }
-export function detectRelativeScheduleRequest(userMessage, now = Date.now(), maxDelegationTurns = getConfig().orchestration.maxDelegationTurns) {
+function detectSessionScheduleManagementRequest(userMessage, sessionId, maxDelegationTurns, environment, originalUserMessage = userMessage, normalized) {
+    if (!sessionId)
+        return null;
+    const trimmed = userMessage.trim();
+    if (!trimmed)
+        return null;
+    const activeSchedules = getSchedulesForSession(sessionId, true);
+    const mentionsSchedule = /(예약|알림|스케줄|schedule|schedules|reminder|reminders|notification|notifications|alarm|alarms)/iu.test(trimmed);
+    const looksLikeScheduleCancel = mentionsSchedule
+        && /(취소|중지|꺼|멈춰|삭제|cancel|stop|disable|delete|remove|turn off)/iu.test(trimmed);
+    const looksLikeScheduleList = !looksLikeScheduleCancel
+        && mentionsSchedule
+        && /(현재|활성|목록|리스트|보여|알려줘|current|active|list|show|tell me)/iu.test(trimmed);
+    if (looksLikeScheduleCancel) {
+        if (activeSchedules.length === 0) {
+            return withStructuredRequest(originalUserMessage, {
+                intent: {
+                    category: "direct_answer",
+                    summary: "취소할 활성 예약 알림이 없음",
+                    confidence: 0.99,
+                },
+                user_message: {
+                    mode: "direct_answer",
+                    text: "현재 이 대화에 취소할 활성 예약 알림은 없습니다.",
+                },
+                action_items: [{
+                        id: "reply-no-active-schedules",
+                        type: "reply",
+                        title: "활성 예약 알림 없음 응답",
+                        priority: "normal",
+                        reason: "현재 세션에 활성 예약 알림이 없습니다.",
+                        payload: { content: "현재 이 대화에 취소할 활성 예약 알림은 없습니다." },
+                    }],
+                scheduling: {
+                    detected: true,
+                    kind: "none",
+                    status: "not_applicable",
+                    schedule_text: "",
+                },
+                execution: {
+                    requires_run: false,
+                    requires_delegation: false,
+                    suggested_target: "auto",
+                    max_delegation_turns: maxDelegationTurns,
+                    needs_tools: false,
+                    needs_web: false,
+                    execution_semantics: defaultTaskExecutionSemantics(),
+                },
+                notes: ["session-schedule-management", "cancel-schedules", "none-active"],
+            }, environment, normalized);
+        }
+        const cancelAll = /(모든|모두|전부|다|전체|all|every|each)/iu.test(trimmed);
+        const targetSchedules = cancelAll || activeSchedules.length === 1
+            ? activeSchedules
+            : activeSchedules.filter((schedule) => trimmed.includes(schedule.name) || trimmed.includes(schedule.prompt));
+        if (targetSchedules.length === 0) {
+            const choices = activeSchedules.map((schedule, index) => `${index + 1}. ${schedule.name}`).join("\n");
+            return withStructuredRequest(originalUserMessage, {
+                intent: {
+                    category: "clarification",
+                    summary: "어떤 예약 알림을 취소할지 모호함",
+                    confidence: 0.95,
+                },
+                user_message: {
+                    mode: "clarification_receipt",
+                    text: `취소할 예약 알림을 특정해 주세요.\n${choices}`,
+                },
+                action_items: [{
+                        id: "ask-cancel-schedule-target",
+                        type: "ask_user",
+                        title: "취소할 예약 알림 확인",
+                        priority: "normal",
+                        reason: "현재 활성 예약 알림이 여러 개라 대상을 특정해야 합니다.",
+                        payload: { question: "어떤 예약 알림을 취소할까요?", missing_fields: ["schedule_target"] },
+                    }],
+                scheduling: {
+                    detected: true,
+                    kind: "recurring",
+                    status: "needs_clarification",
+                    schedule_text: activeSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+                },
+                execution: {
+                    requires_run: false,
+                    requires_delegation: false,
+                    suggested_target: "auto",
+                    max_delegation_turns: maxDelegationTurns,
+                    needs_tools: false,
+                    needs_web: false,
+                    execution_semantics: defaultTaskExecutionSemantics(),
+                },
+                notes: ["session-schedule-management", "cancel-schedules", "needs-target"],
+            }, environment, normalized);
+        }
+        return withStructuredRequest(originalUserMessage, {
+            intent: {
+                category: "schedule_request",
+                summary: `${targetSchedules.length}개의 예약 알림 취소 요청`,
+                confidence: 0.99,
+            },
+            user_message: {
+                mode: "accepted_receipt",
+                text: targetSchedules.length === 1
+                    ? `"${targetSchedules[0]?.name}" 예약 알림 취소를 진행합니다.`
+                    : `${targetSchedules.length}개의 예약 알림 취소를 진행합니다.`,
+            },
+            action_items: [{
+                    id: "cancel-session-schedules",
+                    type: "cancel_schedule",
+                    title: targetSchedules.length === 1 ? targetSchedules[0]?.name ?? "예약 알림 취소" : "예약 알림 일괄 취소",
+                    priority: "high",
+                    reason: "현재 세션에 연결된 활성 예약 알림을 취소합니다.",
+                    payload: {
+                        schedule_ids: targetSchedules.map((schedule) => schedule.id),
+                    },
+                }],
+            scheduling: {
+                detected: true,
+                kind: "recurring",
+                status: "accepted",
+                schedule_text: targetSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+            },
+            execution: {
+                requires_run: false,
+                requires_delegation: false,
+                suggested_target: "auto",
+                max_delegation_turns: maxDelegationTurns,
+                needs_tools: false,
+                needs_web: false,
+                execution_semantics: defaultTaskExecutionSemantics(),
+            },
+            notes: ["session-schedule-management", "cancel-schedules"],
+        }, environment, normalized);
+    }
+    if (looksLikeScheduleList) {
+        const content = activeSchedules.length === 0
+            ? "현재 이 대화에 활성화된 예약 알림은 없습니다."
+            : [
+                "현재 이 대화에 활성화된 예약 알림입니다.",
+                ...activeSchedules.map((schedule, index) => `${index + 1}. ${schedule.name} · ${describeCron(schedule.cron_expression)}`),
+            ].join("\n");
+        return withStructuredRequest(originalUserMessage, {
+            intent: {
+                category: "direct_answer",
+                summary: "현재 대화의 활성 예약 알림 목록 조회",
+                confidence: 0.99,
+            },
+            user_message: {
+                mode: "direct_answer",
+                text: content,
+            },
+            action_items: [{
+                    id: "reply-active-schedules",
+                    type: "reply",
+                    title: "활성 예약 알림 목록 응답",
+                    priority: "normal",
+                    reason: "현재 세션에 연결된 활성 예약 알림을 보여줍니다.",
+                    payload: { content },
+                }],
+            scheduling: {
+                detected: true,
+                kind: activeSchedules.length > 0 ? "recurring" : "none",
+                status: "not_applicable",
+                schedule_text: activeSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+            },
+            execution: {
+                requires_run: false,
+                requires_delegation: false,
+                suggested_target: "auto",
+                max_delegation_turns: maxDelegationTurns,
+                needs_tools: false,
+                needs_web: false,
+                execution_semantics: defaultTaskExecutionSemantics(),
+            },
+            notes: ["session-schedule-management", "list-schedules"],
+        }, environment, normalized);
+    }
+    return null;
+}
+export function detectRelativeScheduleRequest(userMessage, now = Date.now(), maxDelegationTurns = getConfig().orchestration.maxDelegationTurns, environment = buildStructuredRequestEnvironment(undefined, undefined), originalUserMessage = userMessage, normalized) {
     const parsedItems = parseRelativeDelays(userMessage);
     if (parsedItems.length === 0)
         return null;
+    const originalParsedItems = originalUserMessage === userMessage ? parsedItems : parseRelativeDelays(originalUserMessage);
+    const displayItems = originalParsedItems.length === parsedItems.length ? originalParsedItems : parsedItems;
     const missingTaskItems = parsedItems.filter((item) => !item.task);
     if (missingTaskItems.length > 0) {
-        return {
+        return withStructuredRequest(originalUserMessage, {
             intent: {
                 category: "clarification",
                 summary: "상대시간 일정 요청 중 일부 실행할 작업이 비어 있습니다.",
@@ -106,7 +752,7 @@ export function detectRelativeScheduleRequest(userMessage, now = Date.now(), max
                 detected: true,
                 kind: "one_time",
                 status: "needs_clarification",
-                schedule_text: parsedItems.map((item) => item.delayLabel).join(", "),
+                schedule_text: displayItems.map((item) => item.delayLabel).join(", "),
             },
             execution: {
                 requires_run: false,
@@ -115,42 +761,51 @@ export function detectRelativeScheduleRequest(userMessage, now = Date.now(), max
                 max_delegation_turns: maxDelegationTurns,
                 needs_tools: false,
                 needs_web: false,
+                execution_semantics: defaultTaskExecutionSemantics(),
             },
             notes: ["relative-delay-heuristic"],
-        };
+        }, environment, normalized);
     }
     const actionItems = parsedItems.map((item, index) => {
+        const displayItem = displayItems[index] ?? item;
         const runAt = new Date(now + item.delayMs).toISOString();
+        const taskText = displayItem.task || item.task;
+        const literalDeliveryText = extractLiteralDeliveryText(taskText);
+        const goal = literalDeliveryText
+            ? `Deliver the exact literal text "${literalDeliveryText}" to ${environment.destination}.`
+            : taskText;
         return {
             id: `create-relative-delay-schedule-${index + 1}`,
             type: "create_schedule",
-            title: `${item.delayLabel} 후 실행`,
+            title: `${displayItem.delayLabel} 후 실행`,
             priority: "normal",
             reason: "상대시간 기반 일회성 지연 실행 요청입니다.",
             payload: {
-                title: `${item.delayLabel} 후 실행`,
-                task: item.task,
+                title: `${displayItem.delayLabel} 후 실행`,
+                task: taskText,
                 schedule_kind: "one_time",
-                schedule_text: item.delayLabel,
+                schedule_text: displayItem.delayLabel,
                 run_at: runAt,
                 followup_run_payload: {
-                    goal: item.task,
+                    goal,
+                    literal_text: literalDeliveryText ?? undefined,
+                    destination: environment.destination,
                     task_profile: inferTaskProfileFromTask(item.task),
                     preferred_target: "auto",
                 },
             },
         };
     });
-    return {
+    return withStructuredRequest(originalUserMessage, {
         intent: {
             category: "schedule_request",
-            summary: parsedItems.map((item) => `${item.delayLabel} 후 실행 요청: ${item.task}`).join(" / "),
+            summary: displayItems.map((item) => `${item.delayLabel} 후 실행 요청: ${item.task}`).join(" / "),
             confidence: 0.99,
         },
         user_message: {
             mode: "accepted_receipt",
-            text: parsedItems.length === 1
-                ? `${parsedItems[0]?.delayLabel} 후에 "${parsedItems[0]?.task}" 작업을 실행하도록 접수했습니다.`
+            text: displayItems.length === 1
+                ? `${displayItems[0]?.delayLabel} 후에 "${displayItems[0]?.task}" 작업을 실행하도록 접수했습니다.`
                 : "여러 예약 작업을 접수했습니다.",
         },
         action_items: actionItems,
@@ -158,7 +813,7 @@ export function detectRelativeScheduleRequest(userMessage, now = Date.now(), max
             detected: true,
             kind: "one_time",
             status: "accepted",
-            schedule_text: parsedItems.map((item) => item.delayLabel).join(", "),
+            schedule_text: displayItems.map((item) => item.delayLabel).join(", "),
         },
         execution: {
             requires_run: false,
@@ -167,14 +822,16 @@ export function detectRelativeScheduleRequest(userMessage, now = Date.now(), max
             max_delegation_turns: maxDelegationTurns,
             needs_tools: false,
             needs_web: false,
+            execution_semantics: defaultTaskExecutionSemantics(),
         },
         notes: parsedItems.length > 1
             ? ["relative-delay-heuristic", "multi-action-item"]
             : ["relative-delay-heuristic"],
-    };
+    }, environment, normalized);
 }
-function buildConversationContext(sessionId, requestGroupId, latestUserMessage) {
+function buildConversationContext(sessionId, requestGroupId, latestUserMessage, normalizedEnglishMessage, source) {
     const lines = [];
+    const environment = buildStructuredRequestEnvironment(sessionId, source);
     if (sessionId) {
         const recentMessages = requestGroupId
             ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, requestGroupId))
@@ -192,9 +849,51 @@ function buildConversationContext(sessionId, requestGroupId, latestUserMessage) 
             lines.push("");
         }
     }
-    lines.push("Latest user message:");
+    const runtimeContext = buildRuntimeIntakeContext();
+    if (runtimeContext.length > 0) {
+        lines.push("Runtime environment:");
+        lines.push(...runtimeContext);
+        lines.push("");
+    }
+    lines.push("Delivery environment:");
+    lines.push(...environment.contextLines.map((line) => `- ${line}`));
+    lines.push("");
+    lines.push("Normalized English request:");
+    lines.push(normalizedEnglishMessage.trim() || latestUserMessage.trim());
+    lines.push("");
+    lines.push("Latest user message (original):");
     lines.push(latestUserMessage.trim());
     return lines.join("\n");
+}
+function buildRuntimeIntakeContext() {
+    const snapshots = getMqttExtensionSnapshots();
+    const connected = snapshots.filter((item) => (item.state ?? "").toLowerCase() !== "offline");
+    if (connected.length === 0)
+        return [];
+    const lines = [`- Connected Yeonjang extensions: ${connected.length}`];
+    for (const extension of connected.slice(0, 4)) {
+        lines.push(`- Extension: ${extension.extensionId}`
+            + `${extension.displayName ? ` (${extension.displayName})` : ""}`
+            + `${extension.state ? `, state=${extension.state}` : ""}`);
+    }
+    if (connected.length === 1) {
+        const only = connected[0];
+        lines.push(`- There is exactly one connected extension (${only?.extensionId ?? "unknown"}). `
+            + "Unless the user explicitly mentions another device or another computer, do not ask which device to use.");
+    }
+    return lines;
+}
+function looksLikeExplicitScheduleManagementCommand(userMessage) {
+    const trimmed = userMessage.trim();
+    if (!trimmed)
+        return false;
+    const mentionsSchedule = /(예약|알림|스케줄|schedule|schedules|reminder|reminders|notification|notifications|alarm|alarms)/iu.test(trimmed);
+    if (!mentionsSchedule)
+        return false;
+    return /^(?:please\s+)?(?:(?:show|list|display|cancel|stop|disable|delete|remove|turn off|what(?:'s| is))\b|\b(?:current|active)\b|(?:현재|활성|목록|리스트|보여|알려줘|취소|중지|삭제))/iu.test(trimmed);
+}
+function looksLikeSlashCommand(userMessage) {
+    return /^\/[A-Za-z0-9][\w-]*/.test(userMessage.trim());
 }
 function parseRelativeDelays(userMessage) {
     const trimmed = userMessage.trim();
@@ -222,26 +921,26 @@ function parseRelativeDelays(userMessage) {
                 }];
         });
     }
-    const englishMatches = [...trimmed.matchAll(/(?:in|after)\s+(\d+)\s*(seconds?|minutes?|hours?|days?)/gi)];
+    const englishMatches = [...trimmed.matchAll(/(?:(?:in|after)\s+(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)|(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\s+later)/gi)];
     if (englishMatches.length > 0) {
         return englishMatches.flatMap((match, index) => {
-            const amount = Number(match[1]);
-            const unit = (match[2] ?? "").toLowerCase();
+            const amount = Number(match[1] ?? match[3]);
+            const unit = (match[2] ?? match[4] ?? "").toLowerCase();
             if (!Number.isFinite(amount) || amount <= 0 || !unit || match.index == null)
                 return [];
             const nextIndex = englishMatches[index + 1]?.index ?? trimmed.length;
             const rawTask = trimmed.slice(match.index + match[0].length, nextIndex);
             const task = cleanRelativeDelayTask(rawTask);
-            const unitMs = unit.startsWith("second")
+            const unitMs = unit.startsWith("second") || unit.startsWith("sec")
                 ? 1_000
-                : unit.startsWith("minute")
+                : unit.startsWith("minute") || unit.startsWith("min")
                     ? 60_000
-                    : unit.startsWith("hour")
+                    : unit.startsWith("hour") || unit.startsWith("hr")
                         ? 3_600_000
                         : 86_400_000;
             return [{
                     delayMs: amount * unitMs,
-                    delayLabel: `${amount}${unit.startsWith("second") ? "초" : unit.startsWith("minute") ? "분" : unit.startsWith("hour") ? "시간" : "일"}`,
+                    delayLabel: `${amount}${unit.startsWith("second") || unit.startsWith("sec") ? "초" : unit.startsWith("minute") || unit.startsWith("min") ? "분" : unit.startsWith("hour") || unit.startsWith("hr") ? "시간" : "일"}`,
                     task,
                 }];
         });
@@ -273,7 +972,7 @@ function inferTaskProfileFromTask(task) {
     }
     return "general_chat";
 }
-function parseTaskIntakeResult(raw, maxDelegationTurns) {
+function parseTaskIntakeResult(raw, maxDelegationTurns, latestUserMessage, environment, normalized) {
     const trimmed = raw.trim();
     if (!trimmed)
         return null;
@@ -288,7 +987,7 @@ function parseTaskIntakeResult(raw, maxDelegationTurns) {
         if (typeof parsed.intent.summary !== "string" || typeof parsed.user_message.text !== "string") {
             return null;
         }
-        return {
+        const resultWithoutStructuredArtifacts = {
             intent: {
                 category: isIntentCategory(parsed.intent.category) ? parsed.intent.category : "clarification",
                 summary: parsed.intent.summary,
@@ -326,9 +1025,23 @@ function parseTaskIntakeResult(raw, maxDelegationTurns) {
                 max_delegation_turns: typeof parsed.execution.max_delegation_turns === "number" ? parsed.execution.max_delegation_turns : maxDelegationTurns,
                 needs_tools: Boolean(parsed.execution.needs_tools),
                 needs_web: Boolean(parsed.execution.needs_web),
+                execution_semantics: parseTaskExecutionSemantics(parsed.execution.execution_semantics),
             },
             notes: Array.isArray(parsed.notes) ? parsed.notes.filter((item) => typeof item === "string") : [],
         };
+        const artifacts = finalizeStructuredArtifacts({
+            userMessage: latestUserMessage,
+            result: resultWithoutStructuredArtifacts,
+            environment,
+            structuredRequest: parseTaskStructuredRequest(parsed.structured_request, latestUserMessage, resultWithoutStructuredArtifacts, environment, normalized),
+            ...(normalized ? { normalized } : {}),
+        });
+        return promotePromissoryDirectAnswer({
+            ...resultWithoutStructuredArtifacts,
+            notes: artifacts.notes,
+            structured_request: artifacts.structuredRequest,
+            intent_envelope: artifacts.intentEnvelope,
+        }, latestUserMessage);
     }
     catch {
         return null;
@@ -360,5 +1073,17 @@ function isActionType(value) {
 }
 function isPriority(value) {
     return value === "low" || value === "normal" || value === "high" || value === "urgent";
+}
+function isApprovalToolName(value) {
+    return value === "screen_capture"
+        || value === "yeonjang_camera_capture"
+        || value === "mouse_click"
+        || value === "keyboard_type"
+        || value === "file_write"
+        || value === "app_launch"
+        || value === "external_action";
+}
+function isStructuredRequestLanguage(value) {
+    return value === "ko" || value === "en" || value === "mixed" || value === "unknown";
 }
 //# sourceMappingURL=intake.js.map

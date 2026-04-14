@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildIngressReceipt, resolveIngressStartParams } from "../packages/core/src/runs/ingress.ts"
+import { buildIngressDedupeKey, buildIngressReceipt, resolveIngressStartParams } from "../packages/core/src/runs/ingress.ts"
 import { detectRelativeScheduleRequest } from "../packages/core/src/agent/intake.ts"
 
 describe("task001 ingress and intent envelope", () => {
@@ -40,6 +40,16 @@ describe("task001 ingress and intent envelope", () => {
 
     expect(resolved.runId).toBe("run-123")
     expect(resolved.sessionId).toBe("session-123")
+  })
+
+  it("builds a stable ingress dedupe key from channel identity", () => {
+    expect(buildIngressDedupeKey({
+      source: "slack",
+      sessionId: "slack:C123:T456",
+      externalChatId: "C123",
+      externalThreadId: "T456",
+      externalMessageId: "M789",
+    })).toBe("slack:slack:C123:T456:C123:T456:M789")
   })
 
   it("produces a validated intent envelope for relative scheduling", () => {

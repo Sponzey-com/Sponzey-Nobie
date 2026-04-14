@@ -3,6 +3,22 @@ export function resolveSessionKey(chatId, threadId) {
     const thread = threadId !== undefined ? String(threadId) : "main";
     return `telegram:${chatId}:${thread}`;
 }
+export function parseTelegramSessionKey(sessionKey) {
+    const match = /^telegram:(-?\d+):(main|\d+)$/.exec(sessionKey);
+    if (!match)
+        return null;
+    const chatId = Number(match[1]);
+    if (!Number.isFinite(chatId))
+        return null;
+    const threadPart = match[2];
+    if (threadPart === "main") {
+        return { chatId };
+    }
+    const threadId = Number(threadPart);
+    if (!Number.isFinite(threadId))
+        return { chatId };
+    return { chatId, threadId };
+}
 export function getOrCreateTelegramSession(sessionKey) {
     const db = getDb();
     const existing = db

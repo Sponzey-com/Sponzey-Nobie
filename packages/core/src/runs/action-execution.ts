@@ -1,5 +1,7 @@
 import crypto from "node:crypto"
-import { getSchedule, insertSchedule, updateSchedule } from "../db/index.js"
+import { getSchedule, insertSchedule, updateSchedule, upsertScheduleMemoryEntry } from "../db/index.js"
+import { getConfig } from "../config/index.js"
+import { storeMemorySync } from "../memory/store.js"
 import type {
   TaskExecutionSemantics,
   TaskIntakeActionItem,
@@ -7,7 +9,7 @@ import type {
   TaskIntentEnvelope,
   TaskStructuredRequest,
 } from "../agent/intake.js"
-import { isValidCron } from "../scheduler/cron.js"
+import { isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../scheduler/cron.js"
 import {
   reconcileScheduleExecution,
   removeManagedScheduleExecution,
@@ -49,6 +51,7 @@ export type ScheduleActionReceipt =
       task: string
       cron: string
       scheduleText: string
+      timezone?: string
       source: "webui" | "cli" | "telegram" | "slack"
       targetSessionId?: string
       originRunId: string
@@ -101,6 +104,7 @@ export interface ScheduleActionDependencies {
     title: string
     task: string
     cron: string
+    timezone?: string
     source: "webui" | "cli" | "telegram" | "slack"
     sessionId: string
     originRunId: string
@@ -132,10 +136,13 @@ export function createDefaultScheduleActionDependencies(
       const now = Date.now()
       const scheduleId = crypto.randomUUID()
       const targetSessionId = params.source === "telegram" || params.source === "slack" ? params.sessionId : undefined
+      const config = getConfig()
+      const timezone = normalizeScheduleTimezone(params.timezone, config.scheduler.timezone || config.profile.timezone)
       insertSchedule({
         id: scheduleId,
         name: params.title,
         cron_expression: params.cron,
+        timezone,
         prompt: params.task,
         enabled: 1,
         target_channel: params.source === "telegram" ? "telegram" : params.source === "slack" ? "slack" : "agent",
@@ -148,6 +155,36 @@ export function createDefaultScheduleActionDependencies(
         timeout_sec: 300,
         created_at: now,
         updated_at: now,
+      })
+      upsertScheduleMemoryEntry({
+        scheduleId,
+        prompt: params.task,
+        ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+        requestGroupId: params.originRequestGroupId,
+        title: params.title,
+        cronExpression: params.cron,
+        enabled: true,
+        metadata: {
+          source: params.source,
+          timezone,
+          originRunId: params.originRunId,
+          originRequestGroupId: params.originRequestGroupId,
+          targetChannel: params.source === "telegram" ? "telegram" : params.source === "slack" ? "slack" : "agent",
+        },
+      })
+      storeMemorySync({
+        content: [
+          `예약 이름: ${params.title}`,
+          `예약 주기: ${params.cron}`,
+          `예약 시간대: ${timezone}`,
+          `실행 내용: ${params.task}`,
+          `전달 채널: ${params.source}`,
+        ].join("\n"),
+        scope: "schedule",
+        scheduleId,
+        requestGroupId: scheduleId,
+        type: "project_note",
+        importance: "medium",
       })
       const execution = reconcileScheduleExecution(scheduleId)
       return {
@@ -162,6 +199,19 @@ export function createDefaultScheduleActionDependencies(
         const schedule = getSchedule(scheduleId)
         if (!schedule) continue
         updateSchedule(scheduleId, { enabled: 0 })
+        upsertScheduleMemoryEntry({
+          scheduleId,
+          prompt: schedule.prompt,
+          ...(schedule.target_session_id ? { sessionId: schedule.target_session_id } : {}),
+          ...(schedule.origin_request_group_id ? { requestGroupId: schedule.origin_request_group_id } : {}),
+          title: schedule.name,
+          cronExpression: schedule.cron_expression,
+          enabled: false,
+          metadata: {
+            cancelledAt: Date.now(),
+            ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
+          },
+        })
         removeManagedScheduleExecution(scheduleId)
         cancelledNames.push(schedule.name)
       }
@@ -317,6 +367,7 @@ function executeCreateScheduleAction(
   const cron = getString(action.payload.cron) || intake.scheduling.cron
   const runAt = getString(action.payload.run_at) || intake.scheduling.run_at
   const actionScheduleText = getString(action.payload.schedule_text)
+  const timezone = getString(action.payload.timezone)
 
   if (runAt) {
     const scheduledAt = Date.parse(runAt)
@@ -405,11 +456,24 @@ function executeCreateScheduleAction(
       receipts: defaultScheduleActionReceipts(),
     }
   }
+  if (timezone && !isValidTimeZone(timezone)) {
+    return {
+      ok: false,
+      message: receipt
+        ? `${receipt}\n\n일정 생성 실패: timezone 형식이 올바르지 않습니다.`
+        : "일정 생성 실패: timezone 형식이 올바르지 않습니다.",
+      detail: `${actionScheduleText ?? title}: timezone 형식이 올바르지 않습니다.`,
+      successCount: 0,
+      failureCount: 1,
+      receipts: defaultScheduleActionReceipts(),
+    }
+  }
 
   const executionSync = dependencies.createRecurringSchedule({
     title,
     task,
     cron,
+    ...(timezone ? { timezone } : {}),
     source: params.source,
     sessionId: params.sessionId,
     originRunId: params.runId,
@@ -438,6 +502,7 @@ function executeCreateScheduleAction(
       task,
       cron,
       scheduleText,
+      ...(timezone ? { timezone } : {}),
       source: params.source,
       ...(executionSync.targetSessionId ? { targetSessionId: executionSync.targetSessionId } : {}),
       originRunId: params.runId,

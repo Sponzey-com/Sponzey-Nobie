@@ -59,6 +59,7 @@ describe("memory tool scope", () => {
     expect(searchMemoryMock).toHaveBeenCalledWith("최근 실패 원인", 3, {
       sessionId: "session-2",
       runId: "run-2",
+      requestGroupId: "group-2",
     })
   })
 })

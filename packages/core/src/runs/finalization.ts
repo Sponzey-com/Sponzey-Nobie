@@ -3,7 +3,7 @@ import {
   resolveAssistantTextDeliveryOutcome,
   type RunChunkDeliveryHandler,
 } from "./delivery.js"
-import { describeAssistantTextDeliveryFailure, summarizeRawErrorForUser } from "./recovery.js"
+import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser } from "./recovery.js"
 import type { RunStatus, RunStepStatus } from "./types.js"
 
 export type FinalizationSource = "webui" | "cli" | "telegram" | "slack"
@@ -236,6 +236,7 @@ export function buildAwaitingUserMessage(params: AwaitingUserParams): string {
     remainingItems.length > 0 ? `남은 항목:\n- ${remainingItems.join("\n- ")}` : "",
     params.reason?.trim() ? `중단 사유: ${params.reason.trim()}` : "",
     summarizeRawErrorForUser(params.rawMessage) ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}` : "",
+    summarizeRawErrorActionHintForUser(params.rawMessage) ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}` : "",
   ].filter(Boolean)
 
   return lines.join("\n\n")

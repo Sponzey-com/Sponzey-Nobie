@@ -10,6 +10,7 @@ import { createLogger } from "../logger/index.js";
 import { registerStatusRoute } from "./routes/status.js";
 import { registerCapabilitiesRoute } from "./routes/capabilities.js";
 import { registerAgentRoutes } from "./routes/agent.js";
+import { registerArtifactsRoute } from "./routes/artifacts.js";
 import { registerToolsRoute } from "./routes/tools.js";
 import { registerAuditRoute } from "./routes/audit.js";
 import { registerSettingsRoute } from "./routes/settings.js";
@@ -21,10 +22,16 @@ import { registerRunsRoute } from "./routes/runs.js";
 import { registerInstructionsRoute } from "./routes/instructions.js";
 import { registerMcpRoute } from "./routes/mcp.js";
 import { registerUpdateRoute } from "./routes/update.js";
+import { registerMemoryRoute } from "./routes/memory.js";
+import { registerPromptSourcesRoute } from "./routes/prompt-sources.js";
+import { registerConfigOperationsRoute } from "./routes/config-operations.js";
 import { registerWsRoute } from "./ws/stream.js";
+import { stopActiveSlackChannel } from "../channels/slack/runtime.js";
+import { stopActiveTelegramChannel } from "../channels/telegram/runtime.js";
 import { startScheduler, stopScheduler } from "../scheduler/index.js";
 import { pluginLoader } from "../plugins/loader.js";
 import { mcpRegistry } from "../mcp/registry.js";
+import { stopMqttBroker } from "../mqtt/broker.js";
 const log = createLogger("api:server");
 let server = null;
 export async function startServer() {
@@ -53,6 +60,7 @@ export async function startServer() {
     }
     registerStatusRoute(server);
     registerCapabilitiesRoute(server);
+    registerArtifactsRoute(server);
     registerAgentRoutes(server);
     registerToolsRoute(server);
     registerAuditRoute(server);
@@ -65,6 +73,9 @@ export async function startServer() {
     registerSchedulesRoute(server);
     registerSchedulerRoute(server);
     registerPluginsRoute(server);
+    registerMemoryRoute(server);
+    registerPromptSourcesRoute(server);
+    registerConfigOperationsRoute(server);
     registerWsRoute(server);
     const { host, port } = cfg.webui;
     await server.listen({ host, port });
@@ -74,6 +85,9 @@ export async function startServer() {
 }
 export async function closeServer() {
     stopScheduler();
+    stopActiveSlackChannel();
+    stopActiveTelegramChannel();
+    await stopMqttBroker();
     await mcpRegistry.closeAll();
     if (server) {
         await server.close();

@@ -28,6 +28,13 @@ export const DEFAULT_CONFIG = {
             enabled: false,
         },
     },
+    slack: {
+        enabled: false,
+        botToken: "",
+        appToken: "",
+        allowedUserIds: [],
+        allowedChannelIds: [],
+    },
     scheduler: {
         enabled: true,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

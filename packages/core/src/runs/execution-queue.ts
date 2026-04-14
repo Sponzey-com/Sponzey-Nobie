@@ -4,6 +4,7 @@ interface ExecutionQueueLoggingDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
   logWarn: (message: string) => void
   logError: (message: string, payload?: Record<string, unknown>) => void
+  appendRunEvent?: (runId: string, message: string) => void
 }
 
 interface RequestGroupExecutionQueueDependencies extends ExecutionQueueLoggingDependencies {
@@ -11,6 +12,18 @@ interface RequestGroupExecutionQueueDependencies extends ExecutionQueueLoggingDe
 }
 
 const requestGroupExecutionQueues = new Map<string, Promise<RootRun | undefined>>()
+
+function appendExecutionQueueEvent(
+  dependencies: ExecutionQueueLoggingDependencies,
+  runId: string,
+  message: string,
+): void {
+  try {
+    dependencies.appendRunEvent?.(runId, message)
+  } catch {
+    // Queue tracing must never block execution.
+  }
+}
 
 export function hasRequestGroupExecutionQueue(requestGroupId: string): boolean {
   return requestGroupExecutionQueues.has(requestGroupId)
@@ -30,6 +43,7 @@ export function enqueueRequestGroupExecution(
       runId: params.runId,
       requestGroupId: params.requestGroupId,
     })
+    appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_waiting")
   }
 
   const next = (previous ?? Promise.resolve<RootRun | undefined>(undefined))
@@ -39,7 +53,10 @@ export function enqueueRequestGroupExecution(
       )
       return undefined
     })
-    .then(() => params.task())
+    .then(() => {
+      appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_running")
+      return params.task()
+    })
     .catch((error) => {
       dependencies.logError("request-group execution queue task failed", {
         runId: params.runId,
@@ -52,6 +69,7 @@ export function enqueueRequestGroupExecution(
       if (requestGroupExecutionQueues.get(params.requestGroupId) === next) {
         requestGroupExecutionQueues.delete(params.requestGroupId)
       }
+      appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_released")
     })
 
   requestGroupExecutionQueues.set(params.requestGroupId, next)

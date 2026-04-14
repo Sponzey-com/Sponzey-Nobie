@@ -98,6 +98,15 @@ export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger):
   })
 }
 
+export function resetSlackApprovalStateForTest(): void {
+  detachSlackApprovalRequestListener?.()
+  detachSlackApprovalRequestListener = null
+  activeConversations.clear()
+  activeConversationRefs.clear()
+  pendingApprovals.clear()
+  latestActiveConversation = undefined
+}
+
 function resolveSlackApproval(params: {
   runId: string
   decision: "allow_once" | "allow_run" | "deny"

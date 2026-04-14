@@ -1,9 +1,12 @@
-import { getDb } from "../db/index.js";
+import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interruptUnfinishedScheduleRunsOnStartup, upsertTaskContinuity } from "../db/index.js";
 import { eventBus } from "../events/index.js";
+import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js";
+import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun } from "./startup-recovery.js";
 import { DEFAULT_RUN_STEPS } from "./types.js";
 const activeRunControllers = new Map();
 const ACTIVE_WORKER_SESSION_STATUSES = ["queued", "running", "awaiting_approval", "awaiting_user"];
 const ACTIVE_REQUEST_GROUP_STATUSES = ["queued", "running", "awaiting_approval", "awaiting_user"];
+const DEFAULT_STALE_RUN_CLEANUP_MS = 30 * 60 * 1000;
 function truncateTitle(prompt) {
     const normalized = prompt.trim().replace(/\s+/g, " ");
     return normalized.length > 72 ? `${normalized.slice(0, 72)}…` : normalized;
@@ -12,6 +15,24 @@ const RECONNECT_STOP_WORDS = new Set([
     "그", "그거", "그것", "이거", "이것", "저거", "저것", "기존", "이전", "아까", "방금", "전에", "파일", "폴더", "프로그램", "화면", "페이지", "코드", "수정", "고쳐", "바꿔", "추가", "보완", "업데이트",
     "the", "that", "it", "those", "this", "file", "folder", "program", "page", "screen", "code", "modify", "edit", "fix", "change", "update", "continue", "resume",
 ]);
+const CONTINUATION_MESSAGE_PATTERNS = [
+    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|이쪽|그쪽|저쪽|아직|왜\s*안|안\s*돼|안돼|실패|오류|에러|결과)/u,
+    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
+    /\b(?:and|also|then|next|continue|resume|again|now|here|this|that|it|but|why|result|failed|error)\b/i,
+    /\b(?:show|send|fix|change|update|continue|resume|again|failed|error|result)\b/i,
+];
+function isActiveRequestGroupStatus(status) {
+    return ACTIVE_REQUEST_GROUP_STATUSES.includes(status);
+}
+function looksLikeContinuationMessage(value) {
+    const trimmed = value.trim();
+    if (!trimmed)
+        return false;
+    if (CONTINUATION_MESSAGE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+        return true;
+    }
+    return false;
+}
 function extractQuotedReconnectTerms(value) {
     const result = [];
     const regex = /["'“”‘’]([^"'“”‘’]{2,80})["'“”‘’]/g;
@@ -32,15 +53,26 @@ function scoreReconnectCandidate(message, run, recencyIndex) {
     const haystack = [run.title, run.prompt, run.summary].join("\n").toLowerCase();
     const quotedTerms = extractQuotedReconnectTerms(message);
     const tokens = tokenizeReconnectTerms(message);
-    let score = Math.max(0, 20 - recencyIndex);
+    const overlap = tokens.filter((token) => haystack.includes(token));
+    const continuation = looksLikeContinuationMessage(message);
+    let score = 0;
     for (const quoted of quotedTerms) {
         if (haystack.includes(quoted))
             score += 80;
     }
-    const overlap = tokens.filter((token) => haystack.includes(token));
     score += overlap.length * 12;
-    if (quotedTerms.length === 0 && tokens.length === 0) {
-        score += Math.max(0, 12 - recencyIndex);
+    if (overlap.length > 0 || quotedTerms.length > 0) {
+        score += Math.max(0, 10 - recencyIndex);
+    }
+    if (continuation) {
+        score += isActiveRequestGroupStatus(run.status) ? 24 : 10;
+        score += Math.max(0, 6 - recencyIndex);
+        if (overlap.length === 0 && quotedTerms.length === 0 && recencyIndex === 0) {
+            score += 8;
+        }
+    }
+    if (isActiveRequestGroupStatus(run.status)) {
+        score += overlap.length > 0 || continuation ? 8 : 0;
     }
     return score;
 }
@@ -62,8 +94,20 @@ function mapEvent(row) {
         label: row.label,
     };
 }
+function parsePromptSourceSnapshot(value) {
+    if (!value)
+        return undefined;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" ? parsed : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 function hydrateRun(row) {
     const db = getDb();
+    const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot);
     const steps = db
         .prepare(`SELECT run_id, step_key, title, step_index, status, summary, started_at, finished_at
        FROM run_steps WHERE run_id = ? ORDER BY step_index ASC`)
@@ -104,6 +148,7 @@ function hydrateRun(row) {
         updatedAt: row.updated_at,
         steps,
         recentEvents,
+        ...(promptSourceSnapshot ? { promptSourceSnapshot } : {}),
     };
 }
 function buildSqlPlaceholders(count) {
@@ -163,15 +208,39 @@ export function listActiveRootRuns(limit = 100) {
         .all(limit)
         .map(hydrateRun);
 }
+export function listActiveSessionRequestGroups(sessionId, excludingRunId) {
+    const rows = excludingRunId
+        ? getDb()
+            .prepare(`SELECT *
+           FROM root_runs
+           WHERE session_id = ?
+             AND id <> ?
+             AND status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
+           ORDER BY updated_at DESC`)
+            .all(sessionId, excludingRunId)
+        : getDb()
+            .prepare(`SELECT *
+           FROM root_runs
+           WHERE session_id = ?
+             AND status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
+           ORDER BY updated_at DESC`)
+            .all(sessionId);
+    const grouped = new Map();
+    for (const run of rows.map(hydrateRun)) {
+        if (!grouped.has(run.requestGroupId))
+            grouped.set(run.requestGroupId, run);
+    }
+    return [...grouped.values()];
+}
 export function listRunsForActiveRequestGroups(limitGroups = 100, limitRuns = 300) {
-    const activeGroups = [...new Set(listActiveRootRuns(limitGroups).map((run) => run.lineageRootRunId || run.requestGroupId))];
+    const activeGroups = [...new Set(listActiveRootRuns(limitGroups).map((run) => run.requestGroupId))];
     if (activeGroups.length === 0)
         return [];
     const placeholders = activeGroups.map(() => "?").join(", ");
     return getDb()
         .prepare(`SELECT *
        FROM root_runs
-       WHERE COALESCE(lineage_root_run_id, request_group_id, id) IN (${placeholders})
+       WHERE request_group_id IN (${placeholders})
        ORDER BY updated_at DESC
        LIMIT ?`)
         .all(...activeGroups, limitRuns)
@@ -202,24 +271,68 @@ export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 10
 export function recoverActiveRunsOnStartup() {
     const activeRuns = listActiveRootRuns(200);
     const recovered = [];
+    const runSummaries = [];
     for (const run of activeRuns) {
-        if (run.status === 'awaiting_user') {
-            if (!run.canCancel) {
-                const updated = updateRunStatus(run.id, 'awaiting_user', run.summary || '추가 입력을 기다리고 있습니다.', true);
-                if (updated)
-                    recovered.push(updated);
-            }
+        const continuity = getTaskContinuity(run.lineageRootRunId);
+        const recovery = classifyStartupRecovery(run, continuity);
+        runSummaries.push({
+            runId: run.id,
+            lineageRootRunId: run.lineageRootRunId,
+            previousStatus: run.status,
+            recoveryStatus: recovery.status,
+            ...(recovery.nextRunStatus ? { nextRunStatus: recovery.nextRunStatus } : {}),
+            summary: recovery.summary,
+            pendingApprovals: recovery.pendingApprovals ?? [],
+            pendingDelivery: recovery.pendingDelivery ?? [],
+            duplicateRisk: recovery.duplicateRisk,
+        });
+        upsertTaskContinuity({
+            lineageRootRunId: run.lineageRootRunId,
+            ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+            ...(run.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+            lastGoodState: recovery.summary,
+            ...(recovery.pendingApprovals ? { pendingApprovals: recovery.pendingApprovals } : {}),
+            ...(recovery.pendingDelivery ? { pendingDelivery: recovery.pendingDelivery } : {}),
+            status: recovery.status,
+        });
+        if (recovery.status === "delivered") {
+            appendRunEvent(run.id, "프로세스 재시작 후 전달 완료 상태 복구");
+            setRunStepStatus(run.id, "finalizing", "completed", recovery.summary);
+            setRunStepStatus(run.id, "completed", "completed", recovery.summary);
+            const updated = updateRunStatus(run.id, "completed", recovery.summary, false);
+            if (updated)
+                recovered.push(updated);
             continue;
         }
-        const summary = run.status === 'awaiting_approval'
-            ? '프로세스가 다시 시작되어 권한 확인이 초기화되었습니다. 다시 확인하거나 요청을 다시 실행해 주세요.'
-            : '프로세스가 다시 시작되어 자동 실행이 중단되었습니다. 이어서 진행하려면 요청을 다시 실행하거나 취소해 주세요.';
-        appendRunEvent(run.id, '프로세스 재시작 후 상태 복구');
-        setRunStepStatus(run.id, 'awaiting_user', 'running', summary);
-        const updated = updateRunStatus(run.id, 'awaiting_user', summary, true);
-        if (updated)
-            recovered.push(updated);
+        if (recovery.status === "awaiting_approval") {
+            appendRunEvent(run.id, "프로세스 재시작 후 승인 대기 상태 복구");
+            setRunStepStatus(run.id, "awaiting_approval", "running", recovery.summary);
+            const updated = updateRunStatus(run.id, "awaiting_approval", recovery.summary, true);
+            if (updated)
+                recovered.push(updated);
+            continue;
+        }
+        if (recovery.status === "pending_delivery" || recovery.status === "awaiting_user") {
+            appendRunEvent(run.id, "프로세스 재시작 후 사용자 확인 대기 상태 복구");
+            setRunStepStatus(run.id, "awaiting_user", "running", recovery.summary);
+            const updated = updateRunStatus(run.id, "awaiting_user", recovery.summary, true);
+            if (updated)
+                recovered.push(updated);
+            continue;
+        }
+        if (recovery.status === "interrupted") {
+            appendRunEvent(run.id, "프로세스 재시작으로 자동 재실행 없이 중단 처리");
+            setRunStepStatus(run.id, resolveInterruptStepKey(run), "cancelled", recovery.summary);
+            const updated = updateRunStatus(run.id, "interrupted", recovery.summary, false);
+            if (updated)
+                recovered.push(updated);
+        }
     }
+    const interruptedSchedules = interruptUnfinishedScheduleRunsOnStartup();
+    setLastStartupRecoverySummary(buildStartupRecoverySummary({
+        runs: runSummaries,
+        schedules: interruptedSchedules.map(summarizeInterruptedScheduleRun),
+    }));
     return recovered;
 }
 export function getRootRun(runId) {
@@ -240,6 +353,20 @@ export function listRequestGroupRuns(requestGroupId) {
 export function hasActiveRequestGroupRuns(requestGroupId) {
     return listRequestGroupRuns(requestGroupId).some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status));
 }
+export function isReusableRequestGroup(requestGroupId) {
+    const runs = listRequestGroupRuns(requestGroupId);
+    if (runs.length === 0)
+        return false;
+    return runs.some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status));
+}
+export function getRequestGroupDelegationTurnCount(requestGroupId) {
+    const row = getDb()
+        .prepare(`SELECT MAX(delegation_turn_count) as max_count
+       FROM root_runs
+       WHERE request_group_id = ?`)
+        .get(requestGroupId);
+    return row?.max_count ?? 0;
+}
 export function findReconnectRequestGroupSelection(sessionId, message) {
     const runs = getDb()
         .prepare(`SELECT *
@@ -255,14 +382,17 @@ export function findReconnectRequestGroupSelection(sessionId, message) {
             grouped.set(run.requestGroupId, run);
         }
     }
-    const scored = [...grouped.values()]
+    const reusableRuns = [...grouped.values()].filter((run) => isActiveRequestGroupStatus(run.status));
+    const activeGroupCount = reusableRuns.filter((run) => isActiveRequestGroupStatus(run.status)).length;
+    const continuation = looksLikeContinuationMessage(message);
+    const scored = reusableRuns
         .map((run, index) => ({ run, score: scoreReconnectCandidate(message, run, index) }))
-        .filter((item) => item.score >= 12)
+        .filter((item) => item.score >= 18 || (continuation && activeGroupCount === 1 && item.score >= 14))
         .sort((a, b) => (b.score - a.score) || (b.run.updatedAt - a.run.updatedAt));
     const best = scored[0]?.run;
     const secondScore = scored[1]?.score ?? -1;
     const bestScore = scored[0]?.score ?? -1;
-    const ambiguous = Boolean(best && secondScore >= 12 && bestScore - secondScore < 15);
+    const ambiguous = Boolean(best && secondScore >= 18 && bestScore - secondScore < 12);
     return {
         ...(best ? { best } : {}),
         candidates: scored.slice(0, 3).map((item) => item.run),
@@ -332,14 +462,22 @@ export function createRootRun(params) {
     const summary = params.prompt.trim();
     const title = truncateTitle(params.prompt);
     const db = getDb();
+    const identifiers = resolveRunFlowIdentifiers({
+        runId: params.id,
+        sessionId: params.sessionId,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        ...(params.lineageRootRunId ? { lineageRootRunId: params.lineageRootRunId } : {}),
+        ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+        ...(params.runScope ? { runScope: params.runScope } : {}),
+    });
     const tx = db.transaction(() => {
         db.prepare(`INSERT INTO root_runs
-       (id, session_id, title, prompt, source, status, task_profile, target_id, target_label,
+       (id, session_id, request_group_id, lineage_root_run_id, parent_run_id, run_scope, handoff_summary,
+        title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
-        request_group_id, lineage_root_run_id, parent_run_id, run_scope, handoff_summary,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
         total_steps, summary, can_cancel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.requestGroupId ?? params.id, params.lineageRootRunId ?? params.requestGroupId ?? params.id, params.parentRunId ?? null, params.runScope ?? "root", params.handoffSummary ?? null, 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, now, now);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -378,6 +516,11 @@ export function updateRunStatus(runId, status, summary, canCancel) {
     const current = getRootRun(runId);
     if (!current)
         return undefined;
+    const transition = canTransitionRunStatus(current.status, status);
+    if (!transition.allowed) {
+        appendRunEvent(runId, `status_transition_blocked:${transition.reason}`);
+        return current;
+    }
     const nextSummary = summary ?? current.summary;
     const nextCanCancel = canCancel ?? current.canCancel;
     getDb()
@@ -401,18 +544,22 @@ export function incrementDelegationTurnCount(runId, summary) {
     const current = getRootRun(runId);
     if (!current)
         return undefined;
+    const nextCount = current.delegationTurnCount + 1;
     getDb()
         .prepare(`UPDATE root_runs
-       SET delegation_turn_count = delegation_turn_count + 1,
-           summary = ?,
-           updated_at = ?
-       WHERE id = ?`)
-        .run(summary ?? current.summary, now, runId);
-    const run = getRootRun(runId);
-    if (run) {
+       SET delegation_turn_count = CASE
+             WHEN delegation_turn_count < ? THEN ?
+             ELSE delegation_turn_count
+           END,
+           summary = CASE WHEN id = ? THEN ? ELSE summary END,
+           updated_at = CASE WHEN id = ? THEN ? ELSE updated_at END
+       WHERE request_group_id = ?`)
+        .run(nextCount, nextCount, runId, summary ?? current.summary, runId, now, current.requestGroupId);
+    const runs = listRequestGroupRuns(current.requestGroupId);
+    for (const run of runs) {
         eventBus.emit("run.progress", { run });
     }
-    return run;
+    return runs.find((run) => run.id === runId);
 }
 export function updateActiveRunsMaxDelegationTurns(maxDelegationTurns) {
     const now = Date.now();
@@ -475,7 +622,7 @@ export function bindActiveRunController(runId, controller) {
 export function clearActiveRunController(runId) {
     activeRunControllers.delete(runId);
 }
-export function cancelRootRun(runId) {
+export function cancelRootRun(runId, options = {}) {
     const current = getRootRun(runId);
     if (!current)
         return undefined;
@@ -483,7 +630,7 @@ export function cancelRootRun(runId) {
     if (activeRuns.length === 0)
         return undefined;
     for (const run of activeRuns) {
-        appendRunEvent(run.id, "취소 요청");
+        appendRunEvent(run.id, options.eventLabel ?? "취소 요청");
         eventBus.emit("run.cancel.requested", { runId: run.id });
         const controller = activeRunControllers.get(run.id);
         if (controller) {
@@ -491,10 +638,87 @@ export function cancelRootRun(runId) {
             clearActiveRunController(run.id);
         }
         const stepKey = resolveInterruptStepKey(run);
-        setRunStepStatus(run.id, stepKey, "cancelled", "사용자가 실행 취소를 요청했습니다.");
-        updateRunStatus(run.id, "cancelled", "사용자가 실행을 취소했습니다.", false);
+        setRunStepStatus(run.id, stepKey, "cancelled", options.stepSummary ?? "사용자가 실행 취소를 요청했습니다.");
+        updateRunStatus(run.id, "cancelled", options.runSummary ?? "사용자가 실행을 취소했습니다.", false);
     }
     return getRootRun(runId) ?? current;
+}
+export function cleanupStaleRunStates(options = {}) {
+    const now = options.now ?? Date.now();
+    const thresholdMs = Math.max(60_000, options.staleMs ?? DEFAULT_STALE_RUN_CLEANUP_MS);
+    const cutoff = now - thresholdMs;
+    const rows = getDb()
+        .prepare(`SELECT *
+       FROM root_runs
+       WHERE status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
+         AND updated_at <= ?
+       ORDER BY updated_at ASC`)
+        .all(cutoff);
+    const cleanedRunIds = [];
+    const skippedRunIds = [];
+    for (const row of rows) {
+        const run = hydrateRun(row);
+        const controller = activeRunControllers.get(run.id);
+        if (controller) {
+            controller.abort();
+            clearActiveRunController(run.id);
+        }
+        const summary = staleCleanupSummary(run);
+        appendRunEvent(run.id, "운영자가 오래된 대기 상태를 정리했습니다.");
+        setRunStepStatus(run.id, resolveInterruptStepKey(run), "cancelled", summary);
+        const updated = updateRunStatus(run.id, "interrupted", summary, false);
+        if (updated?.status === "interrupted") {
+            cleanedRunIds.push(run.id);
+            insertDiagnosticEvent({
+                kind: "stale_run_cleanup",
+                summary,
+                runId: run.id,
+                sessionId: run.sessionId,
+                requestGroupId: run.requestGroupId,
+                detail: {
+                    previousStatus: run.status,
+                    ageMs: now - run.updatedAt,
+                    thresholdMs,
+                },
+            });
+        }
+        else {
+            skippedRunIds.push(run.id);
+        }
+    }
+    insertAuditLog({
+        timestamp: now,
+        session_id: null,
+        source: "system",
+        tool_name: "stale_run_cleanup",
+        params: JSON.stringify({ thresholdMs }),
+        output: JSON.stringify({ cleanedRunIds, skippedRunIds }),
+        result: skippedRunIds.length === 0 ? "success" : "partial",
+        duration_ms: 0,
+        approval_required: 1,
+        approved_by: "webui",
+    });
+    return {
+        cleanedRunCount: cleanedRunIds.length,
+        skippedRunCount: skippedRunIds.length,
+        cleanedRunIds,
+        skippedRunIds,
+        thresholdMs,
+    };
+}
+function staleCleanupSummary(run) {
+    switch (run.status) {
+        case "awaiting_approval":
+            return "오래된 승인 대기 상태를 운영 정리했습니다. 작업은 자동 재실행하지 않습니다.";
+        case "awaiting_user":
+            return "오래된 사용자 확인 또는 결과 전달 대기 상태를 운영 정리했습니다. 작업은 자동 재전송하지 않습니다.";
+        case "queued":
+            return "오래된 실행 대기 상태를 운영 정리했습니다. 작업은 자동 실행하지 않습니다.";
+        case "running":
+            return "오래된 실행 중 상태를 운영 정리했습니다. 작업은 자동 재실행하지 않습니다.";
+        default:
+            return "오래된 실행 상태를 운영 정리했습니다.";
+    }
 }
 export function deleteRunHistory(runId) {
     const target = getDb()
@@ -504,6 +728,21 @@ export function deleteRunHistory(runId) {
         return undefined;
     const lineageKey = resolveLineageKey(target);
     const rows = selectRunRowsForLineage(lineageKey);
+    const activeRows = rows.filter((row) => ACTIVE_REQUEST_GROUP_STATUSES.includes(row.status) || activeRunControllers.has(row.id));
+    if (activeRows.length > 0) {
+        insertDiagnosticEvent({
+            kind: "active_run_delete_blocked",
+            summary: "진행 중인 실행 기록 삭제 요청을 차단했습니다.",
+            runId,
+            requestGroupId: target.request_group_id ?? target.id,
+            sessionId: target.session_id,
+            detail: {
+                lineageKey,
+                blockedRunIds: activeRows.map((row) => row.id),
+            },
+        });
+        return { deletedRunCount: 0, blockedRunCount: activeRows.length };
+    }
     const runIds = rows.map((row) => row.id);
     const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
     return {

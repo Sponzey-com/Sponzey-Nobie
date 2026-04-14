@@ -17,12 +17,17 @@ export function selectRequestGroupContextMessages(messages: DbRequestGroupMessag
 
   return messages
     .filter((message) => {
-      if (message.role === "user") return true
       if (!hasChildExecution) return true
       if (!message.root_run_id || !message.run_request_group_id) return true
-      if (message.root_run_id !== message.run_request_group_id) return true
+      if (message.root_run_id !== message.run_request_group_id) return false
 
       const prompt = message.run_prompt?.trim() ?? ""
+      if (message.role === "user" && !INTERNAL_WORKER_PROMPT_PREFIXES.some((prefix) => prompt.startsWith(prefix))) {
+        return true
+      }
+      if (message.role === "assistant" && !message.tool_calls) {
+        return true
+      }
       return INTERNAL_WORKER_PROMPT_PREFIXES.some((prefix) => prompt.startsWith(prefix))
     })
     .map((message) => ({

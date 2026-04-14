@@ -42,6 +42,7 @@ export interface RootRun {
   workerRuntimeKind?: string
   workerSessionId?: string
   contextMode: RunContextMode
+  promptSourceSnapshot?: Record<string, unknown>
   delegationTurnCount: number
   maxDelegationTurns: number
   currentStepKey: string

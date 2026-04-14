@@ -28,12 +28,12 @@ function createDeps() {
 }
 
 describe("run finalization helpers", () => {
-  it("builds an awaiting-user message from preview, remaining items, reason, and raw error", () => {
+  it("builds an awaiting-user message with sanitized raw error details", () => {
     const message = buildAwaitingUserMessage({
       preview: "중간 결과",
       summary: "추가 정보가 필요합니다.",
       reason: "대상 파일 경로가 없습니다.",
-      rawMessage: "claude exited with code 1",
+      rawMessage: "claude exited with code 1\n    at runWorker (/tmp/worker.js:10:2)",
       userMessage: "어느 파일을 수정해야 하나요?",
       remainingItems: ["대상 파일 확인"],
     })
@@ -43,7 +43,11 @@ describe("run finalization helpers", () => {
     expect(message).toContain("남은 항목:")
     expect(message).toContain("중단 사유:")
     expect(message).toContain("오류 세부:")
-    expect(message).toContain("claude exited with code 1")
+    expect(message).toContain("도구 또는 실행 경로에서 오류가 발생했습니다.")
+    expect(message).toContain("권장 조치:")
+    expect(message).toContain("도구 권한")
+    expect(message).not.toContain("claude exited with code 1")
+    expect(message).not.toContain("/tmp/worker.js")
   })
 
   it("moves a run to awaiting_user and emits a standalone message", async () => {

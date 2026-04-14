@@ -70,6 +70,7 @@ export interface RootRun {
   updatedAt: number
   steps: RunStep[]
   recentEvents: RunEvent[]
+  promptSourceSnapshot?: Record<string, unknown>
 }
 
 export interface RunProgressSnapshot {

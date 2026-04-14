@@ -1,6 +1,7 @@
-import { basename, extname, relative, resolve, sep } from "node:path"
+import { basename, resolve } from "node:path"
 import { homedir } from "node:os"
-import { PATHS } from "../config/index.js"
+import { buildArtifactApiUrls, guessArtifactMimeType } from "../artifacts/lifecycle.js"
+import type { TaskContinuitySnapshot } from "../db/index.js"
 import type { RootRun, RunStatus } from "./types.js"
 
 export type TaskAttemptKind =
@@ -73,7 +74,7 @@ export interface TaskDeliveryModel {
 }
 
 export interface TaskArtifactModel {
-  filePath: string
+  filePath?: string
   fileName: string
   url?: string
   mimeType?: string
@@ -127,6 +128,42 @@ export interface TaskMonitorModel {
   deliveryStatus: TaskDeliveryStatus
 }
 
+export interface TaskContinuityModel {
+  lineageRootRunId: string
+  parentRunId?: string
+  handoffSummary?: string
+  lastGoodState?: string
+  pendingApprovals: string[]
+  pendingDelivery: string[]
+  lastToolReceipt?: string
+  lastDeliveryReceipt?: string
+  failedRecoveryKey?: string
+  failureKind?: string
+  recoveryBudget?: string
+  status?: string
+  updatedAt: number
+}
+
+export interface TaskDiagnosticsModel {
+  promptSourceIds: string[]
+  promptSources: TaskPromptSourceDiagnosticModel[]
+  promptSourceVersion?: string
+  latencyEvents: string[]
+  memoryEvents: string[]
+  toolEvents: string[]
+  deliveryEvents: string[]
+  recoveryEvents: string[]
+  lastRecoveryKey?: string
+  recoveryBudget?: string
+}
+
+export interface TaskPromptSourceDiagnosticModel {
+  sourceId: string
+  locale?: string
+  version?: string
+  checksum?: string
+}
+
 export interface TaskModel {
   id: string
   requestGroupId: string
@@ -148,6 +185,8 @@ export interface TaskModel {
   failure?: TaskFailureModel
   checklist: TaskChecklistModel
   monitor: TaskMonitorModel
+  continuity?: TaskContinuityModel
+  diagnostics?: TaskDiagnosticsModel
   activities: TaskActivityModel[]
 }
 
@@ -309,50 +348,32 @@ function expandDisplayPath(value: string): string {
 }
 
 function guessMimeTypeFromPath(filePath: string): string | undefined {
-  switch (extname(filePath).toLowerCase()) {
-    case ".png":
-      return "image/png"
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg"
-    case ".gif":
-      return "image/gif"
-    case ".webp":
-      return "image/webp"
-    case ".bmp":
-      return "image/bmp"
-    case ".txt":
-      return "text/plain"
-    case ".md":
-      return "text/markdown"
-    case ".json":
-      return "application/json"
-    case ".pdf":
-      return "application/pdf"
-    default:
-      return undefined
-  }
+  return guessArtifactMimeType(filePath)
 }
 
 function buildArtifactUrl(filePath: string): string | undefined {
   const expandedPath = expandDisplayPath(filePath)
-  const artifactsRoot = resolve(PATHS.stateDir, "artifacts")
-  const candidate = resolve(expandedPath)
-  if (candidate !== artifactsRoot && !candidate.startsWith(`${artifactsRoot}${sep}`)) {
-    return undefined
-  }
+  return buildArtifactApiUrls(expandedPath)?.previewUrl
+}
 
-  const encodedPath = relative(artifactsRoot, candidate)
-    .split(sep)
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")
-  return `/api/artifacts/${encodedPath}`
+function extractArtifactFromUrl(url: string): TaskArtifactModel | undefined {
+  if (!url.startsWith("/api/artifacts/")) return undefined
+  const pathWithoutQuery = url.split("?")[0] ?? url
+  const fileName = decodeURIComponent(pathWithoutQuery.split("/").filter(Boolean).at(-1) ?? "artifact")
+  const mimeType = guessMimeTypeFromPath(fileName)
+  return {
+    fileName,
+    url,
+    ...(mimeType ? { mimeType } : {}),
+  }
 }
 
 function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefined {
   const match = summary.match(/파일 전달 완료:\s*(.+)$/)
   const rawPath = match?.[1]?.trim()
   if (!rawPath) return undefined
+  const urlArtifact = extractArtifactFromUrl(rawPath)
+  if (urlArtifact) return urlArtifact
   const resolvedPath = expandDisplayPath(rawPath)
   const artifactUrl = buildArtifactUrl(resolvedPath)
   const mimeType = guessMimeTypeFromPath(resolvedPath)
@@ -534,6 +555,102 @@ function buildTaskMonitor(
     awaitingApproval: activeAttempts.some((attempt) => attempt.status === "awaiting_approval"),
     awaitingUser: activeAttempts.some((attempt) => attempt.status === "awaiting_user"),
     deliveryStatus: delivery.status,
+  }
+}
+
+function mapContinuitySnapshot(snapshot: TaskContinuitySnapshot | undefined): TaskContinuityModel | undefined {
+  if (!snapshot) return undefined
+  return {
+    lineageRootRunId: snapshot.lineageRootRunId,
+    ...(snapshot.parentRunId ? { parentRunId: snapshot.parentRunId } : {}),
+    ...(snapshot.handoffSummary ? { handoffSummary: snapshot.handoffSummary } : {}),
+    ...(snapshot.lastGoodState ? { lastGoodState: snapshot.lastGoodState } : {}),
+    pendingApprovals: snapshot.pendingApprovals,
+    pendingDelivery: snapshot.pendingDelivery,
+    ...(snapshot.lastToolReceipt ? { lastToolReceipt: snapshot.lastToolReceipt } : {}),
+    ...(snapshot.lastDeliveryReceipt ? { lastDeliveryReceipt: snapshot.lastDeliveryReceipt } : {}),
+    ...(snapshot.failedRecoveryKey ? { failedRecoveryKey: snapshot.failedRecoveryKey } : {}),
+    ...(snapshot.failureKind ? { failureKind: snapshot.failureKind } : {}),
+    ...(snapshot.recoveryBudget ? { recoveryBudget: snapshot.recoveryBudget } : {}),
+    ...(snapshot.status ? { status: snapshot.status } : {}),
+    updatedAt: snapshot.updatedAt,
+  }
+}
+
+function extractPromptSourceIds(snapshot: Record<string, unknown> | undefined): string[] {
+  return extractPromptSources(snapshot).map((source) => source.sourceId)
+}
+
+function extractPromptSources(snapshot: Record<string, unknown> | undefined): TaskPromptSourceDiagnosticModel[] {
+  const sources = Array.isArray(snapshot?.sources) ? snapshot.sources : []
+  return sources
+    .map((source) => {
+      if (!source || typeof source !== "object") return undefined
+      const candidate = source as {
+        sourceId?: unknown
+        locale?: unknown
+        version?: unknown
+        checksum?: unknown
+      }
+      const sourceId = typeof candidate.sourceId === "string" ? candidate.sourceId.trim() : ""
+      if (!sourceId) return undefined
+      return {
+        sourceId,
+        ...(typeof candidate.locale === "string" && candidate.locale.trim() ? { locale: candidate.locale.trim() } : {}),
+        ...(typeof candidate.version === "string" && candidate.version.trim() ? { version: candidate.version.trim() } : {}),
+        ...(typeof candidate.checksum === "string" && candidate.checksum.trim() ? { checksum: candidate.checksum.trim() } : {}),
+      }
+    })
+    .filter((value): value is TaskPromptSourceDiagnosticModel => Boolean(value))
+}
+
+function extractPromptSourceVersion(snapshot: Record<string, unknown> | undefined): string | undefined {
+  const assemblyVersion = snapshot?.assemblyVersion
+  return typeof assemblyVersion === "number" ? `assembly:${assemblyVersion}` : undefined
+}
+
+function buildTaskDiagnostics(
+  orderedRuns: RootRun[],
+  latestRun: RootRun,
+  continuity: TaskContinuityModel | undefined,
+): TaskDiagnosticsModel | undefined {
+  const eventLabels = orderedRuns.flatMap((run) => run.recentEvents.map((event) => event.label.trim()).filter(Boolean))
+  const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:prompt|memory|first_chunk|preflight)[_a-z]*=\d+ms\b/i.test(label))
+  const memoryEvents = eventLabels.filter((label) => /(?:memory|메모리|vector|벡터|index)/i.test(label))
+  const toolEvents = eventLabels.filter((label) => /(?:tool|도구|실행 도구|tool receipt|last tool|lastToolReceipt)/i.test(label))
+  const deliveryEvents = eventLabels.filter((label) => /(?:delivery|전달|telegram|slack|webui|artifact|파일 전달|last delivery|lastDeliveryReceipt)/i.test(label))
+  const recoveryEvents = eventLabels.filter((label) => /(?:recovery|복구|재시도|duplicate|반복|중단|한도)/i.test(label))
+  const promptSourceIds = extractPromptSourceIds(latestRun.promptSourceSnapshot)
+  const promptSources = extractPromptSources(latestRun.promptSourceSnapshot)
+  const promptSourceVersion = extractPromptSourceVersion(latestRun.promptSourceSnapshot)
+  const lastRecoveryKey = continuity?.failedRecoveryKey
+  const recoveryBudget = continuity?.recoveryBudget
+
+  if (
+    promptSourceIds.length === 0
+    && !promptSourceVersion
+    && latencyEvents.length === 0
+    && memoryEvents.length === 0
+    && toolEvents.length === 0
+    && deliveryEvents.length === 0
+    && recoveryEvents.length === 0
+    && !lastRecoveryKey
+    && !recoveryBudget
+  ) {
+    return undefined
+  }
+
+  return {
+    promptSourceIds,
+    promptSources,
+    ...(promptSourceVersion ? { promptSourceVersion } : {}),
+    latencyEvents: [...new Set(latencyEvents)].slice(-8),
+    memoryEvents: [...new Set(memoryEvents)].slice(-8),
+    toolEvents: [...new Set(toolEvents)].slice(-8),
+    deliveryEvents: [...new Set(deliveryEvents)].slice(-8),
+    recoveryEvents: [...new Set(recoveryEvents)].slice(-8),
+    ...(lastRecoveryKey ? { lastRecoveryKey } : {}),
+    ...(recoveryBudget ? { recoveryBudget } : {}),
   }
 }
 
@@ -789,8 +906,12 @@ function buildTaskChecklist(params: {
   }
 }
 
-export function buildTaskModels(runs: RootRun[]): TaskModel[] {
+export function buildTaskModels(
+  runs: RootRun[],
+  continuitySnapshots: TaskContinuitySnapshot[] = [],
+): TaskModel[] {
   const grouped = new Map<string, RootRun[]>()
+  const continuityByLineage = new Map(continuitySnapshots.map((snapshot) => [snapshot.lineageRootRunId, snapshot]))
   for (const run of runs) {
     const key = run.lineageRootRunId || run.requestGroupId || run.id
     const existing = grouped.get(key)
@@ -852,6 +973,8 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
     const status = computeTaskStatus({ groupRuns, attempts, delivery })
     const failure = deriveTaskFailure(orderedRuns, attempts, delivery)
     const activities = buildTaskActivities(taskId, attempts, orderedRuns)
+    const continuity = mapContinuitySnapshot(continuityByLineage.get(taskId))
+    const diagnostics = buildTaskDiagnostics(orderedRuns, latestRun, continuity)
     const checklist = buildTaskChecklist({
       attempts,
       delivery,
@@ -882,6 +1005,8 @@ export function buildTaskModels(runs: RootRun[]): TaskModel[] {
       ...(failure ? { failure } : {}),
       checklist,
       monitor: buildTaskMonitor(attempts, recoveryAttempts, delivery),
+      ...(continuity ? { continuity } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
       activities,
     })
   }

@@ -15,6 +15,27 @@ function describeDiagnosticReason(run: RootRun): string {
   return latest || run.summary
 }
 
+function describePromptSourceSnapshot(run: RootRun): string | null {
+  const rawSources = run.promptSourceSnapshot?.sources
+  if (!Array.isArray(rawSources)) return null
+
+  const labels = rawSources
+    .map((source) => {
+      if (!source || typeof source !== "object") return null
+      const item = source as Record<string, unknown>
+      const sourceId = typeof item.sourceId === "string" ? item.sourceId : null
+      const version = typeof item.version === "string" ? item.version : null
+      const checksum = typeof item.checksum === "string" ? item.checksum.slice(0, 8) : null
+      if (!sourceId) return null
+      if (version) return `${sourceId}@${version}`
+      if (checksum) return `${sourceId}#${checksum}`
+      return sourceId
+    })
+    .filter((value): value is string => Boolean(value))
+
+  return labels.length > 0 ? labels.join(", ") : null
+}
+
 function InfoRow({
   label,
   value,
@@ -30,8 +51,9 @@ function InfoRow({
   )
 }
 
-export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraContent?: ReactNode }) {
+export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: { run: RootRun; extraContent?: ReactNode; diagnosticMode?: boolean }) {
   const { text, displayText, formatTime, language } = useUiI18n()
+  const promptSourceSummary = describePromptSourceSnapshot(run)
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -63,23 +85,33 @@ export function RunSummaryPanel({ run, extraContent }: { run: RootRun; extraCont
               label={text("참조 범위", "Context range")}
               value={toContextModeText(run.contextMode, language)}
             />
-            <InfoRow
-              label={text("세션 ID", "Session ID")}
-              value={run.workerSessionId || text("기본 세션", "Default session")}
-            />
+            {diagnosticMode ? (
+              <InfoRow
+                label={text("세션 ID", "Session ID")}
+                value={run.workerSessionId || text("기본 세션", "Default session")}
+              />
+            ) : null}
             <InfoRow
               label={text("실행 대상", "Execution target")}
               value={run.targetLabel || run.targetId || text("실행 대상 미선정", "No target selected")}
             />
+            {diagnosticMode && promptSourceSummary ? (
+              <InfoRow
+                label={text("프롬프트 소스", "Prompt sources")}
+                value={promptSourceSummary}
+              />
+            ) : null}
           </div>
         </div>
 
-        <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-          <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
-          <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
-            {displayText(describeDiagnosticReason(run))}
+        {diagnosticMode ? (
+          <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
+            <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
+              {displayText(describeDiagnosticReason(run))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
           <div className="text-xs font-semibold text-stone-500">{text("최근 기록", "Recent history")}</div>

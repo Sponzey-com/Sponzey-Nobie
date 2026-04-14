@@ -1,0 +1,1 @@
+{"version":3,"file":"telegram-send.d.ts","sourceRoot":"","sources":["../../../src/tools/builtin/telegram-send.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,SAAS,EAA0D,MAAM,aAAa,CAAA;AAuDpG,UAAU,sBAAsB;IAC9B,QAAQ,EAAE,MAAM,CAAA;IAChB,OAAO,CAAC,EAAE,MAAM,GAAG,SAAS,CAAA;CAC7B;AAUD,eAAO,MAAM,oBAAoB,EAAE,SAAS,CAAC,sBAAsB,CA2FlE,CAAA"}

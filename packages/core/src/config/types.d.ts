@@ -1,20 +1,15 @@
-export interface AIProviderConfig {
-    anthropic?: {
-        apiKeys: string[];
-    };
-    openai?: {
-        apiKeys: string[];
-        baseUrl?: string;
-    };
-    gemini?: {
-        apiKeys: string[];
-        baseUrl?: string;
-    };
-    ollama?: {
-        baseUrl: string;
-    };
-    openrouter?: {
-        apiKeys: string[];
+export type AIConnectionProvider = "openai" | "anthropic" | "gemini" | "ollama" | "llama" | "custom" | "";
+export interface AIConnectionConfig {
+    provider: AIConnectionProvider;
+    model: string;
+    endpoint?: string;
+    auth?: {
+        mode?: "api_key" | "chatgpt_oauth";
+        apiKey?: string;
+        username?: string;
+        password?: string;
+        oauthAuthFilePath?: string;
+        clientId?: string;
     };
 }
 export interface ProfileConfig {
@@ -37,6 +32,13 @@ export interface TelegramConfig {
     allowedUserIds: number[];
     allowedGroupIds: number[];
 }
+export interface SlackConfig {
+    enabled: boolean;
+    botToken: string;
+    appToken: string;
+    allowedUserIds: string[];
+    allowedChannelIds: string[];
+}
 export interface WebuiConfig {
     enabled: boolean;
     port: number;
@@ -49,6 +51,14 @@ export interface WebuiConfig {
 export interface SchedulerConfig {
     enabled: boolean;
     timezone: string;
+}
+export interface MqttConfig {
+    enabled: boolean;
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    allowAnonymous: boolean;
 }
 export interface SearchConfig {
     web?: {
@@ -108,14 +118,14 @@ export interface SkillsConfig {
 export interface NobieConfig {
     profile: ProfileConfig;
     ai: {
-        defaultProvider: string;
-        defaultModel: string;
-        providers: AIProviderConfig;
+        connection: AIConnectionConfig;
     };
     security: SecurityConfig;
     telegram?: TelegramConfig;
+    slack?: SlackConfig;
     webui: WebuiConfig;
     scheduler: SchedulerConfig;
+    mqtt: MqttConfig;
     search: SearchConfig;
     memory: MemoryConfig;
     orchestration: OrchestrationConfig;

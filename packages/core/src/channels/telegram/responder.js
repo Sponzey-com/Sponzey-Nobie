@@ -1,5 +1,4 @@
-import { InputFile } from "grammy";
-import { splitMessage } from "./markdown.js";
+import { sendTelegramFile, sendTelegramPlainMessage, sendTelegramTextParts } from "./message-delivery.js";
 export class TelegramResponder {
     bot;
     chatId;
@@ -30,28 +29,33 @@ export class TelegramResponder {
         }
     }
     async sendFinalResponse(text) {
-        const parts = splitMessage(text);
-        const other = this.threadId !== undefined
-            ? { message_thread_id: this.threadId }
-            : {};
-        for (const part of parts) {
-            await this.bot.api.sendMessage(this.chatId, part, other);
-        }
+        return sendTelegramTextParts({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            text,
+        });
     }
     async sendError(message) {
-        const text = `❌ Error: ${message}`;
-        const other = this.threadId !== undefined
-            ? { message_thread_id: this.threadId }
-            : {};
-        await this.bot.api.sendMessage(this.chatId, text, other);
+        return sendTelegramPlainMessage({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            text: `❌ Error: ${message}`,
+        });
+    }
+    async sendReceipt(text) {
+        return sendTelegramPlainMessage({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            text,
+        });
     }
     async sendFile(filePath, caption) {
-        const other = this.threadId !== undefined
-            ? (caption !== undefined
-                ? { message_thread_id: this.threadId, caption }
-                : { message_thread_id: this.threadId })
-            : (caption !== undefined ? { caption } : {});
-        await this.bot.api.sendDocument(this.chatId, new InputFile(filePath), other);
+        return sendTelegramFile({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            filePath,
+            ...(caption !== undefined ? { caption } : {}),
+        });
     }
 }
 //# sourceMappingURL=responder.js.map

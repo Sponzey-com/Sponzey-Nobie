@@ -1,14 +1,19 @@
 export type RunStatus = "queued" | "running" | "awaiting_approval" | "awaiting_user" | "completed" | "failed" | "cancelled" | "interrupted";
 export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
-export type RunContextMode = "full" | "isolated" | "request_group";
+export type RunContextMode = "full" | "isolated" | "request_group" | "handoff";
+export type RunScope = "root" | "child" | "analysis";
 export type TaskProfile = "general_chat" | "planning" | "coding" | "review" | "research" | "private_local" | "summarization" | "operations";
 export interface RootRun {
     id: string;
     sessionId: string;
     requestGroupId: string;
+    lineageRootRunId: string;
+    runScope: RunScope;
+    parentRunId?: string;
+    handoffSummary?: string;
     title: string;
     prompt: string;
-    source: "webui" | "cli" | "telegram";
+    source: "webui" | "cli" | "telegram" | "slack";
     status: RunStatus;
     taskProfile: TaskProfile;
     targetId?: string;
@@ -16,6 +21,7 @@ export interface RootRun {
     workerRuntimeKind?: string;
     workerSessionId?: string;
     contextMode: RunContextMode;
+    promptSourceSnapshot?: Record<string, unknown>;
     delegationTurnCount: number;
     maxDelegationTurns: number;
     currentStepKey: string;

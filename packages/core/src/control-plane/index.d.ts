@@ -3,7 +3,7 @@ export type CapabilityStatus = "ready" | "disabled" | "planned" | "error";
 export interface FeatureCapability {
     key: string;
     label: string;
-    area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "scheduler" | "plugins" | "memory" | "mcp";
+    area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "slack" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt";
     status: CapabilityStatus;
     implemented: boolean;
     enabled: boolean;
@@ -21,10 +21,12 @@ export interface AIBackendCard {
     label: string;
     kind: "provider";
     providerType: "openai" | "ollama" | "llama" | "anthropic" | "gemini" | "custom";
+    authMode: "api_key" | "chatgpt_oauth";
     credentials: {
         apiKey?: string;
         username?: string;
         password?: string;
+        oauthAuthFilePath?: string;
     };
     local: boolean;
     enabled: boolean;
@@ -78,6 +80,18 @@ export interface SetupDraft {
         botToken: string;
         allowedUserIds: string;
         allowedGroupIds: string;
+        slackEnabled: boolean;
+        slackBotToken: string;
+        slackAppToken: string;
+        slackAllowedUserIds: string;
+        slackAllowedChannelIds: string;
+    };
+    mqtt: {
+        enabled: boolean;
+        host: string;
+        port: number;
+        username: string;
+        password: string;
     };
     remoteAccess: {
         authEnabled: boolean;
@@ -113,7 +127,7 @@ export declare function createTransientAuthToken(): string;
 export declare function createCapabilities(): FeatureCapability[];
 export declare function createCapabilityCounts(): CapabilityCounts;
 export declare function getPrimaryAiTarget(): string | null;
-export declare function discoverModelsFromEndpoint(endpoint: string, providerType?: AIBackendCard["providerType"], credentials?: AIBackendCard["credentials"]): Promise<{
+export declare function discoverModelsFromEndpoint(endpoint: string, providerType?: AIBackendCard["providerType"], credentials?: AIBackendCard["credentials"], authMode?: AIBackendCard["authMode"]): Promise<{
     models: string[];
     sourceUrl: string;
 }>;

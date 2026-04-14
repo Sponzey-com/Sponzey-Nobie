@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
@@ -7,7 +7,9 @@ import { RunStepTimeline } from "../components/runs/RunStepTimeline"
 import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
 import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
 import { TaskFailurePanel } from "../components/runs/TaskFailurePanel"
-import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliveryStatus } from "../lib/task-monitor"
+import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliveryStatus, filterTaskTimelineForMode } from "../lib/task-monitor"
+import type { TaskMonitorCard, TaskMonitorViewMode } from "../lib/task-monitor"
+import type { OperationsHealthItem, OperationsSummary } from "../contracts/operations"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useRunsStore } from "../stores/runs"
 
@@ -16,12 +18,14 @@ function TaskMonitorBadges({
   internalAttemptCount,
   checklistLabel,
   deliveryLabel,
+  showDiagnostics = false,
   text,
 }: {
   attemptCount: number
   internalAttemptCount: number
   checklistLabel: string
   deliveryLabel: string
+  showDiagnostics?: boolean
   text: (ko: string, en: string) => string
 }) {
   return (
@@ -29,7 +33,7 @@ function TaskMonitorBadges({
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("실행", "Runs")} {attemptCount}
       </span>
-      {internalAttemptCount > 0 ? (
+      {showDiagnostics && internalAttemptCount > 0 ? (
         <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
           {text("내부 재시도", "Internal retries")} {internalAttemptCount}
         </span>
@@ -44,18 +48,287 @@ function TaskMonitorBadges({
   )
 }
 
+function TaskDiagnosticsPanel({
+  card,
+  text,
+  displayText,
+}: {
+  card: TaskMonitorCard
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+}) {
+  const diagnostics = card.diagnostics
+  const continuity = card.continuity
+  const hasDetails = Boolean(
+    diagnostics
+    || continuity?.lastGoodState
+    || continuity?.pendingApprovals.length
+    || continuity?.pendingDelivery.length
+    || continuity?.failedRecoveryKey,
+  )
+  if (!hasDetails) return null
+
+  const promptSourceLabel = diagnostics?.promptSources.length
+    ? diagnostics.promptSources.map((source) => {
+        const version = source.version ? `@${source.version}` : ""
+        const checksum = source.checksum ? ` #${source.checksum.slice(0, 8)}` : ""
+        const locale = source.locale ? ` (${source.locale})` : ""
+        return `${source.sourceId}${version}${checksum}${locale}`
+      }).join(", ")
+    : diagnostics?.promptSourceIds.length
+      ? diagnostics.promptSourceIds.join(", ")
+    : text("기록 없음", "Not recorded")
+  const latencyLabel = diagnostics?.latencyEvents.length
+    ? diagnostics.latencyEvents.join(" · ")
+    : text("기록 없음", "Not recorded")
+  const memoryLabel = diagnostics?.memoryEvents.length
+    ? diagnostics.memoryEvents.join(" · ")
+    : text("기록 없음", "Not recorded")
+  const toolLabel = diagnostics?.toolEvents.length
+    ? diagnostics.toolEvents.join(" · ")
+    : continuity?.lastToolReceipt
+      ? continuity.lastToolReceipt
+      : text("기록 없음", "Not recorded")
+  const deliveryTraceLabel = diagnostics?.deliveryEvents.length
+    ? diagnostics.deliveryEvents.join(" · ")
+    : continuity?.lastDeliveryReceipt
+      ? continuity.lastDeliveryReceipt
+      : text("기록 없음", "Not recorded")
+  const recoveryLabel = diagnostics?.recoveryEvents.length
+    ? diagnostics.recoveryEvents.join(" · ")
+    : text("기록 없음", "Not recorded")
+  const pendingApprovalLabel = continuity?.pendingApprovals.length
+    ? continuity.pendingApprovals.join(", ")
+    : text("없음", "None")
+  const pendingDeliveryLabel = continuity?.pendingDelivery.length
+    ? continuity.pendingDelivery.join(", ")
+    : text("없음", "None")
+
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+      <div className="text-xs font-semibold text-stone-500">{text("운영 진단", "Operational diagnostics")}</div>
+      <div className="mt-3 grid gap-3 text-xs leading-5 text-stone-600 md:grid-cols-2">
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("프롬프트 출처", "Prompt sources")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(promptSourceLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("응답 지연 기록", "Latency trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(latencyLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("메모리·벡터 기록", "Memory and vector trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(memoryLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("도구 실행 기록", "Tool receipt trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(toolLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("결과 전달 기록", "Delivery receipt trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(deliveryTraceLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("복구 기록", "Recovery trace")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(recoveryLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("대기 중인 승인", "Pending approvals")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(pendingApprovalLabel)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("대기 중인 전달", "Pending delivery")}</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(pendingDeliveryLabel)}</div>
+        </div>
+      </div>
+      {continuity?.lastGoodState || continuity?.failedRecoveryKey || diagnostics?.recoveryEvents.length ? (
+        <div className="mt-3 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs leading-5 text-stone-600">
+          {continuity?.lastGoodState ? <div>{text("최근 정상 상태", "Last good state")}: {displayText(continuity.lastGoodState)}</div> : null}
+          {continuity?.failedRecoveryKey ? <div>{text("반복 중단 키", "Duplicate stop key")}: {displayText(continuity.failedRecoveryKey)}</div> : null}
+          {diagnostics?.recoveryEvents.length ? <div>{text("복구 기록", "Recovery trace")}: {displayText(diagnostics.recoveryEvents.join(" · "))}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function statusLabel(status: OperationsHealthItem["status"], text: (ko: string, en: string) => string): string {
+  switch (status) {
+    case "ok":
+      return text("정상", "OK")
+    case "degraded":
+      return text("저하", "Degraded")
+    case "down":
+      return text("장애", "Down")
+  }
+}
+
+function statusClassName(status: OperationsHealthItem["status"]): string {
+  switch (status) {
+    case "ok":
+      return "border-emerald-100 bg-emerald-50 text-emerald-800"
+    case "degraded":
+      return "border-amber-100 bg-amber-50 text-amber-800"
+    case "down":
+      return "border-rose-100 bg-rose-50 text-rose-800"
+  }
+}
+
+function healthItemLabel(key: OperationsHealthItem["key"], text: (ko: string, en: string) => string): string {
+  switch (key) {
+    case "overall":
+      return text("전체", "Overall")
+    case "memory":
+      return text("메모리", "Memory")
+    case "vector":
+      return text("벡터", "Vector")
+    case "schedule":
+      return text("예약", "Schedule")
+    case "channel":
+      return text("채널", "Channel")
+  }
+}
+
+function issueKindLabel(kind: OperationsSummary["repeatedIssues"][number]["kind"], text: (ko: string, en: string) => string): string {
+  switch (kind) {
+    case "memory":
+      return text("메모리", "Memory")
+    case "vector":
+      return text("벡터", "Vector")
+    case "schedule":
+      return text("예약", "Schedule")
+    case "channel":
+      return text("채널", "Channel")
+    case "tool":
+      return text("도구", "Tool")
+    case "provider":
+      return text("AI 연결", "AI connection")
+    case "run":
+      return text("실행", "Run")
+  }
+}
+
+function OperationsHealthPanel({
+  summary,
+  diagnosticMode,
+  cleanupRunning,
+  onCleanupStale,
+  text,
+  displayText,
+  formatTime,
+}: {
+  summary: OperationsSummary | null
+  diagnosticMode: boolean
+  cleanupRunning: boolean
+  onCleanupStale: () => void
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+  formatTime: (value: number) => string
+}) {
+  if (!summary) {
+    return (
+      <div className="rounded-2xl border border-stone-200 bg-white p-5 text-sm text-stone-500">
+        {text("운영 상태를 불러오는 중입니다.", "Loading operational health.")}
+      </div>
+    )
+  }
+
+  const healthItems = [summary.health.overall, summary.health.memory, summary.health.vector, summary.health.schedule, summary.health.channel]
+  const staleTotal = summary.stale.total
+
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("운영 상태", "Operational health")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("반복 오류와 오래된 대기 상태를 요약합니다.", "Summarizes repeated issues and stale waiting states.")}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onCleanupStale}
+          disabled={cleanupRunning || staleTotal === 0}
+          className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+        >
+          {cleanupRunning ? text("정리 중", "Cleaning") : text("오래된 대기 정리", "Clean stale waits")}
+        </button>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        {healthItems.map((item) => (
+          <div key={item.key} className={`rounded-xl border px-3 py-3 ${statusClassName(item.status)}`}>
+            <div className="text-[11px] font-semibold">{healthItemLabel(item.key, text)}</div>
+            <div className="mt-1 text-sm font-semibold">{statusLabel(item.status, text)}</div>
+            {diagnosticMode ? (
+              <div className="mt-1 text-[11px] leading-4 opacity-80">
+                {displayText(item.reason)}{item.lastAt ? ` · ${formatTime(item.lastAt)}` : ""}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
+          <div className="text-xs font-semibold text-stone-600">{text("반복 오류", "Repeated issues")}</div>
+          <div className="mt-2 space-y-2 text-xs text-stone-600">
+            {summary.repeatedIssues.length > 0 ? summary.repeatedIssues.slice(0, 5).map((issue) => (
+              <div key={issue.key} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-stone-800">{issueKindLabel(issue.kind, text)}</span>
+                  <span>{statusLabel(issue.status, text)} · {issue.count}</span>
+                </div>
+                <div className="mt-1 break-words leading-5 [overflow-wrap:anywhere]">
+                  {displayText(issue.sample)}{diagnosticMode && issue.lastAt ? ` · ${formatTime(issue.lastAt)}` : ""}
+                </div>
+              </div>
+            )) : (
+              <div className="rounded-lg border border-dashed border-stone-200 bg-white px-3 py-3 text-stone-500">
+                {text("반복 오류가 없습니다.", "No repeated issues.")}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
+          <div className="text-xs font-semibold text-stone-600">{text("오래된 대기", "Stale waits")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{staleTotal}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text(
+              `승인 대기 ${summary.stale.pendingApprovals.length}개, 전달 대기 ${summary.stale.pendingDeliveries.length}개, 실행 대기 ${summary.stale.runs.length}개`,
+              `${summary.stale.pendingApprovals.length} approvals, ${summary.stale.pendingDeliveries.length} deliveries, ${summary.stale.runs.length} runs`,
+            )}
+          </div>
+          {diagnosticMode && staleTotal > 0 ? (
+            <div className="mt-3 space-y-2 text-xs text-stone-600">
+              {[...summary.stale.pendingApprovals, ...summary.stale.pendingDeliveries, ...summary.stale.runs].slice(0, 5).map((item) => (
+                <div key={item.runId} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                  <div className="font-semibold text-stone-800">{displayText(item.reason)}</div>
+                  <div className="mt-1 break-words [overflow-wrap:anywhere]">{item.runId} · {formatTime(item.updatedAt)}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function RunsPage() {
-  const { text, displayText } = useUiI18n()
+  const { text, displayText, formatTime } = useUiI18n()
   const {
     runs,
     tasks,
+    operationsSummary,
     selectedRunId,
     ensureInitialized,
     selectRun,
     cancelRun,
     deleteRunHistory,
     clearHistoricalRunHistory,
+    cleanupStaleRuns,
   } = useRunsStore()
+  const [viewMode, setViewMode] = useState<TaskMonitorViewMode>("normal")
+  const [cleanupRunning, setCleanupRunning] = useState(false)
 
   useEffect(() => {
     ensureInitialized()
@@ -65,9 +338,11 @@ export function RunsPage() {
   const selectedCard = cards.find((card) => card.key === selectedRunId || card.representative.id === selectedRunId) ?? cards[0] ?? null
   const selectedRun = selectedCard?.representative ?? null
   const selectedTimeline = selectedCard?.timeline ?? []
+  const visibleTimeline = filterTaskTimelineForMode(selectedTimeline, viewMode)
   const selectedRequestText = selectedCard?.requestText ?? selectedRun?.prompt ?? ""
   const selectedInternalAttempts = selectedCard?.internalAttempts ?? []
   const selectedDeliveryLabel = selectedCard ? describeTaskDeliveryStatus(selectedCard.delivery.status, text) : ""
+  const diagnosticMode = viewMode === "diagnostic"
   const historicalCards = cards.filter((card) =>
     ["completed", "failed", "cancelled", "interrupted"].includes(card.representative.status),
   )
@@ -97,6 +372,23 @@ export function RunsPage() {
     await clearHistoricalRunHistory()
   }
 
+  async function handleCleanupStaleRuns(): Promise<void> {
+    if (!operationsSummary || operationsSummary.stale.total === 0 || cleanupRunning) return
+    const confirmed = window.confirm(
+      text(
+        "오래된 승인/전달/실행 대기 상태를 정리할까요? 진행 중인 항목은 삭제하지 않고 중단 처리만 합니다.",
+        "Clean stale approval, delivery, and run waits? Active items will not be deleted; they will be marked interrupted.",
+      ),
+    )
+    if (!confirmed) return
+    setCleanupRunning(true)
+    try {
+      await cleanupStaleRuns()
+    } finally {
+      setCleanupRunning(false)
+    }
+  }
+
   return (
     <div className="flex h-full overflow-hidden bg-stone-100">
       <div className="w-[28rem] shrink-0 border-r border-stone-200 bg-white">
@@ -118,6 +410,18 @@ export function RunsPage() {
               {text("이전 기록 정리", "Clear past items")}
             </button>
           </div>
+          <div className="mt-4 inline-flex rounded-2xl border border-stone-200 bg-stone-50 p-1">
+            {(["normal", "diagnostic"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${viewMode === mode ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-800"}`}
+              >
+                {mode === "normal" ? text("일반 보기", "Normal") : text("진단 보기", "Diagnostics")}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="h-[calc(100%-6.25rem)] overflow-y-auto p-4">
           <div className="space-y-3">
@@ -135,6 +439,7 @@ export function RunsPage() {
                     internalAttemptCount={card.internalAttempts.length}
                     checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
                     deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
+                    showDiagnostics={diagnosticMode}
                     text={text}
                   />
                 )}
@@ -150,6 +455,7 @@ export function RunsPage() {
             <div className="space-y-6">
               <RunSummaryPanel
                 run={selectedRun}
+                diagnosticMode={diagnosticMode}
                 extraContent={(
                   <div className="space-y-4">
                     <div className="flex flex-wrap justify-end gap-2">
@@ -186,21 +492,30 @@ export function RunsPage() {
                         text={text}
                       />
                     ) : null}
-                    <div className="grid gap-3 md:grid-cols-3">
+                    {diagnosticMode && selectedCard ? (
+                      <TaskDiagnosticsPanel
+                        card={selectedCard}
+                        text={text}
+                        displayText={displayText}
+                      />
+                    ) : null}
+                    <div className={`grid gap-3 ${diagnosticMode ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("실행 횟수", "Run count")}</div>
                         <div className="mt-2 text-sm font-medium text-stone-900">{selectedCard?.attempts.length ?? 0}</div>
                       </div>
-                      <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("내부 재시도", "Internal retries")}</div>
-                        <div className="mt-2 text-sm font-medium text-stone-900">{selectedInternalAttempts.length}</div>
-                      </div>
+                      {diagnosticMode ? (
+                        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("내부 재시도", "Internal retries")}</div>
+                          <div className="mt-2 text-sm font-medium text-stone-900">{selectedInternalAttempts.length}</div>
+                        </div>
+                      ) : null}
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("결과 전달 상태", "Result delivery status")}</div>
                         <div className="mt-2 text-sm font-medium text-stone-900">{selectedDeliveryLabel}</div>
                       </div>
                     </div>
-                    {selectedInternalAttempts.length > 0 ? (
+                    {diagnosticMode && selectedInternalAttempts.length > 0 ? (
                       <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
                         <div className="text-xs font-semibold text-stone-500">{text("내부 재시도 기록", "Internal retry history")}</div>
                         <div className="mt-3 space-y-2">
@@ -224,8 +539,17 @@ export function RunsPage() {
               </div>
             </div>
             <div className="space-y-6">
+              <OperationsHealthPanel
+                summary={operationsSummary}
+                diagnosticMode={diagnosticMode}
+                cleanupRunning={cleanupRunning}
+                onCleanupStale={() => void handleCleanupStaleRuns()}
+                text={text}
+                displayText={displayText}
+                formatTime={formatTime}
+              />
               <RunEventFeed
-                events={selectedTimeline.map((item) => ({
+                events={visibleTimeline.map((item) => ({
                   id: item.id,
                   at: item.at,
                   label: `[${item.runLabel}] ${displayText(item.label)}`,

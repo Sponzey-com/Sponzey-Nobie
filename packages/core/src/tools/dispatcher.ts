@@ -1,12 +1,34 @@
 import { eventBus } from "../events/index.js"
 import type { ApprovalDecision, ApprovalKind, ApprovalResolutionReason } from "../events/index.js"
-import { insertAuditLog } from "../db/index.js"
+import { insertAuditLog, upsertTaskContinuity } from "../db/index.js"
 import { createLogger } from "../logger/index.js"
 import { getConfig } from "../config/index.js"
 import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus } from "../runs/store.js"
 import type { AgentTool, AnyTool, ToolContext, ToolResult } from "./types.js"
 
 const log = createLogger("tools:dispatcher")
+
+function rememberApprovalContinuity(runId: string, params: {
+  pendingApprovals?: string[]
+  status?: string
+  lastGoodState?: string
+}): void {
+  try {
+    const run = getRootRun(runId)
+    if (!run) return
+    const lineageRootRunId = run?.lineageRootRunId ?? run?.requestGroupId ?? runId
+    upsertTaskContinuity({
+      lineageRootRunId,
+      ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+      ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+      ...(params.pendingApprovals ? { pendingApprovals: params.pendingApprovals } : {}),
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.lastGoodState ? { lastGoodState: params.lastGoodState } : {}),
+    })
+  } catch (error) {
+    log.warn(`approval continuity update failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
 
 function describeApprovalDenial(
   toolName: string,
@@ -247,6 +269,11 @@ export class ToolDispatcher {
     appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`)
     setRunStepStatus(ctx.runId, stepKey, "running", summary)
     updateRunStatus(ctx.runId, stepKey, summary, true)
+    rememberApprovalContinuity(ctx.runId, {
+      pendingApprovals: [`${kind}:${toolName}`],
+      status: kind === "screen_confirmation" ? "awaiting_user" : "awaiting_approval",
+      lastGoodState: summary,
+    })
 
     return new Promise<ApprovalDecision>((resolve) => {
       let resolved = false
@@ -339,6 +366,7 @@ export class ToolDispatcher {
       setRunStepStatus(runId, stepKey, "completed", summary)
       setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`)
       updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true)
+      rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: summary })
       return
     }
 
@@ -354,11 +382,13 @@ export class ToolDispatcher {
       )
       setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`)
       updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true)
+      rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: `${toolName} 승인 완료` })
       return
     }
 
     const denial = describeApprovalDenial(toolName, kind, reason)
     setRunStepStatus(runId, stepKey, "cancelled", denial.stepSummary)
+    rememberApprovalContinuity(runId, { pendingApprovals: [], status: "cancelled", lastGoodState: denial.runSummary })
     cancelRootRun(runId, denial)
   }
 

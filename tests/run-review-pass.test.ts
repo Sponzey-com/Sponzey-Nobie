@@ -34,7 +34,7 @@ describe("run review pass", () => {
 
   it("swallows review errors and reports them through callback", async () => {
     const onReviewError = vi.fn()
-    const reviewTaskCompletion = vi.fn().mockRejectedValue(new Error("review failed"))
+    const reviewTaskCompletion = vi.fn().mockRejectedValue(new Error("403 <html><body>review failed</body></html>"))
 
     const result = await runReviewPass({
       executionProfile: {
@@ -56,6 +56,6 @@ describe("run review pass", () => {
 
     expect(result.review).toBeNull()
     expect(result.syntheticApproval).toBeNull()
-    expect(onReviewError).toHaveBeenCalledWith("review failed")
+    expect(onReviewError).toHaveBeenCalledWith("인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.")
   })
 })
