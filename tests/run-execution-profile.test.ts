@@ -145,4 +145,60 @@ describe("execution profile", () => {
     expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
     expect(result.intentEnvelope.delivery_mode).toBe("none")
   })
+
+  it("downgrades mistaken direct artifact delivery for plain weather text answers", () => {
+    const executionSemantics = {
+      filesystemEffect: "none" as const,
+      privilegedOperation: "none" as const,
+      artifactDelivery: "direct" as const,
+      approvalRequired: false,
+      approvalTool: "external_action" as const,
+    }
+    const structuredRequest = {
+      source_language: "ko" as const,
+      normalized_english: "Tell me the current weather in Dongcheon-dong.",
+      target: "Current weather conditions for Dongcheon-dong",
+      to: "telegram chat 1, main thread",
+      context: ["User asked for current weather in 동천동"],
+      complete_condition: ["Provide a concise current weather summary for Dongcheon-dong."],
+    }
+
+    const result = buildResolvedExecutionProfile({
+      message: [
+        "[Task Execution Brief]",
+        "원래 사용자 요청: 지금 동천동 날씨 어때?",
+        "- [ ] 결과물 자체를 telegram chat 1, main thread에 직접 전달한다.",
+      ].join("\n\n"),
+      originalRequest: "지금 동천동 날씨 어때?",
+      executionSemantics,
+      structuredRequest,
+      intentEnvelope: {
+        intent_type: "task_intake",
+        source_language: "ko",
+        normalized_english: structuredRequest.normalized_english,
+        target: structuredRequest.target,
+        destination: structuredRequest.to,
+        context: structuredRequest.context,
+        complete_condition: structuredRequest.complete_condition,
+        schedule_spec: {
+          detected: false,
+          kind: "none",
+          status: "not_applicable",
+          schedule_text: "",
+        },
+        execution_semantics: executionSemantics,
+        delivery_mode: "direct",
+        requires_approval: false,
+        approval_tool: "external_action",
+        preferred_target: "auto",
+        needs_tools: false,
+        needs_web: true,
+      },
+    })
+
+    expect(result.executionSemantics.artifactDelivery).toBe("none")
+    expect(result.wantsDirectArtifactDelivery).toBe(false)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
+    expect(result.intentEnvelope.delivery_mode).toBe("none")
+  })
 })

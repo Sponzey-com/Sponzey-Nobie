@@ -2,13 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { closeDb, getSchedule } from "../packages/core/src/db/index.js"
+import { closeDb, getDb, getSchedule, getScheduleRuns, insertSchedule } from "../packages/core/src/db/index.js"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { storeMemory } from "../packages/core/src/memory/store.ts"
 import { searchMemoryChunks } from "../packages/core/src/memory/search.ts"
 import { createDefaultScheduleActionDependencies } from "../packages/core/src/runs/action-execution.ts"
 import { getNextRunForTimezone, getNextRunInTimezone } from "../packages/core/src/scheduler/cron.ts"
 import { computeScheduleRetryDelayMs, normalizeScheduleMaxRetries } from "../packages/core/src/scheduler/retry.ts"
+import { runScheduleAndWait } from "../packages/core/src/scheduler/index.ts"
 import { resolveScheduleTickDirective } from "../packages/core/src/scheduler/tick-policy.ts"
 import { buildScheduleMemoryContext } from "../packages/core/src/schedules/context.ts"
 
@@ -126,6 +127,47 @@ describe("task007 schedule stability", () => {
     expect(context).toContain("TASK007 KST 보고")
     expect(context).toContain("TASK007_TIMEZONE_PAYLOAD")
     expect(context).toContain("시간대: Asia/Seoul")
+  })
+
+  it("completes direct agent notification schedules without re-entering the agent loop", async () => {
+    const now = Date.parse("2026-04-15T00:00:00.000Z")
+    insertSchedule({
+      id: "schedule-direct-agent-task007",
+      name: "TASK007 직접 알림",
+      cron_expression: "* * * * *",
+      timezone: "Asia/Seoul",
+      prompt: "매 1분마다 사용자에게 '알림' 메시지로 알려주기",
+      enabled: 1,
+      target_channel: "agent",
+      target_session_id: null,
+      execution_driver: "internal",
+      origin_run_id: "run-origin-task007",
+      origin_request_group_id: "group-origin-task007",
+      model: null,
+      max_retries: 0,
+      timeout_sec: 300,
+      created_at: now,
+      updated_at: now,
+    })
+
+    await runScheduleAndWait("schedule-direct-agent-task007", "manual")
+
+    const [run] = getScheduleRuns("schedule-direct-agent-task007", 1, 0)
+    expect(run).toMatchObject({
+      schedule_id: "schedule-direct-agent-task007",
+      success: 1,
+      summary: "알림",
+      error: null,
+    })
+    const messageCount = getDb()
+      .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM messages WHERE session_id LIKE 'schedule:%'")
+      .get()?.n ?? 0
+    expect(messageCount).toBe(0)
+
+    const legacyAuditCount = getDb()
+      .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM audit_logs WHERE tool_name = 'legacy_schedule_contract_missing'")
+      .get()?.n ?? 0
+    expect(legacyAuditCount).toBe(1)
   })
 
   it("applies scheduleId retry budget and exponential backoff", () => {

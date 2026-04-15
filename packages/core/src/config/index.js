@@ -16,10 +16,64 @@ function toStringArray(value) {
         ? value.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean)
         : [];
 }
+function normalizeAIConnectionProvider(value) {
+    const raw = toString(value).toLowerCase();
+    if (!raw)
+        return "";
+    const normalized = raw.replace(/^provider:/, "").replace(/[-\s]+/g, "_");
+    switch (normalized) {
+        case "openai":
+        case "chatgpt":
+        case "chatgpt_oauth":
+        case "codex":
+        case "openai_codex":
+        case "openai_oauth":
+            return "openai";
+        case "anthropic":
+        case "claude":
+            return "anthropic";
+        case "gemini":
+        case "google":
+            return "gemini";
+        case "ollama":
+            return "ollama";
+        case "llama":
+        case "llama_cpp":
+        case "llamacpp":
+            return "llama";
+        case "custom":
+            return "custom";
+        default:
+            return "custom";
+    }
+}
+function normalizeAIAuthMode(input) {
+    const mode = toString(input.mode).toLowerCase().replace(/[-\s]+/g, "_");
+    if (mode === "chatgpt_oauth" || mode === "codex" || mode === "oauth")
+        return "chatgpt_oauth";
+    if (mode === "api_key" || mode === "apikey")
+        return "api_key";
+    const rawProvider = toString(input.rawProvider).toLowerCase().replace(/[-\s]+/g, "_");
+    if (input.provider === "openai" && ["chatgpt", "chatgpt_oauth", "codex", "openai_codex", "openai_oauth"].includes(rawProvider)) {
+        return "chatgpt_oauth";
+    }
+    if (input.provider === "openai" && toString(input.auth?.oauthAuthFilePath))
+        return "chatgpt_oauth";
+    return "api_key";
+}
+function firstObjectWithKeys(...values) {
+    for (const value of values) {
+        const object = toObject(value);
+        if (Object.keys(object).length > 0)
+            return object;
+    }
+    return {};
+}
 function inferConnectionFromLegacyConfig(rawAi) {
     const rawAiProviders = toObject(rawAi.providers);
     const rawAiBackends = toObject(rawAi.backends);
-    const configuredProvider = toString(rawAi.defaultProvider);
+    const configuredProviderRaw = toString(rawAi.defaultProvider);
+    const configuredProvider = normalizeAIConnectionProvider(configuredProviderRaw);
     const configuredModel = toString(rawAi.defaultModel);
     const buildConnection = (provider, model, patch) => ({
         provider,
@@ -27,12 +81,12 @@ function inferConnectionFromLegacyConfig(rawAi) {
         ...patch,
     });
     if (configuredProvider === "openai") {
-        const openai = toObject(rawAiProviders.openai);
+        const openai = firstObjectWithKeys(rawAiProviders.openai, rawAiProviders.codex, rawAiProviders.chatgpt);
         const auth = toObject(openai.auth);
         return buildConnection("openai", configuredModel, {
             endpoint: toString(openai.baseUrl) || undefined,
             auth: {
-                mode: toString(auth.mode) || "api_key",
+                mode: normalizeAIAuthMode({ mode: auth.mode, provider: "openai", rawProvider: configuredProviderRaw, auth }),
                 apiKey: toStringArray(openai.apiKeys)[0] || undefined,
                 oauthAuthFilePath: toString(auth.codexAuthFilePath) || undefined,
                 clientId: toString(auth.clientId) || undefined,
@@ -136,17 +190,19 @@ function normalizeLegacyAiConfig(parsed) {
         rawAi.connection = inferConnectionFromLegacyConfig(rawAi) ?? {};
     }
     else {
+        const normalizedProvider = normalizeAIConnectionProvider(rawConnection.provider);
+        const rawAuth = toObject(rawConnection.auth);
         rawAi.connection = {
-            provider: toString(rawConnection.provider),
+            provider: normalizedProvider,
             model: toString(rawConnection.model),
             endpoint: toString(rawConnection.endpoint) || undefined,
             auth: {
-                mode: toString(toObject(rawConnection.auth).mode) || "api_key",
-                apiKey: toString(toObject(rawConnection.auth).apiKey) || undefined,
-                username: toString(toObject(rawConnection.auth).username) || undefined,
-                password: toString(toObject(rawConnection.auth).password) || undefined,
-                oauthAuthFilePath: toString(toObject(rawConnection.auth).oauthAuthFilePath) || undefined,
-                clientId: toString(toObject(rawConnection.auth).clientId) || undefined,
+                mode: normalizeAIAuthMode({ mode: rawAuth.mode, provider: normalizedProvider, rawProvider: rawConnection.provider, auth: rawAuth }),
+                apiKey: toString(rawAuth.apiKey) || undefined,
+                username: toString(rawAuth.username) || undefined,
+                password: toString(rawAuth.password) || undefined,
+                oauthAuthFilePath: toString(rawAuth.oauthAuthFilePath) || undefined,
+                clientId: toString(rawAuth.clientId) || undefined,
             },
         };
     }
@@ -306,4 +362,5 @@ export function reloadConfig() {
     return loadConfig();
 }
 export { PATHS } from "./paths.js";
+export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./backup-rehearsal.js";
 //# sourceMappingURL=index.js.map

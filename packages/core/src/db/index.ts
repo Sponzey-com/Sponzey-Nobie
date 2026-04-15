@@ -4,6 +4,15 @@ import BetterSqlite3 from "better-sqlite3"
 import { PATHS } from "../config/index.js"
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js"
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js"
+import {
+  buildDeliveryKey,
+  buildPayloadHash,
+  buildScheduleIdentityKey,
+  formatContractValidationFailureForUser,
+  toCanonicalJson,
+  validateScheduleContract,
+  type ScheduleContract,
+} from "../contracts/index.js"
 
 let _db: BetterSqlite3.Database | null = null
 
@@ -63,6 +72,9 @@ export interface DbAuditLog {
   id: string
   timestamp: number
   session_id: string | null
+  run_id: string | null
+  request_group_id: string | null
+  channel: string | null
   source: string
   tool_name: string
   params: string | null
@@ -71,7 +83,12 @@ export interface DbAuditLog {
   duration_ms: number | null
   approval_required: number
   approved_by: string | null
+  error_code: string | null
+  retry_count: number | null
+  stop_reason: string | null
 }
+
+type DbAuditLogInput = Omit<DbAuditLog, "id" | "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason"> & Partial<Pick<DbAuditLog, "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason">>
 
 export interface DbChannelMessageRef {
   id: string
@@ -259,19 +276,22 @@ export function getMessagesForRun(sessionId: string, runId: string): DbMessage[]
     .all(sessionId, runId)
 }
 
-export function insertAuditLog(log: Omit<DbAuditLog, "id">): void {
+export function insertAuditLog(log: DbAuditLogInput): void {
   const id = crypto.randomUUID()
   getDb()
     .prepare(
       `INSERT INTO audit_logs
-       (id, timestamp, session_id, source, tool_name, params, output, result,
-        duration_ms, approval_required, approved_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, timestamp, session_id, run_id, request_group_id, channel, source, tool_name, params, output, result,
+        duration_ms, approval_required, approved_by, error_code, retry_count, stop_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       log.timestamp,
       log.session_id,
+      log.run_id ?? null,
+      log.request_group_id ?? null,
+      log.channel ?? null,
       log.source,
       log.tool_name,
       log.params,
@@ -280,6 +300,9 @@ export function insertAuditLog(log: Omit<DbAuditLog, "id">): void {
       log.duration_ms,
       log.approval_required,
       log.approved_by,
+      log.error_code ?? null,
+      log.retry_count ?? null,
+      log.stop_reason ?? null,
     )
 }
 
@@ -861,6 +884,16 @@ export function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifac
     .get(artifactPath)
 }
 
+export function getArtifactMetadata(id: string): DbArtifactMetadata | undefined {
+  return getDb()
+    .prepare<[string], DbArtifactMetadata>(
+      `SELECT * FROM artifacts
+       WHERE id = ?
+       LIMIT 1`,
+    )
+    .get(id)
+}
+
 export function listExpiredArtifactMetadata(now: number = Date.now()): DbArtifactMetadata[] {
   return getDb()
     .prepare<[number], DbArtifactMetadata>(
@@ -1304,11 +1337,38 @@ export interface DbSchedule {
   model: string | null
   max_retries: number
   timeout_sec: number
+  contract_json: string | null
+  identity_key: string | null
+  payload_hash: string | null
+  delivery_key: string | null
+  contract_schema_version: number | null
   created_at: number
   updated_at: number
   // computed / optional
   last_run_at?: number | null
   next_run_at?: number | null
+  legacy?: number
+}
+
+export type DbScheduleInsertInput = Omit<
+  DbSchedule,
+  | "last_run_at"
+  | "next_run_at"
+  | "timezone"
+  | "contract_json"
+  | "identity_key"
+  | "payload_hash"
+  | "delivery_key"
+  | "contract_schema_version"
+  | "legacy"
+> & {
+  timezone?: string | null
+  contract?: ScheduleContract
+  contract_json?: string | null
+  identity_key?: string | null
+  payload_hash?: string | null
+  delivery_key?: string | null
+  contract_schema_version?: number | null
 }
 
 export interface DbScheduleRun {
@@ -1319,13 +1379,40 @@ export interface DbScheduleRun {
   success: number | null   // 0 | 1
   summary: string | null
   error: string | null
+  execution_success?: number | null
+  delivery_success?: number | null
+  delivery_dedupe_key?: string | null
+  delivery_error?: string | null
+}
+
+export type DbScheduleDeliveryStatus = "delivered" | "failed" | "skipped"
+
+export interface DbScheduleDeliveryReceipt {
+  dedupe_key: string
+  schedule_id: string
+  schedule_run_id: string
+  due_at: string
+  target_channel: string
+  target_session_id: string | null
+  payload_hash: string
+  delivery_status: DbScheduleDeliveryStatus
+  summary: string | null
+  error: string | null
+  created_at: number
+  updated_at: number
+}
+
+export type DbScheduleDeliveryReceiptInput = Omit<DbScheduleDeliveryReceipt, "created_at" | "updated_at"> & {
+  created_at?: number
+  updated_at?: number
 }
 
 export function getSchedules(): DbSchedule[] {
   return getDb()
     .prepare<[], DbSchedule>(
       `SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s ORDER BY s.created_at DESC`,
     )
     .all()
@@ -1335,7 +1422,8 @@ export function getSchedule(id: string): DbSchedule | undefined {
   return getDb()
     .prepare<[string], DbSchedule>(
       `SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s WHERE s.id = ?`,
     )
     .get(id)
@@ -1346,7 +1434,8 @@ export function getSchedulesForSession(sessionId: string, enabledOnly = false): 
   return getDb()
     .prepare<[string], DbSchedule>(
       `SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s
        WHERE s.target_session_id = ?
        ${enabledClause}
@@ -1355,11 +1444,40 @@ export function getSchedulesForSession(sessionId: string, enabledOnly = false): 
     .all(sessionId)
 }
 
-export function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone"> & { timezone?: string | null }): void {
+export function prepareScheduleContractPersistence(contract: ScheduleContract): Pick<DbSchedule, "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version"> {
+  const validation = validateScheduleContract(contract)
+  if (!validation.ok) {
+    throw new Error(formatContractValidationFailureForUser(validation.issues))
+  }
+
+  return {
+    contract_json: toCanonicalJson(contract),
+    identity_key: buildScheduleIdentityKey(contract),
+    payload_hash: buildPayloadHash(contract.payload),
+    delivery_key: buildDeliveryKey(contract.delivery),
+    contract_schema_version: contract.schemaVersion,
+  }
+}
+
+export function isLegacySchedule(schedule: Pick<DbSchedule, "contract_json" | "contract_schema_version">): boolean {
+  return !schedule.contract_json || schedule.contract_schema_version == null
+}
+
+export function insertSchedule(s: DbScheduleInsertInput): void {
+  const contractFields = s.contract
+    ? prepareScheduleContractPersistence(s.contract)
+    : {
+        contract_json: s.contract_json ?? null,
+        identity_key: s.identity_key ?? null,
+        payload_hash: s.payload_hash ?? null,
+        delivery_key: s.delivery_key ?? null,
+        contract_schema_version: s.contract_schema_version ?? null,
+      }
+
   getDb()
     .prepare(
-      `INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, contract_json, identity_key, payload_hash, delivery_key, contract_schema_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       s.id,
@@ -1376,6 +1494,11 @@ export function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at"
       s.model,
       s.max_retries,
       s.timeout_sec,
+      contractFields.contract_json,
+      contractFields.identity_key,
+      contractFields.payload_hash,
+      contractFields.delivery_key,
+      contractFields.contract_schema_version,
       s.created_at,
       s.updated_at,
     )
@@ -1454,7 +1577,7 @@ export function insertScheduleRun(r: DbScheduleRun): void {
 
 export function updateScheduleRun(
   id: string,
-  fields: Partial<Pick<DbScheduleRun, "finished_at" | "success" | "summary" | "error">>,
+  fields: Partial<Pick<DbScheduleRun, "finished_at" | "success" | "summary" | "error" | "execution_success" | "delivery_success" | "delivery_dedupe_key" | "delivery_error">>,
 ): void {
   const sets: string[] = []
   const vals: unknown[] = []
@@ -1465,6 +1588,44 @@ export function updateScheduleRun(
   if (!sets.length) return
   vals.push(id)
   getDb().prepare(`UPDATE schedule_runs SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+}
+
+export function getScheduleDeliveryReceipt(dedupeKey: string): DbScheduleDeliveryReceipt | undefined {
+  return getDb()
+    .prepare<[string], DbScheduleDeliveryReceipt>("SELECT * FROM schedule_delivery_receipts WHERE dedupe_key = ?")
+    .get(dedupeKey)
+}
+
+export function insertScheduleDeliveryReceipt(input: DbScheduleDeliveryReceiptInput): void {
+  const now = Date.now()
+  const createdAt = input.created_at ?? now
+  const updatedAt = input.updated_at ?? now
+  getDb()
+    .prepare(
+      `INSERT INTO schedule_delivery_receipts
+       (dedupe_key, schedule_id, schedule_run_id, due_at, target_channel, target_session_id, payload_hash, delivery_status, summary, error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(dedupe_key) DO UPDATE SET
+         schedule_run_id = excluded.schedule_run_id,
+         delivery_status = excluded.delivery_status,
+         summary = excluded.summary,
+         error = excluded.error,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      input.dedupe_key,
+      input.schedule_id,
+      input.schedule_run_id,
+      input.due_at,
+      input.target_channel,
+      input.target_session_id,
+      input.payload_hash,
+      input.delivery_status,
+      input.summary,
+      input.error,
+      createdAt,
+      updatedAt,
+    )
 }
 
 export function getScheduleStats(scheduleId: string): {

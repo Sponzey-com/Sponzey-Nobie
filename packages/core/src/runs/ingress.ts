@@ -1,4 +1,5 @@
 import { startRootRun, type StartedRootRun, type StartRootRunParams } from "./start.js"
+import { recordLatencyMetric } from "../observability/latency.js"
 
 export type IngressReceiptLanguage = "ko" | "en" | "mixed" | "unknown"
 
@@ -33,6 +34,8 @@ function normalizeIngressIdentityPart(value: string | number | undefined): strin
 }
 
 export function buildIngressDedupeKey(identity: IngressExternalIdentity): string {
+  // nobie-critical-decision-audit: ingress.external_identity_dedupe
+  // Preferred fast path: dedupe by channel ids, never by natural-language message text.
   return [
     identity.source,
     identity.sessionId,
@@ -83,12 +86,21 @@ export function resolveIngressStartParams(params: StartRootRunParams): ResolvedI
 // Downstream execution keeps using startRootRun, but channel/API entry points
 // should start from this helper instead of assembling receipt logic themselves.
 export function startIngressRun(params: StartRootRunParams): StartedIngressRun {
+  const startedAt = Date.now()
   const resolved = resolveIngressStartParams(params)
+  const receipt = buildIngressReceipt(resolved.message)
+  recordLatencyMetric({
+    name: "ingress_ack_latency_ms",
+    durationMs: Date.now() - startedAt,
+    runId: resolved.runId,
+    sessionId: resolved.sessionId,
+    source: resolved.source,
+  })
   return {
     requestId: resolved.runId,
     sessionId: resolved.sessionId,
     source: resolved.source,
-    receipt: buildIngressReceipt(resolved.message),
+    receipt,
     started: startRootRun(resolved),
   }
 }

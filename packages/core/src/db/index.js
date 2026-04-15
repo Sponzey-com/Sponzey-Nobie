@@ -78,10 +78,10 @@ export function insertAuditLog(log) {
     const id = crypto.randomUUID();
     getDb()
         .prepare(`INSERT INTO audit_logs
-       (id, timestamp, session_id, source, tool_name, params, output, result,
-        duration_ms, approval_required, approved_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, log.timestamp, log.session_id, log.source, log.tool_name, log.params, log.output, log.result, log.duration_ms, log.approval_required, log.approved_by);
+       (id, timestamp, session_id, run_id, request_group_id, channel, source, tool_name, params, output, result,
+        duration_ms, approval_required, approved_by, error_code, retry_count, stop_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, log.timestamp, log.session_id, log.run_id ?? null, log.request_group_id ?? null, log.channel ?? null, log.source, log.tool_name, log.params, log.output, log.result, log.duration_ms, log.approval_required, log.approved_by, log.error_code ?? null, log.retry_count ?? null, log.stop_reason ?? null);
 }
 export function insertChannelMessageRef(ref) {
     const id = crypto.randomUUID();
@@ -322,6 +322,13 @@ export function getLatestArtifactMetadataByPath(artifactPath) {
        ORDER BY created_at DESC
        LIMIT 1`)
         .get(artifactPath);
+}
+export function getArtifactMetadata(id) {
+    return getDb()
+        .prepare(`SELECT * FROM artifacts
+       WHERE id = ?
+       LIMIT 1`)
+        .get(id);
 }
 export function listExpiredArtifactMetadata(now = Date.now()) {
     return getDb()
@@ -580,14 +587,16 @@ export function markMessagesCompressed(ids, summaryId) {
 export function getSchedules() {
     return getDb()
         .prepare(`SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s ORDER BY s.created_at DESC`)
         .all();
 }
 export function getSchedule(id) {
     return getDb()
         .prepare(`SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s WHERE s.id = ?`)
         .get(id);
 }
@@ -595,12 +604,16 @@ export function getSchedulesForSession(sessionId, enabledOnly = false) {
     const enabledClause = enabledOnly ? "AND s.enabled = 1" : "";
     return getDb()
         .prepare(`SELECT s.*,
-        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at
+        (SELECT r.started_at FROM schedule_runs r WHERE r.schedule_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+        CASE WHEN s.contract_json IS NULL OR s.contract_schema_version IS NULL THEN 1 ELSE 0 END AS legacy
        FROM schedules s
        WHERE s.target_session_id = ?
        ${enabledClause}
        ORDER BY s.created_at DESC`)
         .all(sessionId);
+}
+export function isLegacySchedule(schedule) {
+    return !schedule.contract_json || schedule.contract_schema_version == null;
 }
 export function insertSchedule(s) {
     getDb()
@@ -674,6 +687,27 @@ export function updateScheduleRun(id, fields) {
         return;
     vals.push(id);
     getDb().prepare(`UPDATE schedule_runs SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+}
+export function getScheduleDeliveryReceipt(dedupeKey) {
+    return getDb()
+        .prepare("SELECT * FROM schedule_delivery_receipts WHERE dedupe_key = ?")
+        .get(dedupeKey);
+}
+export function insertScheduleDeliveryReceipt(input) {
+    const now = Date.now();
+    const createdAt = input.created_at ?? now;
+    const updatedAt = input.updated_at ?? now;
+    getDb()
+        .prepare(`INSERT INTO schedule_delivery_receipts
+       (dedupe_key, schedule_id, schedule_run_id, due_at, target_channel, target_session_id, payload_hash, delivery_status, summary, error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(dedupe_key) DO UPDATE SET
+         schedule_run_id = excluded.schedule_run_id,
+         delivery_status = excluded.delivery_status,
+         summary = excluded.summary,
+         error = excluded.error,
+         updated_at = excluded.updated_at`)
+        .run(input.dedupe_key, input.schedule_id, input.schedule_run_id, input.due_at, input.target_channel, input.target_session_id, input.payload_hash, input.delivery_status, input.summary, input.error, createdAt, updatedAt);
 }
 export function getScheduleStats(scheduleId) {
     const row = getDb()

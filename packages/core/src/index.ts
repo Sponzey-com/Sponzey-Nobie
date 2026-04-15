@@ -1,7 +1,29 @@
 // Config
 export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/index.js"
 export { generateAuthToken } from "./config/auth.js"
+export {
+  MIGRATION_ROLLBACK_RUNBOOK,
+  buildBackupTargetInventory,
+  buildMigrationPreflightReport,
+  createBackupSnapshot,
+  formatInventoryPathForDisplay,
+  runRestoreRehearsal,
+  verifyBackupSnapshotManifest,
+} from "./config/backup-rehearsal.js"
 export type {
+  BackupInventoryTarget,
+  BackupSnapshotFile,
+  BackupSnapshotManifest,
+  BackupSnapshotOptions,
+  BackupTargetInventory,
+  BackupTargetKind,
+  BackupTargetReason,
+  MigrationPreflightCheck,
+  MigrationPreflightCheckName,
+  MigrationPreflightOptions,
+  MigrationPreflightReport,
+  MigrationPreflightRisk,
+  MigrationRollbackRunbook,
   NobieConfig,
   WizbyConfig,
   HowieConfig,
@@ -11,6 +33,11 @@ export type {
   OrchestrationConfig,
   McpConfig,
   McpServerConfig,
+  RestoreRehearsalCheck,
+  RestoreRehearsalCheckName,
+  RestoreRehearsalOptions,
+  RestoreRehearsalReport,
+  SnapshotVerificationResult,
 } from "./config/index.js"
 
 // Logger
@@ -20,6 +47,124 @@ export type { Logger } from "./logger/index.js"
 // Events
 export { eventBus } from "./events/index.js"
 export type { NobieEvents, WizbyEvents, HowieEvents } from "./events/index.js"
+
+// Contracts
+export {
+  CANONICAL_JSON_POLICY,
+  CONTRACT_SCHEMA_VERSION,
+  buildDeliveryDedupeKey,
+  buildDeliveryKey,
+  buildDeliveryProjection,
+  buildPayloadHash,
+  buildScheduleIdentityKey,
+  buildScheduleIdentityProjection,
+  buildSchedulePayloadProjection,
+  buildToolTargetProjection,
+  formatContractValidationFailureForUser,
+  stableContractHash,
+  toCanonicalJson,
+  validateDeliveryContract,
+  validateIntentContract,
+  validateScheduleContract,
+  validateToolTargetContract,
+} from "./contracts/index.js"
+export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js"
+export {
+  findScheduleCandidatesByContract,
+  parseScheduleContractJson,
+  scheduleContractDestinationEquals,
+  scheduleContractTimeEquals,
+} from "./schedules/candidates.js"
+export {
+  buildScheduleContractComparisonSystemPrompt,
+  compareScheduleContractsWithAI,
+  parseScheduleContractComparisonResult,
+} from "./schedules/comparison.js"
+export type {
+  ActionType,
+  ContractAttachment,
+  ContractLocaleHint,
+  ContractSchemaVersion,
+  ContractSource,
+  ContractValidationErrorCode,
+  ContractValidationIssue,
+  ContractValidationResult,
+  DeliveryChannel,
+  DeliveryContract,
+  DeliveryMode,
+  IngressEnvelope,
+  IntentContract,
+  IntentType,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  ScheduleContract,
+  ScheduleKind,
+  ScheduleMissedPolicy,
+  SchedulePayloadContract,
+  SchedulePayloadKind,
+  ScheduleTimeContract,
+  ToolTargetContract,
+  ToolTargetKind,
+} from "./contracts/index.js"
+export type {
+  FindScheduleCandidatesByContractInput,
+  ScheduleCandidate,
+  ScheduleCandidateConfidence,
+  ScheduleCandidateReason,
+} from "./schedules/candidates.js"
+export type {
+  ScheduleContractComparisonCandidate,
+  ScheduleContractComparisonDecision,
+  ScheduleContractComparisonReasonCode,
+  ScheduleContractComparisonResult,
+} from "./schedules/comparison.js"
+
+// Candidate Providers
+export {
+  buildCandidateDecisionAuditDetails,
+  createExplicitIdProvider,
+  createMemoryVectorProvider,
+  createStoreCandidateProvider,
+  createStructuredKeyProvider,
+  decideCandidateFinal,
+  runCandidateProviders,
+} from "./candidates/index.js"
+export type {
+  CandidateFinalDecision,
+  CandidateFinalDecisionKind,
+  CandidateFinalDecisionSource,
+  CandidateKind,
+  CandidateProvider,
+  CandidateProviderContext,
+  CandidateProviderStage,
+  CandidateProviderTrace,
+  CandidateReason,
+  CandidateResult,
+  CandidateScore,
+  CandidateSearchInput,
+  CandidateSearchResult,
+  CandidateSource,
+  DecisionConfidence,
+} from "./candidates/index.js"
+
+// Observability
+export {
+  LATENCY_BUDGET_MS,
+  buildLatencyEventLabel,
+  buildLatencyEventLabelForMeasurement,
+  getFastResponseHealthSnapshot,
+  listLatencyMetrics,
+  recordLatencyMetric,
+  resetLatencyMetrics,
+} from "./observability/latency.js"
+export type {
+  FastResponseHealthSnapshot,
+  LatencyMetricName,
+  LatencyMetricRecord,
+  LatencyMetricStatus,
+  LatencyMetricSummary,
+} from "./observability/latency.js"
 
 // DB
 export {
@@ -113,6 +258,62 @@ export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus
 export type { RunCompletionOutcome, RunCompletionOutcomeInput, RunCompletionOutcomeStatus, RunFlowIdentifiers, RunFlowStatusTransitionDecision } from "./runs/flow-contract.js"
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js"
 export type { StartupRecoveryClassification, StartupRecoveryRunSummary, StartupRecoveryScheduleSummary, StartupRecoveryStatus, StartupRecoverySummary } from "./runs/startup-recovery.js"
+export {
+  DEFAULT_RETENTION_POLICY,
+  DEFAULT_RETRY_POLICIES,
+  DEFAULT_SOAK_HEALTH_THRESHOLDS,
+  DEFAULT_SOAK_PROFILES,
+  buildSoakHealthSummary,
+  buildSoakReportArtifact,
+  buildSoakReportPayload,
+  buildRetentionCleanupPlan,
+  buildRetryFailureFingerprint,
+  calculateSoakLatencyStats,
+  collectSoakResourceMetrics,
+  evaluateRetryBackoff,
+  expandSoakOperationMix,
+  getSoakProfile,
+  runRetentionCleanup,
+  runSoakProfile,
+  shouldStopRepeatedFailure,
+} from "./runs/soak-retention.js"
+export type {
+  RepeatedFailureStopDecision,
+  RetentionCleanupApplyOptions,
+  RetentionCleanupCandidate,
+  RetentionCleanupFailure,
+  RetentionCleanupKindSummary,
+  RetentionCleanupOptions,
+  RetentionCleanupPlan,
+  RetentionCleanupReason,
+  RetentionCleanupResult,
+  RetentionDataKind,
+  RetentionItem,
+  RetentionKindPolicy,
+  RetentionPolicy,
+  RetryBackoffDecision,
+  RetryBackoffInput,
+  RetryFailureDomain,
+  RetryFailureFingerprintInput,
+  RetryPolicy,
+  SoakChannelHealth,
+  SoakHealthInput,
+  SoakHealthStatus,
+  SoakHealthSummary,
+  SoakHealthThresholds,
+  SoakLatencyStats,
+  SoakOperationContext,
+  SoakOperationExecution,
+  SoakOperationKind,
+  SoakOperationResult,
+  SoakOperationWeight,
+  SoakProfile,
+  SoakProfileId,
+  SoakReportPayload,
+  SoakResourceMetrics,
+  SoakRunSummary,
+  SoakRunnerOptions,
+} from "./runs/soak-retention.js"
 
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"

@@ -2,6 +2,7 @@ import { authMiddleware } from "../middleware/auth.js";
 import { stopActiveSlackChannel } from "../../channels/slack/runtime.js";
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
 import { testMcpServerConnection, testSkillPath } from "../../control-plane/setup-extensions.js";
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { buildSetupDraft, completeSetup, createSetupChecks, createTransientAuthToken, discoverModelsFromEndpoint, readSetupState, resetSetupEnvironment, saveSetupDraft, } from "../../control-plane/index.js";
 export function registerSetupRoute(app) {
     app.get("/api/setup/status", { preHandler: authMiddleware }, async () => {
@@ -42,9 +43,12 @@ export function registerSetupRoute(app) {
             return { ok: true, ...result };
         }
         catch (error) {
+            const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error));
             return reply.status(400).send({
                 ok: false,
-                error: error instanceof Error ? error.message : String(error),
+                error: sanitized.userMessage,
+                kind: sanitized.kind,
+                actionHint: sanitized.actionHint,
             });
         }
     });

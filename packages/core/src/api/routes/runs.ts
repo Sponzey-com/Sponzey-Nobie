@@ -10,9 +10,11 @@ import {
   clearHistoricalRunHistory,
   deleteRunHistory,
   getRootRun,
+  listActiveRootRuns,
   listRootRuns,
   listRunsForRecentRequestGroups,
 } from "../../runs/store.js"
+import { buildActiveRunProjections } from "../../runs/active-run-projection.js"
 import { startIngressRun } from "../../runs/ingress.js"
 import { buildTaskModels } from "../../runs/task-model.js"
 import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js"
@@ -55,7 +57,21 @@ export function registerRunsRoute(app: FastifyInstance): void {
   }
 
   app.get("/api/runs", { preHandler: authMiddleware }, async () => {
-    return { runs: listRootRuns() }
+    const runs = listRootRuns()
+    return {
+      runs,
+      activeRunProjections: buildActiveRunProjections(runs.filter((run) => (
+        run.status === "queued"
+        || run.status === "running"
+        || run.status === "awaiting_approval"
+        || run.status === "awaiting_user"
+      ))),
+    }
+  })
+
+  app.get("/api/runs/active", { preHandler: authMiddleware }, async () => {
+    const runs = listActiveRootRuns()
+    return { runs, activeRunProjections: buildActiveRunProjections(runs) }
   })
 
   app.get("/api/tasks", { preHandler: authMiddleware }, async () => {

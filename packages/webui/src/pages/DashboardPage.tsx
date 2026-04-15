@@ -21,6 +21,9 @@ export function DashboardPage() {
   const checks = useSetupStore((state) => state.checks)
 
   const capabilityCounts = status?.capabilityCounts ?? counts
+  const fastResponse = status?.fast_response_health
+  const ingressAckMetric = fastResponse?.metrics.find((metric) => metric.name === "ingress_ack_latency_ms")
+  const contractComparisonMetric = fastResponse?.metrics.find((metric) => metric.name === "contract_ai_comparison_latency_ms")
   const enabledBackends = draft.aiBackends.filter((backend) => backend.enabled)
   const configuredBackends = draft.aiBackends.filter(
     (backend) =>
@@ -145,6 +148,9 @@ export function DashboardPage() {
               <StatusRow label={text("기본 대상", "Primary target")} value={primaryTargetLabel} />
               <StatusRow label="Orchestrator" value={status?.orchestratorStatus.status ?? ""} />
               {status?.orchestratorStatus.reason ? <StatusRow label={text("오케스트레이터 사유", "Orchestrator reason")} value={displayText(status.orchestratorStatus.reason)} /> : null}
+              {fastResponse ? <StatusRow label={text("빠른 응답", "Fast response")} value={`${fastResponse.status} · ${displayText(fastResponse.reason)}`} /> : null}
+              {ingressAckMetric?.p95Ms != null ? <StatusRow label={text("접수 응답 p95", "Ack p95")} value={`${ingressAckMetric.p95Ms}ms / ${ingressAckMetric.budgetMs}ms`} /> : null}
+              {contractComparisonMetric?.p95Ms != null ? <StatusRow label={text("AI 비교 p95", "AI comparison p95")} value={`${contractComparisonMetric.p95Ms}ms / ${contractComparisonMetric.budgetMs}ms`} /> : null}
               {status?.startupRecovery ? <StatusRow label={text("재시작 복구", "Startup recovery")} value={displayText(status.startupRecovery.userFacingSummary)} /> : null}
               {status?.startupRecovery?.recoveredRunCount ? <StatusRow label={text("복구된 실행", "Recovered runs")} value={String(status.startupRecovery.recoveredRunCount)} /> : null}
               {status?.startupRecovery?.interruptedScheduleRunCount ? <StatusRow label={text("중단된 예약", "Interrupted schedules")} value={String(status.startupRecovery.interruptedScheduleRunCount)} /> : null}

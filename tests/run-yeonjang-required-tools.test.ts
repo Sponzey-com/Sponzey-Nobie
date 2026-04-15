@@ -2,12 +2,25 @@ import { describe, expect, it, vi, beforeEach } from "vitest"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
 
 const canYeonjangHandleMethod = vi.fn()
+const getYeonjangCapabilities = vi.fn()
 const invokeYeonjangMethod = vi.fn()
 const isYeonjangUnavailableError = vi.fn((error: unknown) => error === "unavailable")
 const getMqttExtensionSnapshots = vi.fn()
 
 vi.mock("../packages/core/src/yeonjang/mqtt-client.js", () => ({
   canYeonjangHandleMethod,
+  getYeonjangCapabilities,
+  doesYeonjangCapabilitySupportMethod: (capabilities: { capabilityMatrix?: Record<string, { supported?: boolean }>; methods?: Array<{ name: string; implemented: boolean }> }, method: string) => {
+    const matrixEntry = capabilities.capabilityMatrix?.[method]
+    if (matrixEntry && typeof matrixEntry.supported === "boolean") return matrixEntry.supported
+    return capabilities.methods?.find((candidate) => candidate.name === method)?.implemented ?? false
+  },
+  doesYeonjangCapabilitySupportOutputMode: (capabilities: { capabilityMatrix?: Record<string, { outputModes?: string[] }> }, method: string, outputMode: string) => {
+    const modes = capabilities.capabilityMatrix?.[method]?.outputModes
+    if (!modes) return null
+    return modes.includes(outputMode)
+  },
+  hasYeonjangCapabilityMatrix: (capabilities: { capabilityMatrix?: Record<string, unknown> }) => Boolean(capabilities.capabilityMatrix),
   invokeYeonjangMethod,
   isYeonjangUnavailableError,
   DEFAULT_YEONJANG_EXTENSION_ID: "yeonjang-main",
@@ -41,6 +54,14 @@ function createContext(userMessage = "연장으로 실행해줘", source: ToolCo
 describe("yeonjang required tools", () => {
   beforeEach(() => {
     canYeonjangHandleMethod.mockReset()
+    getYeonjangCapabilities.mockReset().mockResolvedValue({
+      capabilityMatrix: {
+        "screen.capture": {
+          supported: false,
+          outputModes: ["base64", "file"],
+        },
+      },
+    })
     invokeYeonjangMethod.mockReset()
     isYeonjangUnavailableError.mockClear()
     canYeonjangHandleMethod.mockResolvedValue(false)
@@ -50,6 +71,7 @@ describe("yeonjang required tools", () => {
         displayName: 'Yeonjang-osx',
         state: 'online',
         message: 'macOS connected',
+        platform: 'macos',
         methods: ['screen.capture'],
       },
       {
@@ -57,6 +79,7 @@ describe("yeonjang required tools", () => {
         displayName: 'Yeonjang-windows',
         state: 'online',
         message: 'windows connected',
+        platform: 'windows',
         methods: ['screen.capture', 'system.exec'],
       },
     ])
@@ -87,7 +110,11 @@ describe("yeonjang required tools", () => {
   })
 
   it("returns a terminal guidance message when remote screen capture hits the Windows path bug", async () => {
-    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["base64", "file"] },
+      },
+    })
     invokeYeonjangMethod.mockRejectedValueOnce(new Error(
       'screen capture failed: "1" can not be passed to "GetDirectoryName".',
     ))
@@ -103,11 +130,15 @@ describe("yeonjang required tools", () => {
       failureKind: 'path_bug',
       extensionId: 'yeonjang-dongwooshinc28b-92049',
     })
-    expect(canYeonjangHandleMethod).toHaveBeenCalledWith('screen.capture', { extensionId: 'yeonjang-dongwooshinc28b-92049' })
+    expect(getYeonjangCapabilities).toHaveBeenCalledWith({ extensionId: 'yeonjang-dongwooshinc28b-92049' })
   })
 
   it("uses the windows-like user request to avoid falling back to yeonjang-main", async () => {
-    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["base64", "file"] },
+      },
+    })
     invokeYeonjangMethod.mockResolvedValueOnce({
       base64_data: Buffer.from('png').toString('base64'),
       mime_type: 'image/png',
@@ -119,7 +150,7 @@ describe("yeonjang required tools", () => {
     const result = await screenCaptureTool.execute({}, createContext('윈도우 메인화면 캡처해서 보여줘'))
 
     expect(result.success).toBe(true)
-    expect(canYeonjangHandleMethod).toHaveBeenCalledWith('screen.capture', { extensionId: 'yeonjang-dongwooshinc28b-92049' })
+    expect(getYeonjangCapabilities).toHaveBeenCalledWith({ extensionId: 'yeonjang-dongwooshinc28b-92049' })
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       'screen.capture',
       { inline_base64: true },
@@ -128,7 +159,11 @@ describe("yeonjang required tools", () => {
   })
 
   it("passes the requested second-monitor capture target through to Yeonjang", async () => {
-    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["base64", "file"] },
+      },
+    })
     invokeYeonjangMethod.mockResolvedValueOnce({
       base64_data: Buffer.from('png').toString('base64'),
       mime_type: 'image/png',
@@ -148,7 +183,11 @@ describe("yeonjang required tools", () => {
   })
 
   it("respects an explicit display parameter when provided", async () => {
-    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["base64", "file"] },
+      },
+    })
     invokeYeonjangMethod.mockResolvedValueOnce({
       base64_data: Buffer.from('png').toString('base64'),
       mime_type: 'image/png',
@@ -168,7 +207,11 @@ describe("yeonjang required tools", () => {
   })
 
   it("returns slack artifact delivery details for screen capture requested from slack", async () => {
-    canYeonjangHandleMethod.mockResolvedValueOnce(true)
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["base64", "file"] },
+      },
+    })
     invokeYeonjangMethod.mockResolvedValueOnce({
       base64_data: Buffer.from('png').toString('base64'),
       mime_type: 'image/png',
@@ -185,6 +228,32 @@ describe("yeonjang required tools", () => {
       channel: 'slack',
       source: 'slack',
     })
+  })
+
+  it("stops screen capture before execution when Yeonjang is too old to report a capability matrix", async () => {
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      methods: [{ name: "screen.capture", implemented: true }],
+    })
+
+    const result = await screenCaptureTool.execute({}, createContext('메인 화면 캡쳐해서 보여줘'))
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe("YEONJANG_CAPABILITY_MATRIX_REQUIRED")
+    expect(invokeYeonjangMethod).not.toHaveBeenCalled()
+  })
+
+  it("stops screen capture before execution when base64 output is unsupported", async () => {
+    getYeonjangCapabilities.mockResolvedValueOnce({
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["file"] },
+      },
+    })
+
+    const result = await screenCaptureTool.execute({}, createContext('메인 화면 캡쳐해서 보여줘'))
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe("YEONJANG_OUTPUT_MODE_UNSUPPORTED")
+    expect(invokeYeonjangMethod).not.toHaveBeenCalled()
   })
 
   it("fails mouse move when Yeonjang mouse.move is unavailable", async () => {

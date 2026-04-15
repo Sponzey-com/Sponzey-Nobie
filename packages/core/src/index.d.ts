@@ -1,6 +1,7 @@
 export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/index.js";
 export { generateAuthToken } from "./config/auth.js";
-export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, OrchestrationConfig, McpConfig, McpServerConfig, } from "./config/index.js";
+export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
+export type { BackupInventoryTarget, BackupSnapshotFile, BackupSnapshotManifest, BackupSnapshotOptions, BackupTargetInventory, BackupTargetKind, BackupTargetReason, MigrationPreflightCheck, MigrationPreflightCheckName, MigrationPreflightOptions, MigrationPreflightReport, MigrationPreflightRisk, MigrationRollbackRunbook, NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, OrchestrationConfig, McpConfig, McpServerConfig, RestoreRehearsalCheck, RestoreRehearsalCheckName, RestoreRehearsalOptions, RestoreRehearsalReport, SnapshotVerificationResult, } from "./config/index.js";
 export { createLogger, logger } from "./logger/index.js";
 export type { Logger } from "./logger/index.js";
 export { eventBus } from "./events/index.js";
@@ -44,6 +45,8 @@ export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus
 export type { RunCompletionOutcome, RunCompletionOutcomeInput, RunCompletionOutcomeStatus, RunFlowIdentifiers, RunFlowStatusTransitionDecision } from "./runs/flow-contract.js";
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js";
 export type { StartupRecoveryClassification, StartupRecoveryRunSummary, StartupRecoveryScheduleSummary, StartupRecoveryStatus, StartupRecoverySummary } from "./runs/startup-recovery.js";
+export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildRetentionCleanupPlan, buildRetryFailureFingerprint, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
+export type { RepeatedFailureStopDecision, RetentionCleanupApplyOptions, RetentionCleanupCandidate, RetentionCleanupFailure, RetentionCleanupKindSummary, RetentionCleanupOptions, RetentionCleanupPlan, RetentionCleanupReason, RetentionCleanupResult, RetentionDataKind, RetentionItem, RetentionKindPolicy, RetentionPolicy, RetryBackoffDecision, RetryBackoffInput, RetryFailureDomain, RetryFailureFingerprintInput, RetryPolicy, SoakChannelHealth, SoakHealthInput, SoakHealthStatus, SoakHealthSummary, SoakHealthThresholds, SoakLatencyStats, SoakOperationContext, SoakOperationExecution, SoakOperationKind, SoakOperationResult, SoakOperationWeight, SoakProfile, SoakProfileId, SoakReportPayload, SoakResourceMetrics, SoakRunSummary, SoakRunnerOptions, } from "./runs/soak-retention.js";
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
 export { startServer, closeServer } from "./api/server.js";
 export declare function bootstrap(): void;

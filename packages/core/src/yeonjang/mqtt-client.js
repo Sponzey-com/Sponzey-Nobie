@@ -44,14 +44,47 @@ export async function getYeonjangCapabilities(options = {}) {
 export async function canYeonjangHandleMethod(method, options = {}) {
     try {
         const capabilities = await getYeonjangCapabilities(options);
-        const entry = capabilities.methods?.find((candidate) => candidate.name === method);
-        return Boolean(entry?.implemented);
+        return doesYeonjangCapabilitySupportMethod(capabilities, method);
     }
     catch (error) {
         if (isYeonjangUnavailableError(error))
             return false;
         throw error;
     }
+}
+export function resolveYeonjangMethodCapability(capabilities, method) {
+    const matrix = capabilities.capabilityMatrix ?? capabilities.capability_matrix;
+    const matrixEntry = matrix?.[method];
+    if (matrixEntry)
+        return matrixEntry;
+    return capabilities.methods?.find((candidate) => candidate.name === method) ?? null;
+}
+export function doesYeonjangCapabilitySupportMethod(capabilities, method) {
+    const entry = resolveYeonjangMethodCapability(capabilities, method);
+    if (!entry)
+        return false;
+    if ("supported" in entry && typeof entry.supported === "boolean")
+        return entry.supported;
+    if ("implemented" in entry && typeof entry.implemented === "boolean")
+        return entry.implemented;
+    return false;
+}
+export function hasYeonjangCapabilityMatrix(capabilities) {
+    return Boolean(capabilities.capabilityMatrix ?? capabilities.capability_matrix);
+}
+export function resolveYeonjangCapabilityOutputModes(capabilities, method) {
+    const entry = resolveYeonjangMethodCapability(capabilities, method);
+    if (!entry || !Array.isArray(entry.outputModes))
+        return null;
+    return entry.outputModes
+        .map((mode) => mode.trim().toLowerCase())
+        .filter(Boolean);
+}
+export function doesYeonjangCapabilitySupportOutputMode(capabilities, method, outputMode) {
+    const modes = resolveYeonjangCapabilityOutputModes(capabilities, method);
+    if (!modes)
+        return null;
+    return modes.includes(outputMode.trim().toLowerCase());
 }
 export function isYeonjangUnavailableError(error) {
     const message = error instanceof Error ? error.message : String(error);

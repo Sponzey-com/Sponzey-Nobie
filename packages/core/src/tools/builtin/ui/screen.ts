@@ -7,7 +7,16 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import type { AgentTool, ArtifactDeliveryResultDetails, ToolResult } from "../../types.js"
-import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
+import {
+  DEFAULT_YEONJANG_EXTENSION_ID,
+  doesYeonjangCapabilitySupportMethod,
+  doesYeonjangCapabilitySupportOutputMode,
+  getYeonjangCapabilities,
+  hasYeonjangCapabilityMatrix,
+  invokeYeonjangMethod,
+  isYeonjangUnavailableError,
+  type YeonjangClientOptions,
+} from "../../../yeonjang/mqtt-client.js"
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
 import { PATHS } from "../../../config/index.js"
 
@@ -73,6 +82,75 @@ function yeonjangRequiredFailure(method: string): ToolResult {
       requiredExecutor: "yeonjang",
       requiredMethod: method,
     },
+  }
+}
+
+function yeonjangCapabilityMatrixRequiredFailure(method: string): ToolResult {
+  return {
+    success: false,
+    output: [
+      `현재 연결된 Yeonjang이 \`${method}\` capability matrix를 제공하지 않는 오래된 버전입니다.`,
+      "화면 캡처는 지원 여부와 결과 전달 형식(base64/file)을 확인한 뒤 실행해야 하므로, 최신 Yeonjang으로 재빌드하고 재시작해 주세요.",
+    ].join("\n"),
+    error: "YEONJANG_CAPABILITY_MATRIX_REQUIRED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+      requiredCapabilityMatrix: true,
+    },
+  }
+}
+
+function yeonjangOutputModeFailure(method: string, outputMode: string): ToolResult {
+  return {
+    success: false,
+    output: [
+      `현재 연결된 Yeonjang이 \`${method}\` 결과를 \`${outputMode}\` 형식으로 반환할 수 없다고 보고했습니다.`,
+      "요청한 결과물을 안전하게 전달할 수 없으므로 다른 출력 형식으로 임의 실행하지 않고 중단합니다.",
+    ].join("\n"),
+    error: "YEONJANG_OUTPUT_MODE_UNSUPPORTED",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+      requiredOutputMode: outputMode,
+    },
+  }
+}
+
+function yeonjangOutputModeUnknownFailure(method: string, outputMode: string): ToolResult {
+  return {
+    success: false,
+    output: [
+      `현재 연결된 Yeonjang이 \`${method}\`의 \`${outputMode}\` 결과 반환 가능 여부를 보고하지 않았습니다.`,
+      "결과물이 필요한 요청이므로 출력 형식이 확인될 때까지 실행하지 않습니다. 최신 Yeonjang으로 재빌드하고 재시작해 주세요.",
+    ].join("\n"),
+    error: "YEONJANG_OUTPUT_MODE_UNKNOWN",
+    details: {
+      requiredExecutor: "yeonjang",
+      requiredMethod: method,
+      requiredOutputMode: outputMode,
+    },
+  }
+}
+
+async function preflightYeonjangScreenCapture(options: YeonjangClientOptions): Promise<ToolResult | null> {
+  const method = "screen.capture"
+  try {
+    const capabilities = await getYeonjangCapabilities(options)
+    if (!doesYeonjangCapabilitySupportMethod(capabilities, method)) {
+      return yeonjangRequiredFailure(method)
+    }
+    if (!hasYeonjangCapabilityMatrix(capabilities)) {
+      return yeonjangCapabilityMatrixRequiredFailure(method)
+    }
+
+    const base64Support = doesYeonjangCapabilitySupportOutputMode(capabilities, method, "base64")
+    if (base64Support === false) return yeonjangOutputModeFailure(method, "base64")
+    if (base64Support === null) return yeonjangOutputModeUnknownFailure(method, "base64")
+    return null
+  } catch (error) {
+    if (isYeonjangUnavailableError(error)) return yeonjangRequiredFailure(method)
+    throw error
   }
 }
 
@@ -211,7 +289,11 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
     })
     const display = resolveRequestedDisplay(params.display, ctx.userMessage)
     try {
-      if (await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
+      const yeonjangOptions = extensionId ? { extensionId } : {}
+      const preflightFailure = await preflightYeonjangScreenCapture(yeonjangOptions)
+      if (preflightFailure) return preflightFailure
+
+      {
         const { base64, remote } = await captureScreenViaYeonjang({
           ...(extensionId ? { extensionId } : {}),
           ...(display !== undefined ? { display } : {}),
@@ -283,15 +365,14 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
   },
   riskLevel: "safe",
   requiresApproval: false,
-  execute: async (params: ScreenFindTextParams): Promise<ToolResult> => {
+  execute: async (params: ScreenFindTextParams, ctx): Promise<ToolResult> => {
     const extensionId = resolvePreferredYeonjangExtensionId({
       requestedExtensionId: params.extensionId,
-      userMessage: params.text,
+      userMessage: ctx.userMessage || params.text,
     })
     try {
-      if (!await canYeonjangHandleMethod("screen.capture", extensionId ? { extensionId } : {})) {
-        return yeonjangRequiredFailure("screen.capture")
-      }
+      const preflightFailure = await preflightYeonjangScreenCapture(extensionId ? { extensionId } : {})
+      if (preflightFailure) return preflightFailure
       const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`)
       const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`)
 

@@ -332,6 +332,9 @@ export class ToolDispatcher {
             insertAuditLog({
                 timestamp: Date.now(),
                 session_id: ctx.sessionId,
+                run_id: ctx.runId,
+                request_group_id: ctx.requestGroupId ?? getRootRun(ctx.runId)?.requestGroupId ?? ctx.runId,
+                channel: ctx.source,
                 source: "agent",
                 tool_name: toolName,
                 params: JSON.stringify(params),
@@ -340,6 +343,9 @@ export class ToolDispatcher {
                 duration_ms: durationMs,
                 approval_required: approvalRequired ? 1 : 0,
                 approved_by: approvedBy ?? null,
+                error_code: result.error ?? null,
+                retry_count: 0,
+                stop_reason: result.error === "denied" ? "user_denied" : null,
             });
         }
         catch {

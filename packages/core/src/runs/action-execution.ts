@@ -1,6 +1,8 @@
 import crypto from "node:crypto"
-import { getSchedule, insertSchedule, updateSchedule, upsertScheduleMemoryEntry } from "../db/index.js"
+import { getSchedule, insertAuditLog, insertSchedule, updateSchedule, upsertScheduleMemoryEntry } from "../db/index.js"
 import { getConfig } from "../config/index.js"
+import { CONTRACT_SCHEMA_VERSION, type ScheduleContract } from "../contracts/index.js"
+import { findScheduleCandidatesByContract } from "../schedules/candidates.js"
 import { storeMemorySync } from "../memory/store.js"
 import type {
   TaskExecutionSemantics,
@@ -115,6 +117,11 @@ export interface ScheduleActionDependencies {
     targetSessionId?: string
     driver: ScheduleExecutionDriver
     reason?: string | undefined
+    duplicate?: {
+      scheduleId: string
+      title: string
+      decisionSource: "contract_key"
+    }
   }
   cancelSchedules: (scheduleIds: string[]) => string[]
 }
@@ -125,6 +132,55 @@ function defaultScheduleActionReceipts(): ScheduleActionReceipt[] {
 
 function describeDefaultScheduleDestination(source: ScheduleActionExecutionParams["source"]): string {
   return source === "telegram" || source === "slack" ? `${source} current session` : `${source} current session`
+}
+
+function buildRecurringScheduleContract(params: {
+  title: string
+  task: string
+  cron: string
+  timezone: string
+  source: "webui" | "cli" | "telegram" | "slack"
+  targetSessionId?: string | undefined
+  originRunId: string
+  originRequestGroupId: string
+}): ScheduleContract {
+  const targetChannel = params.source === "telegram"
+    ? "telegram"
+    : params.source === "slack"
+      ? "slack"
+      : "agent"
+  const literalText = extractDirectChannelDeliveryText(params.task)
+  return {
+    schemaVersion: CONTRACT_SCHEMA_VERSION,
+    kind: "recurring",
+    time: {
+      cron: params.cron,
+      timezone: params.timezone,
+      missedPolicy: "next_only",
+    },
+    payload: literalText
+      ? {
+          kind: "literal_message",
+          literalText,
+        }
+      : {
+          kind: "agent_task",
+          taskContract: null,
+        },
+    delivery: {
+      schemaVersion: CONTRACT_SCHEMA_VERSION,
+      mode: "channel_message",
+      channel: targetChannel,
+      sessionId: params.targetSessionId ?? null,
+      threadId: null,
+    },
+    source: {
+      originRunId: params.originRunId,
+      originRequestGroupId: params.originRequestGroupId,
+    },
+    displayName: params.title,
+    rawText: params.task,
+  }
 }
 
 export function createDefaultScheduleActionDependencies(
@@ -138,6 +194,55 @@ export function createDefaultScheduleActionDependencies(
       const targetSessionId = params.source === "telegram" || params.source === "slack" ? params.sessionId : undefined
       const config = getConfig()
       const timezone = normalizeScheduleTimezone(params.timezone, config.scheduler.timezone || config.profile.timezone)
+      const contract = buildRecurringScheduleContract({
+        title: params.title,
+        task: params.task,
+        cron: params.cron,
+        timezone,
+        source: params.source,
+        ...(targetSessionId ? { targetSessionId } : {}),
+        originRunId: params.originRunId,
+        originRequestGroupId: params.originRequestGroupId,
+      })
+      const [duplicateCandidate] = findScheduleCandidatesByContract({
+        contract,
+        ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+        limit: 1,
+      }).filter((candidate) => candidate.candidateReason === "identity_key" && !candidate.requiresComparison)
+
+      if (duplicateCandidate) {
+        insertAuditLog({
+          timestamp: now,
+          session_id: targetSessionId ?? null,
+          run_id: params.originRunId,
+          request_group_id: params.originRequestGroupId,
+          channel: params.source,
+          source: "scheduler",
+          tool_name: "schedule_duplicate_decision",
+          params: JSON.stringify({
+            incomingIdentityKey: duplicateCandidate.matchedKeys[0] ?? null,
+            duplicateScheduleId: duplicateCandidate.schedule.id,
+            decisionSource: "contract_key",
+          }),
+          output: null,
+          result: "success",
+          duration_ms: 0,
+          approval_required: 0,
+          approved_by: null,
+        })
+        return {
+          scheduleId: duplicateCandidate.schedule.id,
+          ...(targetSessionId ? { targetSessionId } : {}),
+          driver: "internal",
+          reason: "duplicate_contract_key",
+          duplicate: {
+            scheduleId: duplicateCandidate.schedule.id,
+            title: duplicateCandidate.schedule.name,
+            decisionSource: "contract_key",
+          },
+        }
+      }
+
       insertSchedule({
         id: scheduleId,
         name: params.title,
@@ -153,6 +258,7 @@ export function createDefaultScheduleActionDependencies(
         model: params.model ?? null,
         max_retries: 3,
         timeout_sec: 300,
+        contract,
         created_at: now,
         updated_at: now,
       })
@@ -327,6 +433,8 @@ function executeScheduleAction(
   receipt: string,
   dependencies: ScheduleActionDependencies,
 ): ScheduleActionExecutionResult {
+  // nobie-critical-decision-audit: action-execution.structured_schedule_action
+  // This dispatch uses structured intake action types, not raw user-language string comparison.
   if (!action || action.type === "create_schedule") {
     return executeCreateScheduleAction(action, intake, params, receipt, dependencies)
   }
@@ -481,6 +589,25 @@ function executeCreateScheduleAction(
     model: params.model,
   })
   const scheduleText = actionScheduleText || cron
+
+  if (executionSync.duplicate) {
+    const message = [
+      receipt ? `${receipt}\n` : "",
+      "같은 구조의 예약이 이미 있습니다.",
+      `- 기존 예약: ${executionSync.duplicate.title}`,
+      `- 예약 ID: ${executionSync.duplicate.scheduleId}`,
+      "원하는 처리를 선택해 주세요: 기존 예약 유지, 기존 예약 수정, 또는 새 예약으로 추가",
+    ].filter(Boolean).join("\n")
+    return {
+      ok: true,
+      message,
+      detail: `duplicate schedule candidate ${executionSync.duplicate.scheduleId} by ${executionSync.duplicate.decisionSource}`,
+      successCount: 0,
+      failureCount: 0,
+      receipts: [],
+    }
+  }
+
   const driverLabel = executionSync.reason
     ? `내부 scheduler (${executionSync.reason})`
     : executionSync.driver === "internal"

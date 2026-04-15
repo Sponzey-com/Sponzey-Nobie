@@ -100,6 +100,8 @@ export function decideCompletionApplication(params: {
   }
 
   if (decision.kind === "followup") {
+    // nobie-critical-decision-audit: completion.followup_prompt_dedupe
+    // Temporary guard only. Task 006/008 replaces raw prompt dedupe with contract/receipt based loop protection.
     const normalizedPrompt = decision.followupPrompt.replace(/\s+/g, " ").trim().toLowerCase()
     if (normalizedPrompt && params.followupAlreadySeen) {
       return {

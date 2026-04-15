@@ -143,6 +143,13 @@ function sanitizeUserFacingErrorCore(message: string | undefined): SanitizedErro
       reason: "인증 또는 접근 차단 문제 때문에 모델 호출이 실패했습니다.",
     }
   }
+  if (/(chatgpt|codex|oauth).*(auth\.json|인증 파일|access token|refresh token|토큰 갱신|codex login|login)|(auth\.json|access token|refresh token|토큰 갱신|codex login|login).*(chatgpt|codex|oauth)/i.test(normalized)) {
+    return {
+      kind: "auth",
+      userMessage: "ChatGPT OAuth 인증 정보가 없거나 갱신이 필요합니다.",
+      reason: "ChatGPT OAuth 인증 파일 또는 토큰 상태 때문에 모델 호출이 실패했습니다.",
+    }
+  }
   if (/(\b429\b|rate limit|too many requests)/i.test(normalized)) {
     return {
       kind: "rate_limit",

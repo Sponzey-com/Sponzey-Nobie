@@ -174,9 +174,8 @@ class Scheduler {
     }
     async _execute(params) {
         const { schedule, scheduleRunId } = params;
-        const directTelegramMessage = schedule.target_channel === "telegram"
-            ? extractDirectChannelDeliveryText(schedule.prompt)
-            : null;
+        const directDeliveryMessage = extractDirectChannelDeliveryText(schedule.prompt);
+        const directTelegramMessage = schedule.target_channel === "telegram" ? directDeliveryMessage : null;
         if (directTelegramMessage) {
             if (!schedule.target_session_id) {
                 return {
@@ -218,6 +217,14 @@ class Scheduler {
                     error: err instanceof Error ? err.message : String(err),
                 };
             }
+        }
+        if (directDeliveryMessage && schedule.target_channel === "agent") {
+            log.info(`Schedule "${schedule.name}" resolved as direct agent notification; skipping AI execution`);
+            return {
+                success: true,
+                summary: directDeliveryMessage.slice(0, 2000) || null,
+                error: null,
+            };
         }
         const chunks = [];
         let success = false;

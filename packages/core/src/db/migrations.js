@@ -777,6 +777,118 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 21,
+        up(db) {
+            const auditColumns = db.prepare(`PRAGMA table_info(audit_logs)`).all();
+            if (!auditColumns.some((column) => column.name === "run_id")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN run_id TEXT`);
+            }
+            if (!auditColumns.some((column) => column.name === "request_group_id")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN request_group_id TEXT`);
+            }
+            if (!auditColumns.some((column) => column.name === "channel")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN channel TEXT`);
+            }
+            if (!auditColumns.some((column) => column.name === "error_code")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN error_code TEXT`);
+            }
+            if (!auditColumns.some((column) => column.name === "retry_count")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN retry_count INTEGER`);
+            }
+            if (!auditColumns.some((column) => column.name === "stop_reason")) {
+                db.exec(`ALTER TABLE audit_logs ADD COLUMN stop_reason TEXT`);
+            }
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_audit_run
+          ON audit_logs(run_id, timestamp DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_request_group
+          ON audit_logs(request_group_id, timestamp DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_channel
+          ON audit_logs(channel, timestamp DESC);
+      `);
+        },
+    },
+    {
+        version: 22,
+        up(db) {
+            const scheduleColumns = db.prepare(`PRAGMA table_info(schedules)`).all();
+            const hasColumn = (name) => scheduleColumns.some((column) => column.name === name);
+            if (!hasColumn("contract_json")) {
+                db.exec(`ALTER TABLE schedules ADD COLUMN contract_json TEXT`);
+            }
+            if (!hasColumn("identity_key")) {
+                db.exec(`ALTER TABLE schedules ADD COLUMN identity_key TEXT`);
+            }
+            if (!hasColumn("payload_hash")) {
+                db.exec(`ALTER TABLE schedules ADD COLUMN payload_hash TEXT`);
+            }
+            if (!hasColumn("delivery_key")) {
+                db.exec(`ALTER TABLE schedules ADD COLUMN delivery_key TEXT`);
+            }
+            if (!hasColumn("contract_schema_version")) {
+                db.exec(`ALTER TABLE schedules ADD COLUMN contract_schema_version INTEGER`);
+            }
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_schedules_identity_key
+          ON schedules(identity_key);
+
+        CREATE INDEX IF NOT EXISTS idx_schedules_payload_hash
+          ON schedules(payload_hash);
+
+        CREATE INDEX IF NOT EXISTS idx_schedules_delivery_key
+          ON schedules(delivery_key);
+      `);
+        },
+    },
+    {
+        version: 23,
+        up(db) {
+            const scheduleRunsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schedule_runs'").get();
+            if (scheduleRunsTable) {
+                const scheduleRunColumns = db.prepare(`PRAGMA table_info(schedule_runs)`).all();
+                const hasRunColumn = (name) => scheduleRunColumns.some((column) => column.name === name);
+                if (!hasRunColumn("execution_success")) {
+                    db.exec(`ALTER TABLE schedule_runs ADD COLUMN execution_success INTEGER`);
+                }
+                if (!hasRunColumn("delivery_success")) {
+                    db.exec(`ALTER TABLE schedule_runs ADD COLUMN delivery_success INTEGER`);
+                }
+                if (!hasRunColumn("delivery_dedupe_key")) {
+                    db.exec(`ALTER TABLE schedule_runs ADD COLUMN delivery_dedupe_key TEXT`);
+                }
+                if (!hasRunColumn("delivery_error")) {
+                    db.exec(`ALTER TABLE schedule_runs ADD COLUMN delivery_error TEXT`);
+                }
+            }
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS schedule_delivery_receipts (
+          dedupe_key TEXT PRIMARY KEY,
+          schedule_id TEXT NOT NULL,
+          schedule_run_id TEXT NOT NULL,
+          due_at TEXT NOT NULL,
+          target_channel TEXT NOT NULL,
+          target_session_id TEXT,
+          payload_hash TEXT NOT NULL,
+          delivery_status TEXT NOT NULL CHECK(delivery_status IN ('delivered', 'failed', 'skipped')),
+          summary TEXT,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+          FOREIGN KEY (schedule_run_id) REFERENCES schedule_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_schedule_delivery_receipts_schedule_due
+          ON schedule_delivery_receipts(schedule_id, due_at);
+
+        CREATE INDEX IF NOT EXISTS idx_schedule_delivery_receipts_run
+          ON schedule_delivery_receipts(schedule_run_id);
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
     return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get());

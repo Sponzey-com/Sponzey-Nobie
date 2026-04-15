@@ -825,10 +825,9 @@ export function createCapabilities() {
             key: "audit.viewer",
             label: "Audit Viewer",
             area: "gateway",
-            status: "disabled",
+            status: "ready",
             implemented: true,
-            enabled: false,
-            reason: "기존 감사 로그 API는 있으나 run-centric 제어면과의 통합은 아직 정리 중입니다.",
+            enabled: true,
         },
         {
             key: "ai.overrides",

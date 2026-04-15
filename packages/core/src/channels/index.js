@@ -6,6 +6,7 @@ import { TelegramChannel } from "./telegram/bot.js";
 import { getActiveTelegramChannel, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "./telegram/runtime.js";
 export { TelegramChannel } from "./telegram/bot.js";
 export { SlackChannel } from "./slack/bot.js";
+export { getDefaultChannelSmokeScenarios, resolveChannelSmokeReadiness, runChannelSmokeScenarios, validateChannelSmokeTrace, } from "./smoke-runner.js";
 const log = createLogger("channels");
 export async function startChannels() {
     const config = getConfig();

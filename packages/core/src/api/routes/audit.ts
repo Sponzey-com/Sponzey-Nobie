@@ -1,89 +1,417 @@
 import type { FastifyInstance } from "fastify"
 import { getDb } from "../../db/index.js"
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import { authMiddleware } from "../middleware/auth.js"
 
-const SENSITIVE_KEYS = /api[_-]?key|token|password|secret|credential/i
+const SENSITIVE_KEYS = /api[_-]?key|authorization|auth|bearer|cookie|credential|password|refresh[_-]?token|secret|token/i
+const TEXT_SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
+  [/(api[_-]?key|authorization|password|refresh[_-]?token|secret|token)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2***"],
+  [/([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})/g, "***.***.***"],
+]
 
-function maskParams(raw: string | null): string {
-  if (!raw) return "{}"
+type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery"
+
+interface AuditQuery {
+  page?: string
+  limit?: string
+  toolName?: string
+  result?: string
+  status?: string
+  kind?: string
+  channel?: string
+  runId?: string
+  requestGroupId?: string
+  sessionId?: string
+  from?: string
+  to?: string
+  q?: string
+}
+
+interface AuditEventRow {
+  id: string
+  at: number
+  kind: AuditEventKind
+  status: string
+  summary: string
+  source: string | null
+  session_id: string | null
+  run_id: string | null
+  request_group_id: string | null
+  channel: string | null
+  tool_name: string | null
+  params: string | null
+  output: string | null
+  duration_ms: number | null
+  approval_required: number | null
+  approved_by: string | null
+  error_code: string | null
+  retry_count: number | null
+  stop_reason: string | null
+  detail_json: string | null
+}
+
+interface AuditEvent {
+  id: string
+  at: number
+  kind: AuditEventKind
+  status: string
+  summary: string
+  source: string | null
+  sessionId: string | null
+  runId: string | null
+  requestGroupId: string | null
+  channel: string | null
+  toolName: string | null
+  params: unknown
+  output: string | null
+  durationMs: number | null
+  approvalRequired: boolean
+  approvedBy: string | null
+  errorCode: string | null
+  retryCount: number | null
+  stopReason: string | null
+  detail: unknown
+}
+
+const AUDIT_EVENTS_CTE = `
+WITH audit_events AS (
+  SELECT
+    id,
+    timestamp AS at,
+    'tool_call' AS kind,
+    result AS status,
+    tool_name || ' ' || result AS summary,
+    source,
+    session_id,
+    run_id,
+    request_group_id,
+    COALESCE(channel, source) AS channel,
+    tool_name,
+    params,
+    output,
+    duration_ms,
+    approval_required,
+    approved_by,
+    error_code,
+    retry_count,
+    stop_reason,
+    NULL AS detail_json
+  FROM audit_logs
+
+  UNION ALL
+
+  SELECT
+    id,
+    created_at AS at,
+    'diagnostic' AS kind,
+    CASE
+      WHEN lower(kind) LIKE '%fail%' OR lower(summary) LIKE '%fail%' OR summary LIKE '%실패%' THEN 'failed'
+      WHEN lower(kind) LIKE '%blocked%' OR summary LIKE '%차단%' THEN 'blocked'
+      ELSE 'info'
+    END AS status,
+    summary,
+    'system' AS source,
+    session_id,
+    run_id,
+    request_group_id,
+    NULL AS channel,
+    kind AS tool_name,
+    NULL AS params,
+    NULL AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    kind AS error_code,
+    NULL AS retry_count,
+    recovery_key AS stop_reason,
+    detail_json
+  FROM diagnostic_events
+
+  UNION ALL
+
+  SELECT
+    e.id,
+    e.at,
+    'run_event' AS kind,
+    'info' AS status,
+    e.label AS summary,
+    r.source,
+    r.session_id,
+    e.run_id,
+    r.request_group_id,
+    r.source AS channel,
+    NULL AS tool_name,
+    NULL AS params,
+    NULL AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    NULL AS error_code,
+    NULL AS retry_count,
+    NULL AS stop_reason,
+    NULL AS detail_json
+  FROM run_events e
+  LEFT JOIN root_runs r ON r.id = e.run_id
+
+  UNION ALL
+
+  SELECT
+    id,
+    created_at AS at,
+    'artifact' AS kind,
+    CASE WHEN deleted_at IS NULL THEN 'info' ELSE 'deleted' END AS status,
+    artifact_path AS summary,
+    owner_channel AS source,
+    NULL AS session_id,
+    source_run_id AS run_id,
+    request_group_id,
+    owner_channel AS channel,
+    'artifact' AS tool_name,
+    NULL AS params,
+    NULL AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    mime_type AS error_code,
+    NULL AS retry_count,
+    retention_policy AS stop_reason,
+    metadata_json AS detail_json
+  FROM artifacts
+
+  UNION ALL
+
+  SELECT
+    id,
+    COALESCE(delivered_at, created_at) AS at,
+    'delivery' AS kind,
+    CASE WHEN delivered_at IS NULL THEN 'pending' ELSE 'success' END AS status,
+    artifact_path AS summary,
+    channel AS source,
+    NULL AS session_id,
+    run_id,
+    request_group_id,
+    channel,
+    'artifact_delivery' AS tool_name,
+    NULL AS params,
+    delivery_receipt_json AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    mime_type AS error_code,
+    NULL AS retry_count,
+    NULL AS stop_reason,
+    json_object('mimeType', mime_type, 'sizeBytes', size_bytes) AS detail_json
+  FROM artifact_receipts
+)
+`
+
+function parsePositiveInt(value: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(value ?? "", 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(parsed, max)
+}
+
+function parseTime(value: string | undefined): number | null {
+  if (!value) return null
+  const numeric = Number(value)
+  if (Number.isFinite(numeric) && numeric > 0) return numeric
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function redactDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactDeep)
+  if (!value || typeof value !== "object") return typeof value === "string" ? sanitizeText(value) : value
+
+  const result: Record<string, unknown> = {}
+  for (const [key, nested] of Object.entries(value)) {
+    result[key] = SENSITIVE_KEYS.test(key) ? "***" : redactDeep(nested)
+  }
+  return result
+}
+
+function sanitizeText(raw: string | null): string | null {
+  if (raw == null) return null
+  let value = raw
+  for (const [pattern, replacement] of TEXT_SECRET_PATTERNS) {
+    value = value.replace(pattern, replacement)
+  }
+
+  if (/(<!doctype\s+html|<html\b|<head\b|<body\b|<script\b)/i.test(value)) {
+    value = sanitizeUserFacingError(value).userMessage
+  }
+
+  return value.length > 4000 ? `${value.slice(0, 3990)}…` : value
+}
+
+function parseAndRedactJson(raw: string | null): unknown {
+  if (!raw) return null
   try {
-    const obj = JSON.parse(raw) as Record<string, unknown>
-    for (const key of Object.keys(obj)) {
-      if (SENSITIVE_KEYS.test(key)) obj[key] = "***"
-    }
-    return JSON.stringify(obj)
+    return redactDeep(JSON.parse(raw))
   } catch {
-    return raw
+    return sanitizeText(raw)
   }
 }
 
+function mapEvent(row: AuditEventRow): AuditEvent {
+  return {
+    id: row.id,
+    at: row.at,
+    kind: row.kind,
+    status: row.status,
+    summary: sanitizeText(row.summary) ?? "",
+    source: row.source,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    requestGroupId: row.request_group_id,
+    channel: row.channel,
+    toolName: row.tool_name,
+    params: parseAndRedactJson(row.params),
+    output: sanitizeText(row.output),
+    durationMs: row.duration_ms,
+    approvalRequired: Boolean(row.approval_required),
+    approvedBy: row.approved_by,
+    errorCode: sanitizeText(row.error_code),
+    retryCount: row.retry_count,
+    stopReason: sanitizeText(row.stop_reason),
+    detail: parseAndRedactJson(row.detail_json),
+  }
+}
+
+function buildWhere(query: AuditQuery): { where: string; bindings: unknown[] } {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  const status = query.status ?? query.result
+
+  if (query.kind) {
+    conditions.push("kind = ?")
+    bindings.push(query.kind)
+  }
+  if (status) {
+    conditions.push("status = ?")
+    bindings.push(status)
+  }
+  if (query.toolName) {
+    conditions.push("tool_name LIKE ?")
+    bindings.push(`%${query.toolName}%`)
+  }
+  if (query.channel) {
+    conditions.push("channel = ?")
+    bindings.push(query.channel)
+  }
+  if (query.runId) {
+    conditions.push("run_id = ?")
+    bindings.push(query.runId)
+  }
+  if (query.requestGroupId) {
+    conditions.push("request_group_id = ?")
+    bindings.push(query.requestGroupId)
+  }
+  if (query.sessionId) {
+    conditions.push("session_id = ?")
+    bindings.push(query.sessionId)
+  }
+
+  const from = parseTime(query.from)
+  if (from != null) {
+    conditions.push("at >= ?")
+    bindings.push(from)
+  }
+  const to = parseTime(query.to)
+  if (to != null) {
+    conditions.push("at <= ?")
+    bindings.push(to)
+  }
+  if (query.q?.trim()) {
+    const needle = `%${query.q.trim()}%`
+    conditions.push("(summary LIKE ? OR tool_name LIKE ? OR error_code LIKE ? OR stop_reason LIKE ? OR detail_json LIKE ?)")
+    bindings.push(needle, needle, needle, needle, needle)
+  }
+
+  return {
+    where: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+    bindings,
+  }
+}
+
+export function listAuditEvents(query: AuditQuery): { items: AuditEvent[]; total: number; page: number; pages: number; limit: number } {
+  const limit = parsePositiveInt(query.limit, 50, 500)
+  const page = parsePositiveInt(query.page, 1, 100000)
+  const offset = (page - 1) * limit
+  const { where, bindings } = buildWhere(query)
+  const db = getDb()
+
+  const total = db.prepare(`${AUDIT_EVENTS_CTE} SELECT COUNT(*) AS n FROM audit_events ${where}`).get(...bindings) as { n: number }
+  const rows = db
+    .prepare(`${AUDIT_EVENTS_CTE} SELECT * FROM audit_events ${where} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`)
+    .all(...bindings, limit, offset) as AuditEventRow[]
+
+  return {
+    items: rows.map(mapEvent),
+    total: total.n,
+    page,
+    pages: Math.max(1, Math.ceil(total.n / limit)),
+    limit,
+  }
+}
+
+function resolveRunTimelineQuery(runId: string, limit: string | undefined): AuditQuery {
+  const run = getDb()
+    .prepare<[string], { request_group_id: string | null }>("SELECT request_group_id FROM root_runs WHERE id = ?")
+    .get(runId)
+  return run?.request_group_id && run.request_group_id !== runId
+    ? { requestGroupId: run.request_group_id, limit: limit ?? "500" }
+    : { runId, limit: limit ?? "500" }
+}
+
+function renderMarkdown(events: AuditEvent[]): string {
+  const lines = ["# Audit Timeline", ""]
+  for (const event of events) {
+    lines.push(`- ${new Date(event.at).toISOString()} [${event.kind}/${event.status}] ${event.summary}`)
+    const meta = [
+      event.runId ? `run=${event.runId}` : null,
+      event.requestGroupId ? `group=${event.requestGroupId}` : null,
+      event.channel ? `channel=${event.channel}` : null,
+      event.toolName ? `tool=${event.toolName}` : null,
+      event.errorCode ? `code=${event.errorCode}` : null,
+      event.stopReason ? `reason=${event.stopReason}` : null,
+    ].filter(Boolean)
+    if (meta.length > 0) lines.push(`  - ${meta.join(" | ")}`)
+  }
+  return `${lines.join("\n")}\n`
+}
+
 export function registerAuditRoute(app: FastifyInstance): void {
-  app.get<{
-    Querystring: {
-      page?: string
-      limit?: string
-      toolName?: string
-      result?: string
-      from?: string
-      to?: string
-      sessionId?: string
-    }
-  }>("/api/audit", { preHandler: authMiddleware }, async (req) => {
-    const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200)
-    const page = Math.max(parseInt(req.query.page ?? "1", 10), 1)
-    const offset = (page - 1) * limit
+  app.get<{ Querystring: AuditQuery }>("/api/audit", { preHandler: authMiddleware }, async (req) => listAuditEvents(req.query))
 
-    const conditions: string[] = []
-    const bindings: unknown[] = []
+  app.get<{ Params: { runId: string }; Querystring: { limit?: string } }>(
+    "/api/audit/runs/:runId/timeline",
+    { preHandler: authMiddleware },
+    async (req) => listAuditEvents(resolveRunTimelineQuery(req.params.runId, req.query.limit)),
+  )
 
-    if (req.query.toolName) {
-      conditions.push("tool_name LIKE ?")
-      bindings.push(`%${req.query.toolName}%`)
-    }
-    if (req.query.result) {
-      conditions.push("result = ?")
-      bindings.push(req.query.result)
-    }
-    if (req.query.sessionId) {
-      conditions.push("session_id = ?")
-      bindings.push(req.query.sessionId)
-    }
-    if (req.query.from) {
-      conditions.push("timestamp >= ?")
-      bindings.push(new Date(req.query.from).getTime())
-    }
-    if (req.query.to) {
-      conditions.push("timestamp <= ?")
-      bindings.push(new Date(req.query.to).getTime())
-    }
+  app.get<{ Params: { runId: string }; Querystring: { format?: "json" | "markdown"; limit?: string } }>(
+    "/api/audit/runs/:runId/export",
+    { preHandler: authMiddleware },
+    async (req) => {
+      const events = listAuditEvents(resolveRunTimelineQuery(req.params.runId, req.query.limit)).items
+      const format = req.query.format === "json" ? "json" : "markdown"
+      return {
+        format,
+        content: format === "json" ? JSON.stringify({ runId: req.params.runId, events }, null, 2) : renderMarkdown(events),
+        events,
+      }
+    },
+  )
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+  app.delete<{ Querystring: { before?: string; all?: string } }>("/api/audit", { preHandler: authMiddleware }, async (req) => {
+    const before = req.query.all === "true" ? Date.now() + 1 : parseTime(req.query.before)
+    if (before == null) return { ok: false, deleted: { auditLogs: 0, diagnosticEvents: 0 }, message: "before 또는 all=true가 필요합니다." }
 
-    const total = (
-      getDb().prepare(`SELECT COUNT(*) as n FROM audit_logs ${where}`).get(...bindings) as { n: number }
-    ).n
-
-    const rows = getDb()
-      .prepare(
-        `SELECT timestamp, session_id, tool_name, params, output, result, duration_ms, approval_required, approved_by
-         FROM audit_logs ${where}
-         ORDER BY timestamp DESC
-         LIMIT ? OFFSET ?`,
-      )
-      .all(...bindings, limit, offset) as Array<{
-        timestamp: number
-        session_id: string
-        tool_name: string
-        params: string | null
-        output: string | null
-        result: string
-        duration_ms: number
-        approval_required: number
-        approved_by: string | null
-      }>
-
-    const items = rows.map((r) => ({ ...r, params: maskParams(r.params) }))
-
-    return { items, total, page, pages: Math.ceil(total / limit), limit }
+    const db = getDb()
+    const auditLogs = db.prepare("DELETE FROM audit_logs WHERE timestamp < ?").run(before).changes
+    const diagnosticEvents = db.prepare("DELETE FROM diagnostic_events WHERE created_at < ?").run(before).changes
+    return { ok: true, deleted: { auditLogs, diagnosticEvents }, before }
   })
 }

@@ -1,5 +1,6 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
+import type { ScheduleContract } from "../contracts/index.js";
 export declare function getDb(): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
@@ -31,6 +32,9 @@ export interface DbAuditLog {
     id: string;
     timestamp: number;
     session_id: string | null;
+    run_id: string | null;
+    request_group_id: string | null;
+    channel: string | null;
     source: string;
     tool_name: string;
     params: string | null;
@@ -39,7 +43,11 @@ export interface DbAuditLog {
     duration_ms: number | null;
     approval_required: number;
     approved_by: string | null;
+    error_code: string | null;
+    retry_count: number | null;
+    stop_reason: string | null;
 }
+type DbAuditLogInput = Omit<DbAuditLog, "id" | "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason"> & Partial<Pick<DbAuditLog, "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason">>;
 export interface DbChannelMessageRef {
     id: string;
     source: string;
@@ -132,7 +140,7 @@ export declare function getMessages(sessionId: string): DbMessage[];
 export declare function getMessagesForRequestGroup(sessionId: string, requestGroupId: string): DbMessage[];
 export declare function getMessagesForRequestGroupWithRunMeta(sessionId: string, requestGroupId: string): DbRequestGroupMessage[];
 export declare function getMessagesForRun(sessionId: string, runId: string): DbMessage[];
-export declare function insertAuditLog(log: Omit<DbAuditLog, "id">): void;
+export declare function insertAuditLog(log: DbAuditLogInput): void;
 export declare function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): string;
 export declare function findChannelMessageRef(params: {
     source: string;
@@ -299,6 +307,7 @@ export declare function hasArtifactReceipt(input: {
 }): boolean;
 export declare function insertArtifactMetadata(input: ArtifactMetadataInput): string;
 export declare function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifactMetadata | undefined;
+export declare function getArtifactMetadata(id: string): DbArtifactMetadata | undefined;
 export declare function listExpiredArtifactMetadata(now?: number): DbArtifactMetadata[];
 export declare function markArtifactDeleted(id: string, deletedAt?: number): void;
 export declare function insertDiagnosticEvent(input: {
@@ -390,10 +399,16 @@ export interface DbSchedule {
     model: string | null;
     max_retries: number;
     timeout_sec: number;
+    contract_json: string | null;
+    identity_key: string | null;
+    payload_hash: string | null;
+    delivery_key: string | null;
+    contract_schema_version: number | null;
     created_at: number;
     updated_at: number;
     last_run_at?: number | null;
     next_run_at?: number | null;
+    legacy?: number;
 }
 export interface DbScheduleRun {
     id: string;
@@ -403,13 +418,45 @@ export interface DbScheduleRun {
     success: number | null;
     summary: string | null;
     error: string | null;
+    execution_success?: number | null;
+    delivery_success?: number | null;
+    delivery_dedupe_key?: string | null;
+    delivery_error?: string | null;
 }
+export type DbScheduleDeliveryStatus = "delivered" | "failed" | "skipped";
+export interface DbScheduleDeliveryReceipt {
+    dedupe_key: string;
+    schedule_id: string;
+    schedule_run_id: string;
+    due_at: string;
+    target_channel: string;
+    target_session_id: string | null;
+    payload_hash: string;
+    delivery_status: DbScheduleDeliveryStatus;
+    summary: string | null;
+    error: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export type DbScheduleDeliveryReceiptInput = Omit<DbScheduleDeliveryReceipt, "created_at" | "updated_at"> & {
+    created_at?: number;
+    updated_at?: number;
+};
 export declare function getSchedules(): DbSchedule[];
 export declare function getSchedule(id: string): DbSchedule | undefined;
 export declare function getSchedulesForSession(sessionId: string, enabledOnly?: boolean): DbSchedule[];
-export declare function insertSchedule(s: Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone"> & {
+export type DbScheduleInsertInput = Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone" | "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version" | "legacy"> & {
     timezone?: string | null;
-}): void;
+    contract?: ScheduleContract;
+    contract_json?: string | null;
+    identity_key?: string | null;
+    payload_hash?: string | null;
+    delivery_key?: string | null;
+    contract_schema_version?: number | null;
+};
+export declare function prepareScheduleContractPersistence(contract: ScheduleContract): Pick<DbSchedule, "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version">;
+export declare function isLegacySchedule(schedule: Pick<DbSchedule, "contract_json" | "contract_schema_version">): boolean;
+export declare function insertSchedule(s: DbScheduleInsertInput): void;
 export declare function updateSchedule(id: string, fields: Partial<Omit<DbSchedule, "id" | "created_at" | "last_run_at" | "next_run_at">>): void;
 export declare function deleteSchedule(id: string): void;
 export declare function getScheduleRuns(scheduleId: string, limit: number, offset: number): DbScheduleRun[];
@@ -421,7 +468,9 @@ export declare function interruptUnfinishedScheduleRunsOnStartup(input?: {
 }): DbScheduleRun[];
 export declare function countScheduleRuns(scheduleId: string): number;
 export declare function insertScheduleRun(r: DbScheduleRun): void;
-export declare function updateScheduleRun(id: string, fields: Partial<Pick<DbScheduleRun, "finished_at" | "success" | "summary" | "error">>): void;
+export declare function updateScheduleRun(id: string, fields: Partial<Pick<DbScheduleRun, "finished_at" | "success" | "summary" | "error" | "execution_success" | "delivery_success" | "delivery_dedupe_key" | "delivery_error">>): void;
+export declare function getScheduleDeliveryReceipt(dedupeKey: string): DbScheduleDeliveryReceipt | undefined;
+export declare function insertScheduleDeliveryReceipt(input: DbScheduleDeliveryReceiptInput): void;
 export declare function getScheduleStats(scheduleId: string): {
     total: number;
     successes: number;

@@ -185,6 +185,10 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         ? payload
         : null;
     const current = extensionSnapshots.get(extensionId);
+    const capabilityMatrix = readCapabilityMatrix(objectPayload);
+    const methods = kind === "capabilities"
+        ? readCapabilityMethods(objectPayload, capabilityMatrix)
+        : current?.methods ?? [];
     const next = {
         extensionId,
         clientId: clientId ?? current?.clientId ?? currentOwner,
@@ -201,20 +205,69 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         version: (typeof objectPayload?.version === "string" && objectPayload.version) ||
             current?.version ||
             null,
-        methods: current?.methods ?? [],
+        gitTag: readString(objectPayload, "gitTag", "git_tag") ?? current?.gitTag ?? null,
+        gitCommit: readString(objectPayload, "gitCommit", "git_commit") ?? current?.gitCommit ?? null,
+        buildTarget: readString(objectPayload, "buildTarget", "build_target") ?? current?.buildTarget ?? null,
+        platform: readString(objectPayload, "platform") ?? current?.platform ?? null,
+        os: readString(objectPayload, "os") ?? current?.os ?? null,
+        arch: readString(objectPayload, "arch") ?? current?.arch ?? null,
+        transport: readStringArray(objectPayload, "transport") ?? current?.transport ?? [],
+        capabilityHash: readString(objectPayload, "capabilityHash", "capability_hash") ?? current?.capabilityHash ?? null,
+        methods,
+        ...(capabilityMatrix ? { capabilityMatrix } : current?.capabilityMatrix ? { capabilityMatrix: current.capabilityMatrix } : {}),
         lastSeenAt: Date.now(),
     };
-    if (kind === "capabilities" && Array.isArray(objectPayload?.methods)) {
-        next.methods = objectPayload.methods
-            .map((item) => {
-            if (!item || typeof item !== "object")
-                return null;
-            const candidate = item;
-            return typeof candidate.name === "string" ? candidate.name : null;
-        })
-            .filter((item) => Boolean(item));
-    }
     extensionSnapshots.set(extensionId, next);
+}
+function readString(payload, ...keys) {
+    if (!payload)
+        return null;
+    for (const key of keys) {
+        const value = payload[key];
+        if (typeof value === "string" && value.trim())
+            return value;
+    }
+    return null;
+}
+function readStringArray(payload, key) {
+    if (!payload)
+        return null;
+    const value = payload[key];
+    if (typeof value === "string" && value.trim())
+        return [value];
+    if (Array.isArray(value))
+        return value.filter((item) => typeof item === "string" && item.trim() !== "");
+    return null;
+}
+function readCapabilityMatrix(payload) {
+    if (!payload)
+        return null;
+    const value = payload.capabilityMatrix ?? payload.capability_matrix;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    return value;
+}
+function readCapabilityMethods(payload, capabilityMatrix) {
+    if (capabilityMatrix) {
+        return Object.entries(capabilityMatrix)
+            .filter(([, value]) => {
+            if (!value || typeof value !== "object" || Array.isArray(value))
+                return false;
+            const supported = value.supported;
+            return supported !== false;
+        })
+            .map(([method]) => method);
+    }
+    if (!Array.isArray(payload?.methods))
+        return [];
+    return payload.methods
+        .map((item) => {
+        if (!item || typeof item !== "object")
+            return null;
+        const candidate = item;
+        return typeof candidate.name === "string" ? candidate.name : null;
+    })
+        .filter((item) => Boolean(item));
 }
 function handleBrokerPublish(packet, client) {
     const topic = typeof packet?.topic === "string" ? packet.topic : null;

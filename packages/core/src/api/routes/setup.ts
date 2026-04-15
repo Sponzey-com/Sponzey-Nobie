@@ -3,6 +3,7 @@ import { authMiddleware } from "../middleware/auth.js"
 import { stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { testMcpServerConnection, testSkillPath, type SetupMcpServerDraft } from "../../control-plane/setup-extensions.js"
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import {
   buildSetupDraft,
   completeSetup,
@@ -62,9 +63,12 @@ export function registerSetupRoute(app: FastifyInstance): void {
         const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials, authMode)
         return { ok: true, ...result }
       } catch (error) {
+        const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
         return reply.status(400).send({
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: sanitized.userMessage,
+          kind: sanitized.kind,
+          actionHint: sanitized.actionHint,
         })
       }
     },

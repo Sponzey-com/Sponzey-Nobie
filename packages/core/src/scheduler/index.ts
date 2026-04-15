@@ -1,9 +1,18 @@
-import { getSchedules, getSchedule, insertScheduleRun, updateScheduleRun, type DbSchedule } from "../db/index.js"
+import {
+  getSchedules,
+  getSchedule,
+  insertAuditLog,
+  insertScheduleRun,
+  isLegacySchedule,
+  updateScheduleRun,
+  type DbSchedule,
+} from "../db/index.js"
 import { runAgent } from "../agent/index.js"
 import { eventBus } from "../events/index.js"
 import { createLogger } from "../logger/index.js"
 import { getNextRunForTimezone, isValidCron, normalizeScheduleTimezone } from "./cron.js"
 import { getConfig } from "../config/index.js"
+import { recordLatencyMetric } from "../observability/latency.js"
 import { getActiveTelegramChannel } from "../channels/telegram/runtime.js"
 import { extractDirectChannelDeliveryText } from "../runs/scheduled.js"
 import { enqueueScheduledDelivery } from "./delivery-queue.js"
@@ -19,8 +28,37 @@ import {
   buildScheduleRunStartEvent,
 } from "./lifecycle.js"
 import { computeScheduleRetryDelayMs, normalizeScheduleMaxRetries } from "./retry.js"
+import { executeScheduleContract, type ScheduledExecutionResult } from "./contract-executor.js"
 
 const log = createLogger("scheduler")
+
+function recordLegacyScheduleContractMissing(schedule: DbSchedule, scheduleRunId: string, trigger: string): void {
+  if (!isLegacySchedule(schedule)) return
+
+  try {
+    insertAuditLog({
+      timestamp: Date.now(),
+      session_id: schedule.target_session_id,
+      run_id: scheduleRunId,
+      request_group_id: schedule.origin_request_group_id,
+      channel: schedule.target_channel,
+      source: "scheduler",
+      tool_name: "legacy_schedule_contract_missing",
+      params: JSON.stringify({
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        trigger,
+      }),
+      output: null,
+      result: "success",
+      duration_ms: 0,
+      approval_required: 0,
+      approved_by: null,
+    })
+  } catch (err) {
+    log.warn("Failed to record legacy schedule audit event for " + schedule.id + ": " + (err instanceof Error ? err.message : String(err)))
+  }
+}
 
 class Scheduler {
   private timer: NodeJS.Timeout | null = null
@@ -142,6 +180,8 @@ class Scheduler {
       error: null,
     })
 
+    recordLegacyScheduleContractMissing(schedule, runId, trigger)
+
     log.info(`Running schedule "${schedule.name}" (${scheduleId}), trigger=${trigger}`)
     eventBus.emit("schedule.run.start", buildScheduleRunStartEvent({
       schedule,
@@ -155,6 +195,10 @@ class Scheduler {
       let lastError: string | null = null
       let success = false
       let summary: string | null = null
+      let executionSuccess: boolean | null = null
+      let deliverySuccess: boolean | null = null
+      let deliveryDedupeKey: string | null = null
+      let deliveryError: string | null = null
 
       while (attempt <= maxRetries) {
         if (attempt > 0) {
@@ -162,14 +206,39 @@ class Scheduler {
           await new Promise<void>((r) => setTimeout(r, computeScheduleRetryDelayMs(attempt)))
         }
 
+        const attemptStartedAt = Date.now()
         const result = await this._execute({
           schedule,
           scheduleRunId: runId,
+          trigger,
+          startedAt,
         })
+        recordLatencyMetric({
+          name: "execution_latency_ms",
+          durationMs: Date.now() - attemptStartedAt,
+          runId,
+          requestGroupId: schedule.id,
+          source: "scheduler",
+          detail: {
+            scheduleId: schedule.id,
+            attempt,
+            trigger,
+          },
+        })
+        executionSuccess = result.executionSuccess ?? executionSuccess
+        deliverySuccess = result.deliverySuccess ?? deliverySuccess
+        deliveryDedupeKey = result.deliveryDedupeKey ?? deliveryDedupeKey
+        deliveryError = result.deliveryError ?? deliveryError
         if (result.success) {
           success = true
           summary = result.summary
           lastError = null
+          break
+        }
+        if (result.executionSuccess === true && result.deliverySuccess === false) {
+          summary = result.summary
+          lastError = result.error
+          attempt++
           break
         }
         lastError = result.error
@@ -182,6 +251,10 @@ class Scheduler {
         success: success ? 1 : 0,
         summary,
         error: lastError,
+        execution_success: executionSuccess == null ? null : executionSuccess ? 1 : 0,
+        delivery_success: deliverySuccess == null ? null : deliverySuccess ? 1 : 0,
+        delivery_dedupe_key: deliveryDedupeKey,
+        delivery_error: deliveryError,
       })
 
       log.info(`Schedule "${schedule.name}" run ${runId} finished (success=${success}) in ${finishedAt - startedAt}ms`)
@@ -212,11 +285,25 @@ class Scheduler {
   private async _execute(params: {
     schedule: DbSchedule
     scheduleRunId: string
-  }): Promise<{ success: boolean; summary: string | null; error: string | null }> {
+    trigger: string
+    startedAt: number
+  }): Promise<ScheduledExecutionResult> {
     const { schedule, scheduleRunId } = params
-    const directTelegramMessage = schedule.target_channel === "telegram"
-      ? extractDirectChannelDeliveryText(schedule.prompt)
-      : null
+    const contractExecution = await executeScheduleContract({
+      schedule,
+      scheduleRunId,
+      trigger: params.trigger,
+      startedAt: params.startedAt,
+      dependencies: {
+        logInfo: (message, payload) => log.info(message, payload),
+        logWarn: (message) => log.warn(message),
+        logError: (message, payload) => log.error(message, payload),
+      },
+    })
+    if (contractExecution.handled) return contractExecution.result
+
+    const directDeliveryMessage = extractDirectChannelDeliveryText(schedule.prompt)
+    const directTelegramMessage = schedule.target_channel === "telegram" ? directDeliveryMessage : null
 
     if (directTelegramMessage) {
       if (!schedule.target_session_id) {
@@ -259,6 +346,15 @@ class Scheduler {
           summary: directTelegramMessage,
           error: err instanceof Error ? err.message : String(err),
         }
+      }
+    }
+
+    if (directDeliveryMessage && schedule.target_channel === "agent") {
+      log.info(`Schedule "${schedule.name}" resolved as direct agent notification; skipping AI execution`)
+      return {
+        success: true,
+        summary: directDeliveryMessage.slice(0, 2000) || null,
+        error: null,
       }
     }
 

@@ -37,7 +37,16 @@ export interface MqttExtensionSnapshot {
   state: string | null
   message: string | null
   version: string | null
+  gitTag?: string | null
+  gitCommit?: string | null
+  buildTarget?: string | null
+  platform?: string | null
+  os?: string | null
+  arch?: string | null
+  transport?: string[]
+  capabilityHash?: string | null
   methods: string[]
+  capabilityMatrix?: Record<string, unknown>
   lastSeenAt: number
 }
 
@@ -251,6 +260,10 @@ function updateExtensionSnapshotFromPayload(
       : null
 
   const current = extensionSnapshots.get(extensionId)
+  const capabilityMatrix = readCapabilityMatrix(objectPayload)
+  const methods = kind === "capabilities"
+    ? readCapabilityMethods(objectPayload, capabilityMatrix)
+    : current?.methods ?? []
   const next: MqttExtensionSnapshot = {
     extensionId,
     clientId: clientId ?? current?.clientId ?? currentOwner,
@@ -271,21 +284,68 @@ function updateExtensionSnapshotFromPayload(
       (typeof objectPayload?.version === "string" && objectPayload.version) ||
       current?.version ||
       null,
-    methods: current?.methods ?? [],
+    gitTag: readString(objectPayload, "gitTag", "git_tag") ?? current?.gitTag ?? null,
+    gitCommit: readString(objectPayload, "gitCommit", "git_commit") ?? current?.gitCommit ?? null,
+    buildTarget: readString(objectPayload, "buildTarget", "build_target") ?? current?.buildTarget ?? null,
+    platform: readString(objectPayload, "platform") ?? current?.platform ?? null,
+    os: readString(objectPayload, "os") ?? current?.os ?? null,
+    arch: readString(objectPayload, "arch") ?? current?.arch ?? null,
+    transport: readStringArray(objectPayload, "transport") ?? current?.transport ?? [],
+    capabilityHash: readString(objectPayload, "capabilityHash", "capability_hash") ?? current?.capabilityHash ?? null,
+    methods,
+    ...(capabilityMatrix ? { capabilityMatrix } : current?.capabilityMatrix ? { capabilityMatrix: current.capabilityMatrix } : {}),
     lastSeenAt: Date.now(),
   }
 
-  if (kind === "capabilities" && Array.isArray(objectPayload?.methods)) {
-    next.methods = objectPayload.methods
-      .map((item) => {
-        if (!item || typeof item !== "object") return null
-        const candidate = item as Record<string, unknown>
-        return typeof candidate.name === "string" ? candidate.name : null
+  extensionSnapshots.set(extensionId, next)
+}
+
+function readString(payload: Record<string, unknown> | null, ...keys: string[]): string | null {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === "string" && value.trim()) return value
+  }
+  return null
+}
+
+function readStringArray(payload: Record<string, unknown> | null, key: string): string[] | null {
+  if (!payload) return null
+  const value = payload[key]
+  if (typeof value === "string" && value.trim()) return [value]
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim() !== "")
+  return null
+}
+
+function readCapabilityMatrix(payload: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!payload) return null
+  const value = payload.capabilityMatrix ?? payload.capability_matrix
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function readCapabilityMethods(
+  payload: Record<string, unknown> | null,
+  capabilityMatrix: Record<string, unknown> | null,
+): string[] {
+  if (capabilityMatrix) {
+    return Object.entries(capabilityMatrix)
+      .filter(([, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false
+        const supported = (value as Record<string, unknown>).supported
+        return supported !== false
       })
-      .filter((item): item is string => Boolean(item))
+      .map(([method]) => method)
   }
 
-  extensionSnapshots.set(extensionId, next)
+  if (!Array.isArray(payload?.methods)) return []
+  return payload.methods
+    .map((item) => {
+      if (!item || typeof item !== "object") return null
+      const candidate = item as Record<string, unknown>
+      return typeof candidate.name === "string" ? candidate.name : null
+    })
+    .filter((item): item is string => Boolean(item))
 }
 
 function handleBrokerPublish(packet: { topic?: unknown; payload?: unknown }, client: Client | undefined): void {

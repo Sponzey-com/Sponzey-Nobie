@@ -33,6 +33,36 @@ export interface StatusResponse {
     interruptedScheduleRunCount: number
     userFacingSummary: string
   }
+  fast_response_health: {
+    generatedAt: number
+    status: "ok" | "slow" | "timeout"
+    reason: string
+    recentWindowMs: number
+    metrics: Array<{
+      name: string
+      count: number
+      p95Ms: number | null
+      lastMs: number | null
+      budgetMs: number
+      timeoutCount: number
+      slowCount: number
+      status: "ok" | "slow" | "timeout"
+      lastAt: number | null
+    }>
+    recentTimeouts: Array<{
+      id: string
+      name: string
+      durationMs: number
+      budgetMs: number
+      status: "ok" | "slow" | "timeout"
+      createdAt: number
+      runId?: string
+      sessionId?: string
+      requestGroupId?: string
+      source?: string
+      detail?: Record<string, unknown>
+    }>
+  }
   mcp: {
     serverCount: number
     readyCount: number

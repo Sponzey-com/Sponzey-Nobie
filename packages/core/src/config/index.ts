@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import JSON5 from "json5"
-import { DEFAULT_CONFIG, type NobieConfig } from "./types.js"
+import { DEFAULT_CONFIG, type AIConnectionProvider, type NobieConfig } from "./types.js"
 import { PATHS } from "./paths.js"
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -20,10 +20,69 @@ function toStringArray(value: unknown): string[] {
     : []
 }
 
+function normalizeAIConnectionProvider(value: unknown): AIConnectionProvider {
+  const raw = toString(value).toLowerCase()
+  if (!raw) return ""
+  const normalized = raw.replace(/^provider:/, "").replace(/[-\s]+/g, "_")
+  switch (normalized) {
+    case "openai":
+    case "chatgpt":
+    case "chatgpt_oauth":
+    case "codex":
+    case "openai_codex":
+    case "openai_oauth":
+      return "openai"
+    case "anthropic":
+    case "claude":
+      return "anthropic"
+    case "gemini":
+    case "google":
+      return "gemini"
+    case "ollama":
+      return "ollama"
+    case "llama":
+    case "llama_cpp":
+    case "llamacpp":
+      return "llama"
+    case "custom":
+      return "custom"
+    default:
+      return "custom"
+  }
+}
+
+function normalizeAIAuthMode(input: {
+  mode: unknown
+  provider: AIConnectionProvider
+  rawProvider?: unknown
+  auth?: Record<string, unknown>
+}): "api_key" | "chatgpt_oauth" {
+  const mode = toString(input.mode).toLowerCase().replace(/[-\s]+/g, "_")
+  if (mode === "chatgpt_oauth" || mode === "codex" || mode === "oauth") return "chatgpt_oauth"
+  if (mode === "api_key" || mode === "apikey") return "api_key"
+
+  const rawProvider = toString(input.rawProvider).toLowerCase().replace(/[-\s]+/g, "_")
+  if (input.provider === "openai" && ["chatgpt", "chatgpt_oauth", "codex", "openai_codex", "openai_oauth"].includes(rawProvider)) {
+    return "chatgpt_oauth"
+  }
+  if (input.provider === "openai" && toString(input.auth?.oauthAuthFilePath)) return "chatgpt_oauth"
+
+  return "api_key"
+}
+
+function firstObjectWithKeys(...values: unknown[]): Record<string, unknown> {
+  for (const value of values) {
+    const object = toObject(value)
+    if (Object.keys(object).length > 0) return object
+  }
+  return {}
+}
+
 function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record<string, unknown> | undefined {
   const rawAiProviders = toObject(rawAi.providers)
   const rawAiBackends = toObject(rawAi.backends)
-  const configuredProvider = toString(rawAi.defaultProvider)
+  const configuredProviderRaw = toString(rawAi.defaultProvider)
+  const configuredProvider = normalizeAIConnectionProvider(configuredProviderRaw)
   const configuredModel = toString(rawAi.defaultModel)
 
   const buildConnection = (
@@ -37,12 +96,12 @@ function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record
   })
 
   if (configuredProvider === "openai") {
-    const openai = toObject(rawAiProviders.openai)
+    const openai = firstObjectWithKeys(rawAiProviders.openai, rawAiProviders.codex, rawAiProviders.chatgpt)
     const auth = toObject(openai.auth)
     return buildConnection("openai", configuredModel, {
       endpoint: toString(openai.baseUrl) || undefined,
       auth: {
-        mode: toString(auth.mode) || "api_key",
+        mode: normalizeAIAuthMode({ mode: auth.mode, provider: "openai", rawProvider: configuredProviderRaw, auth }),
         apiKey: toStringArray(openai.apiKeys)[0] || undefined,
         oauthAuthFilePath: toString(auth.codexAuthFilePath) || undefined,
         clientId: toString(auth.clientId) || undefined,
@@ -157,17 +216,19 @@ function normalizeLegacyAiConfig(parsed: Partial<NobieConfig>): Partial<NobieCon
   if (!toString(rawConnection.provider)) {
     rawAi.connection = inferConnectionFromLegacyConfig(rawAi) ?? {}
   } else {
+    const normalizedProvider = normalizeAIConnectionProvider(rawConnection.provider)
+    const rawAuth = toObject(rawConnection.auth)
     rawAi.connection = {
-      provider: toString(rawConnection.provider),
+      provider: normalizedProvider,
       model: toString(rawConnection.model),
       endpoint: toString(rawConnection.endpoint) || undefined,
       auth: {
-        mode: toString(toObject(rawConnection.auth).mode) || "api_key",
-        apiKey: toString(toObject(rawConnection.auth).apiKey) || undefined,
-        username: toString(toObject(rawConnection.auth).username) || undefined,
-        password: toString(toObject(rawConnection.auth).password) || undefined,
-        oauthAuthFilePath: toString(toObject(rawConnection.auth).oauthAuthFilePath) || undefined,
-        clientId: toString(toObject(rawConnection.auth).clientId) || undefined,
+        mode: normalizeAIAuthMode({ mode: rawAuth.mode, provider: normalizedProvider, rawProvider: rawConnection.provider, auth: rawAuth }),
+        apiKey: toString(rawAuth.apiKey) || undefined,
+        username: toString(rawAuth.username) || undefined,
+        password: toString(rawAuth.password) || undefined,
+        oauthAuthFilePath: toString(rawAuth.oauthAuthFilePath) || undefined,
+        clientId: toString(rawAuth.clientId) || undefined,
       },
     }
   }
@@ -338,4 +399,33 @@ export function reloadConfig(): NobieConfig {
 }
 
 export { PATHS } from "./paths.js"
+export {
+  MIGRATION_ROLLBACK_RUNBOOK,
+  buildBackupTargetInventory,
+  buildMigrationPreflightReport,
+  createBackupSnapshot,
+  formatInventoryPathForDisplay,
+  runRestoreRehearsal,
+  verifyBackupSnapshotManifest,
+} from "./backup-rehearsal.js"
 export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
+export type {
+  BackupInventoryTarget,
+  BackupSnapshotFile,
+  BackupSnapshotManifest,
+  BackupSnapshotOptions,
+  BackupTargetInventory,
+  BackupTargetKind,
+  BackupTargetReason,
+  MigrationPreflightCheck,
+  MigrationPreflightCheckName,
+  MigrationPreflightOptions,
+  MigrationPreflightReport,
+  MigrationPreflightRisk,
+  MigrationRollbackRunbook,
+  RestoreRehearsalCheck,
+  RestoreRehearsalCheckName,
+  RestoreRehearsalOptions,
+  RestoreRehearsalReport,
+  SnapshotVerificationResult,
+} from "./backup-rehearsal.js"

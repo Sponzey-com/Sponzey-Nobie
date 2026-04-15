@@ -10,6 +10,12 @@ import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleT
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getConfig } from "../../config/index.js"
+import {
+  applyLegacyScheduleMigration,
+  dryRunLegacyScheduleMigration,
+  keepLegacySchedule,
+  listLegacyScheduleMigrationItems,
+} from "../../schedules/legacy-migration.js"
 
 function syncScheduleMemoryEntry(input: {
   id: string
@@ -64,6 +70,33 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
         })(),
       })),
     }
+  })
+
+  // GET /api/schedules/legacy
+  app.get("/api/schedules/legacy", { preHandler: authMiddleware }, async () => {
+    return { schedules: listLegacyScheduleMigrationItems() }
+  })
+
+  // POST /api/schedules/:id/legacy/dry-run
+  app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/dry-run", { preHandler: authMiddleware }, async (req, reply) => {
+    const report = dryRunLegacyScheduleMigration(req.params.id, { audit: true })
+    if (!report) return reply.status(404).send({ error: "Not found" })
+    return report
+  })
+
+  // POST /api/schedules/:id/legacy/convert
+  app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/convert", { preHandler: authMiddleware }, async (req, reply) => {
+    const result = applyLegacyScheduleMigration(req.params.id)
+    if (!result.report && result.error === "schedule_not_found") return reply.status(404).send({ error: "Not found" })
+    if (!result.ok) return reply.status(409).send({ ok: false, error: result.error ?? "legacy migration failed", report: result.report })
+    return { ok: true, report: result.report }
+  })
+
+  // POST /api/schedules/:id/legacy/keep
+  app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/keep", { preHandler: authMiddleware }, async (req, reply) => {
+    const result = keepLegacySchedule(req.params.id)
+    if (!result.report && result.error === "schedule_not_found") return reply.status(404).send({ error: "Not found" })
+    return { ok: result.ok, report: result.report }
   })
 
   // POST /api/schedules

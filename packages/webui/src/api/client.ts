@@ -208,25 +208,37 @@ export const api = {
   tools: () => request<{ tools: Array<{ name: string; description: string; riskLevel: string }> }>("/api/tools"),
 
   audit: (params: {
-    page?: number; limit?: number; toolName?: string; result?: string;
-    from?: string; to?: string; sessionId?: string
+    page?: number; limit?: number; toolName?: string; result?: string; status?: string; kind?: string; channel?: string;
+    from?: string; to?: string; sessionId?: string; runId?: string; requestGroupId?: string; q?: string
   } = {}) => {
     const q = new URLSearchParams()
     if (params.page) q.set("page", String(params.page))
     if (params.limit) q.set("limit", String(params.limit))
     if (params.toolName) q.set("toolName", params.toolName)
     if (params.result) q.set("result", params.result)
+    if (params.status) q.set("status", params.status)
+    if (params.kind) q.set("kind", params.kind)
+    if (params.channel) q.set("channel", params.channel)
     if (params.from) q.set("from", params.from)
     if (params.to) q.set("to", params.to)
     if (params.sessionId) q.set("sessionId", params.sessionId)
-    return request<{
-      items: Array<{
-        timestamp: number; session_id: string; tool_name: string
-        params: string; result: string; duration_ms: number
-        approval_required: number; approved_by: string | null
-      }>
-      total: number; page: number; pages: number; limit: number
-    }>(`/api/audit?${q.toString()}`)
+    if (params.runId) q.set("runId", params.runId)
+    if (params.requestGroupId) q.set("requestGroupId", params.requestGroupId)
+    if (params.q) q.set("q", params.q)
+    return request<AuditEventsResponse>(`/api/audit?${q.toString()}`)
+  },
+
+  auditTimeline: (runId: string, limit = 500) =>
+    request<AuditEventsResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/timeline?limit=${limit}`),
+
+  auditExport: (runId: string, format: "json" | "markdown" = "markdown") =>
+    request<AuditExportResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
+
+  cleanupAudit: (params: { before?: number; all?: boolean }) => {
+    const q = new URLSearchParams()
+    if (params.before) q.set("before", String(params.before))
+    if (params.all) q.set("all", "true")
+    return request<AuditCleanupResponse>(`/api/audit?${q.toString()}`, { method: "DELETE" })
   },
 
   settings: () => request<Record<string, unknown>>("/api/settings"),
@@ -253,6 +265,18 @@ export const api = {
 
   schedules: () =>
     request<{ schedules: Schedule[] }>("/api/schedules"),
+
+  legacySchedules: () =>
+    request<{ schedules: LegacyScheduleMigrationItem[] }>("/api/schedules/legacy"),
+
+  dryRunLegacySchedule: (id: string) =>
+    request<LegacyScheduleMigrationReport>(`/api/schedules/${id}/legacy/dry-run`, { method: "POST" }),
+
+  convertLegacySchedule: (id: string) =>
+    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(`/api/schedules/${id}/legacy/convert`, { method: "POST" }),
+
+  keepLegacySchedule: (id: string) =>
+    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(`/api/schedules/${id}/legacy/keep`, { method: "POST" }),
 
   createSchedule: (body: { name: string; cron: string; prompt: string; model?: string; enabled?: boolean }) =>
     request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(body) }),
@@ -310,6 +334,50 @@ export const api = {
 
 export type { StatusResponse, SetupChecksResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse, ResetSetupResponse, FeatureCapability, MqttRuntimeResponse }
 
+export interface AuditEvent {
+  id: string
+  at: number
+  kind: "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery"
+  status: string
+  summary: string
+  source: string | null
+  sessionId: string | null
+  runId: string | null
+  requestGroupId: string | null
+  channel: string | null
+  toolName: string | null
+  params: unknown
+  output: string | null
+  durationMs: number | null
+  approvalRequired: boolean
+  approvedBy: string | null
+  errorCode: string | null
+  retryCount: number | null
+  stopReason: string | null
+  detail: unknown
+}
+
+export interface AuditEventsResponse {
+  items: AuditEvent[]
+  total: number
+  page: number
+  pages: number
+  limit: number
+}
+
+export interface AuditExportResponse {
+  format: "json" | "markdown"
+  content: string
+  events: AuditEvent[]
+}
+
+export interface AuditCleanupResponse {
+  ok: boolean
+  deleted: { auditLogs: number; diagnosticEvents: number }
+  before?: number
+  message?: string
+}
+
 export interface Schedule {
   id: string
   name: string
@@ -317,11 +385,60 @@ export interface Schedule {
   timezone: string | null
   prompt: string
   enabled: boolean
+  target_channel?: string
+  target_session_id?: string | null
+  execution_driver?: string
+  legacy?: number | boolean
+  contract_schema_version?: number | null
   model: string | null
   last_run_at: number | null
   next_run_at: number | null
   created_at: number
   updated_at: number
+}
+
+export type LegacyScheduleMigrationRisk = "low" | "medium" | "high" | "blocked"
+export type LegacyScheduleMigrationStatus = "already_contract" | "convertible" | "blocked"
+
+export interface LegacyScheduleMigrationPersistencePreview {
+  identityKey: string
+  payloadHash: string
+  deliveryKey: string
+  contractSchemaVersion: number
+}
+
+export interface LegacyScheduleMigrationReport {
+  scheduleId: string
+  scheduleName: string
+  status: LegacyScheduleMigrationStatus
+  legacy: boolean
+  convertible: boolean
+  risk: LegacyScheduleMigrationRisk
+  confidence: number
+  reasons: string[]
+  warnings: string[]
+  contract: unknown | null
+  persistence: LegacyScheduleMigrationPersistencePreview | null
+}
+
+export interface LegacyScheduleMigrationItem {
+  scheduleId: string
+  name: string
+  rawPrompt: string
+  cronExpression: string
+  timezone: string | null
+  enabled: boolean
+  target: {
+    channel: string
+    sessionId: string | null
+  }
+  legacy: boolean
+  convertible: boolean
+  risk: LegacyScheduleMigrationRisk
+  reason: string
+  createdAt: number
+  updatedAt: number
+  lastRunAt: number | null
 }
 
 export interface ScheduleRun {

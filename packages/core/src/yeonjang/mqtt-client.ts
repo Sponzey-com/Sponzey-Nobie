@@ -43,9 +43,42 @@ export interface YeonjangClientOptions {
 export interface YeonjangMethodCapability {
   name: string
   implemented: boolean
+  supported?: boolean
+  requiresApproval?: boolean
+  requiresPermission?: boolean
+  permissionSetting?: string | null
+  knownLimitations?: string[]
+  outputModes?: string[]
+  lastCheckedAt?: number
+}
+
+export interface YeonjangCapabilityMatrixEntry {
+  supported?: boolean
+  requiresApproval?: boolean
+  requiresPermission?: boolean
+  permissionSetting?: string | null
+  knownLimitations?: string[]
+  outputModes?: string[]
+  lastCheckedAt?: number
 }
 
 export interface YeonjangCapabilitiesPayload {
+  node?: string
+  version?: string
+  gitTag?: string
+  git_tag?: string
+  gitCommit?: string
+  git_commit?: string
+  buildTarget?: string
+  build_target?: string
+  os?: string
+  arch?: string
+  platform?: string
+  transport?: string | string[]
+  capabilityHash?: string
+  capability_hash?: string
+  capabilityMatrix?: Record<string, YeonjangCapabilityMatrixEntry>
+  capability_matrix?: Record<string, YeonjangCapabilityMatrixEntry>
   methods?: YeonjangMethodCapability[]
 }
 
@@ -107,12 +140,57 @@ export async function canYeonjangHandleMethod(
 ): Promise<boolean> {
   try {
     const capabilities = await getYeonjangCapabilities(options)
-    const entry = capabilities.methods?.find((candidate) => candidate.name === method)
-    return Boolean(entry?.implemented)
+    return doesYeonjangCapabilitySupportMethod(capabilities, method)
   } catch (error) {
     if (isYeonjangUnavailableError(error)) return false
     throw error
   }
+}
+
+export function resolveYeonjangMethodCapability(
+  capabilities: YeonjangCapabilitiesPayload,
+  method: string,
+): YeonjangCapabilityMatrixEntry | YeonjangMethodCapability | null {
+  const matrix = capabilities.capabilityMatrix ?? capabilities.capability_matrix
+  const matrixEntry = matrix?.[method]
+  if (matrixEntry) return matrixEntry
+  return capabilities.methods?.find((candidate) => candidate.name === method) ?? null
+}
+
+export function doesYeonjangCapabilitySupportMethod(
+  capabilities: YeonjangCapabilitiesPayload,
+  method: string,
+): boolean {
+  const entry = resolveYeonjangMethodCapability(capabilities, method)
+  if (!entry) return false
+  if ("supported" in entry && typeof entry.supported === "boolean") return entry.supported
+  if ("implemented" in entry && typeof entry.implemented === "boolean") return entry.implemented
+  return false
+}
+
+export function hasYeonjangCapabilityMatrix(capabilities: YeonjangCapabilitiesPayload): boolean {
+  return Boolean(capabilities.capabilityMatrix ?? capabilities.capability_matrix)
+}
+
+export function resolveYeonjangCapabilityOutputModes(
+  capabilities: YeonjangCapabilitiesPayload,
+  method: string,
+): string[] | null {
+  const entry = resolveYeonjangMethodCapability(capabilities, method)
+  if (!entry || !Array.isArray(entry.outputModes)) return null
+  return entry.outputModes
+    .map((mode) => mode.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+export function doesYeonjangCapabilitySupportOutputMode(
+  capabilities: YeonjangCapabilitiesPayload,
+  method: string,
+  outputMode: string,
+): boolean | null {
+  const modes = resolveYeonjangCapabilityOutputModes(capabilities, method)
+  if (!modes) return null
+  return modes.includes(outputMode.trim().toLowerCase())
 }
 
 export function isYeonjangUnavailableError(error: unknown): boolean {

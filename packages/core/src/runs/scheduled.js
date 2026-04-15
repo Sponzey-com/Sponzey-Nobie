@@ -6,6 +6,8 @@ const DIRECT_DELIVERY_PATTERNS = [
     /^(?:say|send)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))\s+(?:in|via)\s+(?:telegram|message|messenger)$/iu,
     /^(?:say|tell)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))$/iu,
 ];
+const QUOTED_LITERAL_PATTERN = /"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’/u;
+const DIRECT_DELIVERY_HINT_PATTERN = /메신저|메시지|텔레그램|슬랙|대화|채팅|알림|알람|말해|알려|보내|전송|안내|message|messenger|telegram|slack|chat|notify|notification|alarm|send|tell|say/iu;
 export function shouldDisableToolsForScheduledTask(task, taskProfile) {
     const normalizedTask = task.trim();
     const normalizedProfile = taskProfile?.trim() ?? "general_chat";
@@ -34,6 +36,13 @@ export function extractDirectChannelDeliveryText(task) {
         if (!candidate)
             continue;
         return candidate.trim();
+    }
+    const quoted = normalizedTask.match(QUOTED_LITERAL_PATTERN);
+    const quotedCandidate = quoted?.slice(1).find((value) => typeof value === "string" && value.trim().length > 0);
+    if (quotedCandidate
+        && DIRECT_DELIVERY_HINT_PATTERN.test(normalizedTask)
+        && !TOOL_REQUIRING_TASK_PATTERN.test(normalizedTask)) {
+        return quotedCandidate.trim();
     }
     return null;
 }

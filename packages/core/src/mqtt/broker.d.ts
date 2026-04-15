@@ -18,7 +18,16 @@ export interface MqttExtensionSnapshot {
     state: string | null;
     message: string | null;
     version: string | null;
+    gitTag?: string | null;
+    gitCommit?: string | null;
+    buildTarget?: string | null;
+    platform?: string | null;
+    os?: string | null;
+    arch?: string | null;
+    transport?: string[];
+    capabilityHash?: string | null;
     methods: string[];
+    capabilityMatrix?: Record<string, unknown>;
     lastSeenAt: number;
 }
 export interface MqttExchangeLogEntry {

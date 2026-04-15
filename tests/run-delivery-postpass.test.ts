@@ -88,4 +88,30 @@ describe("delivery post-pass helpers", () => {
       expect(decision.nextMessage).toContain("[Direct Artifact Delivery Recovery]")
     }
   })
+
+  it("completes mistaken direct delivery for plain text information answers", () => {
+    const decision = decideDirectArtifactDeliveryFlow({
+      deliveryOutcome: {
+        directArtifactDeliveryRequested: true,
+        hasSuccessfulArtifactDelivery: false,
+        deliverySatisfied: false,
+        requiresDirectArtifactRecovery: true,
+      },
+      source: "telegram",
+      successfulFileDeliveries: [],
+      seenKeys: new Set(),
+      canRetry: true,
+      maxTurns: 5,
+      deliveryBudgetLimit: 5,
+      originalRequest: "현재 동천동의 날씨는 어때?",
+      previousResult: "동천동은 현재 대체로 맑습니다.",
+      successfulTools: [{ toolName: "web_search", output: "ok" }],
+    })
+
+    expect(decision.kind).toBe("complete")
+    if (decision.kind === "complete") {
+      expect(decision.finalText).toContain("동천동")
+      expect(decision.eventLabel).toBe("텍스트 결과 전달 요청 완료")
+    }
+  })
 })

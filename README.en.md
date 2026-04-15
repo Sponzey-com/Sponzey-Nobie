@@ -163,6 +163,17 @@ Schedule registration and schedule execution are tracked as separate tasks and r
 - lineage with `scheduleId`, `scheduleRunId`, `originRunId`, and `originRequestGroupId`
 - The WebUI schedule screen separates schedule lists, scheduler status, and recent schedule run history from the normal activity monitor
 
+Operational rules:
+
+- Schedule identity, duplication, and executable payloads must not be finalized by raw string or semantic string comparison.
+- Prefer structured keys such as `ScheduleContract`, `identity_key`, `payload_hash`, and `delivery_key`.
+- Vector DB and memory search are candidate providers only; they are not final decision makers.
+- Legacy schedules are not converted automatically. Use the WebUI `dry-run -> explicit convert` flow.
+- Migration failure must not delete schedules or stop the daemon. Keep the schedule in legacy state and write an audit record.
+- Schedule contract migration, delivery receipts, and rollback decisions must leave operator-visible API/WebUI records.
+- Following the fast-response rule, migration UI and dry-runs must not make the normal user request path heavier.
+- Failures from providers or infrastructure must be shown as normalized failures, not raw stack traces, HTML errors, tokens, or internal payloads.
+
 ### 9. Prompts and Memory Diagnostics `(Implemented)`
 
 Nobie does not keep every rule inside one growing system prompt. It assembles role-specific prompt sources from `prompts/`.
