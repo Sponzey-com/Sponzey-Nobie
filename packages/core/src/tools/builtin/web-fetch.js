@@ -26,7 +26,7 @@ async function fetchWithPlaywright(url, waitForSelector) {
         if (waitForSelector) {
             await page.waitForSelector(waitForSelector, { timeout: 10_000 }).catch(() => { });
         }
-        return page.content();
+        return await page.content();
     }
     finally {
         await browser.close();

@@ -10,6 +10,7 @@ function createDraft(): SetupDraft {
         label: "범용 원격 추론",
         kind: "provider",
         providerType: "openai",
+        authMode: "api_key",
         credentials: { apiKey: "sk-openai" },
         local: false,
         enabled: true,
@@ -25,6 +26,7 @@ function createDraft(): SetupDraft {
         label: "로컬 모델 우선",
         kind: "provider",
         providerType: "ollama",
+        authMode: "api_key",
         credentials: {},
         local: true,
         enabled: true,
@@ -40,6 +42,7 @@ function createDraft(): SetupDraft {
         label: "Anthropic 추론",
         kind: "provider",
         providerType: "anthropic",
+        authMode: "api_key",
         credentials: { apiKey: "sk-ant-test" },
         local: false,
         enabled: true,
@@ -54,6 +57,7 @@ function createDraft(): SetupDraft {
         label: "계획·리서치 특화",
         kind: "provider",
         providerType: "gemini",
+        authMode: "api_key",
         credentials: { apiKey: "gemini-key" },
         local: false,
         enabled: true,
@@ -190,5 +194,33 @@ describe("resolveRunRouteFromDraft", () => {
     expect(route.targetId).toBeUndefined()
     expect(route.workerRuntime).toBeUndefined()
     expect(route.providerId).toBeUndefined()
+  })
+
+  it("routes ChatGPT OAuth connections through the Codex OAuth provider path without API keys", () => {
+    const draft = createDraft()
+    draft.aiBackends = draft.aiBackends.map((backend) => (
+      backend.id === "provider:openai"
+        ? {
+            ...backend,
+            authMode: "chatgpt_oauth",
+            credentials: { oauthAuthFilePath: "/tmp/codex-auth.json" },
+            endpoint: "https://chatgpt.com/backend-api/codex",
+            defaultModel: "gpt-5",
+            enabled: true,
+          }
+        : { ...backend, enabled: false }
+    ))
+
+    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+    const provider = route.provider as unknown as {
+      oauthConfig?: { authFilePath?: string }
+      profile?: { apiKeys: string[] }
+    }
+
+    expect(route.targetId).toBe("provider:openai")
+    expect(route.providerId).toBe("openai")
+    expect(route.model).toBe("gpt-5")
+    expect(provider.oauthConfig?.authFilePath).toBe("/tmp/codex-auth.json")
+    expect(provider.profile?.apiKeys).toEqual([])
   })
 })

@@ -11,8 +11,24 @@ const STATE_DIR = process.env["NOBIE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR
         : join(homedir(), ".nobie"))
 const PID_FILE = join(STATE_DIR, "daemon.pid")
 const LOGS_DIR = join(STATE_DIR, "logs")
+let rejectionGuardInstalled = false
+
+function formatDaemonError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message
+  return String(error)
+}
+
+function installDaemonRejectionGuard(): void {
+  if (rejectionGuardInstalled) return
+  rejectionGuardInstalled = true
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection in daemon; keeping process alive:", formatDaemonError(reason))
+  })
+}
 
 export async function serveCommand(): Promise<void> {
+  installDaemonRejectionGuard()
+
   // Write PID file for service stop support
   mkdirSync(LOGS_DIR, { recursive: true })
   writeFileSync(PID_FILE, String(process.pid), "utf-8")

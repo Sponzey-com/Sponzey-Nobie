@@ -28,10 +28,12 @@ function looksLikeMacAlias(value: string): boolean {
 }
 
 function snapshotLooksWindows(snapshot: MqttExtensionSnapshot): boolean {
+  if (normalize(snapshot.platform) === "windows" || normalize(snapshot.os) === "windows") return true
   return snapshotText(snapshot).some((value) => looksLikeWindowsAlias(value))
 }
 
 function snapshotLooksMac(snapshot: MqttExtensionSnapshot): boolean {
+  if (["macos", "darwin"].includes(normalize(snapshot.platform)) || ["macos", "darwin"].includes(normalize(snapshot.os))) return true
   return normalize(snapshot.extensionId) === normalize(DEFAULT_YEONJANG_EXTENSION_ID)
     || snapshotText(snapshot).some((value) => looksLikeMacAlias(value))
 }

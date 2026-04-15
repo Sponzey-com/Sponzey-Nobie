@@ -1,4 +1,15 @@
 import type { AgentContextMode } from "../agent/index.js"
+import type { IntentContract } from "../contracts/index.js"
+import {
+  createExplicitIdProvider,
+  createStoreCandidateProvider,
+  runCandidateProviders,
+} from "../candidates/index.js"
+import {
+  buildLatencyEventLabel,
+  buildLatencyEventLabelForMeasurement,
+  recordLatencyMetric,
+} from "../observability/latency.js"
 import {
   analyzeRequestEntrySemantics,
   type RequestEntrySemantics,
@@ -7,6 +18,11 @@ import {
   compareRequestContinuationWithAI,
   type RequestContinuationDecision,
 } from "./entry-comparison.js"
+import {
+  buildActiveRunProjections,
+  buildIncomingIntentContract,
+  type ActiveRunContractProjection,
+} from "./active-run-projection.js"
 import {
   findLatestWorkerSessionRun,
   getRequestGroupDelegationTurnCount,
@@ -31,6 +47,7 @@ export interface StartPlan {
   effectiveContextMode: AgentContextMode
   workerSessionId?: string | undefined
   reusableWorkerSessionRun?: RootRun | undefined
+  latencyEvents: string[]
 }
 
 interface StartPlanDependencies {
@@ -38,9 +55,9 @@ interface StartPlanDependencies {
   isReusableRequestGroup: typeof isReusableRequestGroup
   listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups
   compareRequestContinuation: (params: {
-    message: string
+    incomingContract: ReturnType<typeof buildIncomingIntentContract>
     sessionId: string
-    candidates: RootRun[]
+    candidates: ActiveRunContractProjection[]
     model?: string
   }) => Promise<RequestContinuationDecision>
   getRequestGroupDelegationTurnCount: typeof getRequestGroupDelegationTurnCount
@@ -60,8 +77,8 @@ const defaultDependencies: StartPlanDependencies = {
   analyzeRequestEntrySemantics,
   isReusableRequestGroup,
   listActiveSessionRequestGroups,
-  compareRequestContinuation: async ({ message, candidates, model }) => compareRequestContinuationWithAI({
-    message,
+  compareRequestContinuation: async ({ incomingContract, candidates, model }) => compareRequestContinuationWithAI({
+    incomingContract,
     candidates,
     ...(model ? { model } : {}),
   }),
@@ -76,7 +93,11 @@ export async function buildStartPlan(
     message: string
     sessionId: string
     runId: string
+    targetRunId?: string | undefined
+    source?: RootRun["source"] | undefined
+    incomingIntentContract?: IntentContract | undefined
     requestGroupId?: string | undefined
+    approvalId?: string | undefined
     forceRequestGroupReuse?: boolean | undefined
     contextMode?: AgentContextMode | undefined
     taskProfile?: TaskProfile | undefined
@@ -86,7 +107,16 @@ export async function buildStartPlan(
   },
   dependencies: StartPlanDependencies,
 ): Promise<StartPlan> {
+  const latencyEvents: string[] = []
+  const normalizerStartedAt = Date.now()
   const entrySemanticsBase = dependencies.analyzeRequestEntrySemantics(params.message)
+  latencyEvents.push(buildLatencyEventLabel(recordLatencyMetric({
+    name: "normalizer_latency_ms",
+    durationMs: Date.now() - normalizerStartedAt,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+  })))
   const explicitReusableRequestGroupId =
     params.requestGroupId && (params.forceRequestGroupReuse || dependencies.isReusableRequestGroup(params.requestGroupId))
       ? params.requestGroupId
@@ -95,23 +125,105 @@ export async function buildStartPlan(
   const reconnectCandidates = params.requestGroupId == null
     ? dependencies.listActiveSessionRequestGroups(params.sessionId, params.runId)
     : []
+  const rawReconnectCandidateProjections = buildActiveRunProjections(reconnectCandidates)
+  const candidateSearch = await runCandidateProviders({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+    explicitIds: {
+      ...(params.targetRunId ? { runId: params.targetRunId } : {}),
+      ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      ...(params.approvalId ? { approvalId: params.approvalId } : {}),
+    },
+    limit: 50,
+  }, [
+    createExplicitIdProvider({
+      id: "active-run-explicit-id",
+      candidateKind: "run",
+      ids: (input) => [
+        input.explicitIds?.runId,
+        input.explicitIds?.requestGroupId,
+        input.explicitIds?.approvalId,
+      ],
+      resolve: (id) => rawReconnectCandidateProjections.find((candidate) => (
+        candidate.runId === id
+        || candidate.requestGroupId === id
+        || candidate.approvalId === id
+      )),
+      candidateId: (candidate) => candidate.runId,
+    }),
+    createStoreCandidateProvider({
+      id: "active-run-store",
+      source: "run_store",
+      candidateKind: "run",
+      candidateReason: "run_contract_projection",
+      find: () => rawReconnectCandidateProjections,
+      candidateId: (candidate) => candidate.runId,
+      matchedKeys: (candidate) => [candidate.comparisonHash],
+      requiresFinalDecision: true,
+    }),
+  ], {
+    providerTimeoutMs: 100,
+    skipSlowOnFastPath: true,
+  })
+  const reconnectCandidateProjections = candidateSearch.candidates.map((candidate) => candidate.payload)
+  for (const trace of candidateSearch.traces) {
+    if (trace.skipped) continue
+    latencyEvents.push(`${buildLatencyEventLabelForMeasurement({
+      name: "candidate_search_latency_ms",
+      durationMs: trace.durationMs,
+      timeout: trace.timedOut === true,
+    })} provider=${trace.providerId}`)
+  }
+  const explicitTarget = candidateSearch.candidates.find((candidate) => candidate.source === "explicit_id")?.payload
+  const incomingContract = params.incomingIntentContract ?? buildIncomingIntentContract({
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+    ...(params.targetId ? { targetId: params.targetId } : {}),
+  })
   const shouldCompareContinuation =
     params.requestGroupId == null
-    && reconnectCandidates.length > 0
+    && !explicitTarget
+    && reconnectCandidateProjections.length > 0
     && entrySemanticsBase.active_queue_cancellation_mode == null
   const reconnectDecision: RequestContinuationDecision = shouldCompareContinuation
-    ? await dependencies.compareRequestContinuation({
-        message: params.message,
-        sessionId: params.sessionId,
-        candidates: reconnectCandidates,
-        ...(params.model ? { model: params.model } : {}),
-      }).catch((): RequestContinuationDecision => ({ kind: "new", reason: "comparison failed" }))
-    : { kind: "new", reason: "no comparison required" }
+    ? await (async (): Promise<RequestContinuationDecision> => {
+        const comparisonStartedAt = Date.now()
+        try {
+          return await dependencies.compareRequestContinuation({
+            // nobie-critical-decision-audit: start-plan.contract_continuation_boundary
+            // Continuation comparison receives contracts and projection ids, never candidate raw prompts.
+            incomingContract,
+            sessionId: params.sessionId,
+            candidates: reconnectCandidateProjections,
+            ...(params.model ? { model: params.model } : {}),
+          })
+        } catch {
+          return { kind: "new_run", decisionSource: "safe_fallback", reason: "comparison failed" }
+        } finally {
+          latencyEvents.push(buildLatencyEventLabel(recordLatencyMetric({
+            name: "contract_ai_comparison_latency_ms",
+            durationMs: Date.now() - comparisonStartedAt,
+            runId: params.runId,
+            sessionId: params.sessionId,
+            ...(params.source ? { source: params.source } : {}),
+          })))
+        }
+      })()
+    : explicitTarget
+      ? {
+          kind: "same_run",
+          requestGroupId: explicitTarget.requestGroupId,
+          runId: explicitTarget.runId,
+          decisionSource: "explicit_id",
+          reason: "explicit id matched active run",
+        }
+      : { kind: "new_run", decisionSource: "safe_fallback", reason: "no comparison required" }
   const reconnectTarget = reconnectDecision.requestGroupId
     ? reconnectCandidates.find((candidate) => candidate.requestGroupId === reconnectDecision.requestGroupId)
     : undefined
   const reconnectCandidateCount = reconnectCandidates.length
-  const shouldReconnectGroup = reconnectDecision.kind !== "new"
+  const shouldReconnectGroup = reconnectDecision.kind !== "new_run"
   const reconnectNeedsClarification = Boolean(
     reconnectDecision.kind === "clarify"
       && explicitReusableRequestGroupId == null
@@ -160,6 +272,7 @@ export async function buildStartPlan(
     effectiveContextMode,
     ...(workerSessionId ? { workerSessionId } : {}),
     ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
+    latencyEvents,
   }
 }
 

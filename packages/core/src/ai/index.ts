@@ -7,6 +7,22 @@ import { OpenAIProvider } from "./providers/openai.js"
 import type { AIConnectionConfig } from "../config/types.js"
 import type { AuthProfile, AIProvider } from "./types.js"
 
+export type ProviderCredentialKind = "api_key" | "chatgpt_oauth" | "local_endpoint" | "custom_endpoint" | "none"
+
+export interface ProviderResolutionSnapshot {
+  source: "config.ai.connection"
+  providerId: string
+  credentialKind: ProviderCredentialKind
+  authMode: "api_key" | "chatgpt_oauth"
+  model: string
+  endpoint: string
+  configured: boolean
+  enabled: boolean
+  healthy: boolean
+  fallbackReason: string | null
+  diagnosticId: string
+}
+
 const profiles = new Map<string, AuthProfile>()
 const providers = new Map<string, AIProvider>()
 const providerFingerprints = new Map<string, string>()
@@ -68,36 +84,93 @@ function isOpenAIOAuthConfigured(connection = getActiveAIConnection()): boolean 
   }))
 }
 
-function hasConfiguredConnection(connection = getActiveAIConnection()): boolean {
+function resolveCredentialKind(connection: AIConnectionConfig): ProviderCredentialKind {
   const providerId = connection.provider.trim()
-  if (!providerId) return false
+  const authMode = connection.auth?.mode ?? "api_key"
+  if (!providerId) return "none"
+  if (providerId === "openai" && authMode === "chatgpt_oauth") return "chatgpt_oauth"
+  if (connection.auth?.apiKey?.trim()) return "api_key"
+  if (providerId === "ollama" || providerId === "llama") return "local_endpoint"
+  if (providerId === "custom") return "custom_endpoint"
+  return "none"
+}
+
+function resolveProviderConfigured(connection: AIConnectionConfig): { configured: boolean; reason: string | null } {
+  const providerId = connection.provider.trim()
+  if (!providerId) return { configured: false, reason: "provider_missing" }
 
   if (providerId === "openai") {
     const authMode = connection.auth?.mode ?? "api_key"
-    if (authMode === "chatgpt_oauth") return isOpenAIOAuthConfigured(connection)
-    return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
+    if (authMode === "chatgpt_oauth") {
+      return isOpenAIOAuthConfigured(connection)
+        ? { configured: true, reason: null }
+        : { configured: false, reason: "chatgpt_oauth_auth_file_missing" }
+    }
+    return connection.auth?.apiKey?.trim()
+      ? { configured: true, reason: null }
+      : { configured: false, reason: "openai_api_key_missing" }
   }
 
   if (providerId === "anthropic" || providerId === "gemini") {
-    return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim())
+    return connection.auth?.apiKey?.trim()
+      ? { configured: true, reason: null }
+      : { configured: false, reason: `${providerId}_api_key_missing` }
   }
 
   if (providerId === "ollama" || providerId === "llama" || providerId === "custom") {
-    return Boolean(connection.endpoint?.trim())
+    return connection.endpoint?.trim()
+      ? { configured: true, reason: null }
+      : { configured: false, reason: `${providerId}_endpoint_missing` }
   }
 
-  return false
+  return { configured: false, reason: "provider_unsupported" }
+}
+
+function hasConfiguredConnection(connection = getActiveAIConnection()): boolean {
+  return resolveProviderConfigured(connection).configured
+}
+
+export function resolveProviderResolutionSnapshot(providerId?: string, config = getConfig()): ProviderResolutionSnapshot {
+  const connection = getActiveAIConnection(config)
+  const activeProviderId = connection.provider.trim()
+  const requestedProviderId = providerId?.trim() ?? ""
+  const model = connection.model.trim()
+  const authMode = connection.auth?.mode ?? "api_key"
+  const endpoint = activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom"
+    ? normalizeOpenAICompatibleEndpoint(activeProviderId, connection.endpoint) ?? ""
+    : connection.endpoint?.trim() ?? ""
+  const configured = resolveProviderConfigured(connection)
+  let fallbackReason = configured.reason
+
+  if (requestedProviderId && requestedProviderId !== activeProviderId) {
+    fallbackReason = `provider_mismatch:${requestedProviderId}->${activeProviderId || "none"}`
+  } else if (configured.configured && !model) {
+    fallbackReason = "model_missing"
+  }
+
+  return {
+    source: "config.ai.connection",
+    providerId: activeProviderId,
+    credentialKind: resolveCredentialKind(connection),
+    authMode,
+    model,
+    endpoint,
+    configured: configured.configured,
+    enabled: configured.configured,
+    healthy: configured.configured && Boolean(model) && !(requestedProviderId && requestedProviderId !== activeProviderId),
+    fallbackReason,
+    diagnosticId: [activeProviderId || "none", authMode, resolveCredentialKind(connection), model || "model_missing"].join(":"),
+  }
 }
 
 export function detectAvailableProvider(): string {
-  const connection = getActiveAIConnection()
-  return hasConfiguredConnection(connection) ? connection.provider.trim() : ""
+  const snapshot = resolveProviderResolutionSnapshot()
+  return snapshot.configured ? snapshot.providerId : ""
 }
 
 export function getDefaultModel(): string {
-  const connection = getActiveAIConnection()
-  if (!hasConfiguredConnection(connection)) return ""
-  return connection.model.trim()
+  const snapshot = resolveProviderResolutionSnapshot()
+  return snapshot.configured ? snapshot.model : ""
 }
 
 export function inferProviderId(_model: string): string {
@@ -106,12 +179,13 @@ export function inferProviderId(_model: string): string {
 
 export function getProvider(providerId?: string): AIProvider {
   const connection = getActiveAIConnection()
-  const activeProviderId = detectAvailableProvider()
+  const snapshot = resolveProviderResolutionSnapshot(providerId)
+  const activeProviderId = snapshot.configured ? snapshot.providerId : ""
   const requestedProviderId = providerId?.trim() ?? ""
   const currentFingerprint = buildProviderFingerprint(connection)
 
   if (!activeProviderId) {
-    throw new Error("No configured AI backend is available. Connect an AI in settings first.")
+    throw new Error(`No configured AI backend is available. Connect an AI in settings first. reason=${snapshot.fallbackReason ?? "unknown"}`)
   }
 
   if (requestedProviderId && requestedProviderId !== activeProviderId) {
@@ -150,7 +224,7 @@ export function getProvider(providerId?: string): AIProvider {
     return provider
   }
 
-  if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "custom") {
+  if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom") {
     const authMode = connection.auth?.mode ?? "api_key"
     const apiKey = connection.auth?.apiKey?.trim()
     const profile = buildOpenAICompatibleProfile(activeProviderId, apiKey)

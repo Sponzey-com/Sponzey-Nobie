@@ -1,3 +1,5 @@
+import { recordLatencyMetric } from "../observability/latency.js"
+
 interface ScheduleDeliveryQueueDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
   logWarn: (message: string) => void
@@ -49,7 +51,27 @@ export function enqueueScheduledDelivery<T>(
         `previous scheduled delivery queue recovered: ${error instanceof Error ? error.message : String(error)}`,
       )
     })
-    .then(() => params.task())
+    .then(async () => {
+      const startedAt = Date.now()
+      try {
+        return await params.task()
+      } finally {
+        recordLatencyMetric({
+          name: "delivery_latency_ms",
+          durationMs: Date.now() - startedAt,
+          ...(params.scheduleRunId ? { runId: params.scheduleRunId } : {}),
+          ...(params.scheduleId ? { requestGroupId: params.scheduleId } : {}),
+          source: "scheduler",
+          detail: {
+            queueId,
+            targetChannel: params.targetChannel,
+            targetSessionId: params.targetSessionId,
+            scheduleId: params.scheduleId ?? null,
+            scheduleRunId: params.scheduleRunId ?? null,
+          },
+        })
+      }
+    })
     .catch((error) => {
       dependencies.logError("scheduled delivery queue task failed", {
         queueId,

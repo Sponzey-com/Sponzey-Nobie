@@ -21,6 +21,9 @@ export function buildResolvedExecutionProfile(params) {
         approvalTool: executionSemantics.approvalTool,
     };
 }
+export function normalizeDirectArtifactDeliverySemantics(params) {
+    return resolveExecutionSemantics(params);
+}
 export function createExecutionLoopRuntimeState(params) {
     const executionProfile = buildResolvedExecutionProfile(params);
     return {
@@ -139,6 +142,10 @@ function shouldTreatAsDirectArtifactDelivery(params, executionSemantics) {
     if (executionSemantics.approvalTool === "screen_capture" || executionSemantics.approvalTool === "yeonjang_camera_capture") {
         return true;
     }
+    const userFacingRequest = [params.originalRequest, params.structuredRequest?.target, params.intentEnvelope?.target]
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .join("\n");
+    const plainTextInformationRequest = looksLikePlainTextInformationRequest(userFacingRequest || params.message);
     const combined = [
         params.message,
         params.originalRequest,
@@ -160,6 +167,20 @@ function shouldTreatAsDirectArtifactDelivery(params, executionSemantics) {
     const referencesArtifactDelivery = (/\b(file|document|attachment|report|image|artifact)\b/iu.test(normalized)
         && /\b(send|deliver|attach|return|export|show)\b/iu.test(normalized)) || (/(?:파일|문서|첨부|보고서|이미지)/u.test(normalized)
         && /(?:보내|전달|첨부|반환|내보내|보여)/u.test(normalized));
-    return referencesExplicitArtifactFile || referencesArtifactImage || referencesArtifactDelivery;
+    if (referencesExplicitArtifactFile || referencesArtifactImage)
+        return true;
+    if (plainTextInformationRequest)
+        return false;
+    return referencesArtifactDelivery;
+}
+export function looksLikePlainTextInformationRequest(value) {
+    const normalized = value.trim();
+    if (!normalized)
+        return false;
+    const asksForInformation = /(?:날씨|기온|온도|습도|바람|강수|뉴스|소식|환율|주가|시세|검색|조회|알려|어때|뭐야|몇|weather|temperature|humidity|wind|forecast|news|exchange rate|stock|price|current|today|now)/iu.test(normalized);
+    if (!asksForInformation)
+        return false;
+    const requestsArtifact = /(?:화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영|파일|문서|첨부|이미지|다운로드|보고서\s*파일|screenshot|screen\s*capture|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture|file|attachment|image|download)/iu.test(normalized);
+    return !requestsArtifact;
 }
 //# sourceMappingURL=execution-profile.js.map

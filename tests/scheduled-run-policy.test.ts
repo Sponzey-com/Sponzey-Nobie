@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildScheduledFollowupPrompt,
+  extractDirectChannelDeliveryText,
   getScheduledRunExecutionOptions,
   shouldDisableToolsForScheduledTask,
 } from "../packages/core/src/runs/scheduled.ts"
@@ -20,6 +21,13 @@ describe("scheduled run policy", () => {
     const options = getScheduledRunExecutionOptions("파일 내용을 읽고 요약해줘", "operations")
     expect(options.toolsEnabled).toBe(true)
     expect(options.contextMode).toBe("isolated")
+  })
+
+  it("extracts quoted notification text from recurring schedule wording", () => {
+    expect(extractDirectChannelDeliveryText("매 1분마다 사용자에게 '알림' 메시지로 알려주기")).toBe("알림")
+    expect(extractDirectChannelDeliveryText("이 대화에 \"알람\" 메시지를 전송")).toBe("알람")
+    expect(extractDirectChannelDeliveryText("시스템 알람(소리/알림)으로 '일어나'라고 안내")).toBe("일어나")
+    expect(extractDirectChannelDeliveryText("매일 'report.txt' 파일을 읽고 요약해줘")).toBeNull()
   })
 
   it("builds a task-scoped prompt without the original multi-schedule sentence", () => {

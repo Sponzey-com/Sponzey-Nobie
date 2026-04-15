@@ -1,4 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js"
+import type { IntentContract } from "../contracts/index.js"
 import { analyzeRequestEntrySemantics } from "./entry-semantics.js"
 import { compareRequestContinuationWithAI } from "./entry-comparison.js"
 import type { RootRun, TaskProfile } from "./types.js"
@@ -87,7 +88,9 @@ export async function prepareStartLaunch(
     message: string
     sessionId: string
     runId: string
+    targetRunId?: string | undefined
     source: RootRun["source"]
+    incomingIntentContract?: IntentContract | undefined
     controller: AbortController
     now: number
     maxDelegationTurns: number
@@ -112,6 +115,9 @@ export async function prepareStartLaunch(
     message: params.message,
     sessionId: params.sessionId,
     runId: params.runId,
+    ...(params.targetRunId ? { targetRunId: params.targetRunId } : {}),
+    source: params.source,
+    ...(params.incomingIntentContract ? { incomingIntentContract: params.incomingIntentContract } : {}),
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
     ...(params.contextMode ? { contextMode: params.contextMode } : {}),

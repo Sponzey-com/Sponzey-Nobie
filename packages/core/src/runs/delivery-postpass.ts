@@ -11,6 +11,7 @@ import {
   type RecoveryAlternative,
   type SuccessfulToolEvidence,
 } from "./recovery.js"
+import { looksLikePlainTextInformationRequest } from "./execution-profile.js"
 
 export interface DeliveryPostPassPreview {
   preview: string
@@ -97,6 +98,15 @@ export function decideDirectArtifactDeliveryFlow(params: {
 
   if (!params.deliveryOutcome.requiresDirectArtifactRecovery) {
     return { kind: "none" }
+  }
+
+  if (looksLikePlainTextInformationRequest(params.originalRequest) && params.previousResult.trim()) {
+    return {
+      kind: "complete",
+      deliverySummary: "텍스트 결과 전달 완료",
+      finalText: params.previousResult,
+      eventLabel: "텍스트 결과 전달 요청 완료",
+    }
   }
 
   const deliveryRecovery = selectDirectArtifactDeliveryRecovery({

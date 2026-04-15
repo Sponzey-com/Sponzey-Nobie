@@ -90,6 +90,16 @@ export const errorCorpus: ErrorCorpusCase[] = [
     recovery: { action: "ai_call", toolName: "codex_oauth", targetId: "provider:codex" },
   },
   {
+    id: "oauth-refresh-token-missing",
+    source: "provider",
+    raw: "ChatGPT OAuth refresh token이 없습니다. 먼저 `codex login`을 다시 실행해 주세요.",
+    expectedKind: "auth",
+    expectedUserMessageIncludes: "ChatGPT OAuth 인증 정보",
+    expectedActionHintIncludes: "OAuth 세션",
+    forbiddenUserMessageSubstrings: forbiddenRawLeakSubstrings,
+    recovery: { action: "ai_call", toolName: "codex_oauth", targetId: "provider:codex" },
+  },
+  {
     id: "slack-upload-failed",
     source: "channel",
     raw: "Slack upload failed: files.upload returned channel_not_found",

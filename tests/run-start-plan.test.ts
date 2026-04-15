@@ -17,8 +17,10 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
     isReusableRequestGroup: vi.fn(() => false),
     listActiveSessionRequestGroups: vi.fn(() => [reconnectRun]),
     compareRequestContinuation: vi.fn(async () => ({
-      kind: "reuse",
+      kind: "same_run",
       requestGroupId: "group-prev",
+      runId: "run-prev",
+      decisionSource: "contract_ai",
       reason: "same task",
     })),
     getRequestGroupDelegationTurnCount: vi.fn(() => 2),
@@ -69,6 +71,7 @@ describe("build start plan", () => {
       ])),
       compareRequestContinuation: vi.fn(async () => ({
         kind: "clarify",
+        decisionSource: "contract_ai",
         reason: "ambiguous candidates",
       })),
     })
@@ -107,8 +110,10 @@ describe("build start plan", () => {
 
   it("skips AI continuation comparison for cancellation commands", async () => {
     const compareRequestContinuation = vi.fn(async () => ({
-      kind: "reuse",
+      kind: "same_run",
       requestGroupId: "group-prev",
+      runId: "run-prev",
+      decisionSource: "contract_ai",
       reason: "should not be used",
     }))
     const dependencies = createDependencies({
@@ -128,5 +133,52 @@ describe("build start plan", () => {
     expect(compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("run-4")
     expect(result.isRootRequest).toBe(true)
+  })
+
+  it("uses explicit reusable request group without contract projection comparison", async () => {
+    const compareRequestContinuation = vi.fn(async () => ({
+      kind: "same_run",
+      requestGroupId: "group-prev",
+      runId: "run-prev",
+      decisionSource: "contract_ai",
+      reason: "should not be called",
+    }))
+    const dependencies = createDependencies({
+      isReusableRequestGroup: vi.fn(() => true),
+      compareRequestContinuation,
+    })
+
+    const result = await buildStartPlan({
+      message: "후속 작업",
+      sessionId: "session-5",
+      runId: "run-5",
+      requestGroupId: "group-explicit",
+    }, dependencies)
+
+    expect(compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.requestGroupId).toBe("group-explicit")
+    expect(result.isRootRequest).toBe(false)
+  })
+
+  it("uses explicit target run id as a fast path without AI comparison", async () => {
+    const compareRequestContinuation = vi.fn(async () => ({
+      kind: "same_run",
+      requestGroupId: "group-prev",
+      runId: "run-prev",
+      decisionSource: "contract_ai",
+      reason: "should not be called",
+    }))
+    const dependencies = createDependencies({ compareRequestContinuation })
+
+    const result = await buildStartPlan({
+      message: "이 실행에 이어서 처리",
+      sessionId: "session-6",
+      runId: "run-6",
+      targetRunId: "run-prev",
+    }, dependencies)
+
+    expect(compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.requestGroupId).toBe("group-prev")
+    expect(result.isRootRequest).toBe(false)
   })
 })

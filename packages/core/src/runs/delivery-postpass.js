@@ -1,6 +1,7 @@
 import { buildImplicitExecutionSummary } from "./execution.js";
 import { buildSuccessfulDeliverySummary, } from "./delivery.js";
 import { buildDirectArtifactDeliveryRecoveryPrompt, selectDirectArtifactDeliveryRecovery, } from "./recovery.js";
+import { looksLikePlainTextInformationRequest } from "./execution-profile.js";
 export function buildDeliveryPostPassPreview(params) {
     if (params.deliveryOutcome.hasSuccessfulArtifactDelivery && params.deliveryOutcome.deliverySummary) {
         return {
@@ -34,6 +35,14 @@ export function decideDirectArtifactDeliveryFlow(params) {
     }
     if (!params.deliveryOutcome.requiresDirectArtifactRecovery) {
         return { kind: "none" };
+    }
+    if (looksLikePlainTextInformationRequest(params.originalRequest) && params.previousResult.trim()) {
+        return {
+            kind: "complete",
+            deliverySummary: "텍스트 결과 전달 완료",
+            finalText: params.previousResult,
+            eventLabel: "텍스트 결과 전달 요청 완료",
+        };
     }
     const deliveryRecovery = selectDirectArtifactDeliveryRecovery({
         source: params.source,

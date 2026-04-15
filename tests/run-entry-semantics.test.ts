@@ -10,4 +10,17 @@ describe("request entry semantics", () => {
     expect(analyzeRequestEntrySemantics("그 화면 다시 보여줘").reuse_conversation_context).toBe(false)
     expect(analyzeRequestEntrySemantics("continue the previous calendar work").reuse_conversation_context).toBe(false)
   })
+
+  it("does not treat multilingual schedule cancellation wording as active queue cancellation", () => {
+    expect(analyzeRequestEntrySemantics("Cancel the 9 AM reminder").active_queue_cancellation_mode).toBeNull()
+    expect(analyzeRequestEntrySemantics("예약 알림 취소해줘").active_queue_cancellation_mode).toBeNull()
+    expect(analyzeRequestEntrySemantics("予約をキャンセルして").active_queue_cancellation_mode).toBeNull()
+    expect(analyzeRequestEntrySemantics("取消预约").active_queue_cancellation_mode).toBeNull()
+  })
+
+  it("does not finalize active queue cancellation from direct keywords", () => {
+    expect(analyzeRequestEntrySemantics("지금 작업 취소해줘").active_queue_cancellation_mode).toBeNull()
+    expect(analyzeRequestEntrySemantics("stop it").active_queue_cancellation_mode).toBeNull()
+    expect(analyzeRequestEntrySemantics("cancel the current task").active_queue_cancellation_mode).toBeNull()
+  })
 })

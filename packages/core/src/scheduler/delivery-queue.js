@@ -1,3 +1,4 @@
+import { recordLatencyMetric } from "../observability/latency.js";
 const scheduleDeliveryQueues = new Map();
 export function buildScheduleDeliveryQueueId(params) {
     return `${params.targetChannel}:${params.targetSessionId}`;
@@ -24,7 +25,28 @@ export function enqueueScheduledDelivery(params, dependencies) {
         .catch((error) => {
         dependencies.logWarn(`previous scheduled delivery queue recovered: ${error instanceof Error ? error.message : String(error)}`);
     })
-        .then(() => params.task())
+        .then(async () => {
+        const startedAt = Date.now();
+        try {
+            return await params.task();
+        }
+        finally {
+            recordLatencyMetric({
+                name: "delivery_latency_ms",
+                durationMs: Date.now() - startedAt,
+                ...(params.scheduleRunId ? { runId: params.scheduleRunId } : {}),
+                ...(params.scheduleId ? { requestGroupId: params.scheduleId } : {}),
+                source: "scheduler",
+                detail: {
+                    queueId,
+                    targetChannel: params.targetChannel,
+                    targetSessionId: params.targetSessionId,
+                    scheduleId: params.scheduleId ?? null,
+                    scheduleRunId: params.scheduleRunId ?? null,
+                },
+            });
+        }
+    })
         .catch((error) => {
         dependencies.logError("scheduled delivery queue task failed", {
             queueId,

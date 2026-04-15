@@ -6,11 +6,12 @@ export interface RequestEntrySemantics {
 }
 
 export function analyzeRequestEntrySemantics(message: string): RequestEntrySemantics {
+  void message
   return {
     // Conversation reuse is decided by an isolated AI comparison step in start-plan.ts.
-    // Entry semantics keeps only deterministic local checks such as cancellation intent.
+    // Active queue cancel/update must come from structured action contracts or explicit ids, not keyword regex.
     reuse_conversation_context: false,
-    active_queue_cancellation_mode: detectActiveQueueCancellationMode(message),
+    active_queue_cancellation_mode: null,
   }
 }
 
@@ -46,28 +47,6 @@ export function buildActiveQueueCancellationMessage(params: {
     ? `\n\n아직 ${params.remainingCount}건의 다른 활성 작업은 계속 진행 중입니다.`
     : ""
   return titleLines ? `${heading}\n${titleLines}${tail}` : `${heading}${tail}`
-}
-
-function detectActiveQueueCancellationMode(message: string): ActiveQueueCancellationMode | null {
-  const trimmed = message.trim()
-  if (!trimmed) return null
-  if (/(일정|예약|알림|스케줄|schedule|reminder|notification|alarm)/iu.test(trimmed)) return null
-  if (!/(취소|중단|멈춰|그만|cancel|abort|stop)/iu.test(trimmed)) return null
-
-  const directPatterns = [
-    /^(지금|현재|방금)?\s*(진행\s*중인|하고\s*있는|돌고\s*있는)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(이|그)?\s*(작업|요청|실행|큐|거|것)?\s*(취소|중단|멈춰|그만)(해|해줘|해주세요|해\s*줘|해\s*주세요)?[.!?]*$/u,
-    /^(cancel|stop|abort)(\s+the)?(\s+(current|active|running|latest|queued))?(\s+(task|run|request|job|queue))?[.!?]*$/i,
-  ]
-
-  const looksDirect = directPatterns.some((pattern) => pattern.test(trimmed))
-  const tokenCount = trimmed.split(/\s+/).filter(Boolean).length
-  if (!looksDirect && tokenCount > 8) return null
-
-  if (/(모두|전부|다\s*(취소|중단)?|all|everything|every\s*(task|run|request|job)?)/iu.test(trimmed)) {
-    return "all"
-  }
-  return "latest"
 }
 
 function isEnglishCancellationRequest(message: string): boolean {

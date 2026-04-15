@@ -11,7 +11,9 @@ use anyhow::{Context, Result, anyhow};
 use rumqttc::{Client, Event, Incoming, LastWill, MqttOptions, Outgoing, QoS};
 use serde::Serialize;
 
-use crate::node::{capabilities_payload, spawn_request_task};
+use crate::automation::AutomationBackend;
+use crate::node::{build_target, capabilities_payload, git_commit, git_tag, spawn_request_task};
+use crate::platform::current_backend;
 use crate::protocol::{Request, Response};
 use crate::settings::{YeonjangSettings, load_settings};
 
@@ -462,6 +464,12 @@ struct StatusPayload<'a> {
     state: &'a str,
     message: &'a str,
     version: &'static str,
+    git_tag: &'static str,
+    git_commit: &'static str,
+    build_target: &'static str,
+    platform: crate::automation::PlatformKind,
+    os: &'static str,
+    arch: &'static str,
 }
 
 fn status_payload<'a>(
@@ -475,6 +483,12 @@ fn status_payload<'a>(
         state,
         message,
         version: env!("CARGO_PKG_VERSION"),
+        git_tag: git_tag(),
+        git_commit: git_commit(),
+        build_target: build_target(),
+        platform: current_backend().platform_kind(),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
     }
 }
 

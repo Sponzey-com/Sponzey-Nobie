@@ -8,6 +8,9 @@
     "dev": "pnpm --filter @nobie/cli dev",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "backup:rehearsal": "vitest run --cache=false tests/task007-backup-rehearsal.test.ts",
+    "smoke:channels": "vitest run --cache=false tests/channel-smoke-runner.test.ts tests/channel-e2e-simulator.test.ts tests/slack-approval-handler.test.ts",
+    "soak:short": "vitest run --cache=false tests/task006-soak-retention.test.ts",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck"
   },

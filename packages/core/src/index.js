@@ -1,6 +1,7 @@
 // Config
 export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/index.js";
 export { generateAuthToken } from "./config/auth.js";
+export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
 // Logger
 export { createLogger, logger } from "./logger/index.js";
 // Events
@@ -38,6 +39,7 @@ export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from 
 export { buildIngressDedupeKey } from "./runs/ingress.js";
 export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js";
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js";
+export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildRetentionCleanupPlan, buildRetryFailureFingerprint, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
 // API server

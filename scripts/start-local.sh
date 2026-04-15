@@ -58,7 +58,12 @@ wait_for_http() {
 
   for _ in $(seq 1 30); do
     if curl -fsS "$url" >/dev/null 2>&1; then
-      return 0
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        return 0
+      fi
+
+      echo "$name 프로세스가 시작 중 종료되었습니다. 기존 프로세스나 포트 점유 상태를 확인해 주세요."
+      return 1
     fi
 
     if ! kill -0 "$pid" >/dev/null 2>&1; then

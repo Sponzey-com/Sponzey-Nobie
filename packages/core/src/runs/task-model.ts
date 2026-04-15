@@ -290,6 +290,8 @@ function computeTaskRequest(groupRuns: RootRun[]): string {
 }
 
 function detectDeliveryChannel(label: string): "telegram" | "webui" | "slack" | "cli" | "unknown" {
+  // nobie-critical-decision-audit: task-model.delivery_channel_label
+  // Display-only channel projection for task monitor labels.
   const normalized = label.toLowerCase()
   if (normalized.includes("텔레그램") || normalized.includes("telegram")) return "telegram"
   if (normalized.includes("webui")) return "webui"
@@ -387,6 +389,8 @@ function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefine
 }
 
 function resolveTaskDeliverySignal(orderedRuns: RootRun[], attempts: TaskAttemptModel[]): TaskDeliverySignal {
+  // nobie-critical-decision-audit: task-model.delivery_status_label
+  // System event-label projection until delivery receipts become the sole status source.
   const sourceAttemptId = attempts.at(-1)?.id
   const recentEvents = orderedRuns
     .flatMap((run) => run.recentEvents)
@@ -615,7 +619,7 @@ function buildTaskDiagnostics(
   continuity: TaskContinuityModel | undefined,
 ): TaskDiagnosticsModel | undefined {
   const eventLabels = orderedRuns.flatMap((run) => run.recentEvents.map((event) => event.label.trim()).filter(Boolean))
-  const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:prompt|memory|first_chunk|preflight)[_a-z]*=\d+ms\b/i.test(label))
+  const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:(?:prompt|memory|first_chunk|preflight)[_a-z]*|[a-z_]+_latency_ms)=\d+ms\b/i.test(label))
   const memoryEvents = eventLabels.filter((label) => /(?:memory|메모리|vector|벡터|index)/i.test(label))
   const toolEvents = eventLabels.filter((label) => /(?:tool|도구|실행 도구|tool receipt|last tool|lastToolReceipt)/i.test(label))
   const deliveryEvents = eventLabels.filter((label) => /(?:delivery|전달|telegram|slack|webui|artifact|파일 전달|last delivery|lastDeliveryReceipt)/i.test(label))

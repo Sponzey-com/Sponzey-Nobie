@@ -254,6 +254,99 @@ describe("run intake bridge pass", () => {
     })
   })
 
+  it("normalizes mistaken direct artifact semantics before delegated weather runs", async () => {
+    const dependencies = createDependencies()
+    const directSemantics = {
+      filesystemEffect: "none" as const,
+      privilegedOperation: "none" as const,
+      artifactDelivery: "direct" as const,
+      approvalRequired: false,
+      approvalTool: "external_action" as const,
+    }
+    const delegatedIntake = {
+      ...createBaseIntakeResult(),
+      action_items: [{
+        id: "weather-1",
+        type: "run_task" as const,
+        title: "Current weather conditions for Dongcheon-dong",
+        priority: "normal" as const,
+        reason: "live information requires web lookup",
+        payload: {
+          goal: "Current weather conditions for Dongcheon-dong",
+        },
+      }],
+      structured_request: {
+        source_language: "ko" as const,
+        normalized_english: "Tell me the current weather in Dongcheon-dong.",
+        target: "Current weather conditions for Dongcheon-dong",
+        to: "telegram chat 1, main thread",
+        context: ["User asked for current weather in 동천동"],
+        complete_condition: ["Provide a concise current weather summary for Dongcheon-dong."],
+      },
+      intent_envelope: {
+        ...createBaseIntakeResult().intent_envelope,
+        source_language: "ko" as const,
+        normalized_english: "Tell me the current weather in Dongcheon-dong.",
+        target: "Current weather conditions for Dongcheon-dong",
+        destination: "telegram chat 1, main thread",
+        context: ["User asked for current weather in 동천동"],
+        complete_condition: ["Provide a concise current weather summary for Dongcheon-dong."],
+        execution_semantics: directSemantics,
+        delivery_mode: "direct" as const,
+        needs_web: true,
+      },
+      execution: {
+        ...createBaseIntakeResult().execution,
+        requires_run: true,
+        needs_web: true,
+        execution_semantics: directSemantics,
+      },
+    }
+    const moduleDependencies = {
+      analyzeTaskIntake: vi.fn().mockResolvedValue(delegatedIntake),
+      resolveRunRoute: vi.fn().mockReturnValue({
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        providerId: "openai",
+        model: "gpt-5.4",
+        reason: "routing:provider:openai",
+      }),
+      executeScheduleActions: vi.fn(),
+      createDefaultScheduleActionDependencies: vi.fn(),
+      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Execution Brief]\nweather"),
+    }
+
+    await runIntakeBridgePass({
+      message: "지금 동천동 날씨 어때?",
+      originalRequest: "지금 동천동 날씨 어때?",
+      sessionId: "session-weather",
+      requestGroupId: "group-weather",
+      model: "gpt-test",
+      workDir: "/tmp/project",
+      source: "telegram",
+      runId: "run-weather",
+      onChunk: undefined,
+      reuseConversationContext: false,
+    }, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.buildFollowupPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      intake: expect.objectContaining({
+        intent_envelope: expect.objectContaining({
+          delivery_mode: "none",
+          execution_semantics: expect.objectContaining({ artifactDelivery: "none" }),
+        }),
+      }),
+    }))
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
+      executionSemantics: expect.objectContaining({ artifactDelivery: "none" }),
+      intentEnvelope: expect.objectContaining({
+        delivery_mode: "none",
+        execution_semantics: expect.objectContaining({ artifactDelivery: "none" }),
+      }),
+    }))
+  })
+
   it("emits schedule created event for recurring schedule receipts", async () => {
     const dependencies = createDependencies()
     const moduleDependencies = {

@@ -5,9 +5,11 @@ import {
   type TaskStructuredRequest,
 } from "../agent/intake.js"
 import { getConfig } from "../config/index.js"
+import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js"
 import type { AIProvider } from "../ai/index.js"
 import { detectAvailableProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
+import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/latency.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import { emitStandaloneAssistantMessage } from "./finalization.js"
 import {
@@ -40,6 +42,7 @@ const syntheticApprovalScopes = new Set<string>()
 
 export interface StartRootRunParams {
   runId?: string | undefined
+  targetRunId?: string | undefined
   message: string
   sessionId: string | undefined
   requestGroupId?: string | undefined
@@ -117,13 +120,18 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const targetId = params.targetId ?? (params.model ? detectAvailableProvider() : undefined)
   const now = Date.now()
   const workDir = params.workDir ?? process.cwd()
+  const incomingIntentContract = params.intentEnvelope
+    ? intentContractFromTaskIntentEnvelope(params.intentEnvelope)
+    : undefined
   const finished = (async () => {
     const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
     const startLaunch = await prepareStartLaunch({
       message: params.message,
       sessionId,
       runId,
+      ...(params.targetRunId ? { targetRunId: params.targetRunId } : {}),
       source: params.source,
+      ...(incomingIntentContract ? { incomingIntentContract } : {}),
       controller,
       now,
       maxDelegationTurns,
@@ -144,6 +152,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     })
     appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)
     const { startPlan } = startLaunch
+    for (const latencyEvent of startPlan.latencyEvents) appendRunEvent(runId, latencyEvent)
     const {
       entrySemantics,
       reconnectTarget,
@@ -202,38 +211,50 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       requestGroupId,
       runId,
       task: async () => {
-        await executeRootRunDriver({
-          runId,
-          sessionId,
-          requestGroupId,
-          source: params.source,
-          onChunk: params.onChunk,
-          controller,
-          message: params.message,
-          ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
-          ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
-          ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
-          ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
-          currentModel: params.model,
-          currentProviderId: params.providerId,
-          currentProvider: params.provider,
-          currentTargetId: params.targetId,
-          currentTargetLabel: params.targetLabel,
-          workDir,
-          ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
-          ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
-          reconnectNeedsClarification,
-          ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
-          queuedBehindRequestGroupRun,
-          activeWorkerRuntime: params.workerRuntime,
-          ...(workerSessionId ? { workerSessionId } : {}),
-          ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
-          isRootRequest,
-          contextMode: effectiveContextMode,
-          taskProfile: effectiveTaskProfile,
-          syntheticApprovalRuntimeDependencies,
-          defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
-        }, driverDependencies)
+        const executionStartedAt = Date.now()
+        try {
+          await executeRootRunDriver({
+            runId,
+            sessionId,
+            requestGroupId,
+            source: params.source,
+            onChunk: params.onChunk,
+            controller,
+            message: params.message,
+            ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+            ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
+            ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
+            ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
+            currentModel: params.model,
+            currentProviderId: params.providerId,
+            currentProvider: params.provider,
+            currentTargetId: params.targetId,
+            currentTargetLabel: params.targetLabel,
+            workDir,
+            ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
+            ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+            reconnectNeedsClarification,
+            ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
+            queuedBehindRequestGroupRun,
+            activeWorkerRuntime: params.workerRuntime,
+            ...(workerSessionId ? { workerSessionId } : {}),
+            ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
+            isRootRequest,
+            contextMode: effectiveContextMode,
+            taskProfile: effectiveTaskProfile,
+            syntheticApprovalRuntimeDependencies,
+            defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
+          }, driverDependencies)
+        } finally {
+          appendRunEvent(runId, buildLatencyEventLabel(recordLatencyMetric({
+            name: "execution_latency_ms",
+            durationMs: Date.now() - executionStartedAt,
+            runId,
+            sessionId,
+            requestGroupId,
+            source: params.source,
+          })))
+        }
 
         return getRootRun(runId)
       },

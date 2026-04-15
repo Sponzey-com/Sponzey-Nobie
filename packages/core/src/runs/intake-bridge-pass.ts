@@ -11,6 +11,7 @@ import {
 } from "../agent/intake.js"
 import type { AgentContextMode } from "../agent/index.js"
 import { resolveRunRoute } from "./routing.js"
+import { normalizeDirectArtifactDeliverySemantics } from "./execution-profile.js"
 import {
   buildFollowupPrompt,
   createDefaultScheduleActionDependencies,
@@ -224,13 +225,35 @@ export async function runIntakeBridgePass(
     }
 
     for (const delegatedAction of delegatedActions) {
+      const delegatedExecutionSemantics = normalizeDirectArtifactDeliverySemantics({
+        message: params.originalRequest,
+        originalRequest: params.originalRequest,
+        executionSemantics: intake.intent_envelope.execution_semantics,
+        structuredRequest: intake.structured_request,
+        intentEnvelope: intake.intent_envelope,
+      })
+      const delegatedIntentEnvelope = {
+        ...intake.intent_envelope,
+        execution_semantics: delegatedExecutionSemantics,
+        delivery_mode: delegatedExecutionSemantics.artifactDelivery,
+        requires_approval: delegatedExecutionSemantics.approvalRequired,
+        approval_tool: delegatedExecutionSemantics.approvalTool,
+      }
+      const delegatedIntake = {
+        ...intake,
+        execution: {
+          ...intake.execution,
+          execution_semantics: delegatedExecutionSemantics,
+        },
+        intent_envelope: delegatedIntentEnvelope,
+      }
       const delegatedTaskProfile = moduleDependencies.inferDelegatedTaskProfile({
-        intake,
+        intake: delegatedIntake,
         action: delegatedAction,
       })
       const followupPrompt = moduleDependencies.buildFollowupPrompt({
         originalMessage: params.originalRequest,
-        intake,
+        intake: delegatedIntake,
         action: delegatedAction,
         taskProfile: delegatedTaskProfile,
       })
@@ -272,9 +295,9 @@ export async function runIntakeBridgePass(
         runScope: "child",
         handoffSummary: delegatedAction.title,
         originalRequest: params.message,
-        executionSemantics: intake.intent_envelope.execution_semantics,
-        structuredRequest: intake.structured_request,
-        intentEnvelope: intake.intent_envelope,
+        executionSemantics: delegatedExecutionSemantics,
+        structuredRequest: delegatedIntake.structured_request,
+        intentEnvelope: delegatedIntentEnvelope,
         model: route.model ?? params.model,
         ...(route.providerId ? { providerId: route.providerId } : {}),
         ...(route.provider ? { provider: route.provider } : {}),

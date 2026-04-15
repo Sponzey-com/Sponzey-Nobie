@@ -1,14 +1,22 @@
 import { buildStructuredExecutionBrief } from "./request-prompt.js"
 
 const TOOL_REQUIRING_TASK_PATTERN =
+  // nobie-critical-decision-audit: scheduled.tool_disable_keyword_guard
+  // Legacy fallback only. New ScheduleContract schedules bypass this language-sensitive tool decision.
   /\b(file|files|code|repo|repository|command|commands|shell|terminal|browser|click|open|search|web|website|url|link|process|run|execute|edit|write|read|fetch|download)\b|파일|코드|저장소|명령|쉘|터미널|브라우저|클릭|열어|검색|웹|사이트|링크|주소|프로세스|실행|수정|작성|읽기|가져와|다운로드/u
 
+// nobie-critical-decision-audit: scheduled.direct_literal_extraction
+// Legacy fallback only. Contract schedules store literal delivery in ScheduleContract payloads.
 const DIRECT_DELIVERY_PATTERNS = [
   /^(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,
   /^(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,
   /^(?:say|send)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))\s+(?:in|via)\s+(?:telegram|message|messenger)$/iu,
   /^(?:say|tell)\s+(?:"([^"\n]+)"|'([^'\n]+)'|(.+?))$/iu,
 ] as const
+
+const QUOTED_LITERAL_PATTERN = /"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’/u
+const DIRECT_DELIVERY_HINT_PATTERN =
+  /메신저|메시지|텔레그램|슬랙|대화|채팅|알림|알람|말해|알려|보내|전송|안내|message|messenger|telegram|slack|chat|notify|notification|alarm|send|tell|say/iu
 
 export interface ScheduledRunExecutionOptions {
   toolsEnabled: boolean
@@ -45,6 +53,16 @@ export function extractDirectChannelDeliveryText(task: string): string | null {
     const candidate = match.slice(1).find((value) => typeof value === "string" && value.trim().length > 0)
     if (!candidate) continue
     return candidate.trim()
+  }
+
+  const quoted = normalizedTask.match(QUOTED_LITERAL_PATTERN)
+  const quotedCandidate = quoted?.slice(1).find((value) => typeof value === "string" && value.trim().length > 0)
+  if (
+    quotedCandidate
+    && DIRECT_DELIVERY_HINT_PATTERN.test(normalizedTask)
+    && !TOOL_REQUIRING_TASK_PATTERN.test(normalizedTask)
+  ) {
+    return quotedCandidate.trim()
   }
 
   return null

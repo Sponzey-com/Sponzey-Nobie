@@ -187,8 +187,10 @@ describe("prepare start launch", () => {
         } as any,
       ])),
       compareRequestContinuation: vi.fn(async () => ({
-        kind: "reuse",
+        kind: "same_run",
         requestGroupId: "group-prev",
+        runId: "run-prev",
+        decisionSource: "contract_ai",
         reason: "same task",
       })) as any,
       getRequestGroupDelegationTurnCount: vi.fn(() => 0),

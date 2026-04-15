@@ -1,4 +1,4 @@
-import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession, getSession } from "../db/index.js"
+import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession, getSession, isLegacySchedule } from "../db/index.js"
 import { getConfig } from "../config/index.js"
 import { getDefaultModel, getProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
@@ -813,6 +813,7 @@ function detectSessionScheduleManagementRequest(
   if (!trimmed) return null
 
   const activeSchedules = getSchedulesForSession(sessionId, true)
+  const activeContractSchedules = activeSchedules.filter((schedule) => !isLegacySchedule(schedule))
   const mentionsSchedule = /(예약|알림|스케줄|schedule|schedules|reminder|reminders|notification|notifications|alarm|alarms)/iu.test(trimmed)
   const looksLikeScheduleCancel = mentionsSchedule
     && /(취소|중지|꺼|멈춰|삭제|cancel|stop|disable|delete|remove|turn off)/iu.test(trimmed)
@@ -859,29 +860,24 @@ function detectSessionScheduleManagementRequest(
       }, environment, normalized)
     }
 
-    const cancelAll = /(모든|모두|전부|다|전체|all|every|each)/iu.test(trimmed)
-    const targetSchedules = cancelAll || activeSchedules.length === 1
-      ? activeSchedules
-      : activeSchedules.filter((schedule) => trimmed.includes(schedule.name) || trimmed.includes(schedule.prompt))
-
-    if (targetSchedules.length === 0) {
+    if (activeContractSchedules.length === 0) {
       const choices = activeSchedules.map((schedule, index) => `${index + 1}. ${schedule.name}`).join("\n")
       return withStructuredRequest(originalUserMessage, {
         intent: {
           category: "clarification",
-          summary: "어떤 예약 알림을 취소할지 모호함",
+          summary: "구조화된 취소 대상이 없어 예약 선택 필요",
           confidence: 0.95,
         },
         user_message: {
           mode: "clarification_receipt",
-          text: `취소할 예약 알림을 특정해 주세요.\n${choices}`,
+          text: `취소할 예약 알림을 직접 선택해 주세요.\n${choices}`,
         },
         action_items: [{
           id: "ask-cancel-schedule-target",
           type: "ask_user",
           title: "취소할 예약 알림 확인",
           priority: "normal",
-          reason: "현재 활성 예약 알림이 여러 개라 대상을 특정해야 합니다.",
+          reason: "자연어 문구만으로 기존 예약을 확정 취소하지 않습니다.",
           payload: { question: "어떤 예약 알림을 취소할까요?", missing_fields: ["schedule_target"] },
         }],
         scheduling: {
@@ -903,33 +899,30 @@ function detectSessionScheduleManagementRequest(
       }, environment, normalized)
     }
 
+    const choices = activeContractSchedules.map((schedule, index) => `${index + 1}. ${schedule.name}`).join("\n")
     return withStructuredRequest(originalUserMessage, {
       intent: {
-        category: "schedule_request",
-        summary: `${targetSchedules.length}개의 예약 알림 취소 요청`,
-        confidence: 0.99,
+        category: "clarification",
+        summary: "예약 취소 대상 선택 필요",
+        confidence: 0.95,
       },
       user_message: {
-        mode: "accepted_receipt",
-        text: targetSchedules.length === 1
-          ? `"${targetSchedules[0]?.name}" 예약 알림 취소를 진행합니다.`
-          : `${targetSchedules.length}개의 예약 알림 취소를 진행합니다.`,
+        mode: "clarification_receipt",
+        text: `취소할 예약 알림을 선택해 주세요.\n${choices}`,
       },
       action_items: [{
-        id: "cancel-session-schedules",
-        type: "cancel_schedule",
-        title: targetSchedules.length === 1 ? targetSchedules[0]?.name ?? "예약 알림 취소" : "예약 알림 일괄 취소",
-        priority: "high",
-        reason: "현재 세션에 연결된 활성 예약 알림을 취소합니다.",
-        payload: {
-          schedule_ids: targetSchedules.map((schedule) => schedule.id),
-        },
+        id: "ask-cancel-schedule-target",
+        type: "ask_user",
+        title: "취소할 예약 알림 확인",
+        priority: "normal",
+        reason: "scheduleId 없는 자연어 취소 요청은 확정 실행하지 않고 사용자의 선택을 받습니다.",
+        payload: { question: "어떤 예약 알림을 취소할까요?", missing_fields: ["schedule_target"] },
       }],
       scheduling: {
         detected: true,
         kind: "recurring",
-        status: "accepted",
-        schedule_text: targetSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
+        status: "needs_clarification",
+        schedule_text: activeContractSchedules.map((schedule) => describeCron(schedule.cron_expression)).join(", "),
       },
       execution: {
         requires_run: false,
@@ -940,7 +933,7 @@ function detectSessionScheduleManagementRequest(
         needs_web: false,
         execution_semantics: defaultTaskExecutionSemantics(),
       },
-      notes: ["session-schedule-management", "cancel-schedules"],
+      notes: ["session-schedule-management", "cancel-schedules", "contract-target-clarification"],
     }, environment, normalized)
   }
 

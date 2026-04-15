@@ -4,6 +4,7 @@ import { AnthropicProvider } from "../ai/providers/anthropic.js"
 import { GeminiProvider } from "../ai/providers/gemini.js"
 import { OpenAIProvider } from "../ai/providers/openai.js"
 import type { AuthProfile } from "../ai/types.js"
+import type { OpenAICodexOAuthConfig } from "../auth/openai-codex-oauth.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
 export interface RouteActionInput {
@@ -101,12 +102,18 @@ function resolveBackend(
     }
 
     case "openai": {
-      const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
+      const authMode = backend.authMode ?? "api_key"
+      const oauthConfig = authMode === "chatgpt_oauth"
+        ? resolveCodexOAuthConfig(backend)
+        : undefined
+      const profile = oauthConfig
+        ? buildProfile([])
+        : buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
       const endpoint = normalizeOpenAICompatibleEndpoint("openai", backend.endpoint)
       return {
         providerId: "openai",
         model,
-        provider: new OpenAIProvider(profile, endpoint),
+        provider: new OpenAIProvider(profile, endpoint, oauthConfig),
       }
     }
 
@@ -142,6 +149,12 @@ function resolveBackend(
         provider: new GeminiProvider(buildProfile([apiKey]), backend.endpoint?.trim() || undefined),
       }
     }
+  }
+}
+
+function resolveCodexOAuthConfig(backend: AIBackendCard): OpenAICodexOAuthConfig {
+  return {
+    authFilePath: backend.credentials.oauthAuthFilePath,
   }
 }
 
