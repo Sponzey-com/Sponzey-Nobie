@@ -165,6 +165,7 @@ Scheduling, reminder, recurring execution, and later-execution requests must be 
 - If the time or recurrence is clear, create an `accepted_receipt` and a `create_schedule` action item.
 - If the time, recurrence, or target task is missing, create a `clarification_receipt` and an `ask_user` action item.
 - If schedule creation fails, write the failure reason and missing information in `failed_receipt`.
+- Schedule requests are handed to the internal `ScheduleContract` creation path.
 - If a scheduled run must deliver literal text, preserve the exact text as `literal_text`.
 - If the scheduled run has a known destination, store it explicitly in `destination`.
 

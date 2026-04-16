@@ -121,6 +121,13 @@ function sanitizeUserFacingErrorCore(message) {
             reason: "모델 호출 빈도 제한 때문에 응답 생성이 중단되었습니다.",
         };
     }
+    if (/(unsupported|invalid|unknown|not found|does not exist).{0,40}\bmodel\b|\bmodel\b.{0,40}(unsupported|invalid|unknown|not found|does not exist)/i.test(normalized)) {
+        return {
+            kind: "not_found",
+            userMessage: "현재 설정된 모델을 provider가 지원하지 않거나 찾을 수 없습니다.",
+            reason: "설정된 모델 이름과 provider 실행 경로가 맞지 않아 모델 호출이 실패했습니다.",
+        };
+    }
     if (/(\b403\b|forbidden|unauthorized|access denied|cloudflare|challenge|auth|api key|credential|\b401\b)/i.test(normalized)) {
         return {
             kind: "access_blocked",

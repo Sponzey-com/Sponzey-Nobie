@@ -334,10 +334,20 @@ describe("ai provider configuration", () => {
     reloadConfig()
     resetAIProviderCache()
 
-    const provider = getProvider("openai") as { oauthConfig?: { authFilePath?: string }; profile?: { apiKeys: string[] } }
+    const provider = getProvider("openai") as { oauthConfig?: { authFilePath?: string }; profile?: { apiKeys: string[] }; baseUrl?: string }
     expect(detectAvailableProvider()).toBe("openai")
     expect(getDefaultModel()).toBe("gpt-5.4")
+    expect(resolveProviderResolutionSnapshot()).toMatchObject({
+      providerId: "openai",
+      adapterType: "openai_codex_oauth",
+      authType: "chatgpt_oauth",
+      baseUrlClass: "chatgpt_codex",
+      credentialKind: "chatgpt_oauth",
+      configured: true,
+      healthy: true,
+    })
     expect(provider.oauthConfig?.authFilePath).toBe(authFilePath)
     expect(provider.profile?.apiKeys).toEqual([])
+    expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api/codex")
   })
 })

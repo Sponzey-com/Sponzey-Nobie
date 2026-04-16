@@ -60,6 +60,16 @@ export const errorCorpus: ErrorCorpusCase[] = [
     recovery: { action: "ai_call", toolName: "openai", targetId: "provider:openai" },
   },
   {
+    id: "provider-unsupported-model",
+    source: "provider",
+    raw: "400 Bad Request: model gpt-unknown does not exist or is unsupported for this endpoint",
+    expectedKind: "not_found",
+    expectedUserMessageIncludes: "모델을 provider가 지원하지 않거나 찾을 수 없습니다",
+    expectedActionHintIncludes: "모델 이름",
+    forbiddenUserMessageSubstrings: forbiddenRawLeakSubstrings,
+    recovery: { action: "ai_call", toolName: "openai", targetId: "provider:openai" },
+  },
+  {
     id: "provider-timeout",
     source: "provider",
     raw: "model request timed out after 30000ms",

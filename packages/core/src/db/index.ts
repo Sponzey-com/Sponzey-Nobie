@@ -103,6 +103,100 @@ export interface DbChannelMessageRef {
   created_at: number
 }
 
+export interface DbDecisionTrace {
+  id: string
+  run_id: string | null
+  request_group_id: string | null
+  session_id: string | null
+  source: string | null
+  channel: string | null
+  decision_kind: string
+  reason_code: string
+  input_contract_ids_json: string | null
+  receipt_ids_json: string | null
+  sanitized_detail_json: string | null
+  created_at: number
+}
+
+export interface DbDecisionTraceInput {
+  id?: string
+  runId?: string | null
+  requestGroupId?: string | null
+  sessionId?: string | null
+  source?: string | null
+  channel?: string | null
+  decisionKind: string
+  reasonCode: string
+  inputContractIds?: string[]
+  receiptIds?: string[]
+  detail?: Record<string, unknown>
+  createdAt?: number
+}
+
+export type DbChannelSmokeRunMode = "dry-run" | "live-run"
+export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped"
+export type DbChannelSmokeStepStatus = "passed" | "failed" | "skipped"
+
+export interface DbChannelSmokeRun {
+  id: string
+  mode: DbChannelSmokeRunMode
+  status: DbChannelSmokeRunStatus
+  started_at: number
+  finished_at: number | null
+  scenario_count: number
+  passed_count: number
+  failed_count: number
+  skipped_count: number
+  initiated_by: string | null
+  summary: string | null
+  metadata_json: string | null
+}
+
+export interface DbChannelSmokeStep {
+  id: string
+  run_id: string
+  scenario_id: string
+  channel: string
+  scenario_kind: string
+  status: DbChannelSmokeStepStatus
+  reason: string | null
+  failures_json: string
+  trace_json: string | null
+  audit_log_id: string | null
+  started_at: number
+  finished_at: number
+}
+
+export interface DbChannelSmokeRunInput {
+  id?: string
+  mode: DbChannelSmokeRunMode
+  status?: DbChannelSmokeRunStatus
+  startedAt?: number
+  finishedAt?: number | null
+  scenarioCount?: number
+  passedCount?: number
+  failedCount?: number
+  skippedCount?: number
+  initiatedBy?: string | null
+  summary?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export interface DbChannelSmokeStepInput {
+  id?: string
+  runId: string
+  scenarioId: string
+  channel: string
+  scenarioKind: string
+  status: DbChannelSmokeStepStatus
+  reason?: string | null
+  failures?: string[]
+  trace?: Record<string, unknown> | null
+  auditLogId?: string | null
+  startedAt?: number
+  finishedAt?: number
+}
+
 export interface DbPromptSource {
   source_id: string
   locale: string
@@ -329,6 +423,32 @@ export function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): s
   return id
 }
 
+export function insertDecisionTrace(input: DbDecisionTraceInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO decision_traces
+       (id, run_id, request_group_id, session_id, source, channel, decision_kind, reason_code,
+        input_contract_ids_json, receipt_ids_json, sanitized_detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      input.sessionId ?? null,
+      input.source ?? null,
+      input.channel ?? null,
+      input.decisionKind,
+      input.reasonCode,
+      input.inputContractIds ? JSON.stringify(input.inputContractIds) : null,
+      input.receiptIds ? JSON.stringify(input.receiptIds) : null,
+      toJsonOrNull(input.detail),
+      input.createdAt ?? Date.now(),
+    )
+  return id
+}
+
 export function findChannelMessageRef(params: {
   source: string
   externalChatId: string
@@ -363,6 +483,110 @@ export function findChannelMessageRef(params: {
        LIMIT 1`,
     )
     .get(params.source, params.externalChatId, params.externalMessageId)
+}
+
+export function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  const startedAt = input.startedAt ?? Date.now()
+  getDb()
+    .prepare(
+      `INSERT INTO channel_smoke_runs
+       (id, mode, status, started_at, finished_at, scenario_count, passed_count, failed_count, skipped_count, initiated_by, summary, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.mode,
+      input.status ?? "running",
+      startedAt,
+      input.finishedAt ?? null,
+      input.scenarioCount ?? 0,
+      input.passedCount ?? 0,
+      input.failedCount ?? 0,
+      input.skippedCount ?? 0,
+      input.initiatedBy ?? null,
+      input.summary ?? null,
+      toJsonOrNull(input.metadata),
+    )
+  return id
+}
+
+export function updateChannelSmokeRun(
+  id: string,
+  fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>,
+): void {
+  const sets: string[] = []
+  const values: unknown[] = []
+  const push = (column: string, value: unknown) => {
+    sets.push(`${column} = ?`)
+    values.push(value)
+  }
+
+  if (fields.status !== undefined) push("status", fields.status)
+  if (fields.finishedAt !== undefined) push("finished_at", fields.finishedAt)
+  if (fields.scenarioCount !== undefined) push("scenario_count", fields.scenarioCount)
+  if (fields.passedCount !== undefined) push("passed_count", fields.passedCount)
+  if (fields.failedCount !== undefined) push("failed_count", fields.failedCount)
+  if (fields.skippedCount !== undefined) push("skipped_count", fields.skippedCount)
+  if (fields.summary !== undefined) push("summary", fields.summary)
+  if (fields.metadata !== undefined) push("metadata_json", toJsonOrNull(fields.metadata))
+  if (sets.length === 0) return
+
+  values.push(id)
+  getDb().prepare(`UPDATE channel_smoke_runs SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+}
+
+export function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  const startedAt = input.startedAt ?? Date.now()
+  const finishedAt = input.finishedAt ?? startedAt
+  getDb()
+    .prepare(
+      `INSERT INTO channel_smoke_steps
+       (id, run_id, scenario_id, channel, scenario_kind, status, reason, failures_json, trace_json, audit_log_id, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId,
+      input.scenarioId,
+      input.channel,
+      input.scenarioKind,
+      input.status,
+      input.reason ?? null,
+      JSON.stringify(input.failures ?? []),
+      input.trace ? JSON.stringify(input.trace) : null,
+      input.auditLogId ?? null,
+      startedAt,
+      finishedAt,
+    )
+  return id
+}
+
+export function getChannelSmokeRun(id: string): DbChannelSmokeRun | undefined {
+  return getDb()
+    .prepare<[string], DbChannelSmokeRun>("SELECT * FROM channel_smoke_runs WHERE id = ?")
+    .get(id)
+}
+
+export function listChannelSmokeRuns(limit = 20): DbChannelSmokeRun[] {
+  return getDb()
+    .prepare<[number], DbChannelSmokeRun>(
+      `SELECT * FROM channel_smoke_runs
+       ORDER BY started_at DESC
+       LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(limit, 200)))
+}
+
+export function listChannelSmokeSteps(runId: string): DbChannelSmokeStep[] {
+  return getDb()
+    .prepare<[string], DbChannelSmokeStep>(
+      `SELECT * FROM channel_smoke_steps
+       WHERE run_id = ?
+       ORDER BY started_at ASC, id ASC`,
+    )
+    .all(runId)
 }
 
 export function upsertPromptSources(sources: PromptSourceMetadata[]): void {
@@ -904,6 +1128,16 @@ export function listExpiredArtifactMetadata(now: number = Date.now()): DbArtifac
        ORDER BY expires_at ASC`,
     )
     .all(now)
+}
+
+export function listActiveArtifactMetadata(): DbArtifactMetadata[] {
+  return getDb()
+    .prepare<[], DbArtifactMetadata>(
+      `SELECT * FROM artifacts
+       WHERE deleted_at IS NULL
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all()
 }
 
 export function markArtifactDeleted(id: string, deletedAt: number = Date.now()): void {

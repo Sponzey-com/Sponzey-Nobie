@@ -7,6 +7,7 @@ import {
   rollbackPromptSourceBackup,
   writePromptSourceWithBackup,
 } from "../../memory/nobie-md.js"
+import { runPromptSourceRegression, type PromptRegressionLocale } from "../../memory/prompt-regression.js"
 
 function resolveWorkDir(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : process.cwd()
@@ -14,6 +15,11 @@ function resolveWorkDir(value: unknown): string {
 
 function resolveLocale(value: unknown): "ko" | "en" | null {
   return value === "ko" || value === "en" ? value : null
+}
+
+function resolveRegressionLocales(value: unknown): PromptRegressionLocale[] {
+  if (value === "ko" || value === "en") return [value]
+  return ["ko", "en"]
 }
 
 export function registerPromptSourcesRoute(app: FastifyInstance): void {
@@ -34,6 +40,12 @@ export function registerPromptSourcesRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { workDir?: string } }>("/api/prompt-sources/parity", { preHandler: authMiddleware }, async (req) => {
     const workDir = resolveWorkDir(req.query.workDir)
     return { workDir, parity: checkPromptSourceLocaleParity(workDir) }
+  })
+
+  app.get<{ Querystring: { workDir?: string; locale?: string } }>("/api/prompt-sources/regression", { preHandler: authMiddleware }, async (req) => {
+    const workDir = resolveWorkDir(req.query.workDir)
+    const locales = resolveRegressionLocales(req.query.locale)
+    return { workDir, regression: runPromptSourceRegression(workDir, { locales }) }
   })
 
   app.get<{

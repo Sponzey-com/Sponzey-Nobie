@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import mqtt, { type MqttClient } from "mqtt"
 import { getConfig } from "../config/index.js"
 import { createLogger } from "../logger/index.js"
-import { getMqttBrokerSnapshot, validateMqttBrokerConfig } from "../mqtt/broker.js"
+import { getMqttBrokerSnapshot, getMqttExtensionSnapshots, validateMqttBrokerConfig, type MqttExtensionSnapshot } from "../mqtt/broker.js"
 
 const log = createLogger("yeonjang:mqtt")
 
@@ -38,6 +38,7 @@ interface YeonjangChunkEnvelope {
 export interface YeonjangClientOptions {
   extensionId?: string
   timeoutMs?: number
+  forceRefresh?: boolean
 }
 
 export interface YeonjangMethodCapability {
@@ -65,6 +66,8 @@ export interface YeonjangCapabilityMatrixEntry {
 export interface YeonjangCapabilitiesPayload {
   node?: string
   version?: string
+  protocolVersion?: string
+  protocol_version?: string
   gitTag?: string
   git_tag?: string
   gitCommit?: string
@@ -80,9 +83,17 @@ export interface YeonjangCapabilitiesPayload {
   capabilityMatrix?: Record<string, YeonjangCapabilityMatrixEntry>
   capability_matrix?: Record<string, YeonjangCapabilityMatrixEntry>
   methods?: YeonjangMethodCapability[]
+  permissions?: Record<string, unknown>
+  toolHealth?: Record<string, unknown>
+  tool_health?: Record<string, unknown>
+  lastCapabilityRefreshAt?: number
+  lastCheckedAt?: number
 }
 
 export const DEFAULT_YEONJANG_EXTENSION_ID = "yeonjang-main"
+const YEONJANG_CAPABILITY_TTL_MS = 5_000
+
+const capabilityCache = new Map<string, { payload: YeonjangCapabilitiesPayload; cachedAt: number }>()
 
 export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID): {
   statusTopic: string
@@ -131,7 +142,30 @@ export async function invokeYeonjangMethod<T = unknown>(
 }
 
 export async function getYeonjangCapabilities(options: YeonjangClientOptions = {}): Promise<YeonjangCapabilitiesPayload> {
-  return await invokeYeonjangMethod<YeonjangCapabilitiesPayload>("node.capabilities", {}, options)
+  const extensionId = normalizeExtensionId(options.extensionId)
+  if (!options.forceRefresh) {
+    const cached = getFreshCachedCapabilities(extensionId)
+    if (cached) return cached
+
+    const snapshot = getFreshCapabilitySnapshot(extensionId)
+    if (snapshot) {
+      const payload = snapshotToYeonjangCapabilitiesPayload(snapshot)
+      rememberCapabilities(extensionId, payload)
+      return payload
+    }
+  }
+
+  const payload = await invokeYeonjangMethod<YeonjangCapabilitiesPayload>(
+    "node.capabilities",
+    {},
+    { ...options, extensionId },
+  )
+  rememberCapabilities(extensionId, payload)
+  return payload
+}
+
+export function clearYeonjangCapabilityCache(): void {
+  capabilityCache.clear()
 }
 
 export async function canYeonjangHandleMethod(
@@ -191,6 +225,73 @@ export function doesYeonjangCapabilitySupportOutputMode(
   const modes = resolveYeonjangCapabilityOutputModes(capabilities, method)
   if (!modes) return null
   return modes.includes(outputMode.trim().toLowerCase())
+}
+
+export function snapshotToYeonjangCapabilitiesPayload(snapshot: MqttExtensionSnapshot): YeonjangCapabilitiesPayload {
+  const matrix = snapshot.capabilityMatrix as Record<string, YeonjangCapabilityMatrixEntry> | undefined
+  return {
+    node: "nobie-yeonjang",
+    ...(snapshot.version ? { version: snapshot.version } : {}),
+    ...(snapshot.protocolVersion ? { protocolVersion: snapshot.protocolVersion } : {}),
+    ...(snapshot.gitTag ? { gitTag: snapshot.gitTag } : {}),
+    ...(snapshot.gitCommit ? { gitCommit: snapshot.gitCommit } : {}),
+    ...(snapshot.buildTarget ? { buildTarget: snapshot.buildTarget } : {}),
+    ...(snapshot.os ? { os: snapshot.os } : {}),
+    ...(snapshot.arch ? { arch: snapshot.arch } : {}),
+    ...(snapshot.platform ? { platform: snapshot.platform } : {}),
+    ...(snapshot.transport ? { transport: snapshot.transport } : {}),
+    ...(snapshot.capabilityHash ? { capabilityHash: snapshot.capabilityHash } : {}),
+    ...(matrix ? { capabilityMatrix: matrix } : {}),
+    methods: matrix
+      ? Object.entries(matrix).map(([name, entry]) => matrixEntryToMethodCapability(name, entry))
+      : snapshot.methods.map((name) => ({ name, implemented: true })),
+    ...(snapshot.permissions ? { permissions: snapshot.permissions } : {}),
+    ...(snapshot.toolHealth ? { toolHealth: snapshot.toolHealth } : {}),
+    lastCapabilityRefreshAt: snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt,
+  }
+}
+
+function matrixEntryToMethodCapability(
+  name: string,
+  entry: YeonjangCapabilityMatrixEntry,
+): YeonjangMethodCapability {
+  return {
+    name,
+    implemented: entry.supported !== false,
+    ...(typeof entry.supported === "boolean" ? { supported: entry.supported } : {}),
+    ...(typeof entry.requiresApproval === "boolean" ? { requiresApproval: entry.requiresApproval } : {}),
+    ...(typeof entry.requiresPermission === "boolean" ? { requiresPermission: entry.requiresPermission } : {}),
+    ...(entry.permissionSetting !== undefined ? { permissionSetting: entry.permissionSetting } : {}),
+    ...(entry.knownLimitations ? { knownLimitations: entry.knownLimitations } : {}),
+    ...(entry.outputModes ? { outputModes: entry.outputModes } : {}),
+    ...(typeof entry.lastCheckedAt === "number" ? { lastCheckedAt: entry.lastCheckedAt } : {}),
+  }
+}
+
+function normalizeExtensionId(extensionId?: string): string {
+  return extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID
+}
+
+function rememberCapabilities(extensionId: string, payload: YeonjangCapabilitiesPayload): void {
+  capabilityCache.set(extensionId, { payload, cachedAt: Date.now() })
+}
+
+function getFreshCachedCapabilities(extensionId: string): YeonjangCapabilitiesPayload | null {
+  const cached = capabilityCache.get(extensionId)
+  if (!cached) return null
+  if (Date.now() - cached.cachedAt > YEONJANG_CAPABILITY_TTL_MS) return null
+  return cached.payload
+}
+
+function getFreshCapabilitySnapshot(extensionId: string): MqttExtensionSnapshot | null {
+  const now = Date.now()
+  const snapshot = getMqttExtensionSnapshots().find((candidate) => candidate.extensionId === extensionId)
+  if (!snapshot) return null
+  if (String(snapshot.state ?? "").toLowerCase() === "offline") return null
+  if (!snapshot.capabilityMatrix && snapshot.methods.length === 0) return null
+  const refreshedAt = snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt
+  if (now - refreshedAt > YEONJANG_CAPABILITY_TTL_MS) return null
+  return snapshot
 }
 
 export function isYeonjangUnavailableError(error: unknown): boolean {

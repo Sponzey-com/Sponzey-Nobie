@@ -172,8 +172,45 @@ describe("task002 contracts", () => {
     const contract = intentContractFromTaskIntentEnvelope(envelope)
     expect(contract.intentType).toBe("schedule_request")
     expect(contract.actionType).toBe("create_schedule")
+    expect(contract.delivery.mode).toBe("channel_message")
     expect(contract.constraints).toEqual(["reminder is scheduled"])
     expect(validateIntentContract(contract).ok).toBe(true)
   })
-})
 
+  it("adapts text answer envelopes to reply delivery instead of channel artifact delivery", () => {
+    const envelope: TaskIntentEnvelope = {
+      intent_type: "task_intake",
+      source_language: "ko",
+      normalized_english: "Tell me the current weather in Dongcheon-dong.",
+      target: "current weather in Dongcheon-dong",
+      destination: "telegram chat 42120565, main thread",
+      context: ["Original user request: 지금 동천동 날씨 어때?"],
+      complete_condition: ["Reply with the weather summary in the current channel."],
+      schedule_spec: {
+        detected: false,
+        kind: "none",
+        status: "not_applicable",
+        schedule_text: "",
+      },
+      execution_semantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "none",
+        approvalRequired: false,
+        approvalTool: "external_action",
+      },
+      delivery_mode: "none",
+      requires_approval: false,
+      approval_tool: "external_action",
+      preferred_target: "auto",
+      needs_tools: true,
+      needs_web: true,
+    }
+
+    const contract = intentContractFromTaskIntentEnvelope(envelope)
+
+    expect(contract.actionType).toBe("run_tool")
+    expect(contract.delivery.mode).toBe("reply")
+    expect(validateIntentContract(contract).ok).toBe(true)
+  })
+})

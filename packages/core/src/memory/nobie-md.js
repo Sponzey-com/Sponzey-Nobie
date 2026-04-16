@@ -278,7 +278,7 @@ This file defines long-term operating principles. User-facing identity belongs i
 - 실제로 원하는 작업을 구조화한다.
 - 접수 응답과 실제 실행을 분리한다.
 - 실행이 필요한 요청은 명확한 action item으로 남긴다.
-- 예약, 리마인더, 반복 실행 요청은 일정 작업으로 구조화한다.
+- 예약, 리마인더, 반복 실행 요청은 일정 작업으로 구조화하고 내부 \`ScheduleContract\` 생성 경로로 전달한다.
 - 불명확한 요청은 추측하지 않고 필요한 정보만 묻는다.
 
 ## 완료 검토
@@ -297,7 +297,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Structure the actual requested work.
 - Separate intake receipts from real execution.
 - Leave clear action items for requests that require execution.
-- Structure scheduling, reminders, and recurring requests as schedule work.
+- Structure scheduling, reminders, and recurring requests as schedule work and hand them to the internal \`ScheduleContract\` creation path.
 - Ask only for necessary information when a request is unclear.
 
 ## Completion Review
@@ -330,6 +330,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 
 - 실행 가능한 요청은 적절한 도구로 실제 수행한다.
 - 로컬 장치와 시스템 작업은 연결된 로컬 실행 확장을 우선한다.
+- 화면 캡처, 카메라, 키보드, 마우스, 앱 실행, 로컬 명령은 로컬 실행 확장 capability를 먼저 확인한다.
 - 승인 필요한 도구는 승인 절차 없이 실행한 것처럼 말하지 않는다.
 - 실행 결과의 바이너리, 파일 경로, receipt는 버리지 않는다.
 - 현재 채널에서 전달 가능한 도구를 우선 사용하고 다른 채널 도구로 임의 변경하지 않는다.
@@ -338,6 +339,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 
 - Execute actionable requests with the appropriate tool.
 - Prefer the connected local execution extension for local device and system work.
+- For screen capture, camera, keyboard, mouse, app launch, and local commands, check local execution extension capability first.
 - Do not claim an approval-required tool ran before approval is complete.
 - Preserve binaries, file paths, and receipts returned by tools.
 - Prefer tools deliverable through the active channel and do not switch to another channel tool arbitrarily.
@@ -367,6 +369,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - 완료는 실제 결과 또는 명확한 불가능 사유가 있을 때만 선언한다.
 - 실행 완료와 전달 완료를 분리한다.
 - 결과물 전달 요청은 delivery receipt가 있어야 완료다.
+- 텍스트 답변만으로 완료되는 요청은 artifact delivery나 artifact recovery로 전환하지 않는다.
 - 일부 하위 단계가 끝났어도 완료 조건이 남아 있으면 계속 진행한다.
 - 물리적 또는 논리적으로 불가능한 작업은 다른 대상으로 바꾸지 않고 사유를 반환해 완료한다.
 `,
@@ -375,6 +378,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Declare completion only when there is an actual result or a clear impossible-reason result.
 - Separate execution completion from delivery completion.
 - Artifact delivery requests require a delivery receipt to be complete.
+- Text-only answers that satisfy the request do not need artifact delivery or artifact recovery.
 - Continue if completion criteria remain, even when some substeps are done.
 - If work is physically or logically impossible, return the reason and complete without changing the target.
 `,
@@ -404,6 +408,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - WebUI, Telegram, Slack은 서로 다른 session, thread, delivery 경계를 가진다.
 - 사용자가 명시하지 않았으면 다른 채널로 결과물을 보내지 않는다.
 - thread가 있는 채널에서는 가능한 한 원 요청 thread 안에서 승인, 진행, 결과 전달을 처리한다.
+- 승인 응답을 받지 못했으면 \`Aborted by user\`로 단정하지 않는다.
 - 채널 전송이 실패하면 같은 전송 경로를 반복하기 전에 원인을 분류한다.
 `,
         en: `# Channel Policy
@@ -412,6 +417,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - WebUI, Telegram, and Slack have separate session, thread, and delivery boundaries.
 - Do not send artifacts to another channel unless the user explicitly requested it.
 - In threaded channels, keep approval, progress, and result delivery in the original request thread when possible.
+- Do not treat a missing approval reply as \`Aborted by user\`.
 - If channel delivery fails, classify the cause before repeating the same delivery path.
 `,
     },

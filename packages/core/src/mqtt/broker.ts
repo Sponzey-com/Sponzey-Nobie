@@ -37,6 +37,7 @@ export interface MqttExtensionSnapshot {
   state: string | null
   message: string | null
   version: string | null
+  protocolVersion?: string | null
   gitTag?: string | null
   gitCommit?: string | null
   buildTarget?: string | null
@@ -46,7 +47,10 @@ export interface MqttExtensionSnapshot {
   transport?: string[]
   capabilityHash?: string | null
   methods: string[]
+  permissions?: Record<string, unknown>
+  toolHealth?: Record<string, unknown>
   capabilityMatrix?: Record<string, unknown>
+  lastCapabilityRefreshAt?: number | null
   lastSeenAt: number
 }
 
@@ -171,7 +175,16 @@ function releaseExtensionClaimsForClient(clientId: string | null | undefined): v
   for (const extensionId of claimed) {
     if (claimedExtensionOwners.get(extensionId) === normalizedClientId) {
       claimedExtensionOwners.delete(extensionId)
-      extensionSnapshots.delete(extensionId)
+      const current = extensionSnapshots.get(extensionId)
+      if (current) {
+        extensionSnapshots.set(extensionId, {
+          ...current,
+          clientId: null,
+          state: "offline",
+          message: "MQTT connection disconnected.",
+          lastSeenAt: Date.now(),
+        })
+      }
     }
   }
   claimedExtensionsByClient.delete(normalizedClientId)
@@ -179,11 +192,19 @@ function releaseExtensionClaimsForClient(clientId: string | null | undefined): v
 }
 
 function clearExtensionClaims(): void {
+  const now = Date.now()
+  for (const [extensionId, current] of extensionSnapshots.entries()) {
+    extensionSnapshots.set(extensionId, {
+      ...current,
+      clientId: null,
+      state: "offline",
+      message: "MQTT broker is stopped.",
+      lastSeenAt: now,
+    })
+  }
   activeClientsById.clear()
   claimedExtensionOwners.clear()
   claimedExtensionsByClient.clear()
-  extensionSnapshots.clear()
-  exchangeLogs.length = 0
 }
 
 function truncateText(value: string, max = 2_000): string {
@@ -261,9 +282,12 @@ function updateExtensionSnapshotFromPayload(
 
   const current = extensionSnapshots.get(extensionId)
   const capabilityMatrix = readCapabilityMatrix(objectPayload)
+  const permissions = readObject(objectPayload, "permissions")
+  const toolHealth = readObject(objectPayload, "toolHealth", "tool_health")
   const methods = kind === "capabilities"
     ? readCapabilityMethods(objectPayload, capabilityMatrix)
     : current?.methods ?? []
+  const now = Date.now()
   const next: MqttExtensionSnapshot = {
     extensionId,
     clientId: clientId ?? current?.clientId ?? currentOwner,
@@ -284,6 +308,7 @@ function updateExtensionSnapshotFromPayload(
       (typeof objectPayload?.version === "string" && objectPayload.version) ||
       current?.version ||
       null,
+    protocolVersion: readString(objectPayload, "protocolVersion", "protocol_version") ?? current?.protocolVersion ?? null,
     gitTag: readString(objectPayload, "gitTag", "git_tag") ?? current?.gitTag ?? null,
     gitCommit: readString(objectPayload, "gitCommit", "git_commit") ?? current?.gitCommit ?? null,
     buildTarget: readString(objectPayload, "buildTarget", "build_target") ?? current?.buildTarget ?? null,
@@ -293,8 +318,11 @@ function updateExtensionSnapshotFromPayload(
     transport: readStringArray(objectPayload, "transport") ?? current?.transport ?? [],
     capabilityHash: readString(objectPayload, "capabilityHash", "capability_hash") ?? current?.capabilityHash ?? null,
     methods,
+    ...(permissions ? { permissions } : current?.permissions ? { permissions: current.permissions } : {}),
+    ...(toolHealth ? { toolHealth } : current?.toolHealth ? { toolHealth: current.toolHealth } : {}),
     ...(capabilityMatrix ? { capabilityMatrix } : current?.capabilityMatrix ? { capabilityMatrix: current.capabilityMatrix } : {}),
-    lastSeenAt: Date.now(),
+    lastCapabilityRefreshAt: kind === "capabilities" ? now : current?.lastCapabilityRefreshAt ?? null,
+    lastSeenAt: now,
   }
 
   extensionSnapshots.set(extensionId, next)
@@ -314,6 +342,15 @@ function readStringArray(payload: Record<string, unknown> | null, key: string): 
   const value = payload[key]
   if (typeof value === "string" && value.trim()) return [value]
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim() !== "")
+  return null
+}
+
+function readObject(payload: Record<string, unknown> | null, ...keys: string[]): Record<string, unknown> | null {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = payload[key]
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>
+  }
   return null
 }
 

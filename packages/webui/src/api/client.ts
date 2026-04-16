@@ -106,6 +106,11 @@ export const api = {
       `/api/prompt-sources/parity${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
+  promptSourcesRegression: (workDir?: string, locale: "ko" | "en" | "all" = "all") =>
+    request<{ workDir: string; regression: PromptSourceRegressionResult }>(
+      `/api/prompt-sources/regression?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
+    ),
+
   writePromptSource: (sourceId: string, locale: "ko" | "en", body: { workDir?: string; content: string; createBackup?: boolean }) =>
     request<PromptSourceWriteResult>(`/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}/write`, {
       method: "POST",
@@ -171,6 +176,18 @@ export const api = {
       body: JSON.stringify({ ...(staleMs ? { staleMs } : {}) }),
     }),
 
+  channelSmokeRuns: (limit = 20) =>
+    request<ChannelSmokeRunsResponse>(`/api/channel-smoke/runs?limit=${encodeURIComponent(String(limit))}`),
+
+  channelSmokeRun: (id: string) =>
+    request<ChannelSmokeRunDetailResponse>(`/api/channel-smoke/runs/${encodeURIComponent(id)}`),
+
+  startChannelSmokeRun: (body: { mode?: ChannelSmokeRunMode; channel?: ChannelSmokeChannel; scenarioIds?: string[] } = {}) =>
+    request<ChannelSmokeStartResponse>("/api/channel-smoke/runs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   run: (runId: string) => request<{ run: RootRun }>(`/api/runs/${runId}`),
 
   runSteps: (runId: string) => request<{ steps: RunStep[] }>(`/api/runs/${runId}/steps`),
@@ -208,7 +225,7 @@ export const api = {
   tools: () => request<{ tools: Array<{ name: string; description: string; riskLevel: string }> }>("/api/tools"),
 
   audit: (params: {
-    page?: number; limit?: number; toolName?: string; result?: string; status?: string; kind?: string; channel?: string;
+    page?: number; limit?: number; toolName?: string; result?: string; status?: string; kind?: string; timelineKind?: string; channel?: string;
     from?: string; to?: string; sessionId?: string; runId?: string; requestGroupId?: string; q?: string
   } = {}) => {
     const q = new URLSearchParams()
@@ -218,6 +235,7 @@ export const api = {
     if (params.result) q.set("result", params.result)
     if (params.status) q.set("status", params.status)
     if (params.kind) q.set("kind", params.kind)
+    if (params.timelineKind) q.set("timelineKind", params.timelineKind)
     if (params.channel) q.set("channel", params.channel)
     if (params.from) q.set("from", params.from)
     if (params.to) q.set("to", params.to)
@@ -233,6 +251,12 @@ export const api = {
 
   auditExport: (runId: string, format: "json" | "markdown" = "markdown") =>
     request<AuditExportResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
+
+  promoteAuditEventToErrorCorpus: (eventId: string, note?: string) =>
+    request<AuditPromotionResponse>(`/api/audit/events/${encodeURIComponent(eventId)}/promote-error-corpus`, {
+      method: "POST",
+      body: JSON.stringify({ ...(note ? { note } : {}) }),
+    }),
 
   cleanupAudit: (params: { before?: number; all?: boolean }) => {
     const q = new URLSearchParams()
@@ -311,6 +335,9 @@ export const api = {
       nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
     }>("/api/scheduler/health"),
 
+  memoryQuality: () =>
+    request<{ snapshot: MemoryQualitySnapshot }>("/api/memory/quality"),
+
   memoryWritebackReview: (status: "pending" | "completed" | "discarded" | "failed" | "all" = "pending") =>
     request<{ candidates: MemoryWritebackReviewItem[] }>(`/api/memory/writeback?status=${encodeURIComponent(status)}`),
 
@@ -337,7 +364,8 @@ export type { StatusResponse, SetupChecksResponse, TestBackendResponse, TestMcpS
 export interface AuditEvent {
   id: string
   at: number
-  kind: "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery"
+  kind: "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace"
+  timelineKind: "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion"
   status: string
   summary: string
   source: string | null
@@ -373,9 +401,80 @@ export interface AuditExportResponse {
 
 export interface AuditCleanupResponse {
   ok: boolean
-  deleted: { auditLogs: number; diagnosticEvents: number }
+  deleted: { auditLogs: number; diagnosticEvents: number; decisionTraces?: number }
   before?: number
   message?: string
+}
+
+export interface AuditPromotionResponse {
+  ok: boolean
+  diagnosticEventId?: string
+  event?: AuditEvent
+  message?: string
+}
+
+export type ChannelSmokeChannel = "webui" | "telegram" | "slack"
+export type ChannelSmokeRunMode = "dry-run" | "live-run"
+export type ChannelSmokeStatus = "running" | "passed" | "failed" | "skipped"
+
+export interface ChannelSmokeCounts {
+  total: number
+  passed: number
+  failed: number
+  skipped: number
+}
+
+export interface ChannelSmokeRunSummary {
+  id: string
+  mode: ChannelSmokeRunMode
+  status: ChannelSmokeStatus
+  startedAt: number
+  finishedAt: number | null
+  counts: ChannelSmokeCounts
+  initiatedBy: string | null
+  summary: string | null
+  metadata: unknown
+}
+
+export interface ChannelSmokeStepSummary {
+  id: string
+  runId: string
+  scenarioId: string
+  channel: ChannelSmokeChannel
+  scenarioKind: string
+  status: Exclude<ChannelSmokeStatus, "running">
+  reason: string | null
+  failures: string[]
+  trace: unknown
+  auditLogId: string | null
+  startedAt: number
+  finishedAt: number
+}
+
+export interface ChannelSmokeRunsResponse {
+  runs: ChannelSmokeRunSummary[]
+}
+
+export interface ChannelSmokeRunDetailResponse {
+  run: ChannelSmokeRunSummary
+  steps: ChannelSmokeStepSummary[]
+}
+
+export interface ChannelSmokeStartResponse {
+  ok: boolean
+  runId: string
+  status: Exclude<ChannelSmokeStatus, "running">
+  counts: ChannelSmokeCounts
+  summary: string
+  results: Array<{
+    scenarioId: string
+    channel: ChannelSmokeChannel
+    kind: string
+    status: Exclude<ChannelSmokeStatus, "running">
+    reason?: string
+    failures: string[]
+    auditLogId?: string
+  }>
 }
 
 export interface Schedule {
@@ -466,6 +565,54 @@ export interface Plugin {
 
 export type MemoryWritebackReviewAction = "approve_long_term" | "approve_edited" | "keep_session" | "discard"
 
+export interface MemoryScopeQualityMetric {
+  scope: string
+  documents: number
+  chunks: number
+  missingEmbeddings: number
+  staleEmbeddings: number
+  staleDocuments: number
+  accessCount: number
+  avgRetrievalLatencyMs: number | null
+  p95RetrievalLatencyMs: number | null
+  lastFailure: string | null
+}
+
+export interface MemoryQualitySnapshot {
+  generatedAt: number
+  status: "healthy" | "degraded"
+  scopes: MemoryScopeQualityMetric[]
+  totals: {
+    documents: number
+    chunks: number
+    missingEmbeddings: number
+    staleEmbeddings: number
+    staleDocuments: number
+    accessCount: number
+  }
+  writeback: {
+    pending: number
+    writing: number
+    failed: number
+    completed: number
+    discarded: number
+    lastFailure: string | null
+  }
+  flashFeedback: {
+    active: number
+    expired: number
+    highSeverityActive: number
+  }
+  retrievalPolicy: {
+    fastPathBlocksLongTerm: boolean
+    fastPathBlocksVector: boolean
+    fastPathBudget: { maxChunks: number; maxChars: number }
+    normalBudget: { maxChunks: number; maxChars: number }
+    scheduleMemoryDefaultInjection: boolean
+  }
+  lastFailure: string | null
+}
+
 export interface MemoryWritebackReviewItem {
   id: string
   scope: string
@@ -526,6 +673,48 @@ export interface PromptSourceLocaleParityIssue {
 export interface PromptSourceLocaleParityResult {
   ok: boolean
   issues: PromptSourceLocaleParityIssue[]
+}
+
+export interface PromptRegressionIssue {
+  severity: "error" | "warning"
+  code: string
+  message: string
+  sourceId?: string
+  locale?: "ko" | "en"
+  evidence?: string
+}
+
+export interface PromptResponsibilityRuleResult {
+  id: string
+  description: string
+  ok: boolean
+  allowedSourceIds: string[]
+  issues: PromptRegressionIssue[]
+}
+
+export interface PromptImpactScenarioResult {
+  id: string
+  description: string
+  locale: "ko" | "en"
+  ok: boolean
+  requiredMarkers: string[]
+  missingMarkers: string[]
+}
+
+export interface PromptSourceRegressionResult {
+  ok: boolean
+  workDir: string
+  generatedAt: number
+  locales: Array<"ko" | "en">
+  registry: {
+    sourceCount: number
+    runtimeSourceCount: number
+    checksums: Array<{ sourceId: string; locale: "ko" | "en"; checksum: string; version: string; path: string }>
+  }
+  localeParity: PromptSourceLocaleParityResult
+  responsibility: PromptResponsibilityRuleResult[]
+  impact: PromptImpactScenarioResult[]
+  issues: PromptRegressionIssue[]
 }
 
 export interface PromptSourceWriteResult {

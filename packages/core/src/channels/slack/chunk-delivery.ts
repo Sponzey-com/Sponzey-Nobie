@@ -1,4 +1,5 @@
 import type { AgentChunk } from "../../agent/index.js"
+import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
 import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
@@ -35,6 +36,14 @@ function isArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryRes
     && candidate.channel === "slack"
     && typeof candidate.filePath === "string"
     && typeof candidate.size === "number"
+}
+
+function buildSlackArtifactFallbackMessage(fileName: string, downloadUrl?: string, caption?: string): string {
+  const title = caption?.trim() || fileName
+  if (!downloadUrl) {
+    return `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`
+  }
+  return `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`
 }
 
 export function createSlackChunkDeliveryHandler(
@@ -103,7 +112,40 @@ export function createSlackChunkDeliveryHandler(
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
               context.logError(`Failed to send Slack file: ${message}`)
-              return undefined
+              const artifact = buildArtifactAccessDescriptor({
+                filePath: details.filePath,
+                sizeBytes: details.size,
+                ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+              })
+              const fallbackText = buildSlackArtifactFallbackMessage(
+                artifact.fileName,
+                artifact.ok ? artifact.downloadUrl : undefined,
+                details.caption,
+              )
+              const sentMessageIds = await context.responder.sendFinalResponse(fallbackText)
+              for (const fallbackMessageId of sentMessageIds) {
+                recordIfRunPresent(fallbackMessageId, "assistant")
+              }
+              return {
+                textDeliveries: [{
+                  channel: "slack" as const,
+                  text: fallbackText,
+                }],
+                ...(artifact.ok && artifact.url ? {
+                  artifactDeliveries: [{
+                    toolName: chunk.toolName,
+                    channel: "slack" as const,
+                    filePath: details.filePath,
+                    url: artifact.url,
+                    ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+                    ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+                    previewable: artifact.previewable,
+                    mimeType: artifact.mimeType,
+                    sizeBytes: details.size,
+                    ...(details.caption ? { caption: details.caption } : {}),
+                  }],
+                } : {}),
+              }
             }
           },
         })

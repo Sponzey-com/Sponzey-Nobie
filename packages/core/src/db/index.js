@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { PATHS } from "../config/index.js";
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
+import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
 let _db = null;
 export function getDb() {
     if (_db)
@@ -92,6 +93,16 @@ export function insertChannelMessageRef(ref) {
         .run(id, ref.source, ref.session_id, ref.root_run_id, ref.request_group_id, ref.external_chat_id, ref.external_thread_id, ref.external_message_id, ref.role, ref.created_at);
     return id;
 }
+export function insertDecisionTrace(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO decision_traces
+       (id, run_id, request_group_id, session_id, source, channel, decision_kind, reason_code,
+        input_contract_ids_json, receipt_ids_json, sanitized_detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.requestGroupId ?? null, input.sessionId ?? null, input.source ?? null, input.channel ?? null, input.decisionKind, input.reasonCode, input.inputContractIds ? JSON.stringify(input.inputContractIds) : null, input.receiptIds ? JSON.stringify(input.receiptIds) : null, toJsonOrNull(input.detail), input.createdAt ?? Date.now());
+    return id;
+}
 export function findChannelMessageRef(params) {
     const withThread = params.externalThreadId
         ? getDb()
@@ -116,6 +127,74 @@ export function findChannelMessageRef(params) {
        ORDER BY created_at DESC
        LIMIT 1`)
         .get(params.source, params.externalChatId, params.externalMessageId);
+}
+export function insertChannelSmokeRun(input) {
+    const id = input.id ?? crypto.randomUUID();
+    const startedAt = input.startedAt ?? Date.now();
+    getDb()
+        .prepare(`INSERT INTO channel_smoke_runs
+       (id, mode, status, started_at, finished_at, scenario_count, passed_count, failed_count, skipped_count, initiated_by, summary, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.mode, input.status ?? "running", startedAt, input.finishedAt ?? null, input.scenarioCount ?? 0, input.passedCount ?? 0, input.failedCount ?? 0, input.skippedCount ?? 0, input.initiatedBy ?? null, input.summary ?? null, toJsonOrNull(input.metadata));
+    return id;
+}
+export function updateChannelSmokeRun(id, fields) {
+    const sets = [];
+    const values = [];
+    const push = (column, value) => {
+        sets.push(`${column} = ?`);
+        values.push(value);
+    };
+    if (fields.status !== undefined)
+        push("status", fields.status);
+    if (fields.finishedAt !== undefined)
+        push("finished_at", fields.finishedAt);
+    if (fields.scenarioCount !== undefined)
+        push("scenario_count", fields.scenarioCount);
+    if (fields.passedCount !== undefined)
+        push("passed_count", fields.passedCount);
+    if (fields.failedCount !== undefined)
+        push("failed_count", fields.failedCount);
+    if (fields.skippedCount !== undefined)
+        push("skipped_count", fields.skippedCount);
+    if (fields.summary !== undefined)
+        push("summary", fields.summary);
+    if (fields.metadata !== undefined)
+        push("metadata_json", toJsonOrNull(fields.metadata));
+    if (sets.length === 0)
+        return;
+    values.push(id);
+    getDb().prepare(`UPDATE channel_smoke_runs SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+}
+export function insertChannelSmokeStep(input) {
+    const id = input.id ?? crypto.randomUUID();
+    const startedAt = input.startedAt ?? Date.now();
+    const finishedAt = input.finishedAt ?? startedAt;
+    getDb()
+        .prepare(`INSERT INTO channel_smoke_steps
+       (id, run_id, scenario_id, channel, scenario_kind, status, reason, failures_json, trace_json, audit_log_id, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId, input.scenarioId, input.channel, input.scenarioKind, input.status, input.reason ?? null, JSON.stringify(input.failures ?? []), input.trace ? JSON.stringify(input.trace) : null, input.auditLogId ?? null, startedAt, finishedAt);
+    return id;
+}
+export function getChannelSmokeRun(id) {
+    return getDb()
+        .prepare("SELECT * FROM channel_smoke_runs WHERE id = ?")
+        .get(id);
+}
+export function listChannelSmokeRuns(limit = 20) {
+    return getDb()
+        .prepare(`SELECT * FROM channel_smoke_runs
+       ORDER BY started_at DESC
+       LIMIT ?`)
+        .all(Math.max(1, Math.min(limit, 200)));
+}
+export function listChannelSmokeSteps(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM channel_smoke_steps
+       WHERE run_id = ?
+       ORDER BY started_at ASC, id ASC`)
+        .all(runId);
 }
 export function upsertPromptSources(sources) {
     if (sources.length === 0)
@@ -338,6 +417,13 @@ export function listExpiredArtifactMetadata(now = Date.now()) {
          AND deleted_at IS NULL
        ORDER BY expires_at ASC`)
         .all(now);
+}
+export function listActiveArtifactMetadata() {
+    return getDb()
+        .prepare(`SELECT * FROM artifacts
+       WHERE deleted_at IS NULL
+       ORDER BY created_at ASC, id ASC`)
+        .all();
 }
 export function markArtifactDeleted(id, deletedAt = Date.now()) {
     getDb()
@@ -612,14 +698,36 @@ export function getSchedulesForSession(sessionId, enabledOnly = false) {
        ORDER BY s.created_at DESC`)
         .all(sessionId);
 }
+export function prepareScheduleContractPersistence(contract) {
+    const validation = validateScheduleContract(contract);
+    if (!validation.ok) {
+        throw new Error(formatContractValidationFailureForUser(validation.issues));
+    }
+    return {
+        contract_json: toCanonicalJson(contract),
+        identity_key: buildScheduleIdentityKey(contract),
+        payload_hash: buildPayloadHash(contract.payload),
+        delivery_key: buildDeliveryKey(contract.delivery),
+        contract_schema_version: contract.schemaVersion,
+    };
+}
 export function isLegacySchedule(schedule) {
     return !schedule.contract_json || schedule.contract_schema_version == null;
 }
 export function insertSchedule(s) {
+    const contractFields = s.contract
+        ? prepareScheduleContractPersistence(s.contract)
+        : {
+            contract_json: s.contract_json ?? null,
+            identity_key: s.identity_key ?? null,
+            payload_hash: s.payload_hash ?? null,
+            delivery_key: s.delivery_key ?? null,
+            contract_schema_version: s.contract_schema_version ?? null,
+        };
     getDb()
-        .prepare(`INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(s.id, s.name, s.cron_expression, s.timezone ?? null, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, s.created_at, s.updated_at);
+        .prepare(`INSERT INTO schedules (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id, execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec, contract_json, identity_key, payload_hash, delivery_key, contract_schema_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(s.id, s.name, s.cron_expression, s.timezone ?? null, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, contractFields.contract_json, contractFields.identity_key, contractFields.payload_hash, contractFields.delivery_key, contractFields.contract_schema_version, s.created_at, s.updated_at);
 }
 export function updateSchedule(id, fields) {
     const sets = [];

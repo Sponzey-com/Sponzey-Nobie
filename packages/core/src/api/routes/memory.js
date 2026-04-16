@@ -1,5 +1,6 @@
 import { authMiddleware } from "../middleware/auth.js";
 import { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, } from "../../memory/writeback.js";
+import { buildMemoryQualitySnapshot } from "../../memory/quality.js";
 const ALLOWED_STATUSES = new Set(["pending", "writing", "failed", "completed", "discarded", "all"]);
 const ALLOWED_ACTIONS = new Set(["approve_long_term", "approve_edited", "keep_session", "discard"]);
 function normalizeStatus(value) {
@@ -12,6 +13,9 @@ function normalizeLimit(value) {
     return Number.isFinite(parsed) ? Math.max(1, Math.min(500, Math.floor(parsed))) : 100;
 }
 export function registerMemoryRoute(app) {
+    app.get("/api/memory/quality", { preHandler: authMiddleware }, async () => {
+        return { snapshot: buildMemoryQualitySnapshot() };
+    });
     app.get("/api/memory/writeback", { preHandler: authMiddleware }, async (req) => {
         return {
             candidates: listMemoryWritebackReviewItems({

@@ -171,6 +171,7 @@ export function scheduleDelayedRootRun(
           model: route.model ?? params.model,
           ...(route.providerId ? { providerId: route.providerId } : {}),
           ...(route.provider ? { provider: route.provider } : {}),
+          ...(route.providerTrace ? { providerTrace: route.providerTrace } : {}),
           ...(route.workerRuntime ? { workerRuntime: route.workerRuntime } : {}),
           ...(route.targetId ? { targetId: route.targetId } : {}),
           ...(route.targetLabel ? { targetLabel: route.targetLabel } : {}),

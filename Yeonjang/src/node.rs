@@ -12,6 +12,8 @@ use crate::platform::current_backend;
 use crate::protocol::{Request, Response};
 use crate::settings::{PermissionSettings, load_settings};
 
+const YEONJANG_PROTOCOL_VERSION: &str = "2026-04-16.capability-matrix.v1";
+
 pub fn handle_request(request: Request) -> Response {
     match dispatch(&request) {
         Ok(result) => Response::ok(request.id, result),
@@ -33,7 +35,8 @@ fn dispatch(request: &Request) -> Result<Value> {
     match request.method.as_str() {
         "node.ping" => Ok(json!({
             "node": "nobie-yeonjang",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": git_tag(),
+            "protocolVersion": YEONJANG_PROTOCOL_VERSION,
             "gitTag": git_tag(),
             "gitCommit": git_commit(),
             "buildTarget": build_target(),
@@ -145,10 +148,12 @@ fn dispatch(request: &Request) -> Result<Value> {
 
 fn capabilities() -> Value {
     let capability_flags = effective_capabilities();
+    let permissions = current_permissions();
     let last_checked_at = now_unix_millis();
     json!({
         "node": "nobie-yeonjang",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": git_tag(),
+        "protocolVersion": YEONJANG_PROTOCOL_VERSION,
         "gitTag": git_tag(),
         "gitCommit": git_commit(),
         "buildTarget": build_target(),
@@ -158,6 +163,8 @@ fn capabilities() -> Value {
         "platform": capability_flags.platform,
         "capabilityHash": capability_hash(&capability_flags),
         "capabilityMatrix": capability_matrix(&capability_flags, last_checked_at),
+        "permissions": permissions_payload(&permissions),
+        "toolHealth": tool_health(&capability_flags, &permissions, last_checked_at),
         "abstractions": {
             "cameraManagement": capability_flags.camera_management,
             "commandExecution": capability_flags.command_execution,
@@ -402,6 +409,62 @@ fn capability_entry(
         "permissionSetting": permission_setting,
         "knownLimitations": known_limitations,
         "outputModes": output_modes,
+        "lastCheckedAt": last_checked_at,
+    })
+}
+
+fn permissions_payload(permissions: &PermissionSettings) -> Value {
+    json!({
+        "allow_system_control": permissions.allow_system_control,
+        "allow_shell_exec": permissions.allow_shell_exec,
+        "allow_application_launch": permissions.allow_application_launch,
+        "allow_screen_capture": permissions.allow_screen_capture,
+        "allow_keyboard_control": permissions.allow_keyboard_control,
+        "allow_mouse_control": permissions.allow_mouse_control,
+    })
+}
+
+fn tool_health(
+    flags: &AutomationCapabilities,
+    permissions: &PermissionSettings,
+    last_checked_at: u64,
+) -> Value {
+    json!({
+        "node.ping": tool_health_entry(true, true, None, last_checked_at),
+        "node.capabilities": tool_health_entry(true, true, None, last_checked_at),
+        "system.info": tool_health_entry(true, true, None, last_checked_at),
+        "camera.list": tool_health_entry(flags.camera_management, true, None, last_checked_at),
+        "camera.capture": tool_health_entry(flags.camera_management, true, None, last_checked_at),
+        "system.control": tool_health_entry(flags.system_control, permissions.allow_system_control, Some("allow_system_control"), last_checked_at),
+        "system.exec": tool_health_entry(flags.command_execution, permissions.allow_shell_exec, Some("allow_shell_exec"), last_checked_at),
+        "application.launch": tool_health_entry(flags.application_launch, permissions.allow_application_launch, Some("allow_application_launch"), last_checked_at),
+        "screen.capture": tool_health_entry(flags.screen_capture, permissions.allow_screen_capture, Some("allow_screen_capture"), last_checked_at),
+        "mouse.action": tool_health_entry(flags.mouse_control, permissions.allow_mouse_control, Some("allow_mouse_control"), last_checked_at),
+        "mouse.move": tool_health_entry(flags.mouse_control, permissions.allow_mouse_control, Some("allow_mouse_control"), last_checked_at),
+        "mouse.click": tool_health_entry(flags.mouse_control, permissions.allow_mouse_control, Some("allow_mouse_control"), last_checked_at),
+        "keyboard.action": tool_health_entry(flags.keyboard_control, permissions.allow_keyboard_control, Some("allow_keyboard_control"), last_checked_at),
+        "keyboard.type": tool_health_entry(flags.keyboard_control, permissions.allow_keyboard_control, Some("allow_keyboard_control"), last_checked_at),
+    })
+}
+
+fn tool_health_entry(
+    supported: bool,
+    permission_allowed: bool,
+    permission_setting: Option<&'static str>,
+    last_checked_at: u64,
+) -> Value {
+    let status = if supported {
+        "ready"
+    } else if !permission_allowed {
+        "permission_disabled"
+    } else {
+        "unsupported"
+    };
+    json!({
+        "status": status,
+        "supported": supported,
+        "permissionAllowed": permission_allowed,
+        "permissionSetting": permission_setting,
         "lastCheckedAt": last_checked_at,
     })
 }

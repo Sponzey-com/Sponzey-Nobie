@@ -7,6 +7,8 @@ import { runServiceAction, type ServiceAction } from "./commands/service/index.j
 import { memoryInitCommand, memoryShowCommand } from "./commands/memory.js"
 import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
 import { scheduleRunCommand } from "./commands/schedule.js"
+import { channelSmokeCommand } from "./commands/smoke.js"
+import { getCurrentDisplayVersion } from "@nobie/core"
 import {
   pluginListCommand,
   pluginInstallCommand,
@@ -16,7 +18,7 @@ import {
   pluginInfoCommand,
 } from "./commands/plugin.js"
 
-const VERSION = "0.1.0"
+const VERSION = getCurrentDisplayVersion()
 
 program
   .name("nobie")
@@ -85,6 +87,20 @@ schedule
   .description("저장된 스케줄을 한 번 실행합니다 (system cron 실행용)")
   .action((id: string) => {
     scheduleRunCommand(id).catch((err: unknown) => {
+      console.error("Error:", err instanceof Error ? err.message : String(err))
+      process.exit(1)
+    })
+  })
+
+const smoke = program.command("smoke").description("운영 smoke 점검")
+smoke
+  .command("channels")
+  .description("WebUI, Telegram, Slack 채널 파이프라인 smoke 점검을 실행합니다")
+  .option("--channel <channel>", "webui | telegram | slack 중 하나만 실행")
+  .option("--live", "실제 채널 live-run 실행 (NOBIE_CHANNEL_SMOKE_LIVE=1 필요)")
+  .option("--json", "결과를 JSON으로 출력")
+  .action((options: { channel?: string; live?: boolean; json?: boolean }) => {
+    channelSmokeCommand(options).catch((err: unknown) => {
       console.error("Error:", err instanceof Error ? err.message : String(err))
       process.exit(1)
     })

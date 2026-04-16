@@ -12,6 +12,7 @@ This file covers only completion decisions.
 - File creation requires confirming the actual file exists.
 - File modification requires confirming the actual change exists.
 - Local device work requires an actual tool or local execution extension result.
+- Text-only answers that satisfy the request do not need artifact delivery or artifact recovery.
 
 ---
 

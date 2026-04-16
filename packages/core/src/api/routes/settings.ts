@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import JSON5 from "json5"
 import { getConfig, reloadConfig } from "../../config/index.js"
-import { getProvider, getDefaultModel, resetAIProviderCache } from "../../ai/index.js"
+import { getProvider, getDefaultModel, resetAIProviderCache, resolveProviderResolutionSnapshot } from "../../ai/index.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
@@ -12,6 +12,7 @@ import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironme
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
 import { getVectorBackendStatus } from "../../memory/embedding.js"
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
@@ -333,6 +334,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
     try {
       const model = getDefaultModel()
       const provider = getProvider()
+      const providerResolution = resolveProviderResolutionSnapshot()
       const chunks: string[] = []
       for await (const chunk of provider.chat({
         model,
@@ -344,11 +346,14 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (chunk.type === "text_delta") chunks.push(chunk.delta)
         if (chunk.type === "message_stop") break
       }
-      return { ok: true, response: chunks.join("").trim(), model }
+      return { ok: true, response: chunks.join("").trim(), model, providerResolution: providerResolution.auditTrace }
     } catch (err) {
+      const sanitized = sanitizeUserFacingError(err instanceof Error ? err.message : String(err))
       return reply.status(503).send({
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: sanitized.userMessage,
+        kind: sanitized.kind,
+        actionHint: sanitized.actionHint,
       })
     }
   })

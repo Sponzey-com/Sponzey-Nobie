@@ -1,6 +1,13 @@
 import type { NobieConfig } from "../config/types.js"
+import {
+  insertChannelSmokeRun,
+  insertChannelSmokeStep,
+  updateChannelSmokeRun,
+  type DbChannelSmokeRunStatus,
+} from "../db/index.js"
 
 export type ChannelSmokeChannel = "webui" | "telegram" | "slack"
+export type ChannelSmokeRunMode = "dry-run" | "live-run"
 export type ChannelSmokeScenarioKind =
   | "basic_query"
   | "approval_required_tool"
@@ -52,6 +59,8 @@ export interface ChannelSmokeApprovalTrace {
   resolved?: "approve_once" | "approve_all" | "deny" | "timeout"
   targetChannel?: ChannelSmokeChannel
   correlationKey?: ChannelSmokeCorrelationKey
+  uiVisible?: boolean
+  uiKind?: "button" | "text_fallback" | "inline" | "none"
 }
 
 export interface ChannelSmokeTrace {
@@ -79,6 +88,9 @@ export interface ChannelSmokeRunResult {
   reason?: string
   failures: string[]
   auditLogId?: string
+  trace?: ChannelSmokeTrace
+  startedAt?: number
+  finishedAt?: number
 }
 
 export interface ChannelSmokeRunnerOptions {
@@ -87,8 +99,38 @@ export interface ChannelSmokeRunnerOptions {
   executeScenario: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>
 }
 
+export interface PersistedChannelSmokeRunResult {
+  runId: string
+  mode: ChannelSmokeRunMode
+  status: ChannelSmokeStatus
+  startedAt: number
+  finishedAt: number
+  summary: string
+  counts: {
+    total: number
+    passed: number
+    failed: number
+    skipped: number
+  }
+  results: ChannelSmokeRunResult[]
+}
+
+export interface PersistedChannelSmokeRunnerOptions extends Omit<ChannelSmokeRunnerOptions, "executeScenario"> {
+  mode?: ChannelSmokeRunMode
+  initiatedBy?: string
+  metadata?: Record<string, unknown>
+  executeScenario?: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>
+}
+
 const LOCAL_PATH_MARKDOWN_PATTERN =
   /!?\[[^\]]*\]\((?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^)]+\)|(?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^\s)]+/u
+const SENSITIVE_KEY_PATTERN = /token|secret|authorization|cookie|api[_-]?key|password|credential|chat[_-]?id|channel[_-]?id|group[_-]?id|user[_-]?id|target[_-]?id|allowed.*ids/i
+const SENSITIVE_TEXT_PATTERNS: Array<[RegExp, string]> = [
+  [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
+  [/xox[abpr]-[A-Za-z0-9-]+/gi, "xox*-***"],
+  [/\b\d{7,}\b/g, "***"],
+  [/([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})/g, "***.***.***"],
+]
 
 export function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[] {
   return [
@@ -224,6 +266,12 @@ export function validateChannelSmokeTrace(
     if (scenario.channel !== "telegram" && toolCall.toolName === "telegram_send_file") {
       failures.push("telegram_delivery_tool_used_outside_telegram")
     }
+    if (scenario.channel !== "slack" && /^slack(?:_|\.)/i.test(toolCall.toolName)) {
+      failures.push("slack_delivery_tool_used_outside_slack")
+    }
+    if (scenario.channel !== "webui" && /^webui(?:_|\.)/i.test(toolCall.toolName)) {
+      failures.push("webui_delivery_tool_used_outside_webui")
+    }
   }
 
   if (scenario.expectedTool && !(trace.toolCalls ?? []).some((toolCall) => toolCall.toolName === scenario.expectedTool)) {
@@ -233,6 +281,12 @@ export function validateChannelSmokeTrace(
   if (scenario.expectsApproval) {
     if (!trace.approval?.requested) {
       failures.push("approval_request_missing")
+    } else if (trace.approval.resolved === "timeout") {
+      failures.push("approval_timeout")
+    } else if (trace.approval.uiVisible === false || trace.approval.uiKind === "none") {
+      failures.push("approval_ui_missing")
+    } else if ((scenario.channel === "slack" || scenario.channel === "telegram") && trace.approval.uiKind && trace.approval.uiKind !== "button") {
+      failures.push("approval_button_missing")
     } else if (trace.approval.targetChannel && trace.approval.targetChannel !== scenario.expectedTarget) {
       failures.push(`approval_target_mismatch:${trace.approval.targetChannel}`)
     } else if (trace.approval.correlationKey && trace.approval.correlationKey !== scenario.correlationKey) {
@@ -286,6 +340,7 @@ export async function runChannelSmokeScenarios(options: ChannelSmokeRunnerOption
   const results: ChannelSmokeRunResult[] = []
 
   for (const scenario of scenarios) {
+    const startedAt = Date.now()
     const readiness = resolveChannelSmokeReadiness(options.config, scenario)
     if (!readiness.ready) {
       results.push({
@@ -293,6 +348,8 @@ export async function runChannelSmokeScenarios(options: ChannelSmokeRunnerOption
         status: "skipped",
         failures: [],
         ...(readiness.skipReason ? { reason: readiness.skipReason } : {}),
+        startedAt,
+        finishedAt: Date.now(),
       })
       continue
     }
@@ -306,6 +363,9 @@ export async function runChannelSmokeScenarios(options: ChannelSmokeRunnerOption
         failures: validation.failures,
         ...(validation.reason ? { reason: validation.reason } : {}),
         ...(trace.auditLogId ? { auditLogId: trace.auditLogId } : {}),
+        trace,
+        startedAt,
+        finishedAt: Date.now(),
       })
     } catch (error) {
       results.push({
@@ -313,9 +373,157 @@ export async function runChannelSmokeScenarios(options: ChannelSmokeRunnerOption
         status: "failed",
         reason: error instanceof Error ? error.message : String(error),
         failures: ["scenario_execution_failed"],
+        startedAt,
+        finishedAt: Date.now(),
       })
     }
   }
 
   return results
+}
+
+export function createDryRunChannelSmokeExecutor(input: {
+  traceOverrides?: Partial<Record<string, Partial<ChannelSmokeTrace>>>
+} = {}): (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace> {
+  return async (scenario) => {
+    const baseTrace: ChannelSmokeTrace = {
+      sourceChannel: scenario.channel,
+      responseChannel: scenario.expectedTarget,
+      correlationKey: scenario.correlationKey,
+      auditLogId: `dry-audit-${scenario.id}`,
+      toolCalls: scenario.expectedTool
+        ? [{ toolName: scenario.expectedTool, sourceChannel: scenario.channel, deliveryChannel: scenario.expectedTarget }]
+        : [],
+      ...(scenario.expectsApproval
+        ? {
+            approval: {
+              requested: true,
+              resolved: "approve_once",
+              targetChannel: scenario.expectedTarget,
+              correlationKey: scenario.correlationKey,
+              uiVisible: true,
+              uiKind: scenario.channel === "webui" ? "inline" : "button",
+            },
+          }
+        : {}),
+      artifacts: scenario.expectsArtifact
+        ? [scenario.channel === "webui"
+            ? {
+                channel: scenario.expectedTarget,
+                mode: "download_link",
+                url: "/api/artifacts/smoke/dry-run.png",
+              }
+            : {
+                channel: scenario.expectedTarget,
+                mode: "native_file",
+                filePath: "/tmp/nobie-smoke-dry-run.png",
+              }]
+        : [],
+      finalText: scenario.expectsFailure
+        ? "지원하지 않는 기능이라 실행하지 않았습니다."
+        : "dry-run smoke completed",
+    }
+    const override = input.traceOverrides?.[scenario.id] ?? {}
+    return { ...baseTrace, ...override }
+  }
+}
+
+export function sanitizeChannelSmokeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeChannelSmokeValue(item))
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      SENSITIVE_KEY_PATTERN.test(key) ? "***" : sanitizeChannelSmokeValue(item),
+    ]))
+  }
+  if (typeof value !== "string") return value
+  return SENSITIVE_TEXT_PATTERNS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value)
+}
+
+export function sanitizeChannelSmokeTrace(trace: ChannelSmokeTrace | undefined): ChannelSmokeTrace | undefined {
+  if (!trace) return undefined
+  return sanitizeChannelSmokeValue(trace) as ChannelSmokeTrace
+}
+
+function summarizeSmokeRun(results: ChannelSmokeRunResult[]): {
+  status: ChannelSmokeStatus
+  summary: string
+  counts: PersistedChannelSmokeRunResult["counts"]
+} {
+  const counts = {
+    total: results.length,
+    passed: results.filter((result) => result.status === "passed").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    skipped: results.filter((result) => result.status === "skipped").length,
+  }
+  const status: ChannelSmokeStatus = counts.failed > 0
+    ? "failed"
+    : counts.passed > 0
+      ? "passed"
+      : "skipped"
+  return {
+    status,
+    summary: `channel smoke ${status}: passed=${counts.passed}, failed=${counts.failed}, skipped=${counts.skipped}`,
+    counts,
+  }
+}
+
+export async function runPersistedChannelSmokeScenarios(options: PersistedChannelSmokeRunnerOptions): Promise<PersistedChannelSmokeRunResult> {
+  const mode = options.mode ?? "dry-run"
+  const scenarios = options.scenarios ?? getDefaultChannelSmokeScenarios()
+  const startedAt = Date.now()
+  const runId = insertChannelSmokeRun({
+    mode,
+    status: "running",
+    startedAt,
+    scenarioCount: scenarios.length,
+    initiatedBy: options.initiatedBy ?? null,
+    metadata: sanitizeChannelSmokeValue(options.metadata ?? {}) as Record<string, unknown>,
+  })
+  const executeScenario = options.executeScenario ?? createDryRunChannelSmokeExecutor()
+  const results = await runChannelSmokeScenarios({
+    config: options.config,
+    scenarios,
+    executeScenario,
+  })
+
+  for (const result of results) {
+    const sanitizedTrace = sanitizeChannelSmokeTrace(result.trace)
+    insertChannelSmokeStep({
+      runId,
+      scenarioId: result.scenario.id,
+      channel: result.scenario.channel,
+      scenarioKind: result.scenario.kind,
+      status: result.status,
+      reason: result.reason ?? null,
+      failures: result.failures,
+      trace: sanitizedTrace ? (sanitizedTrace as unknown as Record<string, unknown>) : null,
+      auditLogId: result.auditLogId ?? null,
+      startedAt: result.startedAt ?? startedAt,
+      finishedAt: result.finishedAt ?? Date.now(),
+    })
+  }
+
+  const finishedAt = Date.now()
+  const { status, summary, counts } = summarizeSmokeRun(results)
+  updateChannelSmokeRun(runId, {
+    status: status as DbChannelSmokeRunStatus,
+    finishedAt,
+    scenarioCount: counts.total,
+    passedCount: counts.passed,
+    failedCount: counts.failed,
+    skippedCount: counts.skipped,
+    summary,
+  })
+
+  const sanitizedResults: ChannelSmokeRunResult[] = results.map((result) => {
+    const sanitizedTrace = sanitizeChannelSmokeTrace(result.trace)
+    if (!sanitizedTrace) {
+      const { trace: _trace, ...rest } = result
+      return rest
+    }
+    return { ...result, trace: sanitizedTrace }
+  })
+
+  return { runId, mode, status, startedAt, finishedAt, summary, counts, results: sanitizedResults }
 }

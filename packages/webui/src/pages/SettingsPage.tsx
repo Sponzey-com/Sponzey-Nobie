@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse } from "../api/client"
+import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
@@ -110,6 +110,9 @@ export function SettingsPage() {
   const [memoryReviewError, setMemoryReviewError] = useState("")
   const [memoryReviewActionId, setMemoryReviewActionId] = useState<string | null>(null)
   const [memoryReviewEdits, setMemoryReviewEdits] = useState<Record<string, string>>({})
+  const [memoryQuality, setMemoryQuality] = useState<MemoryQualitySnapshot | null>(null)
+  const [memoryQualityLoading, setMemoryQualityLoading] = useState(false)
+  const [memoryQualityError, setMemoryQualityError] = useState("")
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const { text, displayText } = useUiI18n()
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -188,6 +191,19 @@ export function SettingsPage() {
     }
   }, [])
 
+  const loadMemoryQuality = useCallback(async () => {
+    setMemoryQualityLoading(true)
+    try {
+      const result = await api.memoryQuality()
+      setMemoryQuality(result.snapshot)
+      setMemoryQualityError("")
+    } catch (error) {
+      setMemoryQualityError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMemoryQualityLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (tab !== "mqtt") return
     void loadMqttRuntime()
@@ -201,8 +217,9 @@ export function SettingsPage() {
     if (tab !== "advanced") return
     void loadOperationsDiagnostics()
     void loadConfigOperations()
+    void loadMemoryQuality()
     void loadMemoryWritebackReview()
-  }, [tab, editorVersion, loadConfigOperations, loadMemoryWritebackReview, loadOperationsDiagnostics])
+  }, [tab, editorVersion, loadConfigOperations, loadMemoryQuality, loadMemoryWritebackReview, loadOperationsDiagnostics])
 
   const handleConfigAction = useCallback(async (action: "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport") => {
     setConfigOperationsLoading(true)
@@ -272,6 +289,7 @@ export function SettingsPage() {
     try {
       const editedContent = action === "approve_edited" ? memoryReviewEdits[candidateId] : undefined
       await api.reviewMemoryWriteback(candidateId, { action, ...(editedContent ? { editedContent } : {}) })
+      await loadMemoryQuality()
       await loadMemoryWritebackReview()
       setMemoryReviewError("")
     } catch (error) {
@@ -279,7 +297,7 @@ export function SettingsPage() {
     } finally {
       setMemoryReviewActionId(null)
     }
-  }, [loadMemoryWritebackReview, memoryReviewEdits])
+  }, [loadMemoryQuality, loadMemoryWritebackReview, memoryReviewEdits])
 
   const tabs = useMemo(
     () => [
@@ -556,6 +574,12 @@ export function SettingsPage() {
               error={operationsDiagnosticsError}
               onRefresh={() => void loadOperationsDiagnostics()}
             />
+            <MemoryQualityDashboardPanel
+              snapshot={memoryQuality}
+              loading={memoryQualityLoading}
+              error={memoryQualityError}
+              onRefresh={() => void loadMemoryQuality()}
+            />
             <ConfigMigrationPanel
               snapshot={configOperationsSnapshot}
               dryRun={configMigrationDryRun}
@@ -748,6 +772,135 @@ function RuntimeNotice({
     <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
       <div className="text-sm font-semibold">{title}</div>
       <div className="mt-1 text-sm leading-6">{displayText(message)}</div>
+    </div>
+  )
+}
+
+function formatMetric(value: number | null): string {
+  return value == null ? "-" : String(value)
+}
+
+function MemoryQualityDashboardPanel({
+  snapshot,
+  loading,
+  error,
+  onRefresh,
+}: {
+  snapshot: MemoryQualitySnapshot | null
+  loading: boolean
+  error: string
+  onRefresh: () => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const visibleScopes = snapshot?.scopes.filter((scope) => scope.documents > 0 || scope.chunks > 0 || scope.accessCount > 0 || scope.lastFailure) ?? []
+  const statusClass = snapshot?.status === "degraded"
+    ? "border-amber-200 bg-amber-50 text-amber-700"
+    : "border-emerald-200 bg-emerald-50 text-emerald-700"
+
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("메모리 품질 대시보드", "Memory quality dashboard")}</div>
+          <p className="mt-1 text-sm leading-6 text-stone-600">
+            {text(
+              "scope별 저장량, 임베딩 누락, 오래된 항목, 검색 지연, writeback 실패를 한 번에 확인합니다.",
+              "Inspect scope counts, missing embeddings, stale items, retrieval latency, and writeback failures in one place.",
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {snapshot ? (
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
+              {snapshot.status}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? text("불러오는 중", "Loading") : text("새로고침", "Refresh")}
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("문서", "Documents")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.totals.documents ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">chunks {snapshot?.totals.chunks ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("임베딩 누락", "Missing embeddings")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.totals.missingEmbeddings ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">stale {snapshot?.totals.staleEmbeddings ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">Flash Feedback</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.flashFeedback.active ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">high {snapshot?.flashFeedback.highSeverityActive ?? 0} · expired {snapshot?.flashFeedback.expired ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">Writeback</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">pending {snapshot?.writeback.pending ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">failed {snapshot?.writeback.failed ?? 0} · completed {snapshot?.writeback.completed ?? 0}</div>
+        </div>
+      </div>
+
+      {snapshot?.lastFailure ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          {text("최근 실패", "Last failure")}: {displayText(snapshot.lastFailure)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs font-semibold text-stone-500">{text("검색 정책", "Retrieval policy")}</div>
+          <div className="text-xs text-stone-500">
+            {text("fast path는 장기/벡터 조회를 막고 즉시 응답을 우선합니다.", "Fast path blocks long-term/vector retrieval and prioritizes immediate response.")}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
+            {text("fast path budget", "Fast path budget")}: {snapshot?.retrievalPolicy.fastPathBudget.maxChunks ?? 0} chunks / {snapshot?.retrievalPolicy.fastPathBudget.maxChars ?? 0} chars
+          </div>
+          <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
+            {text("normal budget", "Normal budget")}: {snapshot?.retrievalPolicy.normalBudget.maxChunks ?? 4} chunks / {snapshot?.retrievalPolicy.normalBudget.maxChars ?? 2200} chars
+          </div>
+          <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
+            schedule default: {snapshot?.retrievalPolicy.scheduleMemoryDefaultInjection ? "on" : "off"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+        <div className="grid grid-cols-[1.1fr_0.7fr_0.7fr_0.9fr_0.9fr_0.9fr] gap-2 border-b border-stone-200 bg-stone-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-500">
+          <span>scope</span>
+          <span>docs</span>
+          <span>chunks</span>
+          <span>missing</span>
+          <span>p95 ms</span>
+          <span>failure</span>
+        </div>
+        {(visibleScopes.length ? visibleScopes : snapshot?.scopes.slice(0, 7) ?? []).map((scope) => (
+          <div key={scope.scope} className="grid grid-cols-[1.1fr_0.7fr_0.7fr_0.9fr_0.9fr_0.9fr] gap-2 border-b border-stone-100 px-4 py-2 text-xs text-stone-600 last:border-b-0">
+            <span className="font-semibold text-stone-900">{scope.scope}</span>
+            <span>{scope.documents}</span>
+            <span>{scope.chunks}</span>
+            <span className={scope.missingEmbeddings > 0 ? "font-semibold text-amber-700" : ""}>{scope.missingEmbeddings}</span>
+            <span>{formatMetric(scope.p95RetrievalLatencyMs)}</span>
+            <span className="truncate" title={scope.lastFailure ?? ""}>{scope.lastFailure ? displayText(scope.lastFailure) : "-"}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

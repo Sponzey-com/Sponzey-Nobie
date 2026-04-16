@@ -209,11 +209,15 @@ export function findScheduleCandidatesByContract(
     })
   }
 
+  // nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary
+  // Vector/semantic/FTS hits can only enter as comparison-required candidates, never as final identity decisions.
   for (const schedule of input.semanticCandidates ?? []) {
     if (!includeDisabled && schedule.enabled !== 1) continue
+    const contract = parseScheduleContractJson(schedule.contract_json)
+    if (!contract) continue
     addCandidate(candidates, {
       schedule,
-      contract: parseScheduleContractJson(schedule.contract_json),
+      contract,
       candidateReason: "semantic_candidate",
       confidenceKind: "semantic",
       requiresComparison: true,

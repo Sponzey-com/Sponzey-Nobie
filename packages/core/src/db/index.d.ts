@@ -1,6 +1,6 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
-import type { ScheduleContract } from "../contracts/index.js";
+import { type ScheduleContract } from "../contracts/index.js";
 export declare function getDb(): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
@@ -59,6 +59,93 @@ export interface DbChannelMessageRef {
     external_message_id: string;
     role: string;
     created_at: number;
+}
+export interface DbDecisionTrace {
+    id: string;
+    run_id: string | null;
+    request_group_id: string | null;
+    session_id: string | null;
+    source: string | null;
+    channel: string | null;
+    decision_kind: string;
+    reason_code: string;
+    input_contract_ids_json: string | null;
+    receipt_ids_json: string | null;
+    sanitized_detail_json: string | null;
+    created_at: number;
+}
+export interface DbDecisionTraceInput {
+    id?: string;
+    runId?: string | null;
+    requestGroupId?: string | null;
+    sessionId?: string | null;
+    source?: string | null;
+    channel?: string | null;
+    decisionKind: string;
+    reasonCode: string;
+    inputContractIds?: string[];
+    receiptIds?: string[];
+    detail?: Record<string, unknown>;
+    createdAt?: number;
+}
+export type DbChannelSmokeRunMode = "dry-run" | "live-run";
+export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped";
+export type DbChannelSmokeStepStatus = "passed" | "failed" | "skipped";
+export interface DbChannelSmokeRun {
+    id: string;
+    mode: DbChannelSmokeRunMode;
+    status: DbChannelSmokeRunStatus;
+    started_at: number;
+    finished_at: number | null;
+    scenario_count: number;
+    passed_count: number;
+    failed_count: number;
+    skipped_count: number;
+    initiated_by: string | null;
+    summary: string | null;
+    metadata_json: string | null;
+}
+export interface DbChannelSmokeStep {
+    id: string;
+    run_id: string;
+    scenario_id: string;
+    channel: string;
+    scenario_kind: string;
+    status: DbChannelSmokeStepStatus;
+    reason: string | null;
+    failures_json: string;
+    trace_json: string | null;
+    audit_log_id: string | null;
+    started_at: number;
+    finished_at: number;
+}
+export interface DbChannelSmokeRunInput {
+    id?: string;
+    mode: DbChannelSmokeRunMode;
+    status?: DbChannelSmokeRunStatus;
+    startedAt?: number;
+    finishedAt?: number | null;
+    scenarioCount?: number;
+    passedCount?: number;
+    failedCount?: number;
+    skippedCount?: number;
+    initiatedBy?: string | null;
+    summary?: string | null;
+    metadata?: Record<string, unknown>;
+}
+export interface DbChannelSmokeStepInput {
+    id?: string;
+    runId: string;
+    scenarioId: string;
+    channel: string;
+    scenarioKind: string;
+    status: DbChannelSmokeStepStatus;
+    reason?: string | null;
+    failures?: string[];
+    trace?: Record<string, unknown> | null;
+    auditLogId?: string | null;
+    startedAt?: number;
+    finishedAt?: number;
 }
 export interface DbPromptSource {
     source_id: string;
@@ -142,12 +229,19 @@ export declare function getMessagesForRequestGroupWithRunMeta(sessionId: string,
 export declare function getMessagesForRun(sessionId: string, runId: string): DbMessage[];
 export declare function insertAuditLog(log: DbAuditLogInput): void;
 export declare function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): string;
+export declare function insertDecisionTrace(input: DbDecisionTraceInput): string;
 export declare function findChannelMessageRef(params: {
     source: string;
     externalChatId: string;
     externalMessageId: string;
     externalThreadId?: string;
 }): DbChannelMessageRef | undefined;
+export declare function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string;
+export declare function updateChannelSmokeRun(id: string, fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>): void;
+export declare function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string;
+export declare function getChannelSmokeRun(id: string): DbChannelSmokeRun | undefined;
+export declare function listChannelSmokeRuns(limit?: number): DbChannelSmokeRun[];
+export declare function listChannelSmokeSteps(runId: string): DbChannelSmokeStep[];
 export declare function upsertPromptSources(sources: PromptSourceMetadata[]): void;
 export declare function updateRunPromptSourceSnapshot(runId: string, snapshot: PromptSourceSnapshot): void;
 export declare function getPromptSourceStates(): PromptSourceState[];
@@ -309,6 +403,7 @@ export declare function insertArtifactMetadata(input: ArtifactMetadataInput): st
 export declare function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifactMetadata | undefined;
 export declare function getArtifactMetadata(id: string): DbArtifactMetadata | undefined;
 export declare function listExpiredArtifactMetadata(now?: number): DbArtifactMetadata[];
+export declare function listActiveArtifactMetadata(): DbArtifactMetadata[];
 export declare function markArtifactDeleted(id: string, deletedAt?: number): void;
 export declare function insertDiagnosticEvent(input: {
     kind: string;
@@ -410,6 +505,15 @@ export interface DbSchedule {
     next_run_at?: number | null;
     legacy?: number;
 }
+export type DbScheduleInsertInput = Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone" | "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version" | "legacy"> & {
+    timezone?: string | null;
+    contract?: ScheduleContract;
+    contract_json?: string | null;
+    identity_key?: string | null;
+    payload_hash?: string | null;
+    delivery_key?: string | null;
+    contract_schema_version?: number | null;
+};
 export interface DbScheduleRun {
     id: string;
     schedule_id: string;
@@ -445,15 +549,6 @@ export type DbScheduleDeliveryReceiptInput = Omit<DbScheduleDeliveryReceipt, "cr
 export declare function getSchedules(): DbSchedule[];
 export declare function getSchedule(id: string): DbSchedule | undefined;
 export declare function getSchedulesForSession(sessionId: string, enabledOnly?: boolean): DbSchedule[];
-export type DbScheduleInsertInput = Omit<DbSchedule, "last_run_at" | "next_run_at" | "timezone" | "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version" | "legacy"> & {
-    timezone?: string | null;
-    contract?: ScheduleContract;
-    contract_json?: string | null;
-    identity_key?: string | null;
-    payload_hash?: string | null;
-    delivery_key?: string | null;
-    contract_schema_version?: number | null;
-};
 export declare function prepareScheduleContractPersistence(contract: ScheduleContract): Pick<DbSchedule, "contract_json" | "identity_key" | "payload_hash" | "delivery_key" | "contract_schema_version">;
 export declare function isLegacySchedule(schedule: Pick<DbSchedule, "contract_json" | "contract_schema_version">): boolean;
 export declare function insertSchedule(s: DbScheduleInsertInput): void;
@@ -478,4 +573,5 @@ export declare function getScheduleStats(scheduleId: string): {
     avgDurationMs: number | null;
     lastRunAt: number | null;
 };
+export {};
 //# sourceMappingURL=index.d.ts.map

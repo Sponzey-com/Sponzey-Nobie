@@ -263,6 +263,21 @@ pnpm install
 pnpm build
 ```
 
+### Release Package and Rollback Baseline
+
+Before publishing, do not only check whether the development server starts. The release gate verifies the git-tag-derived version, Gateway/CLI bundle, WebUI static build, DB migration source, prompt seed files, Yeonjang protocol, and channel smoke path together.
+
+```bash
+pnpm run release:dry-run
+pnpm run release:package
+```
+
+- The display version is based on `git describe --tags --always --dirty` by default.
+- Release output includes `manifest.json` and `SHA256SUMS`.
+- Updates must pass DB/prompt backup snapshot and restore rehearsal first.
+- Rollback restores binary payload, DB, prompt registry, config, and Yeonjang protocol together.
+- Use `docs/release-runbook.md` as the detailed operating procedure.
+
 ### Run Locally
 
 ```bash

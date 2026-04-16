@@ -24,6 +24,19 @@ function toneClassForState(state: string | null) {
   return "border-stone-200 bg-stone-100 text-stone-600"
 }
 
+function countSupportedCapabilities(matrix: Record<string, unknown> | undefined): { supported: number; total: number } | null {
+  if (!matrix) return null
+  const entries = Object.values(matrix)
+  if (entries.length === 0) return { supported: 0, total: 0 }
+  return {
+    supported: entries.filter((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false
+      return (entry as Record<string, unknown>).supported !== false
+    }).length,
+    total: entries.length,
+  }
+}
+
 export function MqttRuntimePanel({
   runtime,
   loading,
@@ -106,12 +119,26 @@ export function MqttRuntimePanel({
                         Version: <span className="font-mono">{extension.version}</span>
                       </div>
                     ) : null}
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500">
+                      {extension.protocolVersion ? <span>Protocol: <span className="font-mono">{extension.protocolVersion}</span></span> : null}
+                      {extension.platform || extension.os || extension.arch ? <span>OS: <span className="font-mono">{[extension.platform, extension.os, extension.arch].filter(Boolean).join("/")}</span></span> : null}
+                      {extension.capabilityHash ? <span>Capability: <span className="font-mono">{extension.capabilityHash.slice(0, 12)}</span></span> : null}
+                    </div>
                     {extension.message ? (
                       <div className="mt-2 text-sm text-stone-700">{displayText(extension.message)}</div>
                     ) : null}
                     <div className="mt-2 text-xs text-stone-500">
                       {text("마지막 수신", "Last seen")}: {formatTimestamp(extension.lastSeenAt)}
+                      {extension.lastCapabilityRefreshAt ? ` · ${text("기능 갱신", "Capabilities")}: ${formatTimestamp(extension.lastCapabilityRefreshAt)}` : ""}
                     </div>
+                    {(() => {
+                      const counts = countSupportedCapabilities(extension.capabilityMatrix)
+                      return counts ? (
+                        <div className="mt-2 text-xs text-stone-500">
+                          {text("지원 기능", "Supported capabilities")}: {counts.supported}/{counts.total}
+                        </div>
+                      ) : null
+                    })()}
                     {extension.methods.length > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-2">
                         {extension.methods.slice(0, 8).map((method) => (
