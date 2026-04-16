@@ -39,6 +39,34 @@ export type {
   RestoreRehearsalReport,
   SnapshotVerificationResult,
 } from "./config/index.js"
+export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath } from "./version.js"
+
+// Release package
+export {
+  buildCleanMachineInstallChecklist,
+  buildReleaseArtifactDefinitions,
+  buildReleaseManifest,
+  buildReleasePipelinePlan,
+  buildReleaseRollbackRunbook,
+  buildReleaseUpdatePreflightReport,
+  writeReleasePackage,
+} from "./release/package.js"
+export type {
+  ReleaseArtifact,
+  ReleaseArtifactDefinition,
+  ReleaseArtifactKind,
+  ReleaseArtifactStatus,
+  ReleaseChecklistItem,
+  ReleaseManifest,
+  ReleaseManifestOptions,
+  ReleasePackageWriteResult,
+  ReleasePipelinePlan,
+  ReleasePipelineStep,
+  ReleaseRollbackRunbook,
+  ReleaseTargetPlatform,
+  ReleaseUpdatePreflightCheck,
+  ReleaseUpdatePreflightReport,
+} from "./release/package.js"
 
 // Logger
 export { createLogger, logger } from "./logger/index.js"

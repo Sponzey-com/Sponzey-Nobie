@@ -263,6 +263,21 @@ pnpm install
 pnpm build
 ```
 
+### 릴리즈 패키지와 롤백 기준
+
+배포 전에는 개발 서버 실행 여부만 확인하지 않고, git tag 기반 버전, Gateway/CLI bundle, WebUI static build, DB migration, prompt seed, Yeonjang protocol, channel smoke를 함께 확인합니다.
+
+```bash
+pnpm run release:dry-run
+pnpm run release:package
+```
+
+- 표시 버전은 기본적으로 `git describe --tags --always --dirty` 기준입니다.
+- release 산출물은 `manifest.json`과 `SHA256SUMS`를 생성합니다.
+- update 전에는 DB/prompt backup snapshot과 restore rehearsal을 먼저 통과해야 합니다.
+- rollback은 binary, DB, prompt registry, config, Yeonjang protocol을 함께 되돌리는 절차로 처리합니다.
+- 상세 절차는 `docs/release-runbook.md`를 기준으로 합니다.
+
 ### 로컬 실행
 
 ```bash

@@ -7,6 +7,7 @@ import { runServiceAction, type ServiceAction } from "./commands/service/index.j
 import { memoryInitCommand, memoryShowCommand } from "./commands/memory.js"
 import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
 import { scheduleRunCommand } from "./commands/schedule.js"
+import { getCurrentDisplayVersion } from "@nobie/core"
 import {
   pluginListCommand,
   pluginInstallCommand,
@@ -16,7 +17,7 @@ import {
   pluginInfoCommand,
 } from "./commands/plugin.js"
 
-const VERSION = "0.1.0"
+const VERSION = getCurrentDisplayVersion()
 
 program
   .name("nobie")

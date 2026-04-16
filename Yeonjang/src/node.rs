@@ -33,7 +33,7 @@ fn dispatch(request: &Request) -> Result<Value> {
     match request.method.as_str() {
         "node.ping" => Ok(json!({
             "node": "nobie-yeonjang",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": git_tag(),
             "gitTag": git_tag(),
             "gitCommit": git_commit(),
             "buildTarget": build_target(),
@@ -148,7 +148,7 @@ fn capabilities() -> Value {
     let last_checked_at = now_unix_millis();
     json!({
         "node": "nobie-yeonjang",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": git_tag(),
         "gitTag": git_tag(),
         "gitCommit": git_commit(),
         "buildTarget": build_target(),
