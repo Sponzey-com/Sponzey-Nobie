@@ -27,13 +27,15 @@ function inferActionType(envelope: TaskIntentEnvelope): IntentContract["actionTy
   return envelope.needs_tools ? "run_tool" : "answer"
 }
 
-function inferDeliveryMode(envelope: TaskIntentEnvelope): DeliveryContract["mode"] {
+function inferDeliveryMode(envelope: TaskIntentEnvelope, actionType: IntentContract["actionType"]): DeliveryContract["mode"] {
   if (envelope.delivery_mode === "direct") return "direct_artifact"
+  if (actionType === "answer" || actionType === "ask_user" || actionType === "run_tool") return "reply"
   if (!envelope.destination.trim()) return "reply"
   return "channel_message"
 }
 
 export function intentContractFromTaskIntentEnvelope(envelope: TaskIntentEnvelope): IntentContract {
+  const actionType = inferActionType(envelope)
   const target: ToolTargetContract = {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     kind: envelope.preferred_target.trim() ? "extension" : "unknown",
@@ -42,7 +44,7 @@ export function intentContractFromTaskIntentEnvelope(envelope: TaskIntentEnvelop
   }
   const delivery: DeliveryContract = {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
-    mode: inferDeliveryMode(envelope),
+    mode: inferDeliveryMode(envelope, actionType),
     channel: "current_session",
     ...(envelope.destination.trim() ? { rawText: envelope.destination.trim() } : {}),
   }
@@ -50,7 +52,7 @@ export function intentContractFromTaskIntentEnvelope(envelope: TaskIntentEnvelop
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     intentType: mapIntentType(envelope.intent_type),
-    actionType: inferActionType(envelope),
+    actionType,
     target,
     delivery,
     constraints: envelope.complete_condition,

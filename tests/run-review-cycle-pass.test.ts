@@ -194,4 +194,46 @@ describe("run review cycle pass", () => {
       expect.any(Object),
     )
   })
+
+  it("skips review pass when reply text delivery already satisfies completion", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = createModuleDependencies()
+    moduleDependencies.decideReviewGate.mockReturnValue({
+      kind: "skip",
+      state: {
+        executionSatisfied: true,
+        deliveryRequired: false,
+        deliverySatisfied: true,
+        completionSatisfied: true,
+        interpretationStatus: "satisfied",
+        executionStatus: "satisfied",
+        deliveryStatus: "not_required",
+        recoveryStatus: "settled",
+        blockingReasons: [],
+      },
+      reason: "reply 텍스트 전달 receipt와 checklist 기준 완료 항목이 이미 충족되어 completion review를 생략합니다.",
+    })
+    const params = createParams()
+    params.deliveryOutcome = {
+      mode: "reply",
+      directArtifactDeliveryRequested: false,
+      hasSuccessfulArtifactDelivery: false,
+      hasSuccessfulTextDelivery: true,
+      textDeliverySatisfied: true,
+      deliverySatisfied: true,
+      requiresDirectArtifactRecovery: false,
+    }
+    params.successfulTools = [{ toolName: "web_search", output: "ok" }]
+
+    await runReviewCyclePass(params, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.runReviewPass).not.toHaveBeenCalled()
+    expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        review: null,
+        deliveryOutcome: expect.objectContaining({ hasSuccessfulTextDelivery: true }),
+      }),
+      expect.any(Object),
+    )
+  })
 })

@@ -1,7 +1,9 @@
+import { createRequire } from "node:module"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { registerSchedulesRoute } from "../packages/core/src/api/routes/schedules.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -17,8 +19,11 @@ import {
   getSchedule,
   getScheduleDeliveryReceipt,
   getScheduleRuns,
+  insertSchedule,
   insertScheduleRun,
+  isLegacySchedule,
 } from "../packages/core/src/db/index.js"
+import { findScheduleCandidatesByContract } from "../packages/core/src/schedules/candidates.ts"
 import {
   buildScheduledAgentExecutionBrief,
   executeScheduleContract,
@@ -28,6 +33,12 @@ import { runScheduleAndWait } from "../packages/core/src/scheduler/index.ts"
 const tempDirs: string[] = []
 const previousStateDir = process.env["NOBIE_STATE_DIR"]
 const previousConfig = process.env["NOBIE_CONFIG"]
+const require = createRequire(import.meta.url)
+const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
+  ready(): Promise<void>
+  close(): Promise<void>
+  inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
+}
 
 function useTempState(): void {
   closeDb()
@@ -130,6 +141,67 @@ afterEach(() => {
 })
 
 describe("task005 scheduled contract execution", () => {
+  it("creates new schedules through the API as validated contract schedules, not legacy rows", async () => {
+    const app = Fastify({ logger: false })
+    registerSchedulesRoute(app)
+    await app.ready()
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/schedules",
+        payload: {
+          name: "TASK005 API Contract",
+          cron: "0 9 * * *",
+          timezone: "Asia/Seoul",
+          prompt: "매일 오전 9시에 오늘 할 일을 정리해줘",
+        },
+      })
+      expect(response.statusCode).toBe(201)
+      const body = response.json()
+      const row = getSchedule(body.id)
+      expect(row).toBeDefined()
+      expect(row && isLegacySchedule(row)).toBe(false)
+      expect(row?.contract_json).toContain("agent_task")
+      expect(row?.identity_key).toMatch(/^schedule:v1:/)
+      expect(row?.payload_hash).toMatch(/^payload:v1:/)
+      expect(row?.delivery_key).toMatch(/^delivery:v1:/)
+      expect(row?.contract_schema_version).toBe(CONTRACT_SCHEMA_VERSION)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("excludes legacy schedules from automatic semantic duplicate candidates", () => {
+    const now = Date.parse("2026-04-15T00:00:00.000Z")
+    insertSchedule({
+      id: "schedule-task005-legacy-candidate",
+      name: "TASK005 legacy candidate",
+      cron_expression: "0 9 * * *",
+      timezone: "Asia/Seoul",
+      prompt: "매일 오전 9시에 알림이라고 보내줘",
+      enabled: 1,
+      target_channel: "telegram",
+      target_session_id: "telegram-session-task005",
+      execution_driver: "internal",
+      origin_run_id: "run-task005",
+      origin_request_group_id: "group-task005",
+      model: null,
+      max_retries: 3,
+      timeout_sec: 300,
+      created_at: now,
+      updated_at: now,
+    })
+    const legacy = getSchedule("schedule-task005-legacy-candidate")
+    expect(legacy && isLegacySchedule(legacy)).toBe(true)
+
+    const candidates = findScheduleCandidatesByContract({
+      contract: scheduleContract(),
+      semanticCandidates: legacy ? [legacy] : [],
+    })
+
+    expect(candidates.map((candidate) => candidate.schedule.id)).not.toContain("schedule-task005-legacy-candidate")
+  })
+
   it("executes literal messages without calling the AI provider and records a delivery receipt", async () => {
     const contract = scheduleContract({
       delivery: {

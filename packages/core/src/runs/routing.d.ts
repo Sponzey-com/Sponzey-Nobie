@@ -1,5 +1,5 @@
 import { type SetupDraft } from "../control-plane/index.js";
-import { type AIProvider } from "../ai/index.js";
+import { type AIProvider, type ProviderAuditTrace } from "../ai/index.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface RouteActionInput {
     preferredTarget?: string | undefined;
@@ -13,6 +13,7 @@ export interface ResolvedRunRoute {
     providerId?: string;
     model?: string;
     provider?: AIProvider;
+    providerTrace?: ProviderAuditTrace;
     workerRuntime?: WorkerRuntimeTarget;
     reason: string;
 }

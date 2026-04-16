@@ -107,6 +107,8 @@ function computeTaskRequest(groupRuns) {
     return anchorRun?.prompt?.trim() || "";
 }
 function detectDeliveryChannel(label) {
+    // nobie-critical-decision-audit: task-model.delivery_channel_label
+    // Display-only channel projection for task monitor labels.
     const normalized = label.toLowerCase();
     if (normalized.includes("텔레그램") || normalized.includes("telegram"))
         return "telegram";
@@ -157,9 +159,9 @@ function expandDisplayPath(value) {
 function guessMimeTypeFromPath(filePath) {
     return guessArtifactMimeType(filePath);
 }
-function buildArtifactUrl(filePath) {
+function buildArtifactUrls(filePath) {
     const expandedPath = expandDisplayPath(filePath);
-    return buildArtifactApiUrls(expandedPath)?.previewUrl;
+    return buildArtifactApiUrls(expandedPath);
 }
 function extractArtifactFromUrl(url) {
     if (!url.startsWith("/api/artifacts/"))
@@ -167,9 +169,13 @@ function extractArtifactFromUrl(url) {
     const pathWithoutQuery = url.split("?")[0] ?? url;
     const fileName = decodeURIComponent(pathWithoutQuery.split("/").filter(Boolean).at(-1) ?? "artifact");
     const mimeType = guessMimeTypeFromPath(fileName);
+    const downloadUrl = `${pathWithoutQuery}?download=1`;
     return {
         fileName,
         url,
+        previewUrl: pathWithoutQuery,
+        downloadUrl,
+        ...(mimeType ? { previewable: mimeType.startsWith("image/") } : {}),
         ...(mimeType ? { mimeType } : {}),
     };
 }
@@ -182,16 +188,19 @@ function extractDeliveredArtifact(summary) {
     if (urlArtifact)
         return urlArtifact;
     const resolvedPath = expandDisplayPath(rawPath);
-    const artifactUrl = buildArtifactUrl(resolvedPath);
+    const artifactUrls = buildArtifactUrls(resolvedPath);
     const mimeType = guessMimeTypeFromPath(resolvedPath);
     return {
         filePath: resolvedPath,
         fileName: basename(resolvedPath),
-        ...(artifactUrl ? { url: artifactUrl } : {}),
+        ...(artifactUrls ? { url: artifactUrls.previewUrl, previewUrl: artifactUrls.previewUrl, downloadUrl: artifactUrls.downloadUrl } : {}),
+        ...(mimeType ? { previewable: mimeType.startsWith("image/") } : {}),
         ...(mimeType ? { mimeType } : {}),
     };
 }
 function resolveTaskDeliverySignal(orderedRuns, attempts) {
+    // nobie-critical-decision-audit: task-model.delivery_status_label
+    // System event-label projection until delivery receipts become the sole status source.
     const sourceAttemptId = attempts.at(-1)?.id;
     const recentEvents = orderedRuns
         .flatMap((run) => run.recentEvents)
@@ -382,7 +391,7 @@ function extractPromptSourceVersion(snapshot) {
 }
 function buildTaskDiagnostics(orderedRuns, latestRun, continuity) {
     const eventLabels = orderedRuns.flatMap((run) => run.recentEvents.map((event) => event.label.trim()).filter(Boolean));
-    const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:prompt|memory|first_chunk|preflight)[_a-z]*=\d+ms\b/i.test(label));
+    const latencyEvents = eventLabels.filter((label) => /(?:^|\b)(?:(?:prompt|memory|first_chunk|preflight)[_a-z]*|[a-z_]+_latency_ms)=\d+ms\b/i.test(label));
     const memoryEvents = eventLabels.filter((label) => /(?:memory|메모리|vector|벡터|index)/i.test(label));
     const toolEvents = eventLabels.filter((label) => /(?:tool|도구|실행 도구|tool receipt|last tool|lastToolReceipt)/i.test(label));
     const deliveryEvents = eventLabels.filter((label) => /(?:delivery|전달|telegram|slack|webui|artifact|파일 전달|last delivery|lastDeliveryReceipt)/i.test(label));

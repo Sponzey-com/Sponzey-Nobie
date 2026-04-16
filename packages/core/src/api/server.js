@@ -25,6 +25,7 @@ import { registerUpdateRoute } from "./routes/update.js";
 import { registerMemoryRoute } from "./routes/memory.js";
 import { registerPromptSourcesRoute } from "./routes/prompt-sources.js";
 import { registerConfigOperationsRoute } from "./routes/config-operations.js";
+import { registerChannelSmokeRoute } from "./routes/channel-smoke.js";
 import { registerWsRoute } from "./ws/stream.js";
 import { stopActiveSlackChannel } from "../channels/slack/runtime.js";
 import { stopActiveTelegramChannel } from "../channels/telegram/runtime.js";
@@ -32,6 +33,7 @@ import { startScheduler, stopScheduler } from "../scheduler/index.js";
 import { pluginLoader } from "../plugins/loader.js";
 import { mcpRegistry } from "../mcp/registry.js";
 import { stopMqttBroker } from "../mqtt/broker.js";
+import { startArtifactCleanupScheduler, stopArtifactCleanupScheduler } from "../artifacts/lifecycle.js";
 const log = createLogger("api:server");
 let server = null;
 export async function startServer() {
@@ -76,14 +78,17 @@ export async function startServer() {
     registerMemoryRoute(server);
     registerPromptSourcesRoute(server);
     registerConfigOperationsRoute(server);
+    registerChannelSmokeRoute(server);
     registerWsRoute(server);
     const { host, port } = cfg.webui;
     await server.listen({ host, port });
     log.info(`WebUI server listening on http://${host}:${port}`);
+    startArtifactCleanupScheduler();
     startScheduler();
     await pluginLoader.loadAll();
 }
 export async function closeServer() {
+    stopArtifactCleanupScheduler();
     stopScheduler();
     stopActiveSlackChannel();
     stopActiveTelegramChannel();

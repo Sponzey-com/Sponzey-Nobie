@@ -77,7 +77,11 @@ export interface TaskArtifactModel {
   filePath?: string
   fileName: string
   url?: string
+  previewUrl?: string
+  downloadUrl?: string
+  previewable?: boolean
   mimeType?: string
+  sizeBytes?: number
 }
 
 export interface TaskFailureModel {
@@ -353,9 +357,9 @@ function guessMimeTypeFromPath(filePath: string): string | undefined {
   return guessArtifactMimeType(filePath)
 }
 
-function buildArtifactUrl(filePath: string): string | undefined {
+function buildArtifactUrls(filePath: string): ReturnType<typeof buildArtifactApiUrls> {
   const expandedPath = expandDisplayPath(filePath)
-  return buildArtifactApiUrls(expandedPath)?.previewUrl
+  return buildArtifactApiUrls(expandedPath)
 }
 
 function extractArtifactFromUrl(url: string): TaskArtifactModel | undefined {
@@ -363,9 +367,13 @@ function extractArtifactFromUrl(url: string): TaskArtifactModel | undefined {
   const pathWithoutQuery = url.split("?")[0] ?? url
   const fileName = decodeURIComponent(pathWithoutQuery.split("/").filter(Boolean).at(-1) ?? "artifact")
   const mimeType = guessMimeTypeFromPath(fileName)
+  const downloadUrl = `${pathWithoutQuery}?download=1`
   return {
     fileName,
     url,
+    previewUrl: pathWithoutQuery,
+    downloadUrl,
+    ...(mimeType ? { previewable: mimeType.startsWith("image/") } : {}),
     ...(mimeType ? { mimeType } : {}),
   }
 }
@@ -377,13 +385,14 @@ function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefine
   const urlArtifact = extractArtifactFromUrl(rawPath)
   if (urlArtifact) return urlArtifact
   const resolvedPath = expandDisplayPath(rawPath)
-  const artifactUrl = buildArtifactUrl(resolvedPath)
+  const artifactUrls = buildArtifactUrls(resolvedPath)
   const mimeType = guessMimeTypeFromPath(resolvedPath)
 
   return {
     filePath: resolvedPath,
     fileName: basename(resolvedPath),
-    ...(artifactUrl ? { url: artifactUrl } : {}),
+    ...(artifactUrls ? { url: artifactUrls.previewUrl, previewUrl: artifactUrls.previewUrl, downloadUrl: artifactUrls.downloadUrl } : {}),
+    ...(mimeType ? { previewable: mimeType.startsWith("image/") } : {}),
     ...(mimeType ? { mimeType } : {}),
   }
 }

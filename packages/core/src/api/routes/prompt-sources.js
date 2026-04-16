@@ -1,10 +1,16 @@
 import { authMiddleware } from "../middleware/auth.js";
 import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, rollbackPromptSourceBackup, writePromptSourceWithBackup, } from "../../memory/nobie-md.js";
+import { runPromptSourceRegression } from "../../memory/prompt-regression.js";
 function resolveWorkDir(value) {
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : process.cwd();
 }
 function resolveLocale(value) {
     return value === "ko" || value === "en" ? value : null;
+}
+function resolveRegressionLocales(value) {
+    if (value === "ko" || value === "en")
+        return [value];
+    return ["ko", "en"];
 }
 export function registerPromptSourcesRoute(app) {
     app.get("/api/prompt-sources", { preHandler: authMiddleware }, async (req) => {
@@ -22,6 +28,11 @@ export function registerPromptSourcesRoute(app) {
     app.get("/api/prompt-sources/parity", { preHandler: authMiddleware }, async (req) => {
         const workDir = resolveWorkDir(req.query.workDir);
         return { workDir, parity: checkPromptSourceLocaleParity(workDir) };
+    });
+    app.get("/api/prompt-sources/regression", { preHandler: authMiddleware }, async (req) => {
+        const workDir = resolveWorkDir(req.query.workDir);
+        const locales = resolveRegressionLocales(req.query.locale);
+        return { workDir, regression: runPromptSourceRegression(workDir, { locales }) };
     });
     app.get("/api/prompt-sources/:sourceId/:locale", { preHandler: authMiddleware }, async (req, reply) => {
         const locale = resolveLocale(req.params.locale);

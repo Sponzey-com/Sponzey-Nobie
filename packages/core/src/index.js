@@ -2,12 +2,24 @@
 export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/index.js";
 export { generateAuthToken } from "./config/auth.js";
 export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
+export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath } from "./version.js";
+// Release package
+export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, writeReleasePackage, } from "./release/package.js";
 // Logger
 export { createLogger, logger } from "./logger/index.js";
 // Events
 export { eventBus } from "./events/index.js";
+// Contracts
+export { CANONICAL_JSON_POLICY, CONTRACT_SCHEMA_VERSION, buildDeliveryDedupeKey, buildDeliveryKey, buildDeliveryProjection, buildPayloadHash, buildScheduleIdentityKey, buildScheduleIdentityProjection, buildSchedulePayloadProjection, buildToolTargetProjection, formatContractValidationFailureForUser, stableContractHash, toCanonicalJson, validateDeliveryContract, validateIntentContract, validateScheduleContract, validateToolTargetContract, } from "./contracts/index.js";
+export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js";
+export { findScheduleCandidatesByContract, parseScheduleContractJson, scheduleContractDestinationEquals, scheduleContractTimeEquals, } from "./schedules/candidates.js";
+export { buildScheduleContractComparisonSystemPrompt, compareScheduleContractsWithAI, parseScheduleContractComparisonResult, } from "./schedules/comparison.js";
+// Candidate Providers
+export { buildCandidateDecisionAuditDetails, createExplicitIdProvider, createMemoryVectorProvider, createStoreCandidateProvider, createStructuredKeyProvider, decideCandidateFinal, runCandidateProviders, } from "./candidates/index.js";
+// Observability
+export { LATENCY_BUDGET_MS, buildLatencyEventLabel, buildLatencyEventLabelForMeasurement, getFastResponseHealthSnapshot, listLatencyMetrics, recordLatencyMetric, resetLatencyMetrics, } from "./observability/latency.js";
 // DB
-export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, } from "./db/index.js";
+export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, getChannelSmokeRun, insertChannelSmokeRun, insertChannelSmokeStep, listChannelSmokeRuns, listChannelSmokeSteps, updateChannelSmokeRun, } from "./db/index.js";
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
 // Agent
@@ -22,6 +34,7 @@ export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, eva
 export { diagnoseVectorEmbeddingRows } from "./memory/search.js";
 export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js";
 export { loadNobieMd, initNobieMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, dryRunPromptSourceAssembly, buildPromptSourceContentDiff, writePromptSourceWithBackup, rollbackPromptSourceBackup, checkPromptSourceLocaleParity, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/nobie-md.js";
+export { runPromptSourceRegression } from "./memory/prompt-regression.js";
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js";
 export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, VoyageEmbeddingProvider, OpenAIEmbeddingProvider } from "./memory/embedding.js";
 // Plugins
@@ -32,14 +45,14 @@ export { McpStdioClient } from "./mcp/client.js";
 // MQTT
 export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/broker.js";
 // Channels
-export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.js";
+export { startChannels, TelegramChannel, SlackChannel, createDryRunChannelSmokeExecutor, getDefaultChannelSmokeScenarios, resolveChannelSmokeReadiness, runChannelSmokeScenarios, runPersistedChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, validateChannelSmokeTrace, } from "./channels/index.js";
 // Runs
 export { startRootRun } from "./runs/start.js";
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js";
 export { buildIngressDedupeKey } from "./runs/ingress.js";
 export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js";
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js";
-export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildRetentionCleanupPlan, buildRetryFailureFingerprint, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
+export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, buildRetentionCleanupPlan, buildRetryFailureFingerprint, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
 // API server

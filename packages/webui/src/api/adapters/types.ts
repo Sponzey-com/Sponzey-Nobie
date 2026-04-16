@@ -123,7 +123,20 @@ export interface MqttExtensionSnapshot {
   state: string | null
   message: string | null
   version: string | null
+  protocolVersion?: string | null
+  gitTag?: string | null
+  gitCommit?: string | null
+  buildTarget?: string | null
+  platform?: string | null
+  os?: string | null
+  arch?: string | null
+  transport?: string[]
+  capabilityHash?: string | null
   methods: string[]
+  permissions?: Record<string, unknown>
+  toolHealth?: Record<string, unknown>
+  capabilityMatrix?: Record<string, unknown>
+  lastCapabilityRefreshAt?: number | null
   lastSeenAt: number
 }
 

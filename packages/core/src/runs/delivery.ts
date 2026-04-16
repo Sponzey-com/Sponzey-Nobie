@@ -34,8 +34,11 @@ export interface ChunkDeliveryReceipt {
 }
 
 export interface DeliveryOutcome {
+  mode?: "reply" | "direct_artifact" | "channel_message" | "none"
   directArtifactDeliveryRequested: boolean
   hasSuccessfulArtifactDelivery: boolean
+  hasSuccessfulTextDelivery?: boolean
+  textDeliverySatisfied?: boolean
   deliverySatisfied: boolean
   deliverySummary?: string
   requiresDirectArtifactRecovery: boolean
@@ -279,16 +282,23 @@ export async function resendArtifact<T>(params: Omit<ArtifactDeliveryOnceParams<
 export function resolveDeliveryOutcome(params: {
   wantsDirectArtifactDelivery: boolean
   deliveries: SuccessfulFileDelivery[]
+  textDeliveries?: SuccessfulTextDelivery[]
 }): DeliveryOutcome {
   const hasSuccessfulArtifactDelivery = params.deliveries.length > 0
-  const deliverySatisfied = params.wantsDirectArtifactDelivery && hasSuccessfulArtifactDelivery
+  const hasSuccessfulTextDelivery = (params.textDeliveries?.length ?? 0) > 0
+  const deliverySatisfied = params.wantsDirectArtifactDelivery
+    ? hasSuccessfulArtifactDelivery
+    : hasSuccessfulTextDelivery
   const deliverySummary = hasSuccessfulArtifactDelivery
     ? buildSuccessfulDeliverySummary(params.deliveries)
     : undefined
 
   return {
+    mode: params.wantsDirectArtifactDelivery ? "direct_artifact" : "reply",
     directArtifactDeliveryRequested: params.wantsDirectArtifactDelivery,
     hasSuccessfulArtifactDelivery,
+    hasSuccessfulTextDelivery,
+    textDeliverySatisfied: hasSuccessfulTextDelivery,
     deliverySatisfied,
     ...(deliverySummary ? { deliverySummary } : {}),
     requiresDirectArtifactRecovery: params.wantsDirectArtifactDelivery && !hasSuccessfulArtifactDelivery,

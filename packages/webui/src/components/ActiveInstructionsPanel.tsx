@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { api } from "../api/client"
-import type { PromptSourceDocument, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceMetadata, PromptSourceWriteResult } from "../api/client"
+import type { PromptSourceDocument, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceMetadata, PromptSourceRegressionResult, PromptSourceWriteResult } from "../api/client"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import { useUiI18n } from "../lib/ui-i18n"
 
@@ -11,6 +11,7 @@ export function ActiveInstructionsPanel() {
   const [promptSourcesWorkDir, setPromptSourcesWorkDir] = useState("")
   const [promptDryRun, setPromptDryRun] = useState<PromptSourceDryRunResult | null>(null)
   const [promptParity, setPromptParity] = useState<PromptSourceLocaleParityResult | null>(null)
+  const [promptRegression, setPromptRegression] = useState<PromptSourceRegressionResult | null>(null)
   const [selectedPromptSourceKey, setSelectedPromptSourceKey] = useState("")
   const [promptSourceDocument, setPromptSourceDocument] = useState<PromptSourceDocument | null>(null)
   const [promptSourceDraft, setPromptSourceDraft] = useState("")
@@ -24,11 +25,12 @@ export function ActiveInstructionsPanel() {
     setLoading(true)
     setError(null)
     try {
-      const [response, promptSourceResponse, promptDryRunResponse, promptParityResponse] = await Promise.all([
+      const [response, promptSourceResponse, promptDryRunResponse, promptParityResponse, promptRegressionResponse] = await Promise.all([
         api.instructionsActive(),
         api.promptSources(),
         api.promptSourcesDryRun(),
         api.promptSourcesParity(),
+        api.promptSourcesRegression(),
       ])
       setData(response)
       const nextSources = promptSourceResponse.sources
@@ -40,6 +42,7 @@ export function ActiveInstructionsPanel() {
       })
       setPromptDryRun(promptDryRunResponse.dryRun)
       setPromptParity(promptParityResponse.parity)
+      setPromptRegression(promptRegressionResponse.regression)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
@@ -149,8 +152,13 @@ export function ActiveInstructionsPanel() {
                     {text("runtime dry-run 순서와 checksum", "Runtime dry-run order and checksums")}: {promptDryRun?.totalChars ?? 0} chars
                   </div>
                 </div>
-                <div className={`rounded-full px-2 py-1 text-xs font-semibold ${promptParity?.ok === false ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-                  {promptParity?.ok === false ? text("locale 점검 필요", "Locale check needed") : text("locale 정상", "Locale OK")}
+                <div className="flex flex-wrap gap-2">
+                  <div className={`rounded-full px-2 py-1 text-xs font-semibold ${promptParity?.ok === false ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+                    {promptParity?.ok === false ? text("locale 점검 필요", "Locale check needed") : text("locale 정상", "Locale OK")}
+                  </div>
+                  <div className={`rounded-full px-2 py-1 text-xs font-semibold ${promptRegression?.ok === false ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                    {promptRegression?.ok === false ? text("regression 실패", "Regression failed") : text("regression 정상", "Regression OK")}
+                  </div>
                 </div>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -167,6 +175,26 @@ export function ActiveInstructionsPanel() {
               {promptParity?.issues.length ? (
                 <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                   {promptParity.issues.slice(0, 5).map((issue) => issue.message).join(" / ")}
+                </div>
+              ) : null}
+              {promptRegression ? (
+                <div className={`mt-3 rounded-lg px-3 py-2 text-xs leading-5 ${promptRegression.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"}`}>
+                  <div className="font-semibold">
+                    {text("프롬프트 회귀 검증", "Prompt regression")}: {promptRegression.issues.length} {text("개 이슈", "issues")}
+                  </div>
+                  {promptRegression.issues.length ? (
+                    <div className="mt-1 space-y-1">
+                      {promptRegression.issues.slice(0, 6).map((issue, index) => (
+                        <div key={`${issue.code}-${issue.sourceId ?? "assembly"}-${issue.locale ?? "all"}-${index}`}>
+                          {issue.sourceId ? `${issue.sourceId}:${issue.locale ?? "all"} · ` : ""}{displayText(issue.message)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-1">
+                      {text("책임 중복, locale parity, impact marker가 모두 통과했습니다.", "Responsibility split, locale parity, and impact markers passed.")}
+                    </div>
+                  )}
                 </div>
               ) : null}
 

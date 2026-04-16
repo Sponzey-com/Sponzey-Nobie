@@ -5,6 +5,7 @@ import {
   reviewMemoryWritebackCandidate,
   type MemoryWritebackReviewAction,
 } from "../../memory/writeback.js"
+import { buildMemoryQualitySnapshot } from "../../memory/quality.js"
 import type { MemoryWritebackStatus } from "../../db/index.js"
 
 const ALLOWED_STATUSES = new Set<MemoryWritebackStatus | "all">(["pending", "writing", "failed", "completed", "discarded", "all"])
@@ -22,6 +23,10 @@ function normalizeLimit(value: unknown): number {
 }
 
 export function registerMemoryRoute(app: FastifyInstance): void {
+  app.get("/api/memory/quality", { preHandler: authMiddleware }, async () => {
+    return { snapshot: buildMemoryQualitySnapshot() }
+  })
+
   app.get<{
     Querystring: { status?: string; limit?: string }
   }>("/api/memory/writeback", { preHandler: authMiddleware }, async (req) => {

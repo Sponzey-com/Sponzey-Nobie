@@ -14,9 +14,11 @@ export function TaskArtifactPanel(params: {
   text: (ko: string, en: string) => string
 }): JSX.Element {
   const { artifact, title, text } = params
-  const artifactUrl = artifact.url ? resolveArtifactUrl(artifact.url) : ""
-  const isImage = typeof artifact.mimeType === "string" && artifact.mimeType.startsWith("image/")
-  const downloadUrl = artifact.url ? resolveArtifactUrl(`${artifact.url}${artifact.url.includes("?") ? "&" : "?"}download=1`) : ""
+  const previewSource = artifact.previewUrl ?? artifact.url
+  const downloadSource = artifact.downloadUrl ?? artifact.url
+  const artifactUrl = previewSource ? resolveArtifactUrl(previewSource) : ""
+  const isImage = artifact.previewable !== false && typeof artifact.mimeType === "string" && artifact.mimeType.startsWith("image/")
+  const downloadUrl = downloadSource ? resolveArtifactUrl(downloadSource) : ""
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
