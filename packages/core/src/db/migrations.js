@@ -889,6 +889,85 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 24,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_smoke_runs (
+          id TEXT PRIMARY KEY,
+          mode TEXT NOT NULL CHECK(mode IN ('dry-run', 'live-run')),
+          status TEXT NOT NULL CHECK(status IN ('running', 'passed', 'failed', 'skipped')),
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER,
+          scenario_count INTEGER NOT NULL DEFAULT 0,
+          passed_count INTEGER NOT NULL DEFAULT 0,
+          failed_count INTEGER NOT NULL DEFAULT 0,
+          skipped_count INTEGER NOT NULL DEFAULT 0,
+          initiated_by TEXT,
+          summary TEXT,
+          metadata_json TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS channel_smoke_steps (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          scenario_id TEXT NOT NULL,
+          channel TEXT NOT NULL CHECK(channel IN ('webui', 'telegram', 'slack')),
+          scenario_kind TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('passed', 'failed', 'skipped')),
+          reason TEXT,
+          failures_json TEXT NOT NULL DEFAULT '[]',
+          trace_json TEXT,
+          audit_log_id TEXT,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES channel_smoke_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_smoke_runs_started
+          ON channel_smoke_runs(started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_smoke_runs_status
+          ON channel_smoke_runs(status, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_smoke_steps_run
+          ON channel_smoke_steps(run_id, started_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_smoke_steps_channel
+          ON channel_smoke_steps(channel, status, started_at DESC);
+      `);
+        },
+    },
+    {
+        version: 25,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS decision_traces (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          request_group_id TEXT,
+          session_id TEXT,
+          source TEXT,
+          channel TEXT,
+          decision_kind TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          input_contract_ids_json TEXT,
+          receipt_ids_json TEXT,
+          sanitized_detail_json TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_decision_traces_run
+          ON decision_traces(run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_decision_traces_request_group
+          ON decision_traces(request_group_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_decision_traces_kind
+          ON decision_traces(decision_kind, created_at DESC);
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
     return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get());

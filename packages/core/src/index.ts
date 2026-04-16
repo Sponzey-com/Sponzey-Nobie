@@ -203,6 +203,12 @@ export {
   insertMessage,
   getMessages,
   insertAuditLog,
+  getChannelSmokeRun,
+  insertChannelSmokeRun,
+  insertChannelSmokeStep,
+  listChannelSmokeRuns,
+  listChannelSmokeSteps,
+  updateChannelSmokeRun,
 } from "./db/index.js"
 
 // Tools
@@ -237,6 +243,7 @@ export type { MemoryRetrievalEvaluationFixture, MemoryRetrievalEvaluationMode, M
 export type { MemoryVectorDegradedReason, MemoryVectorDiagnostic } from "./memory/search.js"
 export type { MemoryWritebackReviewAction, MemoryWritebackReviewItem, MemoryWritebackReviewResult, MemoryWritebackSafetyResult } from "./memory/writeback.js"
 export type { PromptSourceBackupResult, PromptSourceDiffResult, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceRollbackResult, PromptSourceWriteResult } from "./memory/nobie-md.js"
+export type { PromptImpactScenarioResult, PromptRegressionIssue, PromptRegressionLocale, PromptResponsibilityRuleResult, PromptSourceRegressionResult } from "./memory/prompt-regression.js"
 export {
   loadNobieMd,
   initNobieMd,
@@ -257,6 +264,7 @@ export {
   detectPromptSourceSecretMarkers,
   isPromptSourceContentSafe,
 } from "./memory/nobie-md.js"
+export { runPromptSourceRegression } from "./memory/prompt-regression.js"
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js"
 export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, VoyageEmbeddingProvider, OpenAIEmbeddingProvider } from "./memory/embedding.js"
 
@@ -274,7 +282,37 @@ export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/b
 export type { MqttBrokerSnapshot } from "./mqtt/broker.js"
 
 // Channels
-export { startChannels, TelegramChannel, SlackChannel } from "./channels/index.js"
+export {
+  startChannels,
+  TelegramChannel,
+  SlackChannel,
+  createDryRunChannelSmokeExecutor,
+  getDefaultChannelSmokeScenarios,
+  resolveChannelSmokeReadiness,
+  runChannelSmokeScenarios,
+  runPersistedChannelSmokeScenarios,
+  sanitizeChannelSmokeTrace,
+  sanitizeChannelSmokeValue,
+  validateChannelSmokeTrace,
+} from "./channels/index.js"
+export type {
+  ChannelSmokeArtifactMode,
+  ChannelSmokeArtifactTrace,
+  ChannelSmokeChannel,
+  ChannelSmokeCorrelationKey,
+  ChannelSmokeReadiness,
+  ChannelSmokeRunMode,
+  ChannelSmokeRunResult,
+  ChannelSmokeRunnerOptions,
+  ChannelSmokeScenario,
+  ChannelSmokeScenarioKind,
+  ChannelSmokeStatus,
+  ChannelSmokeToolTrace,
+  ChannelSmokeTrace,
+  ChannelSmokeValidation,
+  PersistedChannelSmokeRunnerOptions,
+  PersistedChannelSmokeRunResult,
+} from "./channels/index.js"
 
 // Runs
 export { startRootRun } from "./runs/start.js"

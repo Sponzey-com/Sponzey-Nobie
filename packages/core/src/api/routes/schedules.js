@@ -4,6 +4,7 @@ import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleT
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getConfig } from "../../config/index.js";
+import { CONTRACT_SCHEMA_VERSION } from "../../contracts/index.js";
 import { applyLegacyScheduleMigration, dryRunLegacyScheduleMigration, keepLegacySchedule, listLegacyScheduleMigrationItems, } from "../../schedules/legacy-migration.js";
 function syncScheduleMemoryEntry(input) {
     upsertScheduleMemoryEntry({
@@ -33,6 +34,34 @@ function resolveNextRunAt(cron, baseMs, timezone) {
     catch {
         return null;
     }
+}
+function buildApiScheduleContract(input) {
+    return {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        kind: "recurring",
+        time: {
+            cron: input.cron,
+            timezone: input.timezone,
+            missedPolicy: "next_only",
+        },
+        payload: {
+            kind: "agent_task",
+            taskContract: null,
+        },
+        delivery: {
+            schemaVersion: CONTRACT_SCHEMA_VERSION,
+            mode: "channel_message",
+            channel: "agent",
+            sessionId: null,
+            threadId: null,
+        },
+        source: {
+            createdBy: "webui",
+        },
+        displayName: input.name,
+        rawText: input.prompt,
+        summary: input.name,
+    };
 }
 export function registerSchedulesRoute(app) {
     // GET /api/schedules
@@ -109,6 +138,7 @@ export function registerSchedulesRoute(app) {
             model: model ?? null,
             max_retries: 3,
             timeout_sec: 300,
+            contract: buildApiScheduleContract({ name, cron, timezone, prompt }),
             created_at: now,
             updated_at: now,
         });

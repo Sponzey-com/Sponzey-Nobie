@@ -10,6 +10,8 @@ export type CriticalDecisionSignalKind =
   | "user-natural-language-regex"
   | "raw-prompt-ai-comparison"
   | "raw-prompt-normalized-dedupe"
+  | "structured-contract-ai-comparison"
+  | "vector-semantic-candidate"
   | "system-error-classification"
   | "system-event-label-classification"
   | "channel-label-classification"
@@ -70,6 +72,31 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     userFacingRisk: "계약 projection이 부족한 legacy 항목은 자동 재사용하지 않고 clarification/new fallback으로 처리된다.",
     currentRole: "incoming IntentContract와 active run contract projection만 isolated AI에 전달해 continuation/cancel/update 대상을 판단한다.",
     sourceMarker: "nobie-critical-decision-audit: entry-comparison.contract_projection_comparison",
+  },
+  {
+    id: "schedules.comparison.contract_projection_only",
+    file: "packages/core/src/schedules/comparison.ts",
+    symbols: ["compareScheduleContractsWithAI", "comparisonProjection"],
+    category: "critical-decision",
+    decisionArea: "schedule duplicate/update/cancel contract comparison",
+    signalKind: "structured-contract-ai-comparison",
+    languageSensitive: false,
+    userFacingRisk: "스케줄 비교 AI에 raw prompt나 표시명을 넘기면 언어별 표현 차이가 최종 동일성 판단에 섞일 수 있다.",
+    currentRole: "스케줄 comparator는 schedule id와 구조화된 time/payload/delivery/identity projection만 isolated AI에 전달한다.",
+    sourceMarker: "nobie-critical-decision-audit: schedules.comparison.contract_projection_only",
+  },
+  {
+    id: "schedules.candidates.semantic_candidate_boundary",
+    file: "packages/core/src/schedules/candidates.ts",
+    symbols: ["findScheduleCandidatesByContract"],
+    category: "candidate-search",
+    decisionArea: "schedule candidate search",
+    signalKind: "vector-semantic-candidate",
+    languageSensitive: true,
+    userFacingRisk: "vector/semantic/FTS 점수가 최종 동일성 판단으로 승격되면 다른 언어 요청에서 예약 수정/취소 대상이 오판될 수 있다.",
+    currentRole: "semantic 후보는 candidateReason=semantic_candidate, confidenceKind=semantic, requiresComparison=true로만 남기고 final decision으로 사용하지 않는다.",
+    migrationTask: "Task 006",
+    sourceMarker: "nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary",
   },
   {
     id: "scheduled.tool_disable_keyword_guard",

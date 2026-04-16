@@ -1,11 +1,12 @@
 import type { AgentContextMode } from "../agent/index.js";
 import { type TaskExecutionSemantics, type TaskIntentEnvelope, type TaskStructuredRequest } from "../agent/intake.js";
-import type { AIProvider } from "../ai/index.js";
+import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface StartRootRunParams {
     runId?: string | undefined;
+    targetRunId?: string | undefined;
     message: string;
     sessionId: string | undefined;
     requestGroupId?: string | undefined;
@@ -16,6 +17,7 @@ export interface StartRootRunParams {
     model: string | undefined;
     providerId?: string | undefined;
     provider?: AIProvider | undefined;
+    providerTrace?: ProviderAuditTrace | undefined;
     targetId?: string | undefined;
     targetLabel?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;

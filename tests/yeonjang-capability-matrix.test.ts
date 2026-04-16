@@ -6,6 +6,7 @@ import {
   hasYeonjangCapabilityMatrix,
   resolveYeonjangCapabilityOutputModes,
   resolveYeonjangMethodCapability,
+  snapshotToYeonjangCapabilitiesPayload,
   type YeonjangCapabilitiesPayload,
 } from "../packages/core/src/yeonjang/mqtt-client.ts"
 
@@ -68,5 +69,64 @@ describe("Yeonjang capability matrix", () => {
     expect(doesYeonjangCapabilitySupportOutputMode(payload, "screen.capture", "base64")).toBe(true)
     expect(doesYeonjangCapabilitySupportOutputMode(payload, "camera.capture", "base64")).toBe(false)
     expect(doesYeonjangCapabilitySupportOutputMode({ methods: [{ name: "screen.capture", implemented: true }] }, "screen.capture", "base64")).toBeNull()
+  })
+
+  it("converts MQTT extension snapshots into fresh capability payloads", () => {
+    const payload = snapshotToYeonjangCapabilitiesPayload({
+      extensionId: "yeonjang-test",
+      clientId: "client-1",
+      displayName: "Yeonjang Test",
+      state: "ready",
+      message: null,
+      version: "0.1.0",
+      protocolVersion: "2026-04-16.capability-matrix.v1",
+      os: "darwin",
+      arch: "arm64",
+      transport: ["mqtt"],
+      capabilityHash: "hash-1",
+      methods: ["node.ping"],
+      permissions: {
+        screen: { allowed: true },
+      },
+      toolHealth: {
+        "screen.capture": { status: "ready" },
+      },
+      capabilityMatrix: {
+        "screen.capture": {
+          supported: true,
+          requiresApproval: true,
+          requiresPermission: true,
+          permissionSetting: "allow_screen_capture",
+          outputModes: ["base64", "file"],
+          lastCheckedAt: 10,
+        },
+      },
+      lastCapabilityRefreshAt: 123,
+      lastSeenAt: 456,
+    })
+
+    expect(payload).toMatchObject({
+      version: "0.1.0",
+      protocolVersion: "2026-04-16.capability-matrix.v1",
+      os: "darwin",
+      arch: "arm64",
+      transport: ["mqtt"],
+      capabilityHash: "hash-1",
+      permissions: { screen: { allowed: true } },
+      toolHealth: { "screen.capture": { status: "ready" } },
+      lastCapabilityRefreshAt: 123,
+    })
+    expect(payload.methods).toEqual([
+      {
+        name: "screen.capture",
+        implemented: true,
+        supported: true,
+        requiresApproval: true,
+        requiresPermission: true,
+        permissionSetting: "allow_screen_capture",
+        outputModes: ["base64", "file"],
+        lastCheckedAt: 10,
+      },
+    ])
   })
 })

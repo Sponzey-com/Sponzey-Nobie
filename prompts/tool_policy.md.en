@@ -4,7 +4,7 @@ This file covers only tool selection and execution rules. Completion rules follo
 
 ---
 
-## Core Principles
+## Tool Selection Rules
 
 - For actionable requests, execute with the appropriate tool instead of only explaining.
 - Prefer the connected local execution extension for local device and system work.

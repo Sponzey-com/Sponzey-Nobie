@@ -287,6 +287,7 @@ export async function runExecutionCyclePass(
     activeWorkerRuntime: Boolean(nextStateFromAttempt.activeWorkerRuntime),
     ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
     successfulFileDeliveries,
+    successfulTextDeliveries,
     successfulTools: params.successfulTools,
     sawRealFilesystemMutation: nextStateFromAttempt.sawRealFilesystemMutation,
     filesystemMutationRecoveryAttempted: nextStateFromAttempt.filesystemMutationRecoveryAttempted,

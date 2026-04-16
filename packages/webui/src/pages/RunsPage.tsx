@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
@@ -313,6 +314,115 @@ function OperationsHealthPanel({
   )
 }
 
+function ChannelSmokePanel({
+  text,
+  formatTime,
+}: {
+  text: (ko: string, en: string) => string
+  formatTime: (value: number) => string
+}) {
+  const [runs, setRuns] = useState<ChannelSmokeRunSummary[]>([])
+  const [loading, setLoading] = useState(false)
+  const [runningChannel, setRunningChannel] = useState<ChannelSmokeChannel | "all" | null>(null)
+  const [error, setError] = useState("")
+
+  async function loadRuns(): Promise<void> {
+    setLoading(true)
+    try {
+      const response = await api.channelSmokeRuns(5)
+      setRuns(response.runs)
+      setError("")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function startDryRun(channel: ChannelSmokeChannel | "all"): Promise<void> {
+    setRunningChannel(channel)
+    try {
+      await api.startChannelSmokeRun({ mode: "dry-run", ...(channel === "all" ? {} : { channel }) })
+      await loadRuns()
+      setError("")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunningChannel(null)
+    }
+  }
+
+  useEffect(() => {
+    void loadRuns()
+  }, [])
+
+  const channels: Array<{ key: ChannelSmokeChannel | "all"; label: string }> = [
+    { key: "all", label: text("전체", "All") },
+    { key: "webui", label: "WebUI" },
+    { key: "telegram", label: "Telegram" },
+    { key: "slack", label: "Slack" },
+  ]
+
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("채널 Smoke", "Channel smoke")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("WebUI, Telegram, Slack 전달 경로와 승인 UI를 dry-run으로 점검합니다.", "Checks WebUI, Telegram, and Slack delivery paths and approval UI with dry-run smoke tests.")}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadRuns()}
+          disabled={loading || runningChannel !== null}
+          className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+        >
+          {loading ? text("갱신 중", "Refreshing") : text("새로고침", "Refresh")}
+        </button>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {channels.map((channel) => (
+          <button
+            key={channel.key}
+            type="button"
+            onClick={() => void startDryRun(channel.key)}
+            disabled={runningChannel !== null}
+            className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+          >
+            {runningChannel === channel.key ? text("실행 중", "Running") : text(`${channel.label} 점검`, `${channel.label} check`)}
+          </button>
+        ))}
+      </div>
+      {error ? (
+        <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">
+          {error}
+        </div>
+      ) : null}
+      <div className="mt-4 space-y-2">
+        {runs.length > 0 ? runs.map((run) => (
+          <div key={run.id} className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-600">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold text-stone-900">{run.status}</span>
+              <span>{formatTime(run.startedAt)}</span>
+            </div>
+            <div className="mt-1 leading-5 text-stone-500">{run.summary ?? text("요약 없음", "No summary")}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className="rounded-full bg-white px-2 py-1">{text("통과", "Passed")} {run.counts.passed}</span>
+              <span className="rounded-full bg-white px-2 py-1">{text("실패", "Failed")} {run.counts.failed}</span>
+              <span className="rounded-full bg-white px-2 py-1">{text("건너뜀", "Skipped")} {run.counts.skipped}</span>
+            </div>
+          </div>
+        )) : (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
+            {loading ? text("결과를 불러오는 중입니다.", "Loading results.") : text("아직 smoke 결과가 없습니다.", "No smoke results yet.")}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function RunsPage() {
   const { text, displayText, formatTime } = useUiI18n()
   const {
@@ -548,6 +658,7 @@ export function RunsPage() {
                 displayText={displayText}
                 formatTime={formatTime}
               />
+              <ChannelSmokePanel text={text} formatTime={formatTime} />
               <RunEventFeed
                 events={visibleTimeline.map((item) => ({
                   id: item.id,

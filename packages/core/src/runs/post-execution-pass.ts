@@ -5,6 +5,7 @@ import {
   type DeliveryOutcome,
   type RunChunkDeliveryHandler,
   type SuccessfulFileDelivery,
+  type SuccessfulTextDelivery,
 } from "./delivery.js"
 import { runDeliveryPass } from "./delivery-pass.js"
 import {
@@ -91,6 +92,7 @@ export async function runPostExecutionPass(
     activeWorkerRuntime: boolean
     workerSessionId?: string
     successfulFileDeliveries: SuccessfulFileDelivery[]
+    successfulTextDeliveries?: SuccessfulTextDelivery[]
     successfulTools: SuccessfulToolEvidence[]
     sawRealFilesystemMutation: boolean
     filesystemMutationRecoveryAttempted: boolean
@@ -171,6 +173,7 @@ export async function runPostExecutionPass(
     preview: params.preview,
     wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
     successfulFileDeliveries: params.successfulFileDeliveries,
+    successfulTextDeliveries: params.successfulTextDeliveries ?? [],
     successfulTools: params.successfulTools,
     sawRealFilesystemMutation: params.sawRealFilesystemMutation,
     source: params.source,

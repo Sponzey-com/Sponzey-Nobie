@@ -257,8 +257,23 @@ describe("runs delivery helpers", () => {
       deliveries,
     })
     expect(generalOutcome.deliverySatisfied).toBe(false)
+    expect(generalOutcome.mode).toBe("reply")
     expect(generalOutcome.requiresDirectArtifactRecovery).toBe(false)
     expect(generalOutcome.hasSuccessfulArtifactDelivery).toBe(true)
+  })
+
+  it("marks reply delivery satisfied only from text delivery receipts", () => {
+    const replyOutcome = resolveDeliveryOutcome({
+      wantsDirectArtifactDelivery: false,
+      deliveries: [],
+      textDeliveries: [{ channel: "telegram", text: "동천동 날씨 답변" }],
+    })
+
+    expect(replyOutcome.mode).toBe("reply")
+    expect(replyOutcome.hasSuccessfulTextDelivery).toBe(true)
+    expect(replyOutcome.textDeliverySatisfied).toBe(true)
+    expect(replyOutcome.deliverySatisfied).toBe(true)
+    expect(replyOutcome.requiresDirectArtifactRecovery).toBe(false)
   })
 
   it("emits assistant text through the delivery boundary with persistence and done chunk", async () => {

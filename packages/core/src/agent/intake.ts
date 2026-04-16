@@ -1,6 +1,6 @@
 import { getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getSchedulesForSession, getSession, isLegacySchedule } from "../db/index.js"
 import { getConfig } from "../config/index.js"
-import { getDefaultModel, getProvider } from "../ai/index.js"
+import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import type { Message } from "../ai/types.js"
 import { buildTaskIntakeSystemPrompt } from "./intake-prompt.js"
@@ -737,7 +737,8 @@ export async function analyzeTaskIntake(params: {
   }
 
   const model = params.model ?? getDefaultModel()
-  const provider = getProvider()
+  const providerId = detectAvailableProvider()
+  const provider = getProvider(providerId)
   const context = buildConversationContext(
     params.sessionId,
     params.requestGroupId,
@@ -750,7 +751,7 @@ export async function analyzeTaskIntake(params: {
   log.debug("starting intake analysis", {
     sessionId: params.sessionId ?? null,
     model,
-    providerId: provider.id,
+    providerId,
     workDir: params.workDir ?? process.cwd(),
     contextLength: context.length,
     instructionSources: instructions.chain.sources.map((source) => source.path),

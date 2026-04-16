@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery";
+type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace";
+type AuditTimelineKind = "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion";
 interface AuditQuery {
     page?: string;
     limit?: string;
@@ -7,6 +8,7 @@ interface AuditQuery {
     result?: string;
     status?: string;
     kind?: string;
+    timelineKind?: string;
     channel?: string;
     runId?: string;
     requestGroupId?: string;
@@ -19,6 +21,7 @@ interface AuditEvent {
     id: string;
     at: number;
     kind: AuditEventKind;
+    timelineKind: AuditTimelineKind;
     status: string;
     summary: string;
     source: string | null;
@@ -44,5 +47,11 @@ export declare function listAuditEvents(query: AuditQuery): {
     pages: number;
     limit: number;
 };
+export declare function getAuditEventById(id: string): AuditEvent | null;
+export declare function promoteAuditEventToErrorCorpusCandidate(eventId: string, note?: string): {
+    diagnosticEventId: string;
+    event: AuditEvent;
+} | null;
 export declare function registerAuditRoute(app: FastifyInstance): void;
+export {};
 //# sourceMappingURL=audit.d.ts.map

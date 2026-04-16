@@ -1,16 +1,19 @@
 import type { FastifyInstance } from "fastify"
-import { getDb } from "../../db/index.js"
+import { getDb, insertDiagnosticEvent } from "../../db/index.js"
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import { authMiddleware } from "../middleware/auth.js"
 
-const SENSITIVE_KEYS = /api[_-]?key|authorization|auth|bearer|cookie|credential|password|refresh[_-]?token|secret|token/i
+const SENSITIVE_KEYS = /api[_-]?key|authorization|auth|bearer|cookie|credential|password|refresh[_-]?token|secret|token|chat[_-]?id|external[_-]?chat[_-]?id|channel[_-]?target|raw[_-]?(body|response)|provider[_-]?raw/i
 const TEXT_SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
   [/(api[_-]?key|authorization|password|refresh[_-]?token|secret|token)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2***"],
+  [/(chat[_-]?id|chatId|external[_-]?chat[_-]?id)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2***"],
+  [/\b(telegram|chat)[:#-]\d{6,}\b/gi, "$1:***"],
   [/([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})/g, "***.***.***"],
 ]
 
-type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery"
+type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace"
+type AuditTimelineKind = "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion"
 
 interface AuditQuery {
   page?: string
@@ -19,6 +22,7 @@ interface AuditQuery {
   result?: string
   status?: string
   kind?: string
+  timelineKind?: string
   channel?: string
   runId?: string
   requestGroupId?: string
@@ -32,6 +36,7 @@ interface AuditEventRow {
   id: string
   at: number
   kind: AuditEventKind
+  timeline_kind: AuditTimelineKind
   status: string
   summary: string
   source: string | null
@@ -55,6 +60,7 @@ interface AuditEvent {
   id: string
   at: number
   kind: AuditEventKind
+  timelineKind: AuditTimelineKind
   status: string
   summary: string
   source: string | null
@@ -80,6 +86,7 @@ WITH audit_events AS (
     id,
     timestamp AS at,
     'tool_call' AS kind,
+    'tool' AS timeline_kind,
     result AS status,
     tool_name || ' ' || result AS summary,
     source,
@@ -105,6 +112,14 @@ WITH audit_events AS (
     id,
     created_at AS at,
     'diagnostic' AS kind,
+    CASE
+      WHEN recovery_key IS NOT NULL OR lower(kind) LIKE '%recovery%' OR summary LIKE '%복구%' THEN 'recovery'
+      WHEN lower(kind) LIKE '%completion%' OR summary LIKE '%완료%' THEN 'completion'
+      WHEN lower(kind) LIKE '%delivery%' OR summary LIKE '%전달%' THEN 'delivery'
+      WHEN lower(kind) LIKE '%memory%' OR summary LIKE '%메모리%' THEN 'memory'
+      WHEN lower(kind) LIKE '%intake%' THEN 'intake'
+      ELSE 'contract'
+    END AS timeline_kind,
     CASE
       WHEN lower(kind) LIKE '%fail%' OR lower(summary) LIKE '%fail%' OR summary LIKE '%실패%' THEN 'failed'
       WHEN lower(kind) LIKE '%blocked%' OR summary LIKE '%차단%' THEN 'blocked'
@@ -134,6 +149,16 @@ WITH audit_events AS (
     e.id,
     e.at,
     'run_event' AS kind,
+    CASE
+      WHEN lower(e.label) LIKE '%ingress%' OR e.label LIKE '%요청 수신%' THEN 'ingress'
+      WHEN lower(e.label) LIKE '%intake%' OR e.label LIKE '%분류%' THEN 'intake'
+      WHEN lower(e.label) LIKE '%contract%' OR e.label LIKE '%계약%' THEN 'contract'
+      WHEN lower(e.label) LIKE '%memory%' OR e.label LIKE '%메모리%' THEN 'memory'
+      WHEN lower(e.label) LIKE '%delivery%' OR e.label LIKE '%전달%' THEN 'delivery'
+      WHEN lower(e.label) LIKE '%recovery%' OR e.label LIKE '%복구%' THEN 'recovery'
+      WHEN lower(e.label) LIKE '%completion%' OR e.label LIKE '%완료%' THEN 'completion'
+      ELSE 'contract'
+    END AS timeline_kind,
     'info' AS status,
     e.label AS summary,
     r.source,
@@ -160,6 +185,7 @@ WITH audit_events AS (
     id,
     created_at AS at,
     'artifact' AS kind,
+    'delivery' AS timeline_kind,
     CASE WHEN deleted_at IS NULL THEN 'info' ELSE 'deleted' END AS status,
     artifact_path AS summary,
     owner_channel AS source,
@@ -185,6 +211,7 @@ WITH audit_events AS (
     id,
     COALESCE(delivered_at, created_at) AS at,
     'delivery' AS kind,
+    'delivery' AS timeline_kind,
     CASE WHEN delivered_at IS NULL THEN 'pending' ELSE 'success' END AS status,
     artifact_path AS summary,
     channel AS source,
@@ -203,6 +230,41 @@ WITH audit_events AS (
     NULL AS stop_reason,
     json_object('mimeType', mime_type, 'sizeBytes', size_bytes) AS detail_json
   FROM artifact_receipts
+
+  UNION ALL
+
+  SELECT
+    id,
+    created_at AS at,
+    'decision_trace' AS kind,
+    CASE
+      WHEN lower(decision_kind) LIKE '%ingress%' THEN 'ingress'
+      WHEN lower(decision_kind) LIKE '%intake%' THEN 'intake'
+      WHEN lower(decision_kind) LIKE '%memory%' THEN 'memory'
+      WHEN lower(decision_kind) LIKE '%tool%' THEN 'tool'
+      WHEN lower(decision_kind) LIKE '%delivery%' THEN 'delivery'
+      WHEN lower(decision_kind) LIKE '%recovery%' THEN 'recovery'
+      WHEN lower(decision_kind) LIKE '%completion%' THEN 'completion'
+      ELSE 'contract'
+    END AS timeline_kind,
+    'info' AS status,
+    decision_kind || ': ' || reason_code AS summary,
+    source,
+    session_id,
+    run_id,
+    request_group_id,
+    channel,
+    decision_kind AS tool_name,
+    input_contract_ids_json AS params,
+    receipt_ids_json AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    reason_code AS error_code,
+    NULL AS retry_count,
+    reason_code AS stop_reason,
+    sanitized_detail_json AS detail_json
+  FROM decision_traces
 )
 `
 
@@ -245,6 +307,12 @@ function sanitizeText(raw: string | null): string | null {
   return value.length > 4000 ? `${value.slice(0, 3990)}…` : value
 }
 
+function sanitizeIdentifier(raw: string | null): string | null {
+  const sanitized = sanitizeText(raw)
+  if (sanitized == null) return null
+  return sanitized.replace(/\b\d{6,}\b/g, "***")
+}
+
 function parseAndRedactJson(raw: string | null): unknown {
   if (!raw) return null
   try {
@@ -259,19 +327,20 @@ function mapEvent(row: AuditEventRow): AuditEvent {
     id: row.id,
     at: row.at,
     kind: row.kind,
+    timelineKind: row.timeline_kind,
     status: row.status,
     summary: sanitizeText(row.summary) ?? "",
-    source: row.source,
-    sessionId: row.session_id,
+    source: sanitizeText(row.source),
+    sessionId: sanitizeIdentifier(row.session_id),
     runId: row.run_id,
     requestGroupId: row.request_group_id,
-    channel: row.channel,
-    toolName: row.tool_name,
+    channel: sanitizeText(row.channel),
+    toolName: sanitizeText(row.tool_name),
     params: parseAndRedactJson(row.params),
     output: sanitizeText(row.output),
     durationMs: row.duration_ms,
     approvalRequired: Boolean(row.approval_required),
-    approvedBy: row.approved_by,
+    approvedBy: sanitizeText(row.approved_by),
     errorCode: sanitizeText(row.error_code),
     retryCount: row.retry_count,
     stopReason: sanitizeText(row.stop_reason),
@@ -287,6 +356,10 @@ function buildWhere(query: AuditQuery): { where: string; bindings: unknown[] } {
   if (query.kind) {
     conditions.push("kind = ?")
     bindings.push(query.kind)
+  }
+  if (query.timelineKind) {
+    conditions.push("timeline_kind = ?")
+    bindings.push(query.timelineKind)
   }
   if (status) {
     conditions.push("status = ?")
@@ -356,6 +429,49 @@ export function listAuditEvents(query: AuditQuery): { items: AuditEvent[]; total
   }
 }
 
+function getAuditEventRowById(id: string): AuditEventRow | null {
+  return getDb()
+    .prepare(`${AUDIT_EVENTS_CTE} SELECT * FROM audit_events WHERE id = ? LIMIT 1`)
+    .get(id) as AuditEventRow | null
+}
+
+export function getAuditEventById(id: string): AuditEvent | null {
+  const row = getAuditEventRowById(id)
+  return row ? mapEvent(row) : null
+}
+
+export function promoteAuditEventToErrorCorpusCandidate(eventId: string, note?: string): { diagnosticEventId: string; event: AuditEvent } | null {
+  const row = getAuditEventRowById(eventId)
+  if (!row) return null
+
+  const event = mapEvent(row)
+  const diagnosticEventId = insertDiagnosticEvent({
+    kind: "error_corpus_candidate",
+    summary: `장애 샘플 후보: ${event.summary}`,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+    recoveryKey: `error-corpus:${event.kind}:${event.id}`,
+    detail: {
+      sourceEventId: event.id,
+      eventKind: event.kind,
+      timelineKind: event.timelineKind,
+      status: event.status,
+      summary: event.summary,
+      channel: event.channel,
+      toolName: event.toolName,
+      errorCode: event.errorCode,
+      stopReason: event.stopReason,
+      params: event.params,
+      output: event.output,
+      detail: event.detail,
+      note: sanitizeText(note ?? null),
+    },
+  })
+
+  return { diagnosticEventId, event }
+}
+
 function resolveRunTimelineQuery(runId: string, limit: string | undefined): AuditQuery {
   const run = getDb()
     .prepare<[string], { request_group_id: string | null }>("SELECT request_group_id FROM root_runs WHERE id = ?")
@@ -368,7 +484,7 @@ function resolveRunTimelineQuery(runId: string, limit: string | undefined): Audi
 function renderMarkdown(events: AuditEvent[]): string {
   const lines = ["# Audit Timeline", ""]
   for (const event of events) {
-    lines.push(`- ${new Date(event.at).toISOString()} [${event.kind}/${event.status}] ${event.summary}`)
+    lines.push(`- ${new Date(event.at).toISOString()} [${event.timelineKind}/${event.kind}/${event.status}] ${event.summary}`)
     const meta = [
       event.runId ? `run=${event.runId}` : null,
       event.requestGroupId ? `group=${event.requestGroupId}` : null,
@@ -405,13 +521,27 @@ export function registerAuditRoute(app: FastifyInstance): void {
     },
   )
 
+  app.post<{ Params: { id: string }; Body: { note?: string } }>(
+    "/api/audit/events/:id/promote-error-corpus",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const result = promoteAuditEventToErrorCorpusCandidate(req.params.id, req.body?.note)
+      if (!result) {
+        reply.code(404)
+        return { ok: false, message: "audit event not found" }
+      }
+      return { ok: true, ...result }
+    },
+  )
+
   app.delete<{ Querystring: { before?: string; all?: string } }>("/api/audit", { preHandler: authMiddleware }, async (req) => {
     const before = req.query.all === "true" ? Date.now() + 1 : parseTime(req.query.before)
-    if (before == null) return { ok: false, deleted: { auditLogs: 0, diagnosticEvents: 0 }, message: "before 또는 all=true가 필요합니다." }
+    if (before == null) return { ok: false, deleted: { auditLogs: 0, diagnosticEvents: 0, decisionTraces: 0 }, message: "before 또는 all=true가 필요합니다." }
 
     const db = getDb()
     const auditLogs = db.prepare("DELETE FROM audit_logs WHERE timestamp < ?").run(before).changes
     const diagnosticEvents = db.prepare("DELETE FROM diagnostic_events WHERE created_at < ?").run(before).changes
-    return { ok: true, deleted: { auditLogs, diagnosticEvents }, before }
+    const decisionTraces = db.prepare("DELETE FROM decision_traces WHERE created_at < ?").run(before).changes
+    return { ok: true, deleted: { auditLogs, diagnosticEvents, decisionTraces }, before }
   })
 }

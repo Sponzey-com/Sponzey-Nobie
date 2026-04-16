@@ -73,7 +73,11 @@ export interface TaskArtifactModel {
   filePath?: string
   fileName: string
   url?: string
+  previewUrl?: string
+  downloadUrl?: string
+  previewable?: boolean
   mimeType?: string
+  sizeBytes?: number
 }
 
 export interface TaskFailureModel {

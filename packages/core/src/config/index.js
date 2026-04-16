@@ -88,7 +88,7 @@ function inferConnectionFromLegacyConfig(rawAi) {
             auth: {
                 mode: normalizeAIAuthMode({ mode: auth.mode, provider: "openai", rawProvider: configuredProviderRaw, auth }),
                 apiKey: toStringArray(openai.apiKeys)[0] || undefined,
-                oauthAuthFilePath: toString(auth.codexAuthFilePath) || undefined,
+                oauthAuthFilePath: toString(auth.oauthAuthFilePath) || toString(auth.codexAuthFilePath) || undefined,
                 clientId: toString(auth.clientId) || undefined,
             },
         });
@@ -133,12 +133,14 @@ function inferConnectionFromLegacyConfig(rawAi) {
     }
     const openai = toObject(rawAiBackends.openai);
     if (openai.enabled === true && (toString(openai.providerType) === "openai" || toString(openai.authMode) === "chatgpt_oauth")) {
+        const credentials = toObject(openai.credentials);
         return buildConnection("openai", toString(openai.defaultModel), {
             endpoint: toString(openai.endpoint) || undefined,
             auth: {
-                mode: toString(openai.authMode) || "api_key",
-                apiKey: toString(toObject(openai.credentials).apiKey) || undefined,
-                oauthAuthFilePath: toString(toObject(openai.credentials).oauthAuthFilePath) || undefined,
+                mode: normalizeAIAuthMode({ mode: openai.authMode, provider: "openai", rawProvider: openai.providerType, auth: credentials }),
+                apiKey: toString(credentials.apiKey) || undefined,
+                oauthAuthFilePath: toString(credentials.oauthAuthFilePath) || toString(credentials.codexAuthFilePath) || undefined,
+                clientId: toString(credentials.clientId) || undefined,
             },
         });
     }

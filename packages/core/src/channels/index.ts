@@ -9,14 +9,19 @@ export { TelegramChannel } from "./telegram/bot.js"
 export { SlackChannel } from "./slack/bot.js"
 export {
   getDefaultChannelSmokeScenarios,
+  createDryRunChannelSmokeExecutor,
   resolveChannelSmokeReadiness,
+  runPersistedChannelSmokeScenarios,
   runChannelSmokeScenarios,
+  sanitizeChannelSmokeTrace,
+  sanitizeChannelSmokeValue,
   validateChannelSmokeTrace,
   type ChannelSmokeArtifactMode,
   type ChannelSmokeArtifactTrace,
   type ChannelSmokeChannel,
   type ChannelSmokeCorrelationKey,
   type ChannelSmokeReadiness,
+  type ChannelSmokeRunMode,
   type ChannelSmokeRunResult,
   type ChannelSmokeRunnerOptions,
   type ChannelSmokeScenario,
@@ -25,6 +30,8 @@ export {
   type ChannelSmokeToolTrace,
   type ChannelSmokeTrace,
   type ChannelSmokeValidation,
+  type PersistedChannelSmokeRunnerOptions,
+  type PersistedChannelSmokeRunResult,
 } from "./smoke-runner.js"
 
 const log = createLogger("channels")

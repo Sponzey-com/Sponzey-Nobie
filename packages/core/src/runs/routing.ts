@@ -1,10 +1,10 @@
 import { buildSetupDraft, type AIBackendCard, type SetupDraft } from "../control-plane/index.js"
-import { type AIProvider } from "../ai/index.js"
-import { AnthropicProvider } from "../ai/providers/anthropic.js"
-import { GeminiProvider } from "../ai/providers/gemini.js"
-import { OpenAIProvider } from "../ai/providers/openai.js"
-import type { AuthProfile } from "../ai/types.js"
-import type { OpenAICodexOAuthConfig } from "../auth/openai-codex-oauth.js"
+import {
+  resolveProviderForConnection,
+  type AIProvider,
+  type ProviderAuditTrace,
+} from "../ai/index.js"
+import type { AIConnectionConfig } from "../config/types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
 export interface RouteActionInput {
@@ -20,6 +20,7 @@ export interface ResolvedRunRoute {
   providerId?: string
   model?: string
   provider?: AIProvider
+  providerTrace?: ProviderAuditTrace
   workerRuntime?: WorkerRuntimeTarget
   reason: string
 }
@@ -87,93 +88,31 @@ function resolveBackend(
   _fallbackModel: string | undefined,
   _options?: RouteResolutionOptions,
 ): Omit<ResolvedRunRoute, "targetId" | "targetLabel" | "reason"> | null {
-  const model = resolveConfiguredModel(backend)
-  if (!model) return null
-
-  switch (backend.providerType) {
-    case "anthropic": {
-      const apiKey = backend.credentials.apiKey?.trim()
-      if (!apiKey) return null
-      return {
-        providerId: "anthropic",
-        model,
-        provider: new AnthropicProvider(buildProfile([apiKey])),
-      }
-    }
-
-    case "openai": {
-      const authMode = backend.authMode ?? "api_key"
-      const oauthConfig = authMode === "chatgpt_oauth"
-        ? resolveCodexOAuthConfig(backend)
-        : undefined
-      const profile = oauthConfig
-        ? buildProfile([])
-        : buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
-      const endpoint = normalizeOpenAICompatibleEndpoint("openai", backend.endpoint)
-      return {
-        providerId: "openai",
-        model,
-        provider: new OpenAIProvider(profile, endpoint, oauthConfig),
-      }
-    }
-
-    case "ollama":
-    case "llama": {
-      const endpoint = normalizeOpenAICompatibleEndpoint(backend.providerType, backend.endpoint)
-      if (!endpoint) return null
-      const profile = buildProfile([backend.credentials.apiKey?.trim() || "nobie-local"])
-      return {
-        providerId: "openai",
-        model,
-        provider: new OpenAIProvider(profile, endpoint),
-      }
-    }
-
-    case "custom": {
-      const endpoint = normalizeOpenAICompatibleEndpoint("custom", backend.endpoint)
-      if (!endpoint) return null
-      const apiKey = backend.credentials.apiKey?.trim() || "nobie-custom"
-      return {
-        providerId: "openai",
-        model,
-        provider: new OpenAIProvider(buildProfile([apiKey]), endpoint),
-      }
-    }
-
-    case "gemini": {
-      const apiKey = backend.credentials.apiKey?.trim()
-      if (!apiKey) return null
-      return {
-        providerId: "gemini",
-        model,
-        provider: new GeminiProvider(buildProfile([apiKey]), backend.endpoint?.trim() || undefined),
-      }
-    }
-  }
-}
-
-function resolveCodexOAuthConfig(backend: AIBackendCard): OpenAICodexOAuthConfig {
+  const connection = backendToConnection(backend)
+  const resolved = resolveProviderForConnection(connection)
+  if (!resolved) return null
   return {
-    authFilePath: backend.credentials.oauthAuthFilePath,
+    providerId: resolved.providerId,
+    model: resolved.model,
+    provider: resolved.provider,
+    providerTrace: resolved.resolution.auditTrace,
   }
 }
 
-function buildProfile(apiKeys: string[]): AuthProfile {
+function backendToConnection(backend: AIBackendCard): AIConnectionConfig {
+  const endpoint = backend.endpoint?.trim()
   return {
-    apiKeys,
-    currentKeyIndex: 0,
-    cooldowns: new Map(),
+    provider: backend.providerType,
+    model: resolveConfiguredModel(backend),
+    ...(endpoint ? { endpoint } : {}),
+    auth: {
+      mode: backend.authMode ?? "api_key",
+      ...(backend.credentials.apiKey?.trim() ? { apiKey: backend.credentials.apiKey.trim() } : {}),
+      ...(backend.credentials.username?.trim() ? { username: backend.credentials.username.trim() } : {}),
+      ...(backend.credentials.password ? { password: backend.credentials.password } : {}),
+      ...(backend.credentials.oauthAuthFilePath?.trim() ? { oauthAuthFilePath: backend.credentials.oauthAuthFilePath.trim() } : {}),
+    },
   }
-}
-
-function normalizeOpenAICompatibleEndpoint(
-  providerType: "openai" | "ollama" | "llama" | "custom",
-  endpoint: string | undefined,
-): string | undefined {
-  const normalized = endpoint?.trim()
-  if (!normalized) return undefined
-  if (providerType !== "ollama") return normalized
-  return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`
 }
 
 function normalizeTargetId(value: string | undefined): string | undefined {

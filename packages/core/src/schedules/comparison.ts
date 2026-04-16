@@ -52,20 +52,15 @@ interface ParsedComparisonResult {
 
 const DEFAULT_TIMEOUT_MS = 2_000
 
-function rawTextPreview(value: string | undefined): string | undefined {
-  const normalized = value?.trim().replace(/\s+/gu, " ")
-  if (!normalized) return undefined
-  return normalized.length <= 80 ? normalized : `${normalized.slice(0, 80)}...`
-}
-
 function comparisonProjection(contract: ScheduleContract): unknown {
+  // nobie-critical-decision-audit: schedules.comparison.contract_projection_only
+  // Comparator input must remain contract-only. Raw prompt, display title, and candidate metadata are excluded.
   return {
     schemaVersion: contract.schemaVersion,
     identity: buildScheduleIdentityProjection(contract),
     time: contract.time,
     payload: buildSchedulePayloadProjection(contract.payload),
     delivery: buildDeliveryProjection(contract.delivery),
-    rawTextPreview: rawTextPreview(contract.rawText),
   }
 }
 
@@ -82,7 +77,6 @@ function buildComparisonPrompt(params: {
       "Candidate schedule contracts:",
       toCanonicalJson(params.candidates.map((candidate) => ({
         id: candidate.id,
-        metadata: candidate.metadata ?? {},
         contract: comparisonProjection(candidate.contract),
       }))),
     ].join("\n"),

@@ -6,8 +6,8 @@ import {
 } from "../agent/intake.js"
 import { getConfig } from "../config/index.js"
 import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js"
-import type { AIProvider } from "../ai/index.js"
-import { detectAvailableProvider } from "../ai/index.js"
+import type { AIProvider, ProviderAuditTrace } from "../ai/index.js"
+import { detectAvailableProvider, formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js"
 import { createLogger } from "../logger/index.js"
 import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/latency.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
@@ -53,6 +53,7 @@ export interface StartRootRunParams {
   model: string | undefined
   providerId?: string | undefined
   provider?: AIProvider | undefined
+  providerTrace?: ProviderAuditTrace | undefined
   targetId?: string | undefined
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
@@ -151,6 +152,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       hasRequestGroupExecutionQueue,
     })
     appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)
+    const providerTrace = params.providerTrace ?? (() => {
+      try {
+        return resolveProviderResolutionSnapshot(params.providerId).auditTrace
+      } catch {
+        return undefined
+      }
+    })()
+    if (providerTrace) appendRunEvent(runId, formatProviderAuditTrace(providerTrace))
     const { startPlan } = startLaunch
     for (const latencyEvent of startPlan.latencyEvents) appendRunEvent(runId, latencyEvent)
     const {
