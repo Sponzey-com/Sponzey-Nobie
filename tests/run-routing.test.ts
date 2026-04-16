@@ -1,6 +1,26 @@
-import { describe, expect, it } from "vitest"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, describe, expect, it } from "vitest"
 import type { SetupDraft } from "../packages/core/src/control-plane/index.ts"
 import { resolveRunRouteFromDraft } from "../packages/core/src/runs/routing.ts"
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function createCodexAuthFile(): string {
+  const dir = mkdtempSync(join(tmpdir(), "nobie-route-codex-"))
+  tempDirs.push(dir)
+  const file = join(dir, "auth.json")
+  writeFileSync(file, JSON.stringify({ tokens: { access_token: "test-access-token" } }), "utf-8")
+  return file
+}
 
 function createDraft(): SetupDraft {
   return {
@@ -198,12 +218,13 @@ describe("resolveRunRouteFromDraft", () => {
 
   it("routes ChatGPT OAuth connections through the Codex OAuth provider path without API keys", () => {
     const draft = createDraft()
+    const authFilePath = createCodexAuthFile()
     draft.aiBackends = draft.aiBackends.map((backend) => (
       backend.id === "provider:openai"
         ? {
             ...backend,
             authMode: "chatgpt_oauth",
-            credentials: { oauthAuthFilePath: "/tmp/codex-auth.json" },
+            credentials: { oauthAuthFilePath: authFilePath },
             endpoint: "https://chatgpt.com/backend-api/codex",
             defaultModel: "gpt-5",
             enabled: true,
@@ -215,12 +236,38 @@ describe("resolveRunRouteFromDraft", () => {
     const provider = route.provider as unknown as {
       oauthConfig?: { authFilePath?: string }
       profile?: { apiKeys: string[] }
+      baseUrl?: string
     }
 
     expect(route.targetId).toBe("provider:openai")
     expect(route.providerId).toBe("openai")
     expect(route.model).toBe("gpt-5")
-    expect(provider.oauthConfig?.authFilePath).toBe("/tmp/codex-auth.json")
+    expect(route.providerTrace).toMatchObject({
+      providerId: "openai",
+      adapterType: "openai_codex_oauth",
+      authType: "chatgpt_oauth",
+      baseUrlClass: "chatgpt_codex",
+    })
+    expect(provider.oauthConfig?.authFilePath).toBe(authFilePath)
     expect(provider.profile?.apiKeys).toEqual([])
+    expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api/codex")
+  })
+
+  it("keeps local provider identity while using the OpenAI-compatible adapter", () => {
+    const draft = createDraft()
+    draft.routingProfiles = draft.routingProfiles.map((profile) => (
+      profile.id === "default" ? { ...profile, targets: ["provider:ollama"] } : profile
+    ))
+
+    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+
+    expect(route.targetId).toBe("provider:ollama")
+    expect(route.providerId).toBe("ollama")
+    expect(route.providerTrace).toMatchObject({
+      providerId: "ollama",
+      adapterType: "openai_compatible",
+      authType: "local_endpoint",
+      baseUrlClass: "local",
+    })
   })
 })

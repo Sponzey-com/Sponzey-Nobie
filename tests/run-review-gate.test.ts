@@ -72,4 +72,31 @@ describe("review gate", () => {
     expect(decision.kind).toBe("skip")
     expect(decision.state.completionSatisfied).toBe(true)
   })
+
+  it("skips completion review when a reply text receipt already exists", () => {
+    const decision = decideReviewGate({
+      executionSemantics: {
+        ...baseExecutionSemantics,
+        artifactDelivery: "none",
+      },
+      preview: "동천동은 지금 대체로 맑고 포근합니다.",
+      deliveryOutcome: {
+        mode: "reply",
+        directArtifactDeliveryRequested: false,
+        hasSuccessfulArtifactDelivery: false,
+        hasSuccessfulTextDelivery: true,
+        textDeliverySatisfied: true,
+        deliverySatisfied: true,
+        requiresDirectArtifactRecovery: false,
+      },
+      successfulTools: [],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision.kind).toBe("skip")
+    expect(decision.reason).toContain("reply 텍스트 전달 receipt")
+    expect(decision.state.completionSatisfied).toBe(true)
+  })
 })

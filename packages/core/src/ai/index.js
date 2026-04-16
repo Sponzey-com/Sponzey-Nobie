@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { getConfig } from "../config/index.js";
-import { resolveOpenAICodexAuthFilePath } from "../auth/openai-codex-oauth.js";
+import { resolveOpenAICodexBaseUrl, resolveOpenAICodexAuthFilePath, } from "../auth/openai-codex-oauth.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { GeminiProvider } from "./providers/gemini.js";
 import { OpenAIProvider } from "./providers/openai.js";
@@ -21,7 +21,7 @@ function buildOpenAICompatibleProfile(providerId, apiKey) {
         return buildProfile(["nobie-custom"]);
     return buildProfile([]);
 }
-function normalizeOpenAICompatibleEndpoint(providerId, endpoint) {
+export function normalizeOpenAICompatibleEndpoint(providerId, endpoint) {
     const normalized = endpoint?.trim();
     if (!normalized)
         return undefined;
@@ -29,12 +29,93 @@ function normalizeOpenAICompatibleEndpoint(providerId, endpoint) {
         return normalized;
     return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`;
 }
-function buildProviderFingerprint(connection) {
+function isLocalEndpoint(endpoint) {
+    if (!endpoint?.trim())
+        return false;
+    try {
+        const hostname = new URL(endpoint).hostname.toLowerCase();
+        return hostname === "localhost"
+            || hostname === "127.0.0.1"
+            || hostname === "::1"
+            || hostname.startsWith("192.168.")
+            || /^10\./.test(hostname)
+            || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+    }
+    catch {
+        return false;
+    }
+}
+function isOfficialOpenAIEndpoint(endpoint) {
+    if (!endpoint?.trim())
+        return true;
+    try {
+        const hostname = new URL(endpoint).hostname.toLowerCase();
+        return hostname === "api.openai.com" || hostname.endsWith(".openai.com");
+    }
+    catch {
+        return false;
+    }
+}
+function resolveAdapterType(connection) {
+    const providerId = connection.provider.trim();
+    const authMode = connection.auth?.mode ?? "api_key";
+    if (!providerId)
+        return "none";
+    if (providerId === "openai" && authMode === "chatgpt_oauth")
+        return "openai_codex_oauth";
+    if (providerId === "openai")
+        return "openai_chat";
+    if (providerId === "ollama" || providerId === "llama" || providerId === "custom")
+        return "openai_compatible";
+    if (providerId === "anthropic")
+        return "anthropic";
+    if (providerId === "gemini")
+        return "gemini";
+    return "none";
+}
+function classifyBaseUrl(connection) {
     const providerId = connection.provider.trim();
     const authMode = connection.auth?.mode ?? "api_key";
     const endpoint = providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom"
-        ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint) ?? ""
-        : connection.endpoint?.trim() ?? "";
+        ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint)
+        : connection.endpoint?.trim();
+    if (!providerId)
+        return "none";
+    if (providerId === "openai" && authMode === "chatgpt_oauth")
+        return "chatgpt_codex";
+    if (providerId === "openai")
+        return isOfficialOpenAIEndpoint(endpoint) ? "official_openai" : (isLocalEndpoint(endpoint) ? "local" : "custom");
+    if (providerId === "ollama" || providerId === "llama")
+        return isLocalEndpoint(endpoint) ? "local" : "custom";
+    if (providerId === "custom")
+        return isLocalEndpoint(endpoint) ? "local" : "custom";
+    return endpoint ? "custom" : "provider_native";
+}
+function buildOAuthConfig(connection) {
+    if (connection.provider !== "openai")
+        return undefined;
+    if (connection.auth?.mode !== "chatgpt_oauth")
+        return undefined;
+    return {
+        authFilePath: connection.auth?.oauthAuthFilePath,
+        clientId: connection.auth?.clientId,
+    };
+}
+function resolveProviderEndpoint(connection) {
+    const providerId = connection.provider.trim();
+    if (providerId === "openai" && connection.auth?.mode === "chatgpt_oauth") {
+        const endpoint = connection.endpoint?.trim();
+        return endpoint ? resolveOpenAICodexBaseUrl(endpoint) : undefined;
+    }
+    if (providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom") {
+        return normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint);
+    }
+    return connection.endpoint?.trim() || undefined;
+}
+function buildProviderFingerprint(connection) {
+    const providerId = connection.provider.trim();
+    const authMode = connection.auth?.mode ?? "api_key";
+    const endpoint = resolveProviderEndpoint(connection) ?? "";
     const model = connection.model.trim();
     const oauthAuthFilePath = connection.auth?.oauthAuthFilePath?.trim() ?? "";
     const clientId = connection.auth?.clientId?.trim() ?? "";
@@ -104,15 +185,12 @@ function resolveProviderConfigured(connection) {
 function hasConfiguredConnection(connection = getActiveAIConnection()) {
     return resolveProviderConfigured(connection).configured;
 }
-export function resolveProviderResolutionSnapshot(providerId, config = getConfig()) {
-    const connection = getActiveAIConnection(config);
+export function resolveAIConnection(connection, providerId) {
     const activeProviderId = connection.provider.trim();
     const requestedProviderId = providerId?.trim() ?? "";
     const model = connection.model.trim();
     const authMode = connection.auth?.mode ?? "api_key";
-    const endpoint = activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom"
-        ? normalizeOpenAICompatibleEndpoint(activeProviderId, connection.endpoint) ?? ""
-        : connection.endpoint?.trim() ?? "";
+    const endpoint = resolveProviderEndpoint(connection) ?? "";
     const configured = resolveProviderConfigured(connection);
     let fallbackReason = configured.reason;
     if (requestedProviderId && requestedProviderId !== activeProviderId) {
@@ -121,19 +199,54 @@ export function resolveProviderResolutionSnapshot(providerId, config = getConfig
     else if (configured.configured && !model) {
         fallbackReason = "model_missing";
     }
+    const credentialKind = resolveCredentialKind(connection);
+    const adapterType = resolveAdapterType(connection);
+    const baseUrlClass = classifyBaseUrl(connection);
+    const healthy = configured.configured && Boolean(model) && !(requestedProviderId && requestedProviderId !== activeProviderId);
+    const diagnosticId = [
+        activeProviderId || "none",
+        adapterType,
+        authMode,
+        credentialKind,
+        baseUrlClass,
+        model || "model_missing",
+    ].join(":");
+    const auditTrace = {
+        source: "config.ai.connection",
+        requestedProviderId,
+        providerId: activeProviderId,
+        adapterType,
+        baseUrlClass,
+        modelId: model,
+        authType: credentialKind,
+        configured: configured.configured,
+        healthy,
+        fallbackReason,
+        diagnosticId,
+    };
     return {
         source: "config.ai.connection",
         providerId: activeProviderId,
-        credentialKind: resolveCredentialKind(connection),
+        credentialKind,
+        adapterType,
+        authType: credentialKind,
+        baseUrlClass,
         authMode,
         model,
         endpoint,
         configured: configured.configured,
         enabled: configured.configured,
-        healthy: configured.configured && Boolean(model) && !(requestedProviderId && requestedProviderId !== activeProviderId),
+        healthy,
         fallbackReason,
-        diagnosticId: [activeProviderId || "none", authMode, resolveCredentialKind(connection), model || "model_missing"].join(":"),
+        diagnosticId,
+        auditTrace,
+        requestedProviderId,
+        connection,
     };
+}
+export function resolveProviderResolutionSnapshot(providerId, config = getConfig()) {
+    const { requestedProviderId: _requestedProviderId, connection: _connection, ...snapshot } = resolveAIConnection(getActiveAIConnection(config), providerId);
+    return snapshot;
 }
 export function detectAvailableProvider() {
     const snapshot = resolveProviderResolutionSnapshot();
@@ -146,9 +259,47 @@ export function getDefaultModel() {
 export function inferProviderId(_model) {
     return detectAvailableProvider();
 }
+export function createProviderForConnection(connection) {
+    const activeProviderId = connection.provider.trim();
+    if (activeProviderId === "anthropic") {
+        const apiKey = connection.auth?.apiKey?.trim();
+        if (!apiKey) {
+            throw new Error("Anthropic AI is not configured. Connect it in settings before using it.");
+        }
+        return new AnthropicProvider(buildProfile([apiKey]));
+    }
+    if (activeProviderId === "gemini") {
+        const apiKey = connection.auth?.apiKey?.trim();
+        if (!apiKey) {
+            throw new Error("Gemini AI is not configured. Connect it in settings before using it.");
+        }
+        return new GeminiProvider(buildProfile([apiKey]), connection.endpoint?.trim() || undefined);
+    }
+    if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom") {
+        const apiKey = connection.auth?.apiKey?.trim();
+        const profile = buildOAuthConfig(connection)
+            ? buildProfile([])
+            : buildOpenAICompatibleProfile(activeProviderId, apiKey);
+        const endpoint = resolveProviderEndpoint(connection);
+        return new OpenAIProvider(profile, endpoint, buildOAuthConfig(connection));
+    }
+    throw new Error(`Unsupported AI backend: "${activeProviderId}"`);
+}
+export function resolveProviderForConnection(connection, providerId) {
+    const resolution = resolveAIConnection(connection, providerId);
+    if (!resolution.healthy)
+        return null;
+    return {
+        providerId: resolution.providerId,
+        model: resolution.model,
+        provider: createProviderForConnection(connection),
+        resolution,
+    };
+}
 export function getProvider(providerId) {
     const connection = getActiveAIConnection();
-    const snapshot = resolveProviderResolutionSnapshot(providerId);
+    const resolved = resolveAIConnection(connection, providerId);
+    const snapshot = resolved;
     const activeProviderId = snapshot.configured ? snapshot.providerId : "";
     const requestedProviderId = providerId?.trim() ?? "";
     const currentFingerprint = buildProviderFingerprint(connection);
@@ -164,44 +315,9 @@ export function getProvider(providerId) {
     providers.delete(activeProviderId);
     profiles.delete(activeProviderId);
     providerFingerprints.set(activeProviderId, currentFingerprint);
-    if (activeProviderId === "anthropic") {
-        const apiKey = connection.auth?.apiKey?.trim();
-        if (!apiKey) {
-            throw new Error("Anthropic AI is not configured. Connect it in settings before using it.");
-        }
-        const profile = buildProfile([apiKey]);
-        profiles.set(activeProviderId, profile);
-        const provider = new AnthropicProvider(profile);
-        providers.set(activeProviderId, provider);
-        return provider;
-    }
-    if (activeProviderId === "gemini") {
-        const apiKey = connection.auth?.apiKey?.trim();
-        if (!apiKey && !connection.endpoint?.trim()) {
-            throw new Error("Gemini AI is not configured. Connect it in settings before using it.");
-        }
-        const profile = buildProfile(apiKey ? [apiKey] : []);
-        profiles.set(activeProviderId, profile);
-        const provider = new GeminiProvider(profile, connection.endpoint?.trim() || undefined);
-        providers.set(activeProviderId, provider);
-        return provider;
-    }
-    if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom") {
-        const authMode = connection.auth?.mode ?? "api_key";
-        const apiKey = connection.auth?.apiKey?.trim();
-        const profile = buildOpenAICompatibleProfile(activeProviderId, apiKey);
-        const endpoint = normalizeOpenAICompatibleEndpoint(activeProviderId, connection.endpoint);
-        profiles.set(activeProviderId, profile);
-        const provider = new OpenAIProvider(profile, endpoint, activeProviderId === "openai" && authMode === "chatgpt_oauth"
-            ? {
-                authFilePath: connection.auth?.oauthAuthFilePath,
-                clientId: connection.auth?.clientId,
-            }
-            : undefined);
-        providers.set(activeProviderId, provider);
-        return provider;
-    }
-    throw new Error(`Unsupported AI backend: "${activeProviderId}"`);
+    const provider = createProviderForConnection(connection);
+    providers.set(activeProviderId, provider);
+    return provider;
 }
 const LLAMA_MODEL_PATTERN = /\bllama(?:[.\-:\w]*)?\b/i;
 const OLLAMA_BASEURL_PATTERN = /(^|\/\/)(?:[^/]*ollama|127\.0\.0\.1:11434|localhost:11434)/i;
@@ -215,5 +331,18 @@ export function shouldForceReasoningMode(providerId, model) {
     if (OLLAMA_BASEURL_PATTERN.test(endpoint))
         return true;
     return false;
+}
+export function formatProviderAuditTrace(trace) {
+    return [
+        "provider_trace",
+        `provider=${trace.providerId || "none"}`,
+        `requested=${trace.requestedProviderId || "none"}`,
+        `adapter=${trace.adapterType}`,
+        `base=${trace.baseUrlClass}`,
+        `model=${trace.modelId || "model_missing"}`,
+        `auth=${trace.authType}`,
+        `healthy=${trace.healthy ? "true" : "false"}`,
+        ...(trace.fallbackReason ? [`reason=${trace.fallbackReason}`] : []),
+    ].join(" ");
 }
 //# sourceMappingURL=index.js.map

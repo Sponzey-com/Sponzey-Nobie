@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import mqtt from "mqtt";
 import { getConfig } from "../config/index.js";
 import { createLogger } from "../logger/index.js";
-import { getMqttBrokerSnapshot, validateMqttBrokerConfig } from "../mqtt/broker.js";
+import { getMqttBrokerSnapshot, getMqttExtensionSnapshots, validateMqttBrokerConfig } from "../mqtt/broker.js";
 const log = createLogger("yeonjang:mqtt");
 export const DEFAULT_YEONJANG_EXTENSION_ID = "yeonjang-main";
+const YEONJANG_CAPABILITY_TTL_MS = 5_000;
+const capabilityCache = new Map();
 export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID) {
     const normalized = extensionId.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
     const prefix = `nobie/v1/node/${normalized}`;
@@ -39,7 +41,24 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
     }
 }
 export async function getYeonjangCapabilities(options = {}) {
-    return await invokeYeonjangMethod("node.capabilities", {}, options);
+    const extensionId = normalizeExtensionId(options.extensionId);
+    if (!options.forceRefresh) {
+        const cached = getFreshCachedCapabilities(extensionId);
+        if (cached)
+            return cached;
+        const snapshot = getFreshCapabilitySnapshot(extensionId);
+        if (snapshot) {
+            const payload = snapshotToYeonjangCapabilitiesPayload(snapshot);
+            rememberCapabilities(extensionId, payload);
+            return payload;
+        }
+    }
+    const payload = await invokeYeonjangMethod("node.capabilities", {}, { ...options, extensionId });
+    rememberCapabilities(extensionId, payload);
+    return payload;
+}
+export function clearYeonjangCapabilityCache() {
+    capabilityCache.clear();
 }
 export async function canYeonjangHandleMethod(method, options = {}) {
     try {
@@ -85,6 +104,70 @@ export function doesYeonjangCapabilitySupportOutputMode(capabilities, method, ou
     if (!modes)
         return null;
     return modes.includes(outputMode.trim().toLowerCase());
+}
+export function snapshotToYeonjangCapabilitiesPayload(snapshot) {
+    const matrix = snapshot.capabilityMatrix;
+    return {
+        node: "nobie-yeonjang",
+        ...(snapshot.version ? { version: snapshot.version } : {}),
+        ...(snapshot.protocolVersion ? { protocolVersion: snapshot.protocolVersion } : {}),
+        ...(snapshot.gitTag ? { gitTag: snapshot.gitTag } : {}),
+        ...(snapshot.gitCommit ? { gitCommit: snapshot.gitCommit } : {}),
+        ...(snapshot.buildTarget ? { buildTarget: snapshot.buildTarget } : {}),
+        ...(snapshot.os ? { os: snapshot.os } : {}),
+        ...(snapshot.arch ? { arch: snapshot.arch } : {}),
+        ...(snapshot.platform ? { platform: snapshot.platform } : {}),
+        ...(snapshot.transport ? { transport: snapshot.transport } : {}),
+        ...(snapshot.capabilityHash ? { capabilityHash: snapshot.capabilityHash } : {}),
+        ...(matrix ? { capabilityMatrix: matrix } : {}),
+        methods: matrix
+            ? Object.entries(matrix).map(([name, entry]) => matrixEntryToMethodCapability(name, entry))
+            : snapshot.methods.map((name) => ({ name, implemented: true })),
+        ...(snapshot.permissions ? { permissions: snapshot.permissions } : {}),
+        ...(snapshot.toolHealth ? { toolHealth: snapshot.toolHealth } : {}),
+        lastCapabilityRefreshAt: snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt,
+    };
+}
+function matrixEntryToMethodCapability(name, entry) {
+    return {
+        name,
+        implemented: entry.supported !== false,
+        ...(typeof entry.supported === "boolean" ? { supported: entry.supported } : {}),
+        ...(typeof entry.requiresApproval === "boolean" ? { requiresApproval: entry.requiresApproval } : {}),
+        ...(typeof entry.requiresPermission === "boolean" ? { requiresPermission: entry.requiresPermission } : {}),
+        ...(entry.permissionSetting !== undefined ? { permissionSetting: entry.permissionSetting } : {}),
+        ...(entry.knownLimitations ? { knownLimitations: entry.knownLimitations } : {}),
+        ...(entry.outputModes ? { outputModes: entry.outputModes } : {}),
+        ...(typeof entry.lastCheckedAt === "number" ? { lastCheckedAt: entry.lastCheckedAt } : {}),
+    };
+}
+function normalizeExtensionId(extensionId) {
+    return extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
+}
+function rememberCapabilities(extensionId, payload) {
+    capabilityCache.set(extensionId, { payload, cachedAt: Date.now() });
+}
+function getFreshCachedCapabilities(extensionId) {
+    const cached = capabilityCache.get(extensionId);
+    if (!cached)
+        return null;
+    if (Date.now() - cached.cachedAt > YEONJANG_CAPABILITY_TTL_MS)
+        return null;
+    return cached.payload;
+}
+function getFreshCapabilitySnapshot(extensionId) {
+    const now = Date.now();
+    const snapshot = getMqttExtensionSnapshots().find((candidate) => candidate.extensionId === extensionId);
+    if (!snapshot)
+        return null;
+    if (String(snapshot.state ?? "").toLowerCase() === "offline")
+        return null;
+    if (!snapshot.capabilityMatrix && snapshot.methods.length === 0)
+        return null;
+    const refreshedAt = snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt;
+    if (now - refreshedAt > YEONJANG_CAPABILITY_TTL_MS)
+        return null;
+    return snapshot;
 }
 export function isYeonjangUnavailableError(error) {
     const message = error instanceof Error ? error.message : String(error);

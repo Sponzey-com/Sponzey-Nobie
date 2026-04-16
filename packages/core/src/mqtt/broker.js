@@ -108,18 +108,35 @@ function releaseExtensionClaimsForClient(clientId) {
     for (const extensionId of claimed) {
         if (claimedExtensionOwners.get(extensionId) === normalizedClientId) {
             claimedExtensionOwners.delete(extensionId);
-            extensionSnapshots.delete(extensionId);
+            const current = extensionSnapshots.get(extensionId);
+            if (current) {
+                extensionSnapshots.set(extensionId, {
+                    ...current,
+                    clientId: null,
+                    state: "offline",
+                    message: "MQTT connection disconnected.",
+                    lastSeenAt: Date.now(),
+                });
+            }
         }
     }
     claimedExtensionsByClient.delete(normalizedClientId);
     activeClientsById.delete(normalizedClientId);
 }
 function clearExtensionClaims() {
+    const now = Date.now();
+    for (const [extensionId, current] of extensionSnapshots.entries()) {
+        extensionSnapshots.set(extensionId, {
+            ...current,
+            clientId: null,
+            state: "offline",
+            message: "MQTT broker is stopped.",
+            lastSeenAt: now,
+        });
+    }
     activeClientsById.clear();
     claimedExtensionOwners.clear();
     claimedExtensionsByClient.clear();
-    extensionSnapshots.clear();
-    exchangeLogs.length = 0;
 }
 function truncateText(value, max = 2_000) {
     if (value.length <= max)
@@ -186,9 +203,12 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         : null;
     const current = extensionSnapshots.get(extensionId);
     const capabilityMatrix = readCapabilityMatrix(objectPayload);
+    const permissions = readObject(objectPayload, "permissions");
+    const toolHealth = readObject(objectPayload, "toolHealth", "tool_health");
     const methods = kind === "capabilities"
         ? readCapabilityMethods(objectPayload, capabilityMatrix)
         : current?.methods ?? [];
+    const now = Date.now();
     const next = {
         extensionId,
         clientId: clientId ?? current?.clientId ?? currentOwner,
@@ -205,6 +225,7 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         version: (typeof objectPayload?.version === "string" && objectPayload.version) ||
             current?.version ||
             null,
+        protocolVersion: readString(objectPayload, "protocolVersion", "protocol_version") ?? current?.protocolVersion ?? null,
         gitTag: readString(objectPayload, "gitTag", "git_tag") ?? current?.gitTag ?? null,
         gitCommit: readString(objectPayload, "gitCommit", "git_commit") ?? current?.gitCommit ?? null,
         buildTarget: readString(objectPayload, "buildTarget", "build_target") ?? current?.buildTarget ?? null,
@@ -214,8 +235,11 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         transport: readStringArray(objectPayload, "transport") ?? current?.transport ?? [],
         capabilityHash: readString(objectPayload, "capabilityHash", "capability_hash") ?? current?.capabilityHash ?? null,
         methods,
+        ...(permissions ? { permissions } : current?.permissions ? { permissions: current.permissions } : {}),
+        ...(toolHealth ? { toolHealth } : current?.toolHealth ? { toolHealth: current.toolHealth } : {}),
         ...(capabilityMatrix ? { capabilityMatrix } : current?.capabilityMatrix ? { capabilityMatrix: current.capabilityMatrix } : {}),
-        lastSeenAt: Date.now(),
+        lastCapabilityRefreshAt: kind === "capabilities" ? now : current?.lastCapabilityRefreshAt ?? null,
+        lastSeenAt: now,
     };
     extensionSnapshots.set(extensionId, next);
 }
@@ -237,6 +261,16 @@ function readStringArray(payload, key) {
         return [value];
     if (Array.isArray(value))
         return value.filter((item) => typeof item === "string" && item.trim() !== "");
+    return null;
+}
+function readObject(payload, ...keys) {
+    if (!payload)
+        return null;
+    for (const key of keys) {
+        const value = payload[key];
+        if (value && typeof value === "object" && !Array.isArray(value))
+            return value;
+    }
     return null;
 }
 function readCapabilityMatrix(payload) {

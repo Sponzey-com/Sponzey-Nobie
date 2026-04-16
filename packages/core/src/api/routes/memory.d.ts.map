@@ -1,1 +1,1 @@
-{"version":3,"file":"memory.d.ts","sourceRoot":"","sources":["../../../src/api/routes/memory.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAuB9C,wBAAgB,mBAAmB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAkC9D"}
+{"version":3,"file":"memory.d.ts","sourceRoot":"","sources":["../../../src/api/routes/memory.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAwB9C,wBAAgB,mBAAmB,CAAC,GAAG,EAAE,eAAe,GAAG,IAAI,CAsC9D"}

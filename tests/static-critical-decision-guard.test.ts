@@ -75,5 +75,30 @@ describe("static critical decision guard", () => {
       expect(source, `${rule.ruleId} no longer matches source; update the audit inventory before changing guard logic`).toMatch(rule.pattern)
     }
   })
-})
 
+  it("keeps isolated contract comparators free of raw prompt previews", () => {
+    const scheduleComparator = readRepoFile("packages/core/src/schedules/comparison.ts")
+    expect(scheduleComparator).not.toContain("rawTextPreview")
+    expect(scheduleComparator).not.toMatch(/contract\.rawText/u)
+    expect(scheduleComparator).not.toMatch(/metadata:\s*candidate\.metadata/u)
+
+    const activeRunComparator = readRepoFile("packages/core/src/runs/entry-comparison.ts")
+    expect(activeRunComparator).not.toMatch(/candidate\.prompt/u)
+    expect(activeRunComparator).not.toMatch(/run\.prompt/u)
+  })
+
+  it("keeps semantic or vector schedule hits as comparison-only candidates", () => {
+    const source = readRepoFile("packages/core/src/schedules/candidates.ts")
+    const marker = "nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary"
+    expect(source).toContain(marker)
+    const blockStart = source.indexOf(marker)
+    const blockEnd = source.indexOf("return [...candidates.values()]", blockStart)
+    const semanticBlock = source.slice(blockStart, blockEnd)
+
+    expect(semanticBlock).toContain('candidateReason: "semantic_candidate"')
+    expect(semanticBlock).toContain('confidenceKind: "semantic"')
+    expect(semanticBlock).toContain("requiresComparison: true")
+    expect(semanticBlock).not.toMatch(/confidenceKind:\s*"exact"/u)
+    expect(semanticBlock).not.toMatch(/requiresComparison:\s*false/u)
+  })
+})

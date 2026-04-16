@@ -3,6 +3,7 @@ import {
   type DeliveryOutcome,
   type DeliverySource,
   type SuccessfulFileDelivery,
+  type SuccessfulTextDelivery,
 } from "./delivery.js"
 import {
   buildDeliveryPostPassPreview,
@@ -25,6 +26,7 @@ export function runDeliveryPass(params: {
   preview: string
   wantsDirectArtifactDelivery: boolean
   successfulFileDeliveries: SuccessfulFileDelivery[]
+  successfulTextDeliveries?: SuccessfulTextDelivery[]
   successfulTools: SuccessfulToolEvidence[]
   sawRealFilesystemMutation: boolean
   source: DeliverySource
@@ -38,6 +40,7 @@ export function runDeliveryPass(params: {
   const deliveryOutcome = resolveDeliveryOutcome({
     wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
     deliveries: params.successfulFileDeliveries,
+    textDeliveries: params.successfulTextDeliveries ?? [],
   })
   const postPassPreview = buildDeliveryPostPassPreview({
     preview: params.preview,
@@ -50,6 +53,7 @@ export function runDeliveryPass(params: {
     deliveryOutcome,
     source: params.source,
     successfulFileDeliveries: params.successfulFileDeliveries,
+    successfulTextDeliveries: params.successfulTextDeliveries ?? [],
     seenKeys: params.seenDeliveryRecoveryKeys,
     canRetry: params.canRetry,
     maxTurns: params.maxTurns,

@@ -10,6 +10,7 @@ import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleT
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getConfig } from "../../config/index.js"
+import { CONTRACT_SCHEMA_VERSION, type ScheduleContract } from "../../contracts/index.js"
 import {
   applyLegacyScheduleMigration,
   dryRunLegacyScheduleMigration,
@@ -54,6 +55,40 @@ function resolveNextRunAt(cron: string, baseMs: number, timezone?: string | null
     return getNextRunForTimezone(cron, new Date(baseMs), timezone).getTime()
   } catch {
     return null
+  }
+}
+
+function buildApiScheduleContract(input: {
+  name: string
+  cron: string
+  timezone: string
+  prompt: string
+}): ScheduleContract {
+  return {
+    schemaVersion: CONTRACT_SCHEMA_VERSION,
+    kind: "recurring",
+    time: {
+      cron: input.cron,
+      timezone: input.timezone,
+      missedPolicy: "next_only",
+    },
+    payload: {
+      kind: "agent_task",
+      taskContract: null,
+    },
+    delivery: {
+      schemaVersion: CONTRACT_SCHEMA_VERSION,
+      mode: "channel_message",
+      channel: "agent",
+      sessionId: null,
+      threadId: null,
+    },
+    source: {
+      createdBy: "webui",
+    },
+    displayName: input.name,
+    rawText: input.prompt,
+    summary: input.name,
   }
 }
 
@@ -128,6 +163,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       model: model ?? null,
       max_retries: 3,
       timeout_sec: 300,
+      contract: buildApiScheduleContract({ name, cron, timezone, prompt }),
       created_at: now,
       updated_at: now,
     })

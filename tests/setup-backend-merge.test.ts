@@ -36,6 +36,32 @@ describe("setup backend merge", () => {
     expect(anthropicProvider?.status).toBe("planned")
   })
 
+  it("does not treat an OpenAI endpoint without credentials as an active connection", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    tempDirs.push(stateDir)
+    process.env["NOBIE_STATE_DIR"] = stateDir
+    writeFileSync(join(stateDir, "config.json5"), `
+      {
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-5",
+            endpoint: "https://api.openai.com/v1",
+            auth: { mode: "api_key" }
+          }
+        }
+      }
+    `, "utf-8")
+
+    reloadConfig()
+
+    const draft = buildSetupDraft()
+    const openai = draft.aiBackends.find((backend) => backend.id === "provider:openai")
+
+    expect(openai?.enabled).toBe(false)
+    expect(openai?.status).toBe("planned")
+  })
+
   it("keeps builtin backend identity while clearing stale endpoint and credentials", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
     tempDirs.push(stateDir)

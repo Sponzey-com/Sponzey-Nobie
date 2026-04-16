@@ -4,6 +4,7 @@ import { stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { testMcpServerConnection, testSkillPath, type SetupMcpServerDraft } from "../../control-plane/setup-extensions.js"
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
+import { resolveAIConnection } from "../../ai/index.js"
 import {
   buildSetupDraft,
   completeSetup,
@@ -61,7 +62,19 @@ export function registerSetupRoute(app: FastifyInstance): void {
 
       try {
         const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials, authMode)
-        return { ok: true, ...result }
+        const providerResolution = resolveAIConnection({
+          provider: providerType,
+          model: result.models[0] ?? "",
+          endpoint,
+          auth: {
+            mode: authMode,
+            ...(credentials.apiKey ? { apiKey: credentials.apiKey } : {}),
+            ...(credentials.username ? { username: credentials.username } : {}),
+            ...(credentials.password ? { password: credentials.password } : {}),
+            ...(credentials.oauthAuthFilePath ? { oauthAuthFilePath: credentials.oauthAuthFilePath } : {}),
+          },
+        }).auditTrace
+        return { ok: true, ...result, providerResolution }
       } catch (error) {
         const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
         return reply.status(400).send({

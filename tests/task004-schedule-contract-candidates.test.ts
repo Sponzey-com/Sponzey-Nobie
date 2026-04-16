@@ -123,6 +123,19 @@ function mockProviderWithText(text: string): AIProvider {
   }
 }
 
+function mockProviderWithCapture(text: string, captures: string[]): AIProvider {
+  return {
+    id: "mock-capture",
+    supportedModels: ["mock-model"],
+    maxContextTokens: () => 4096,
+    async *chat(params) {
+      captures.push(JSON.stringify(params.messages))
+      captures.push(params.system ?? "")
+      yield { type: "text_delta", delta: text }
+    },
+  }
+}
+
 function buildScheduleIntake(): TaskIntakeResult {
   return {
     intent: { category: "schedule_request", summary: "예약 생성", confidence: 0.9 },
@@ -423,6 +436,43 @@ describe("task004 schedule contract ai comparison", () => {
       reasonCode: "same_schedule_identity",
       userMessage: "같은 예약입니다.",
     })
+  })
+
+  it("does not send raw schedule prompts or candidate metadata to the isolated comparator", async () => {
+    const captures: string[] = []
+    const incoming = scheduleContract({
+      displayName: "INCOMING_SECRET_TITLE",
+      rawText: "INCOMING_SECRET_RAW_PROMPT",
+    })
+    const candidate = scheduleContract({
+      displayName: "CANDIDATE_SECRET_TITLE",
+      rawText: "CANDIDATE_SECRET_RAW_PROMPT",
+    })
+
+    await compareScheduleContractsWithAI({
+      incoming,
+      candidates: [{
+        id: "candidate-raw-task004",
+        contract: candidate,
+        metadata: { name: "CANDIDATE_SECRET_METADATA", createdAt: 1, nextRunAt: 2 },
+      }],
+      model: "mock-model",
+      providerId: "mock-capture",
+      provider: mockProviderWithCapture(JSON.stringify({
+        decision: "same",
+        candidateId: "candidate-raw-task004",
+        reasonCode: "same_schedule_identity",
+        userMessage: "same",
+      }), captures),
+    })
+
+    const prompt = captures.join("\n")
+    expect(prompt).not.toContain("INCOMING_SECRET_RAW_PROMPT")
+    expect(prompt).not.toContain("CANDIDATE_SECRET_RAW_PROMPT")
+    expect(prompt).not.toContain("INCOMING_SECRET_TITLE")
+    expect(prompt).not.toContain("CANDIDATE_SECRET_TITLE")
+    expect(prompt).not.toContain("CANDIDATE_SECRET_METADATA")
+    expect(prompt).toContain("candidate-raw-task004")
   })
 
   it("turns invented candidate ids and invalid json into clarification", () => {

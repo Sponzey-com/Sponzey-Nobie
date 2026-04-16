@@ -189,10 +189,10 @@ function hasConfiguredConnection(config, providerType) {
     if (providerType === "openai") {
         if (connection.auth?.mode === "chatgpt_oauth")
             return hasConfiguredOpenAIOAuthConnection(config);
-        return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim());
+        return Boolean(connection.auth?.apiKey?.trim());
     }
     if (providerType === "anthropic" || providerType === "gemini") {
-        return Boolean(connection.auth?.apiKey?.trim() || connection.endpoint?.trim());
+        return Boolean(connection.auth?.apiKey?.trim());
     }
     if (providerType === "ollama" || providerType === "llama" || providerType === "custom") {
         return Boolean(connection.endpoint?.trim());

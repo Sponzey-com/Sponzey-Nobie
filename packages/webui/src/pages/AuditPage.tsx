@@ -7,6 +7,7 @@ import { useUiI18n } from "../lib/ui-i18n"
 
 type AuditStatusFilter = "" | "success" | "failed" | "denied" | "partial" | "info" | "blocked" | "pending"
 type AuditKindFilter = "" | AuditEvent["kind"]
+type AuditTimelineKindFilter = "" | AuditEvent["timelineKind"]
 
 function formatTime(value: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -51,6 +52,7 @@ export function AuditPage() {
   const [selected, setSelected] = useState<AuditEvent | null>(null)
   const [status, setStatus] = useState<AuditStatusFilter>("")
   const [kind, setKind] = useState<AuditKindFilter>("")
+  const [timelineKind, setTimelineKind] = useState<AuditTimelineKindFilter>("")
   const [channel, setChannel] = useState("")
   const [toolName, setToolName] = useState("")
   const [runId, setRunId] = useState("")
@@ -59,6 +61,7 @@ export function AuditPage() {
   const [error, setError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
+  const [promotionMessage, setPromotionMessage] = useState<string | null>(null)
 
   const selectedMeta = useMemo(() => {
     if (!selected) return ""
@@ -77,6 +80,7 @@ export function AuditPage() {
         limit: 100,
         ...(status ? { status } : {}),
         ...(kind ? { kind } : {}),
+        ...(timelineKind ? { timelineKind } : {}),
         ...(channel.trim() ? { channel: channel.trim() } : {}),
         ...(toolName.trim() ? { toolName: toolName.trim() } : {}),
         ...(runId.trim() ? { runId: runId.trim() } : {}),
@@ -109,10 +113,24 @@ export function AuditPage() {
     const before = Date.now() - 30 * 24 * 60 * 60 * 1000
     const response = await api.cleanupAudit({ before })
     setCleanupMessage(text(
-      `정리 완료: 감사 ${response.deleted.auditLogs}건, 진단 ${response.deleted.diagnosticEvents}건`,
-      `Cleanup complete: ${response.deleted.auditLogs} audit logs, ${response.deleted.diagnosticEvents} diagnostic events`,
+      `정리 완료: 감사 ${response.deleted.auditLogs}건, 진단 ${response.deleted.diagnosticEvents}건, 판단 ${response.deleted.decisionTraces ?? 0}건`,
+      `Cleanup complete: ${response.deleted.auditLogs} audit logs, ${response.deleted.diagnosticEvents} diagnostic events, ${response.deleted.decisionTraces ?? 0} decision traces`,
     ))
     await load()
+  }
+
+  async function promoteSelected(): Promise<void> {
+    if (!selected) return
+    setPromotionMessage(null)
+    try {
+      const response = await api.promoteAuditEventToErrorCorpus(selected.id)
+      setPromotionMessage(response.ok
+        ? text("장애 샘플 후보로 저장했습니다.", "Saved as an error corpus candidate.")
+        : response.message ?? text("장애 샘플 후보 저장에 실패했습니다.", "Failed to save error corpus candidate."))
+      await load()
+    } catch (err) {
+      setPromotionMessage(err instanceof Error ? err.message : String(err))
+    }
   }
 
   return (
@@ -142,10 +160,11 @@ export function AuditPage() {
           </div>
         </div>
         {cleanupMessage ? <div className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{cleanupMessage}</div> : null}
+        {promotionMessage ? <div className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm text-blue-700">{promotionMessage}</div> : null}
       </div>
 
       <FeatureGate capabilityKey="audit.viewer" title={text("감사 로그", "Audit Logs")}>
-        <div className="mt-6 grid gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-4 lg:grid-cols-6">
+        <div className="mt-6 grid gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-4 lg:grid-cols-7">
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("검색어", "Search")} value={query} onChange={(event) => setQuery(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="run id" value={runId} onChange={(event) => setRunId(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("도구명", "Tool name")} value={toolName} onChange={(event) => setToolName(event.target.value)} />
@@ -157,6 +176,18 @@ export function AuditPage() {
             <option value="run_event">run_event</option>
             <option value="artifact">artifact</option>
             <option value="delivery">delivery</option>
+            <option value="decision_trace">decision_trace</option>
+          </select>
+          <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={timelineKind} onChange={(event) => setTimelineKind(event.target.value as AuditTimelineKindFilter)}>
+            <option value="">{text("모든 단계", "All timeline stages")}</option>
+            <option value="ingress">ingress</option>
+            <option value="intake">intake</option>
+            <option value="contract">contract</option>
+            <option value="memory">memory</option>
+            <option value="tool">tool</option>
+            <option value="delivery">delivery</option>
+            <option value="recovery">recovery</option>
+            <option value="completion">completion</option>
           </select>
           <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={status} onChange={(event) => setStatus(event.target.value as AuditStatusFilter)}>
             <option value="">{text("모든 상태", "All statuses")}</option>
@@ -168,7 +199,7 @@ export function AuditPage() {
             <option value="blocked">blocked</option>
             <option value="pending">pending</option>
           </select>
-          <button className="rounded-2xl bg-stone-900 px-4 py-3 text-sm font-semibold text-white lg:col-span-6" onClick={() => void load()}>
+          <button className="rounded-2xl bg-stone-900 px-4 py-3 text-sm font-semibold text-white lg:col-span-7" onClick={() => void load()}>
             {text("필터 적용", "Apply filters")}
           </button>
         </div>
@@ -190,6 +221,7 @@ export function AuditPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(event.status)}`}>{event.status}</span>
                       <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-600">{event.kind}</span>
+                      <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700">{event.timelineKind}</span>
                       {event.channel ? <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{event.channel}</span> : null}
                       <span className="ml-auto text-xs text-stone-500">{formatTime(event.at)}</span>
                     </div>
@@ -214,12 +246,16 @@ export function AuditPage() {
                   <dt className="text-stone-500">{text("시각", "Time")}</dt><dd className="text-right text-stone-800">{formatTime(selected.at)}</dd>
                   <dt className="text-stone-500">Status</dt><dd className="text-right text-stone-800">{selected.status}</dd>
                   <dt className="text-stone-500">Kind</dt><dd className="text-right text-stone-800">{selected.kind}</dd>
+                  <dt className="text-stone-500">Timeline</dt><dd className="text-right text-stone-800">{selected.timelineKind}</dd>
                   <dt className="text-stone-500">Channel</dt><dd className="text-right text-stone-800">{selected.channel ?? "-"}</dd>
                   <dt className="text-stone-500">Tool</dt><dd className="text-right text-stone-800">{selected.toolName ?? "-"}</dd>
                   <dt className="text-stone-500">Duration</dt><dd className="text-right text-stone-800">{selected.durationMs != null ? `${selected.durationMs}ms` : "-"}</dd>
                   <dt className="text-stone-500">Approval</dt><dd className="text-right text-stone-800">{selected.approvalRequired ? selected.approvedBy ?? "required" : "-"}</dd>
                   <dt className="text-stone-500">Reason</dt><dd className="text-right text-stone-800">{selected.stopReason ?? selected.errorCode ?? "-"}</dd>
                 </dl>
+                <button className="mt-5 w-full rounded-2xl border border-blue-200 px-4 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-50" onClick={() => void promoteSelected()}>
+                  {text("장애 샘플 후보로 저장", "Save as error corpus candidate")}
+                </button>
                 <pre className="mt-5 max-h-[420px] overflow-auto rounded-3xl bg-stone-950 p-4 text-xs leading-6 text-stone-100">{selectedMeta || "{}"}</pre>
               </div>
             ) : (

@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { listAuditEvents } from "../packages/core/src/api/routes/audit.ts"
+import { listAuditEvents, promoteAuditEventToErrorCorpusCandidate } from "../packages/core/src/api/routes/audit.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, insertAuditLog, insertDiagnosticEvent, insertSession } from "../packages/core/src/db/index.js"
+import { closeDb, getDb, insertAuditLog, insertDecisionTrace, insertDiagnosticEvent, insertSession } from "../packages/core/src/db/index.js"
 import { appendRunEvent, createRootRun } from "../packages/core/src/runs/store.ts"
 
 const previousStateDir = process.env["NOBIE_STATE_DIR"]
@@ -75,19 +75,53 @@ describe("audit route", () => {
       requestGroupId: "group-audit",
       detail: { refreshToken: "hidden-refresh-token", hint: "oauth" },
     })
+    const decisionTraceId = insertDecisionTrace({
+      runId: "run-audit",
+      requestGroupId: "group-audit",
+      sessionId: "session-audit",
+      source: "telegram",
+      channel: "telegram",
+      decisionKind: "completion.final_decision",
+      reasonCode: "delivery_satisfied",
+      inputContractIds: ["contract-a"],
+      receiptIds: ["telegram:42120565"],
+      detail: {
+        chatId: "42120565",
+        providerRawBody: "<!doctype html><html><body>blocked</body></html>",
+        accessToken: "decision-secret-token",
+      },
+    })
 
-    const body = listAuditEvents({ requestGroupId: "group-audit", limit: "20" }) as { items: Array<{ kind: string; runId: string | null; requestGroupId: string | null; params: unknown; output: string | null; errorCode: string | null }> }
-    expect(body.items.map((item) => item.kind)).toEqual(expect.arrayContaining(["tool_call", "diagnostic", "run_event"]))
+    const body = listAuditEvents({ requestGroupId: "group-audit", limit: "20" }) as { items: Array<{ id: string; kind: string; timelineKind: string; runId: string | null; requestGroupId: string | null; params: unknown; output: string | null; errorCode: string | null }> }
+    expect(body.items.map((item) => item.kind)).toEqual(expect.arrayContaining(["tool_call", "diagnostic", "run_event", "decision_trace"]))
+    expect(body.items.map((item) => item.timelineKind)).toEqual(expect.arrayContaining(["tool", "contract", "completion"]))
     expect(body.items.every((item) => item.runId === "run-audit" || item.requestGroupId === "group-audit")).toBe(true)
 
     const serialized = JSON.stringify(body)
     expect(serialized).not.toContain("secret-token")
     expect(serialized).not.toContain("hidden-refresh-token")
+    expect(serialized).not.toContain("decision-secret-token")
+    expect(serialized).not.toContain("42120565")
     expect(serialized).not.toContain("<html")
     expect(serialized).not.toContain("<script")
     expect(serialized).not.toContain("abc.def.ghi")
 
     const runBody = listAuditEvents({ runId: "run-audit", limit: "20" })
     expect(runBody.items.map((item) => item.summary).join("\n")).toContain("screen_capture")
+
+    const completionBody = listAuditEvents({ requestGroupId: "group-audit", timelineKind: "completion", limit: "20" })
+    expect(completionBody.items).toHaveLength(1)
+    expect(completionBody.items[0]?.id).toBe(decisionTraceId)
+
+    const promoted = promoteAuditEventToErrorCorpusCandidate(decisionTraceId, "raw chatId 42120565 should be masked")
+    expect(promoted?.diagnosticEventId).toBeTruthy()
+    const row = getDb()
+      .prepare<[string], { kind: string; summary: string; detail_json: string }>("SELECT kind, summary, detail_json FROM diagnostic_events WHERE id = ?")
+      .get(promoted?.diagnosticEventId ?? "")
+    expect(row?.kind).toBe("error_corpus_candidate")
+    expect(row?.summary).toContain("장애 샘플 후보")
+    const promotedSerialized = JSON.stringify(row)
+    expect(promotedSerialized).not.toContain("42120565")
+    expect(promotedSerialized).not.toContain("decision-secret-token")
   })
 })

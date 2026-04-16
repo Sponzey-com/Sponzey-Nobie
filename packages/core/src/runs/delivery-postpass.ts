@@ -4,6 +4,7 @@ import {
   type DeliveryOutcome,
   type DeliverySource,
   type SuccessfulFileDelivery,
+  type SuccessfulTextDelivery,
 } from "./delivery.js"
 import {
   buildDirectArtifactDeliveryRecoveryPrompt,
@@ -78,6 +79,7 @@ export function decideDirectArtifactDeliveryFlow(params: {
   deliveryOutcome: DeliveryOutcome
   source: DeliverySource
   successfulFileDeliveries: SuccessfulFileDelivery[]
+  successfulTextDeliveries?: SuccessfulTextDelivery[]
   seenKeys: Set<string>
   canRetry: boolean
   maxTurns: number
@@ -100,7 +102,11 @@ export function decideDirectArtifactDeliveryFlow(params: {
     return { kind: "none" }
   }
 
-  if (looksLikePlainTextInformationRequest(params.originalRequest) && params.previousResult.trim()) {
+  if (
+    looksLikePlainTextInformationRequest(params.originalRequest)
+    && params.previousResult.trim()
+    && ((params.successfulTextDeliveries?.length ?? 0) > 0 || params.successfulTools.length > 0)
+  ) {
     return {
       kind: "complete",
       deliverySummary: "텍스트 결과 전달 완료",
