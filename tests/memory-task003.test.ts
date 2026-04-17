@@ -372,7 +372,10 @@ describe("task003 memory scope guard and prompt injection", () => {
     expect(longTermContext).toContain("LONG_TERM_REVIEW_APPROVED")
     expect(longTermContext).not.toContain("LONG_TERM_REVIEW_UNAPPROVED")
 
-    const flashContext = await buildMemoryContext({ query: "FLASH_FEEDBACK", sessionId: "session-a" })
+    const defaultFlashContext = await buildMemoryContext({ query: "FLASH_FEEDBACK", sessionId: "session-a" })
+    expect(defaultFlashContext).not.toContain("FLASH_FEEDBACK_ACTIVE")
+
+    const flashContext = await buildMemoryContext({ query: "FLASH_FEEDBACK", sessionId: "session-a", includeFlashFeedback: true })
     expect(flashContext).toContain("FLASH_FEEDBACK_ACTIVE")
     expect(flashContext).not.toContain("FLASH_FEEDBACK_EXPIRED")
   })

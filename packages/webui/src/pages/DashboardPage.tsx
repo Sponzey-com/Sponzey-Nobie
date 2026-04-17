@@ -1,7 +1,9 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import { api } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
+import type { DoctorReport, DoctorStatus } from "../contracts/doctor"
 import { getAIProviderDisplayLabel, getBackendDisplayLabel } from "../lib/ai-display"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useCapabilitiesStore } from "../stores/capabilities"
@@ -19,6 +21,9 @@ export function DashboardPage() {
   const setupState = useSetupStore((state) => state.state)
   const draft = useSetupStore((state) => state.draft)
   const checks = useSetupStore((state) => state.checks)
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null)
+  const [doctorError, setDoctorError] = useState<string | null>(null)
+  const [doctorLoading, setDoctorLoading] = useState(false)
 
   const capabilityCounts = status?.capabilityCounts ?? counts
   const fastResponse = status?.fast_response_health
@@ -42,6 +47,23 @@ export function DashboardPage() {
     const backend = draft.aiBackends.find((item) => item.id === target)
     return getBackendDisplayLabel(backend?.id ?? target, backend?.label ?? target, language)
   }, [draft.aiBackends, status?.primaryAiTarget])
+
+  useEffect(() => {
+    void runDoctorQuick()
+  }, [])
+
+  async function runDoctorQuick() {
+    setDoctorLoading(true)
+    setDoctorError(null)
+    try {
+      const response = await api.doctor("quick")
+      setDoctorReport(response.report)
+    } catch (error) {
+      setDoctorError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDoctorLoading(false)
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto bg-stone-100 p-6">
@@ -137,6 +159,13 @@ export function DashboardPage() {
         <div className="space-y-6">
           <ActiveInstructionsPanel />
 
+          <DoctorPanel
+            report={doctorReport}
+            loading={doctorLoading}
+            error={doctorError}
+            onRefresh={() => void runDoctorQuick()}
+          />
+
           <div className="rounded-2xl border border-stone-200 bg-white p-5">
             <div className="text-sm font-semibold text-stone-900">{text("Gateway 상태", "Gateway status")}</div>
             <div className="mt-4 space-y-3 text-sm text-stone-600">
@@ -184,6 +213,64 @@ export function DashboardPage() {
           </div>
         </div>
       </section>
+    </div>
+  )
+}
+
+function doctorTone(status: DoctorStatus): string {
+  switch (status) {
+    case "ok":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700"
+    case "warning":
+      return "border-amber-200 bg-amber-50 text-amber-700"
+    case "blocked":
+      return "border-red-200 bg-red-50 text-red-700"
+    case "unknown":
+    default:
+      return "border-stone-200 bg-stone-100 text-stone-600"
+  }
+}
+
+function DoctorPanel({ report, loading, error, onRefresh }: {
+  report: DoctorReport | null
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const visibleChecks = report?.checks.filter((check) => check.status !== "ok").slice(0, 6) ?? []
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("운영 진단", "Doctor")}</div>
+          <div className="mt-1 text-xs text-stone-500">
+            {report ? `${report.mode} · ${new Date(report.createdAt).toLocaleString()}` : text("아직 실행 전", "Not run yet")}
+          </div>
+        </div>
+        <button onClick={onRefresh} disabled={loading} className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 disabled:opacity-50">
+          {loading ? text("확인 중", "Checking") : text("다시 확인", "Run")}
+        </button>
+      </div>
+      {error ? <div className="mt-4 rounded-xl bg-red-50 px-3 py-3 text-sm text-red-700">{displayText(error)}</div> : null}
+      {report ? (
+        <div className="mt-4 space-y-3">
+          <div className="grid gap-2 text-sm text-stone-600">
+            <StatusRow label={text("전체 상태", "Overall")} value={report.overallStatus} />
+            <StatusRow label="Manifest" value={report.runtimeManifestId} mono />
+            <StatusRow label="Checks" value={`ok=${report.summary.ok}, warn=${report.summary.warning}, blocked=${report.summary.blocked}, unknown=${report.summary.unknown}`} />
+          </div>
+          <div className="space-y-2">
+            {(visibleChecks.length > 0 ? visibleChecks : report.checks.slice(0, 3)).map((check) => (
+              <div key={check.name} className={`rounded-xl border px-3 py-2 text-xs leading-5 ${doctorTone(check.status)}`}>
+                <div className="font-semibold">{check.name} · {check.status}</div>
+                <div className="mt-1">{displayText(check.message)}</div>
+                {check.guide ? <div className="mt-1 text-[11px] opacity-80">{displayText(check.guide)}</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

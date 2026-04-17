@@ -1,6 +1,7 @@
 import { getMemoryWritebackCandidate, insertAuditLog, listMemoryWritebackCandidates, updateMemoryWritebackCandidate, } from "../db/index.js";
 import { createHash } from "node:crypto";
 import { storeMemoryDocument } from "./store.js";
+import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag } from "../security/trust-boundary.js";
 const EXPLICIT_MEMORY_PATTERNS = [
     /(?:기억해|기억\s*해|기억해줘|기억\s*해줘|메모해|메모\s*해|저장해|저장\s*해|잊지\s*마)/u,
     /\b(?:remember|memorize|keep in mind|save this|note that|don't forget)\b/i,
@@ -55,6 +56,32 @@ function readStringArrayMetadata(metadata, key) {
     return Array.isArray(value)
         ? value.filter((item) => typeof item === "string" && item.trim().length > 0)
         : [];
+}
+function readTrustTagMetadata(metadata) {
+    const value = metadata?.["sourceTrust"];
+    return typeof value === "string" && [
+        "trusted",
+        "user_input",
+        "channel_input",
+        "web_content",
+        "file_content",
+        "tool_result",
+        "mcp_result",
+        "yeonjang_result",
+        "diagnostic",
+    ].includes(value)
+        ? value
+        : undefined;
+}
+function resolveWritebackSourceTrust(params) {
+    if (params.kind === "tool_result")
+        return "tool_result";
+    if (params.kind === "failure")
+        return "diagnostic";
+    if (params.source === "webui" || params.source === "cli" || params.source === "telegram" || params.source === "slack") {
+        return sourceToTrustTag(params.source);
+    }
+    return "trusted";
 }
 function maskSecrets(value) {
     let masked = false;
@@ -117,6 +144,8 @@ export function inspectMemoryWritebackSafety(input) {
 }
 export function prepareMemoryWritebackQueueInput(candidate) {
     const safety = inspectMemoryWritebackSafety(candidate);
+    const sourceTrust = readTrustTagMetadata(candidate.metadata);
+    const untrustedInjectionBlocked = sourceTrust !== undefined && isUntrustedTag(sourceTrust) && containsPromptInjectionDirective(safety.content);
     const reviewDedupeKey = buildReviewDedupeKey({
         scope: candidate.scope,
         sourceType: candidate.sourceType,
@@ -127,14 +156,18 @@ export function prepareMemoryWritebackQueueInput(candidate) {
         return metadata["reviewDedupeKey"] === reviewDedupeKey
             || (row.scope === candidate.scope && row.source_type === candidate.sourceType && normalizedContent(row.content) === normalizedContent(safety.content));
     });
+    const blockReasons = [
+        ...safety.blockReasons,
+        ...(untrustedInjectionBlocked ? ["untrusted_prompt_injection"] : []),
+        ...(previouslyDiscarded ? ["previously_discarded"] : []),
+    ];
     const metadata = {
         ...(candidate.metadata ?? {}),
         reviewDedupeKey,
         ...(safety.masked ? { safetyMasked: true } : {}),
-        ...(safety.blockReasons.length ? { safetyBlockReasons: safety.blockReasons, reviewBlocked: true } : {}),
+        ...(blockReasons.length ? { safetyBlockReasons: blockReasons, reviewBlocked: true } : {}),
         ...(previouslyDiscarded ? { reviewDedupeBlocked: true } : {}),
     };
-    const blockReasons = [...safety.blockReasons, ...(previouslyDiscarded ? ["previously_discarded"] : [])];
     return {
         ...candidate,
         content: safety.content,
@@ -174,8 +207,10 @@ export function buildRunWritebackCandidates(params) {
     const content = normalizedContent(params.content);
     if (!content)
         return [];
+    const sourceTrust = resolveWritebackSourceTrust(params);
     const commonMetadata = {
         ...(params.metadata ?? {}),
+        sourceTrust,
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
         ...(params.runId ? { runId: params.runId } : {}),

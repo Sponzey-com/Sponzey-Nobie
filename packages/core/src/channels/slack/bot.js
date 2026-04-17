@@ -2,6 +2,7 @@ import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { cancelRootRun, getRootRun } from "../../runs/store.js";
 import { startIngressRun } from "../../runs/ingress.js";
+import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { findChannelMessageRef, insertChannelMessageRef } from "../../db/index.js";
 import { createSlackChunkDeliveryHandler } from "./chunk-delivery.js";
 import { clearActiveSlackConversationForSession, handleSlackApprovalAction, handleSlackApprovalMessage, registerSlackApprovalHandler, setActiveSlackConversationForSession } from "./approval-handler.js";
@@ -49,6 +50,7 @@ export class SlackChannel {
             this.socket.addEventListener("open", () => {
                 clearTimeout(timer);
                 log.info("Slack Socket Mode connected");
+                eventBus.emit("channel.connected", { channel: "slack", detail: { transport: "socket_mode" } });
                 resolve();
             });
             this.socket.addEventListener("error", () => {
@@ -225,6 +227,24 @@ export class SlackChannel {
             this.addSessionRun(sessionKey, started.runId);
             if (receipt.text.trim()) {
                 const receiptMessageId = await responder.sendReceipt(receipt.text);
+                const startedRun = getRootRun(started.runId);
+                recordMessageLedgerEvent({
+                    runId: started.runId,
+                    requestGroupId: startedRun?.requestGroupId ?? started.runId,
+                    sessionKey: sessionId,
+                    threadKey: sessionKey,
+                    channel: "slack",
+                    eventKind: "fast_receipt_sent",
+                    deliveryKey: `slack:receipt:${channelId}:${threadTs ?? "channel"}:${receiptMessageId}`,
+                    idempotencyKey: `slack:receipt:${started.runId}:${receiptMessageId}`,
+                    status: "sent",
+                    summary: "Slack 접수 메시지를 전송했습니다.",
+                    detail: {
+                        channelId,
+                        ...(threadTs ? { threadTs } : {}),
+                        messageId: receiptMessageId,
+                    },
+                });
                 this.recordOutgoingMessageRef({
                     sessionId,
                     runId: started.runId,

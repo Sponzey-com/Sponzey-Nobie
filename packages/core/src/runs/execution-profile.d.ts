@@ -33,6 +33,13 @@ export declare function buildResolvedExecutionProfile(params: {
     structuredRequest?: TaskStructuredRequest;
     intentEnvelope?: TaskIntentEnvelope;
 }): ResolvedExecutionProfile;
+export declare function normalizeDirectArtifactDeliverySemantics(params: {
+    message: string;
+    originalRequest?: string;
+    executionSemantics?: TaskExecutionSemantics;
+    structuredRequest?: TaskStructuredRequest;
+    intentEnvelope?: TaskIntentEnvelope;
+}): TaskExecutionSemantics;
 export declare function createExecutionLoopRuntimeState(params: {
     message: string;
     originalRequest?: string;
@@ -40,4 +47,5 @@ export declare function createExecutionLoopRuntimeState(params: {
     structuredRequest?: TaskStructuredRequest;
     intentEnvelope?: TaskIntentEnvelope;
 }): ExecutionLoopRuntimeState;
+export declare function looksLikePlainTextInformationRequest(value: string): boolean;
 //# sourceMappingURL=execution-profile.d.ts.map

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import BetterSqlite3 from "better-sqlite3"
 import { PATHS } from "../config/index.js"
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js"
+import { assertMigrationWriteAllowed } from "./migration-safety.js"
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js"
 import {
   buildDeliveryKey,
@@ -27,8 +28,10 @@ export function getDb(): BetterSqlite3.Database {
   _db.pragma("foreign_keys = ON")
   _db.pragma("synchronous = NORMAL")
 
-  if (dbExisted) createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"))
-  runMigrations(_db)
+  const backupSnapshotId = dbExisted
+    ? createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"))
+    : null
+  runMigrations(_db, { backupSnapshotId, lockedBy: `gateway:${process.pid}` })
   return _db
 }
 
@@ -131,6 +134,122 @@ export interface DbDecisionTraceInput {
   receiptIds?: string[]
   detail?: Record<string, unknown>
   createdAt?: number
+}
+
+export type DbMessageLedgerStatus =
+  | "received"
+  | "pending"
+  | "started"
+  | "generated"
+  | "sent"
+  | "delivered"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "suppressed"
+  | "degraded"
+
+export interface DbMessageLedgerEvent {
+  id: string
+  run_id: string | null
+  request_group_id: string | null
+  session_key: string | null
+  thread_key: string | null
+  channel: string
+  event_kind: string
+  delivery_key: string | null
+  idempotency_key: string | null
+  status: DbMessageLedgerStatus
+  summary: string
+  detail_json: string | null
+  created_at: number
+}
+
+export interface DbMessageLedgerInput {
+  id?: string
+  runId?: string | null
+  requestGroupId?: string | null
+  sessionKey?: string | null
+  threadKey?: string | null
+  channel: string
+  eventKind: string
+  deliveryKey?: string | null
+  idempotencyKey?: string | null
+  status: DbMessageLedgerStatus
+  summary: string
+  detail?: Record<string, unknown>
+  createdAt?: number
+}
+
+export type DbQueueBackpressureEventKind =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "timeout"
+  | "rejected"
+  | "retry_scheduled"
+  | "dead_letter"
+  | "reset"
+
+export interface DbQueueBackpressureEvent {
+  id: string
+  created_at: number
+  queue_name: string
+  event_kind: DbQueueBackpressureEventKind
+  run_id: string | null
+  request_group_id: string | null
+  pending_count: number
+  retry_count: number
+  retry_budget_remaining: number | null
+  recovery_key: string | null
+  action_taken: string
+  detail_json: string | null
+}
+
+export interface DbQueueBackpressureEventInput {
+  id?: string
+  createdAt?: number
+  queueName: string
+  eventKind: DbQueueBackpressureEventKind
+  runId?: string | null
+  requestGroupId?: string | null
+  pendingCount?: number
+  retryCount?: number
+  retryBudgetRemaining?: number | null
+  recoveryKey?: string | null
+  actionTaken: string
+  detail?: Record<string, unknown>
+}
+
+export type DbControlEventSeverity = "debug" | "info" | "warning" | "error"
+
+export interface DbControlEvent {
+  id: string
+  created_at: number
+  event_type: string
+  correlation_id: string
+  run_id: string | null
+  request_group_id: string | null
+  session_key: string | null
+  component: string
+  severity: DbControlEventSeverity
+  summary: string
+  detail_json: string | null
+}
+
+export interface DbControlEventInput {
+  id?: string
+  createdAt?: number
+  eventType: string
+  correlationId: string
+  runId?: string | null
+  requestGroupId?: string | null
+  sessionKey?: string | null
+  component: string
+  severity?: DbControlEventSeverity
+  summary: string
+  detail?: Record<string, unknown>
 }
 
 export type DbChannelSmokeRunMode = "dry-run" | "live-run"
@@ -449,6 +568,227 @@ export function insertDecisionTrace(input: DbDecisionTraceInput): string {
   return id
 }
 
+export function insertMessageLedgerEvent(input: DbMessageLedgerInput): string | null {
+  const id = input.id ?? crypto.randomUUID()
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO message_ledger
+         (id, run_id, request_group_id, session_key, thread_key, channel, event_kind,
+          delivery_key, idempotency_key, status, summary, detail_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.runId ?? null,
+        input.requestGroupId ?? null,
+        input.sessionKey ?? null,
+        input.threadKey ?? null,
+        input.channel,
+        input.eventKind,
+        input.deliveryKey ?? null,
+        input.idempotencyKey ?? null,
+        input.status,
+        input.summary,
+        toJsonOrNull(input.detail),
+        input.createdAt ?? Date.now(),
+      )
+    return id
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.toLowerCase().includes("unique") && message.includes("message_ledger")) {
+      return null
+    }
+    throw error
+  }
+}
+
+export function getMessageLedgerEventByIdempotencyKey(idempotencyKey: string): DbMessageLedgerEvent | undefined {
+  return getDb()
+    .prepare<[string], DbMessageLedgerEvent>(
+      `SELECT *
+       FROM message_ledger
+       WHERE idempotency_key = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .get(idempotencyKey)
+}
+
+export function insertQueueBackpressureEvent(input: DbQueueBackpressureEventInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO queue_backpressure_events
+       (id, created_at, queue_name, event_kind, run_id, request_group_id, pending_count,
+        retry_count, retry_budget_remaining, recovery_key, action_taken, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.createdAt ?? Date.now(),
+      input.queueName,
+      input.eventKind,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      input.pendingCount ?? 0,
+      input.retryCount ?? 0,
+      input.retryBudgetRemaining ?? null,
+      input.recoveryKey ?? null,
+      input.actionTaken,
+      toJsonOrNull(input.detail),
+    )
+  return id
+}
+
+export function listQueueBackpressureEvents(input: {
+  queueName?: string
+  eventKind?: DbQueueBackpressureEventKind
+  recoveryKey?: string
+  limit?: number
+} = {}): DbQueueBackpressureEvent[] {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (input.queueName) {
+    conditions.push("queue_name = ?")
+    bindings.push(input.queueName)
+  }
+  if (input.eventKind) {
+    conditions.push("event_kind = ?")
+    bindings.push(input.eventKind)
+  }
+  if (input.recoveryKey) {
+    conditions.push("recovery_key = ?")
+    bindings.push(input.recoveryKey)
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""
+  const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)))
+  return getDb()
+    .prepare<[...unknown[], number], DbQueueBackpressureEvent>(
+      `SELECT * FROM queue_backpressure_events ${where} ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(...bindings, limit)
+}
+
+export function listMessageLedgerEvents(params: {
+  runId?: string
+  requestGroupId?: string
+  sessionKey?: string
+  threadKey?: string
+  limit?: number
+} = {}): DbMessageLedgerEvent[] {
+  const where: string[] = []
+  const values: (string | number)[] = []
+
+  if (params.runId) {
+    where.push("run_id = ?")
+    values.push(params.runId)
+  }
+  if (params.requestGroupId) {
+    where.push("request_group_id = ?")
+    values.push(params.requestGroupId)
+  }
+  if (params.sessionKey) {
+    where.push("session_key = ?")
+    values.push(params.sessionKey)
+  }
+  if (params.threadKey) {
+    where.push("thread_key = ?")
+    values.push(params.threadKey)
+  }
+
+  const limit = Math.max(1, Math.min(1000, Math.floor(params.limit ?? 500)))
+  values.push(limit)
+  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""
+
+  return getDb()
+    .prepare<(string | number)[], DbMessageLedgerEvent>(
+      `SELECT *
+       FROM message_ledger
+       ${whereSql}
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
+export function insertControlEvent(input: DbControlEventInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO control_events
+       (id, created_at, event_type, correlation_id, run_id, request_group_id, session_key,
+        component, severity, summary, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.createdAt ?? Date.now(),
+      input.eventType,
+      input.correlationId,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      input.sessionKey ?? null,
+      input.component,
+      input.severity ?? "info",
+      input.summary,
+      toJsonOrNull(input.detail),
+    )
+  return id
+}
+
+export function listControlEvents(params: {
+  runId?: string
+  requestGroupId?: string
+  correlationId?: string
+  eventType?: string
+  component?: string
+  severity?: DbControlEventSeverity
+  limit?: number
+} = {}): DbControlEvent[] {
+  const where: string[] = []
+  const values: (string | number)[] = []
+
+  if (params.runId) {
+    where.push("run_id = ?")
+    values.push(params.runId)
+  }
+  if (params.requestGroupId) {
+    where.push("request_group_id = ?")
+    values.push(params.requestGroupId)
+  }
+  if (params.correlationId) {
+    where.push("correlation_id = ?")
+    values.push(params.correlationId)
+  }
+  if (params.eventType) {
+    where.push("event_type = ?")
+    values.push(params.eventType)
+  }
+  if (params.component) {
+    where.push("component = ?")
+    values.push(params.component)
+  }
+  if (params.severity) {
+    where.push("severity = ?")
+    values.push(params.severity)
+  }
+
+  const limit = Math.max(1, Math.min(2_000, Math.floor(params.limit ?? 500)))
+  values.push(limit)
+  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""
+
+  return getDb()
+    .prepare<(string | number)[], DbControlEvent>(
+      `SELECT *
+       FROM control_events
+       ${whereSql}
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
 export function findChannelMessageRef(params: {
   source: string
   externalChatId: string
@@ -699,10 +1039,13 @@ export interface DbMemoryChunk {
   token_estimate: number
   content: string
   checksum: string
+  source_checksum: string | null
   metadata_json: string | null
   created_at: number
   updated_at: number
 }
+
+export type MemoryIndexJobStatus = "queued" | "indexing" | "embedded" | "failed" | "stale" | "disabled"
 
 export type MemoryWritebackStatus = "pending" | "writing" | "failed" | "completed" | "discarded"
 
@@ -761,6 +1104,7 @@ export interface MemorySearchFilters {
   includeSchedule?: boolean
   includeArtifact?: boolean
   includeDiagnostic?: boolean
+  includeFlashFeedback?: boolean
 }
 
 function resolveMemoryOwnerId(scope: MemoryScope, ownerId: string | undefined): string {
@@ -801,8 +1145,8 @@ export function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemor
   )
   const insertChunk = db.prepare(
     `INSERT INTO memory_chunks
-     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, source_checksum, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   const insertChunkFts = db.prepare(
     `INSERT INTO memory_chunks_fts(rowid, content, metadata_json)
@@ -810,7 +1154,7 @@ export function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemor
   )
   const insertIndexJob = db.prepare(
     `INSERT INTO memory_index_jobs (id, document_id, status, retry_count, created_at, updated_at)
-     VALUES (?, ?, 'pending', 0, ?, ?)`,
+     VALUES (?, ?, 'queued', 0, ?, ?)`,
   )
 
   const tx = db.transaction(() => {
@@ -840,6 +1184,7 @@ export function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemor
         chunk.tokenEstimate,
         chunk.content,
         chunk.checksum,
+        input.checksum,
         toJsonOrNull(chunk.metadata),
         now,
         now,
@@ -888,8 +1233,28 @@ export function rebuildMemorySearchIndexes(): void {
 
 export function markMemoryIndexJobCompleted(documentId: string): void {
   getDb()
-    .prepare(`UPDATE memory_index_jobs SET status = 'completed', updated_at = ? WHERE document_id = ?`)
+    .prepare(`UPDATE memory_index_jobs SET status = 'embedded', updated_at = ? WHERE document_id = ?`)
     .run(Date.now(), documentId)
+}
+
+export function markMemoryIndexJobDisabled(documentId: string, reason: string): void {
+  getDb()
+    .prepare(
+      `UPDATE memory_index_jobs
+       SET status = 'disabled', last_error = ?, updated_at = ?
+       WHERE document_id = ?`,
+    )
+    .run(reason, Date.now(), documentId)
+}
+
+export function markMemoryIndexJobStale(documentId: string, reason: string): void {
+  getDb()
+    .prepare(
+      `UPDATE memory_index_jobs
+       SET status = 'stale', last_error = ?, updated_at = ?
+       WHERE document_id = ? AND status != 'failed'`,
+    )
+    .run(reason, Date.now(), documentId)
 }
 
 export function markMemoryIndexJobFailed(documentId: string, error: string): void {
@@ -908,17 +1273,20 @@ export function recordMemoryAccessLog(input: {
   requestGroupId?: string
   documentId?: string
   chunkId?: string
+  sourceChecksum?: string | null
+  scope?: MemoryScope | string | null
   query: string
   resultSource: string
   score?: number
   latencyMs?: number
+  reason?: string
 }): string {
   const id = crypto.randomUUID()
   getDb()
     .prepare(
       `INSERT INTO memory_access_log
-       (id, run_id, session_id, request_group_id, document_id, chunk_id, query, result_source, score, latency_ms, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, run_id, session_id, request_group_id, document_id, chunk_id, source_checksum, scope, query, result_source, score, latency_ms, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -927,13 +1295,48 @@ export function recordMemoryAccessLog(input: {
       input.requestGroupId ?? null,
       input.documentId ?? null,
       input.chunkId ?? null,
+      input.sourceChecksum ?? null,
+      input.scope ?? null,
       input.query,
       input.resultSource,
       input.score ?? null,
       input.latencyMs ?? null,
+      input.reason ?? null,
       Date.now(),
     )
   return id
+}
+
+export interface DbMemoryAccessTraceRow {
+  id: string
+  run_id: string | null
+  session_id: string | null
+  request_group_id: string | null
+  document_id: string | null
+  chunk_id: string | null
+  source_checksum: string | null
+  scope: string | null
+  query: string
+  result_source: string
+  score: number | null
+  latency_ms: number | null
+  reason: string | null
+  created_at: number
+}
+
+export function listMemoryAccessTraceForRun(runId: string, limit = 100): DbMemoryAccessTraceRow[] {
+  const normalized = runId.trim()
+  if (!normalized) return []
+  return getDb()
+    .prepare<[string, number], DbMemoryAccessTraceRow>(
+      `SELECT id, run_id, session_id, request_group_id, document_id, chunk_id,
+              source_checksum, scope, query, result_source, score, latency_ms, reason, created_at
+       FROM memory_access_log
+       WHERE run_id = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(normalized, Math.max(1, Math.min(500, Math.floor(limit))))
 }
 
 export function insertFlashFeedback(input: {
@@ -984,6 +1387,7 @@ export function upsertScheduleMemoryEntry(input: {
 }): string {
   const scheduleId = input.scheduleId.trim()
   if (!scheduleId) throw new Error("schedule memory requires a schedule id")
+  assertMigrationWriteAllowed(getDb(), "schedule.memory.upsert")
   const id = crypto.randomUUID()
   const now = Date.now()
   getDb()
@@ -1698,6 +2102,7 @@ export function isLegacySchedule(schedule: Pick<DbSchedule, "contract_json" | "c
 }
 
 export function insertSchedule(s: DbScheduleInsertInput): void {
+  assertMigrationWriteAllowed(getDb(), "schedule.insert")
   const contractFields = s.contract
     ? prepareScheduleContractPersistence(s.contract)
     : {
@@ -1739,6 +2144,7 @@ export function insertSchedule(s: DbScheduleInsertInput): void {
 }
 
 export function updateSchedule(id: string, fields: Partial<Omit<DbSchedule, "id" | "created_at" | "last_run_at" | "next_run_at">>): void {
+  assertMigrationWriteAllowed(getDb(), "schedule.update")
   const sets: string[] = []
   const vals: unknown[] = []
   for (const [k, v] of Object.entries(fields)) {
@@ -1751,6 +2157,7 @@ export function updateSchedule(id: string, fields: Partial<Omit<DbSchedule, "id"
 }
 
 export function deleteSchedule(id: string): void {
+  assertMigrationWriteAllowed(getDb(), "schedule.delete")
   getDb().prepare("DELETE FROM schedules WHERE id = ?").run(id)
 }
 

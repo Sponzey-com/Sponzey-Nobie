@@ -404,7 +404,10 @@ export function buildAiRecoveryKey(params: {
 }): string {
   const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default"
   const fingerprint = normalizeAiRecoveryFingerprint(params.reason, params.message)
-  return `${route}::${fingerprint}`
+  const credentialPath = normalizeAiRecoveryCredentialPath(params.reason, params.message)
+  return credentialPath === "auth=unknown"
+    ? `${route}::${fingerprint}`
+    : `${route}::${credentialPath}::${fingerprint}`
 }
 
 export function buildWorkerRuntimeRecoveryKey(params: {
@@ -435,6 +438,13 @@ function normalizeAiRecoveryFingerprint(reason: string, message: string): string
   if (/schema|parameter|unsupported|invalid_request|tool|function/i.test(combined)) return "request-schema"
   if (/network|socket|connect|connection|reset|refused|econn|dns|fetch failed/i.test(combined)) return "network"
   return combined.slice(0, 160)
+}
+
+function normalizeAiRecoveryCredentialPath(reason: string, message: string): string {
+  const combined = `${reason}\n${message}`.toLowerCase()
+  if (/(chatgpt|codex|oauth|auth\.json|refresh token|access token|토큰 갱신)/i.test(combined)) return "auth=chatgpt-oauth"
+  if (/(api key|apikey|openai_api_key|x-api-key|bearer|sk-)/i.test(combined)) return "auth=api-key"
+  return "auth=unknown"
 }
 
 function inferCommandFailureAlternatives(failedTool: FailedCommandTool): RecoveryAlternative[] {

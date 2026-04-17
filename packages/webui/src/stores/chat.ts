@@ -19,6 +19,7 @@ export interface Message {
 }
 
 export interface ApprovalRequest {
+  approvalId?: string
   runId: string
   toolName: string
   params: unknown
@@ -172,6 +173,7 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
 
     case "approval.request":
       store.setPendingApproval({
+        ...(typeof data.approvalId === "string" ? { approvalId: data.approvalId } : {}),
         runId: data.runId as string,
         toolName: data.toolName as string,
         params: data.params,
@@ -191,7 +193,7 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
       }
 
       const interactions = Array.isArray(data.pendingInteractions)
-        ? (data.pendingInteractions as Array<{ runId: string; toolName: string; kind?: ApprovalRequest["kind"]; guidance?: string }>)
+        ? (data.pendingInteractions as Array<{ approvalId?: string; runId: string; toolName: string; kind?: ApprovalRequest["kind"]; guidance?: string }>)
         : []
       const currentSessionId = store.sessionId
       const knownRuns = useRunsStore.getState().runs
@@ -207,6 +209,7 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
       if (chosen) {
         const run = knownRuns.find((item) => item.id === chosen.runId)
         store.setPendingApproval({
+          ...(chosen.approvalId ? { approvalId: chosen.approvalId } : {}),
           runId: chosen.runId,
           toolName: chosen.toolName,
           params: { summary: run?.summary ?? "" },

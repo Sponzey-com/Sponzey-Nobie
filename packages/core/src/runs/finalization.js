@@ -1,4 +1,5 @@
 import { emitAssistantTextDelivery, resolveAssistantTextDeliveryOutcome, } from "./delivery.js";
+import { recordMessageLedgerEvent } from "./message-ledger.js";
 import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser } from "./recovery.js";
 export function markRunCompleted(params) {
     const executingSummary = params.executingSummary ?? params.text ?? "응답 생성을 마쳤습니다.";
@@ -19,6 +20,16 @@ export function markRunCompleted(params) {
 }
 export async function completeRunWithAssistantMessage(params) {
     if (params.text) {
+        recordMessageLedgerEvent({
+            runId: params.runId,
+            sessionKey: params.sessionId,
+            channel: params.source,
+            eventKind: "final_answer_generated",
+            idempotencyKey: `final-answer:${params.runId}`,
+            status: "generated",
+            summary: "최종 응답을 생성했습니다.",
+            detail: { textLength: params.text.trim().length },
+        });
         const deliveryReceipt = await emitAssistantTextDelivery({
             runId: params.runId,
             sessionId: params.sessionId,
@@ -85,6 +96,19 @@ export async function moveRunToAwaitingUser(params) {
 }
 export async function moveRunToCancelledAfterStop(params) {
     const message = buildAwaitingUserMessage(params.cancellation);
+    recordMessageLedgerEvent({
+        runId: params.runId,
+        sessionKey: params.sessionId,
+        channel: params.source,
+        eventKind: "recovery_stop_generated",
+        idempotencyKey: `recovery-stop:${params.runId}:${params.cancellation.reason ?? params.cancellation.summary}`,
+        status: "suppressed",
+        summary: params.cancellation.summary || "자동 진행 중단 안내를 생성했습니다.",
+        detail: {
+            reason: params.cancellation.reason ?? null,
+            remainingItems: params.cancellation.remainingItems ?? [],
+        },
+    });
     if (message) {
         await emitStandaloneAssistantMessage({
             runId: params.runId,

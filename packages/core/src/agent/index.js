@@ -3,12 +3,12 @@ import { eventBus } from "../events/index.js";
 import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode } from "../ai/index.js";
 import { toolDispatcher } from "../tools/dispatcher.js";
 import { createLogger } from "../logger/index.js";
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js";
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates, upsertTaskContinuity } from "../db/index.js";
 import { loadNobieMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/nobie-md.js";
 import { buildMemoryContext, storeMemorySync } from "../memory/store.js";
 import { buildFlashFeedbackContext } from "../memory/flash-feedback.js";
 import { compressContext } from "../memory/compressor.js";
-import { buildSessionCompactionSnapshot, needsSessionCompaction } from "../memory/compaction.js";
+import { needsSessionCompaction, persistSessionCompactionMaintenance } from "../memory/compaction.js";
 import { buildScheduleMemoryContext } from "../schedules/context.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { selectRequestGroupContextMessages } from "./request-group-context.js";
@@ -16,14 +16,11 @@ import { buildUserProfilePromptContext } from "./profile-context.js";
 import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { appendRunEvent } from "../runs/store.js";
+import { createContextBlock, renderContextBlockForPrompt } from "../security/trust-boundary.js";
+import { chatWithContextPreflight } from "../runs/context-preflight.js";
 const log = createLogger("agent");
 const MAX_TOOL_ROUNDS = 20; // prevent infinite loops
 const MAX_CONTEXT_TOKENS = 150_000;
-const RECENT_UNPRUNED_MESSAGE_COUNT = 8;
-const OLD_TOOL_RESULT_MAX_CHARS = 700;
-const RECENT_TOOL_RESULT_MAX_CHARS = 1800;
-const OLD_TEXT_MESSAGE_MAX_CHARS = 4000;
-const RECENT_TEXT_MESSAGE_MAX_CHARS = 8000;
 const WEB_POLICY_PATTERN = [
     /https?:\/\//i,
     /\b(web|internet|browse|browser|search|google|docs?|documentation|readme|website|site|url|link)\b/i,
@@ -42,6 +39,17 @@ const EXECUTION_RECOVERY_TOOL_NAMES = new Set([
     "yeonjang_camera_list",
     "yeonjang_camera_capture",
 ]);
+function renderPromptContext(params) {
+    const content = params.content.trim();
+    if (!content)
+        return "";
+    return `\n${renderContextBlockForPrompt(createContextBlock({
+        id: params.id,
+        tag: params.tag,
+        title: params.title,
+        content,
+    }))}`;
+}
 const DEFAULT_SYSTEM_PROMPT = [
     "You are Nobie.",
     "",
@@ -242,7 +250,7 @@ export async function* runAgent(params) {
     const reasoningDirective = forceReasoningMode
         ? `\n[추론 정책]\n현재 실행 대상은 llama/ollama 계열로 간주합니다. 항상 사유 모드를 켜고 더 신중하게 검토한 뒤 답하세요. 즉시 반응하지 말고, 작업 계획과 가능한 해결 경로를 먼저 내부적으로 점검한 뒤 진행하세요. 내부적으로 충분히 숙고하되, 중간 추론을 길게 노출하지 말고 최종 답변만 간결하게 제시하세요.`
         : "";
-    const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요.`;
+    const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요. 같은 요청 안에서 동일한 검색어, URL, 출처를 반복 호출하지 마세요. 웹 도구가 중복 호출을 skipped로 반환하면 그 결과를 실패가 아니라 이미 확보한 근거로 간주하세요. web_search는 검색 발견 단계이며 사용자 문장 분류나 별도 게이트 판단으로 완료를 막지 않습니다. 도구 결과의 freshnessPolicy와 sourceGuard.status를 우선 따르세요. freshnessPolicy=latest_approximate 또는 sourceGuard.status=approximate_latest이면 source와 fetchTimestamp를 함께 밝히고 "수집 시각 기준 근사값"으로 답할 수 있습니다. 단, 근사값 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. web_search만 성공한 상태에서 값이 없다고 최종 답변하지 마세요. 값 미추출로 완료하려면 같은 요청 안에서 web_fetch 또는 브라우저 근거 확인을 최소 1회 수행했어야 합니다. freshnessPolicy=strict_timestamp이면 sourceTimestamp 또는 신뢰 가능한 기준 시각이 없을 때 수치를 확정하지 마세요. web_fetch나 브라우저 페이지에서 숫자가 잘 추출되지 않아도 이미 확보한 web_search 스니펫에 요청 대상과 직접 연결된 수치 후보가 있고 도구 정책이 근사값을 허용하면 그 근사값으로 답하세요. 웹 페이지 값 추출을 위해 로컬 workspace file_search를 사용하지 마세요. file_search는 로컬 파일 검색 전용이며 웹 검색 결과나 브라우저 HTML의 숫자 추출 fallback이 아닙니다. 브라우저 검색은 느린 보조 근거입니다. 직접 fetch나 공식 API가 이미 충분하면 브라우저 timeout을 전체 실패로 뒤집지 마세요.`;
     const instructions = loadMergedInstructions(workDir);
     const profileContext = buildUserProfilePromptContext();
     const nobieMd = loadNobieMd(workDir);
@@ -292,10 +300,10 @@ export async function* runAgent(params) {
         webPolicyDirective,
         instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
         profileContext ? `\n${profileContext}` : "",
-        nobieMd ? `\n[프로젝트 메모리]\n${nobieMd}` : "",
-        flashFeedbackContext ? `\n${flashFeedbackContext}` : "",
-        scheduleMemoryContext ? `\n${scheduleMemoryContext}` : "",
-        memoryContext ? `\n${memoryContext}` : "",
+        nobieMd ? renderPromptContext({ id: "project-memory", tag: "file_content", title: "프로젝트 메모리", content: nobieMd }) : "",
+        flashFeedbackContext ? renderPromptContext({ id: "flash-feedback-context", tag: "user_input", title: "Flash Feedback Context", content: flashFeedbackContext }) : "",
+        scheduleMemoryContext ? renderPromptContext({ id: "schedule-memory-context", tag: "user_input", title: "Schedule Memory Context", content: scheduleMemoryContext }) : "",
+        memoryContext ? renderPromptContext({ id: "memory-context", tag: "tool_result", title: "Memory Context", content: memoryContext }) : "",
     ].join("");
     // ── Context compression if needed ────────────────────────────────────
     let totalTokens = 0;
@@ -319,16 +327,17 @@ export async function* runAgent(params) {
             });
             // Mark old DB messages as compressed
             markMessagesCompressed(compressed.compressedIds, summaryId);
-            const snapshot = buildSessionCompactionSnapshot({
+            const maintenance = persistSessionCompactionMaintenance({
                 sessionId,
                 summary: compressed.summary,
                 ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+                runId,
+                durableFacts: [compressed.summary],
             });
-            upsertSessionSnapshot(snapshot);
             if (params.requestGroupId) {
                 upsertTaskContinuity({
                     lineageRootRunId: params.requestGroupId,
-                    lastGoodState: `session_snapshot:${snapshot.summary}`,
+                    lastGoodState: `session_snapshot:${maintenance.snapshotId}`,
                     status: "recoverable",
                 });
             }
@@ -336,10 +345,20 @@ export async function* runAgent(params) {
             log.info(`압축 완료 — ${compressed.compressedIds.length}개 메시지 → 요약 1개 + tail ${messages.length - 1}개`);
         }
         catch (err) {
-            log.warn(`컨텍스트 압축 실패 (무시): ${err instanceof Error ? err.message : String(err)}`);
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn(`컨텍스트 압축 실패: ${message}`);
+            appendRunEvent(runId, "context_compaction_failed");
+            insertDiagnosticEvent({
+                kind: "context_compaction_failed",
+                summary: "컨텍스트 압축에 실패했습니다. 마지막 usable snapshot 또는 pruning 경로를 사용해야 합니다.",
+                runId,
+                sessionId,
+                ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+                recoveryKey: `context_compaction:${sessionId}`,
+                detail: { error: message, messageCount: messages.length },
+            });
         }
     }
-    pruneMessagesForPrompt(messages);
     let textBuffer = "";
     let firstChunkRecorded = false;
     const ctx = {
@@ -364,12 +383,19 @@ export async function* runAgent(params) {
         }
         const pendingToolUses = [];
         try {
-            for await (const chunk of provider.chat({
+            for await (const chunk of chatWithContextPreflight({
+                provider,
                 model,
                 messages,
                 system: systemPrompt,
                 tools: toolDefs,
                 signal,
+                metadata: {
+                    runId,
+                    sessionId,
+                    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+                    operation: `agent.round.${round}`,
+                },
             })) {
                 if (signal.aborted)
                     break;
@@ -556,50 +582,6 @@ function appendAgentLatencyEvent(runId, name, durationMs) {
 }
 function shouldIncludeDiagnosticMemory(userMessage) {
     return DIAGNOSTIC_MEMORY_PATTERN.test(userMessage.trim());
-}
-function pruneMessagesForPrompt(messages) {
-    const recentStartIndex = Math.max(0, messages.length - RECENT_UNPRUNED_MESSAGE_COUNT);
-    for (let index = 0; index < messages.length; index++) {
-        const message = messages[index];
-        if (!message)
-            continue;
-        const isRecent = index >= recentStartIndex;
-        const maxTextChars = isRecent ? RECENT_TEXT_MESSAGE_MAX_CHARS : OLD_TEXT_MESSAGE_MAX_CHARS;
-        if (typeof message.content === "string") {
-            message.content = condensePromptText(message.content, maxTextChars, "message");
-            continue;
-        }
-        message.content = message.content.map((block) => {
-            if (block.type === "text") {
-                return {
-                    ...block,
-                    text: condensePromptText(block.text, maxTextChars, "assistant_text"),
-                };
-            }
-            if (block.type === "tool_result") {
-                const maxToolChars = isRecent ? RECENT_TOOL_RESULT_MAX_CHARS : OLD_TOOL_RESULT_MAX_CHARS;
-                return {
-                    ...block,
-                    content: condensePromptText(block.content, maxToolChars, "tool_result"),
-                };
-            }
-            return block;
-        });
-    }
-}
-function condensePromptText(value, maxChars, label) {
-    const normalized = value.replace(/\r/g, "").trim();
-    if (normalized.length <= maxChars)
-        return normalized;
-    const headLength = Math.max(120, Math.floor(maxChars * 0.62));
-    const tailLength = Math.max(80, maxChars - headLength - 120);
-    const head = normalized.slice(0, headLength).trimEnd();
-    const tail = normalized.slice(Math.max(headLength, normalized.length - tailLength)).trimStart();
-    return [
-        head,
-        `[${label}_pruned: original_chars=${normalized.length}]`,
-        tail,
-    ].filter(Boolean).join("\n");
 }
 function shouldAllowWebAccess(userMessage) {
     const normalized = userMessage.trim();

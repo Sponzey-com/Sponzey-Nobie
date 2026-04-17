@@ -1,9 +1,10 @@
 import { api } from "./client"
-import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType, ProviderCapabilityMatrix } from "../contracts/ai"
 
 export interface ModelDiscoveryResult {
   models: string[]
   sourceUrl: string
+  capabilityMatrix?: ProviderCapabilityMatrix
 }
 
 function formatBackendDiscoveryError(message: string, providerType: AIProviderType): string {
@@ -60,6 +61,7 @@ export async function discoverModelsFromEndpoint(
     return {
       models: result.models,
       sourceUrl: result.sourceUrl,
+      capabilityMatrix: result.capabilityMatrix,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

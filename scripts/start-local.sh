@@ -16,6 +16,9 @@ GATEWAY_HOST="${NOBIE_GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
 WEBUI_HOST="${NOBIE_WEBUI_HOST:-127.0.0.1}"
 WEBUI_PORT="${NOBIE_WEBUI_PORT:-5173}"
+LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
+GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
+WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
 
 mkdir -p "$PIDS_DIR" "$LOGS_DIR"
 
@@ -60,6 +63,42 @@ pid_belongs_to_repo() {
   [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   [[ "$cmd" == *"$ROOT_DIR"* ]] && return 0
   [[ "$cmd" == *"@nobie/cli"* || "$cmd" == *"packages/cli/dist/index.js serve"* || "$cmd" == *"@nobie/webui"* ]] && [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
+  return 1
+}
+
+can_use_launchctl() {
+  [[ "${NOBIE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
+    && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
+    && command -v launchctl >/dev/null 2>&1
+}
+
+launchctl_job_pid() {
+  local label="$1"
+  launchctl print "gui/$(id -u)/$label" 2>/dev/null | awk '/pid = / { print $3; exit }' || true
+}
+
+remove_launchctl_job() {
+  local label="$1"
+  can_use_launchctl || return 0
+  launchctl remove "$label" >/dev/null 2>&1 || true
+}
+
+wait_launchctl_pid() {
+  local name="$1"
+  local label="$2"
+  local pid_file="$3"
+
+  for _ in $(seq 1 30); do
+    local pid
+    pid="$(launchctl_job_pid "$label")"
+    if [[ -n "$pid" ]]; then
+      echo "$pid" > "$pid_file"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "$name launchctl 작업 PID를 확인하지 못했습니다. label=$label"
   return 1
 }
 
@@ -257,13 +296,22 @@ start_gateway() {
   build_workspace
 
   echo "Gateway를 시작합니다..."
-  (
-    cd "$ROOT_DIR"
-    export NOBIE_STATE_DIR="$STATE_DIR"
-    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-    exec nohup node packages/cli/dist/index.js serve </dev/null
-  ) >>"$GATEWAY_LOG_FILE" 2>&1 &
-  echo "$!" > "$GATEWAY_PID_FILE"
+  if can_use_launchctl; then
+    remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
+    local command
+    printf -v command 'cd %q && export NOBIE_STATE_DIR=%q NOBIE_LOG_LEVEL=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
+      "$ROOT_DIR" "$STATE_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$PATH" "$GATEWAY_LOG_FILE"
+    launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"
+    wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"
+  else
+    (
+      cd "$ROOT_DIR"
+      export NOBIE_STATE_DIR="$STATE_DIR"
+      export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
+      exec nohup node packages/cli/dist/index.js serve </dev/null
+    ) >>"$GATEWAY_LOG_FILE" 2>&1 &
+    echo "$!" > "$GATEWAY_PID_FILE"
+  fi
 
   if ! wait_for_http "Gateway" "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" "$GATEWAY_PID_FILE" true; then
     echo "Gateway 로그:"
@@ -281,12 +329,21 @@ start_webui() {
   assert_port_available "WebUI" "$WEBUI_PORT"
 
   echo "WebUI를 시작합니다..."
-  (
-    cd "$ROOT_DIR"
-    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-    exec nohup pnpm --filter @nobie/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
-  ) >>"$WEBUI_LOG_FILE" 2>&1 &
-  echo "$!" > "$WEBUI_PID_FILE"
+  if can_use_launchctl; then
+    remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
+    local command
+    printf -v command 'cd %q && export NOBIE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @nobie/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
+      "$ROOT_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
+    launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"
+    wait_launchctl_pid "WebUI" "$WEBUI_LAUNCHD_LABEL" "$WEBUI_PID_FILE"
+  else
+    (
+      cd "$ROOT_DIR"
+      export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
+      exec nohup pnpm --filter @nobie/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
+    ) >>"$WEBUI_LOG_FILE" 2>&1 &
+    echo "$!" > "$WEBUI_PID_FILE"
+  fi
 
   if ! wait_for_http "WebUI" "http://$WEBUI_HOST:$WEBUI_PORT" "$WEBUI_PID_FILE" false; then
     echo "WebUI 로그:"

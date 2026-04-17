@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
 import { authMiddleware } from "../middleware/auth.js";
-import { listTaskContinuityForLineages, } from "../../db/index.js";
-import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
+import { listTaskContinuityForLineages, listMemoryAccessTraceForRun, } from "../../db/index.js";
+import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listActiveRootRuns, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
+import { buildActiveRunProjections } from "../../runs/active-run-projection.js";
 import { startIngressRun } from "../../runs/ingress.js";
+import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { buildTaskModels } from "../../runs/task-model.js";
 import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js";
 import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js";
@@ -17,6 +19,22 @@ export async function startLocalRun(params) {
             ? { onChunk: createWebUiChunkDeliveryHandler({ sessionId, runId }) }
             : {}),
     });
+    if (receipt.text.trim()) {
+        const startedRun = getRootRun(started.runId);
+        recordMessageLedgerEvent({
+            runId: started.runId,
+            requestGroupId: startedRun?.requestGroupId ?? started.runId,
+            sessionKey: sessionId,
+            threadKey: sessionId,
+            channel: params.source,
+            eventKind: "fast_receipt_sent",
+            deliveryKey: `${params.source}:receipt:${sessionId}:${started.runId}`,
+            idempotencyKey: `${params.source}:receipt:${started.runId}`,
+            status: "sent",
+            summary: `${params.source} 접수 메시지를 전송했습니다.`,
+            detail: { receiptLength: receipt.text.length },
+        });
+    }
     return {
         requestId,
         runId: started.runId,
@@ -34,7 +52,18 @@ export function registerRunsRoute(app) {
         return { runs, tasks };
     }
     app.get("/api/runs", { preHandler: authMiddleware }, async () => {
-        return { runs: listRootRuns() };
+        const runs = listRootRuns();
+        return {
+            runs,
+            activeRunProjections: buildActiveRunProjections(runs.filter((run) => (run.status === "queued"
+                || run.status === "running"
+                || run.status === "awaiting_approval"
+                || run.status === "awaiting_user"))),
+        };
+    });
+    app.get("/api/runs/active", { preHandler: authMiddleware }, async () => {
+        const runs = listActiveRootRuns();
+        return { runs, activeRunProjections: buildActiveRunProjections(runs) };
     });
     app.get("/api/tasks", { preHandler: authMiddleware }, async () => {
         return { tasks: listTaskSnapshot().tasks };
@@ -79,6 +108,13 @@ export function registerRunsRoute(app) {
         if (!run)
             return reply.status(404).send({ error: "Run not found" });
         return { events: run.recentEvents };
+    });
+    app.get("/api/runs/:id/memory-trace", { preHandler: authMiddleware }, async (req, reply) => {
+        const run = getRootRun(req.params.id);
+        if (!run)
+            return reply.status(404).send({ error: "Run not found" });
+        const parsedLimit = Number.parseInt(req.query.limit ?? "", 10);
+        return { traces: listMemoryAccessTraceForRun(req.params.id, Number.isFinite(parsedLimit) ? parsedLimit : 100) };
     });
     app.post("/api/runs", { preHandler: authMiddleware }, async (req, reply) => {
         const message = req.body?.message?.trim();

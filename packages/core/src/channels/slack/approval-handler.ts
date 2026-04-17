@@ -1,5 +1,11 @@
 import { eventBus } from "../../events/index.js"
 import { getRootRun } from "../../runs/store.js"
+import {
+  attachApprovalChannelMessage,
+  describeLateApproval,
+  findLatestApprovalByChannelMessage,
+  getLatestApprovalForRun,
+} from "../../runs/approval-registry.js"
 
 interface ActiveSlackConversation {
   channelId: string
@@ -8,6 +14,7 @@ interface ActiveSlackConversation {
 }
 
 interface PendingApproval {
+  approvalId?: string
   requesterId: string
   channelId: string
   threadTs: string
@@ -22,7 +29,7 @@ export interface SlackApprovalMessenger {
     threadTs: string
     runId: string
     text: string
-  }): Promise<void>
+  }): Promise<string | void>
 }
 
 const activeConversations = new Map<string, ActiveSlackConversation>()
@@ -55,19 +62,11 @@ export function clearActiveSlackConversationForSession(sessionId: string): void 
 
 export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger): void {
   detachSlackApprovalRequestListener?.()
-  detachSlackApprovalRequestListener = eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
+  const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, toolName, params, kind = "approval", guidance, resolve }) => {
     const run = getRootRun(runId)
     if (run?.source !== "slack") return
     const target = activeConversations.get(run.sessionId) ?? latestActiveConversation
     if (!target) {
-      eventBus.emit("approval.resolved", {
-        runId,
-        decision: "deny",
-        toolName,
-        kind,
-        reason: "system",
-      })
-      resolve("deny", "system")
       return
     }
 
@@ -80,14 +79,8 @@ export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger):
       "아래 버튼을 누르거나, 버튼이 보이지 않으면 이 스레드에 `approve`, `approve once`, `deny` 중 하나로 답해주세요.",
     ].filter(Boolean).join("\n\n")
 
-    await messenger.sendApprovalRequest({
-      channelId: target.channelId,
-      threadTs: target.threadTs,
-      runId,
-      text,
-    })
-
     pendingApprovals.set(runId, {
+      ...(approvalId ? { approvalId } : {}),
       requesterId: target.userId,
       channelId: target.channelId,
       threadTs: target.threadTs,
@@ -95,7 +88,27 @@ export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger):
       kind,
       resolve,
     })
+
+    const channelMessageId = slackApprovalChannelMessageId(target.channelId, target.threadTs)
+    if (approvalId) attachApprovalChannelMessage(approvalId, channelMessageId)
+
+    const sentTs = await messenger.sendApprovalRequest({
+      channelId: target.channelId,
+      threadTs: target.threadTs,
+      runId,
+      text,
+    })
+    if (approvalId && typeof sentTs === "string" && sentTs.trim()) {
+      attachApprovalChannelMessage(approvalId, channelMessageId)
+    }
   })
+  const detachResolved = eventBus.on("approval.resolved", ({ runId }) => {
+    pendingApprovals.delete(runId)
+  })
+  detachSlackApprovalRequestListener = () => {
+    detachRequest()
+    detachResolved()
+  }
 }
 
 export function resetSlackApprovalStateForTest(): void {
@@ -116,7 +129,13 @@ function resolveSlackApproval(params: {
   reply: (text: string) => Promise<void>
 }): Promise<boolean> {
   const pending = pendingApprovals.get(params.runId)
-  if (!pending) return Promise.resolve(false)
+  if (!pending) {
+    const row = getLatestApprovalForRun(params.runId)
+    if (row) {
+      return params.reply(describeLateApproval(row)).then(() => true)
+    }
+    return Promise.resolve(false)
+  }
   if (pending.channelId !== params.channelId || pending.threadTs !== params.threadTs || pending.requesterId !== params.userId) {
     return Promise.resolve(false)
   }
@@ -124,6 +143,7 @@ function resolveSlackApproval(params: {
   pendingApprovals.delete(params.runId)
   pending.resolve(params.decision, "user")
   eventBus.emit("approval.resolved", {
+    ...(pending.approvalId ? { approvalId: pending.approvalId } : {}),
     runId: params.runId,
     decision: params.decision,
     toolName: pending.toolName,
@@ -164,7 +184,15 @@ export async function handleSlackApprovalMessage(params: {
     && value.requesterId === params.userId,
   )
 
-  if (!entry) return false
+  if (!entry) {
+    const row = findLatestApprovalByChannelMessage({
+      channel: "slack",
+      channelMessageId: slackApprovalChannelMessageId(params.channelId, params.threadTs),
+    })
+    if (!row) return false
+    await params.reply(describeLateApproval(row))
+    return true
+  }
 
   return resolveSlackApproval({
     runId: entry[0],
@@ -185,4 +213,8 @@ export async function handleSlackApprovalAction(params: {
   reply: (text: string) => Promise<void>
 }): Promise<boolean> {
   return resolveSlackApproval(params)
+}
+
+function slackApprovalChannelMessageId(channelId: string, threadTs: string): string {
+  return `slack:${channelId}:${threadTs}`
 }

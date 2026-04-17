@@ -88,6 +88,12 @@ const defaultDependencies: StartPlanDependencies = {
   findLatestWorkerSessionRun,
 }
 
+const LOCAL_EXECUTION_ACTION_PATTERN = /(?=.*(?:화면|스크린|모니터|디스플레이|카메라|사진|마우스|키보드|창|윈도우|프로세스|앱|프로그램|screen|monitor|display|camera|photo|mouse|keyboard|window|process|app))(?=.*(?:캡처|캡쳐|스크린샷|촬영|클릭|입력|이동|열어|실행|종료|죽여|capture|screenshot|photo|click|type|move|focus|launch|open|kill))(?=.*(?:해줘|보여줘|보내줘|전송|저장|찍어|실행|종료|send|show|take|capture|run|open|kill))/iu
+
+function isStandaloneLocalExecutionAction(message: string): boolean {
+  return LOCAL_EXECUTION_ACTION_PATTERN.test(message)
+}
+
 export async function buildStartPlan(
   params: {
     message: string
@@ -122,7 +128,10 @@ export async function buildStartPlan(
       ? params.requestGroupId
       : undefined
   const requestedClosedRequestGroup = Boolean(params.requestGroupId && !params.forceRequestGroupReuse && !explicitReusableRequestGroupId)
-  const reconnectCandidates = params.requestGroupId == null
+  const hasStructuredIncomingContract = params.incomingIntentContract != null
+  const hasExplicitCandidateId = Boolean(params.targetRunId || params.approvalId)
+  const shouldInspectActiveRuns = params.requestGroupId == null && (hasStructuredIncomingContract || hasExplicitCandidateId)
+  const reconnectCandidates = shouldInspectActiveRuns
     ? dependencies.listActiveSessionRequestGroups(params.sessionId, params.runId)
     : []
   const rawReconnectCandidateProjections = buildActiveRunProjections(reconnectCandidates)
@@ -181,11 +190,14 @@ export async function buildStartPlan(
     ...(params.source ? { source: params.source } : {}),
     ...(params.targetId ? { targetId: params.targetId } : {}),
   })
+  const shouldBypassReconnectComparison = isStandaloneLocalExecutionAction(params.message)
   const shouldCompareContinuation =
-    params.requestGroupId == null
+    hasStructuredIncomingContract
+    && params.requestGroupId == null
     && !explicitTarget
     && reconnectCandidateProjections.length > 0
     && entrySemanticsBase.active_queue_cancellation_mode == null
+    && !shouldBypassReconnectComparison
   const reconnectDecision: RequestContinuationDecision = shouldCompareContinuation
     ? await (async (): Promise<RequestContinuationDecision> => {
         const comparisonStartedAt = Date.now()

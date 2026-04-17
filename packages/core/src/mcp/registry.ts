@@ -1,5 +1,7 @@
 import { getConfig, reloadConfig, type NobieConfig } from "../config/index.js"
 import { createLogger } from "../logger/index.js"
+import { recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure } from "../security/extension-governance.js"
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
 import { toolDispatcher, type AgentTool } from "../tools/index.js"
 import type { ToolResult } from "../tools/types.js"
 import { McpStdioClient, type McpDiscoveredTool, type McpServerConfig, type McpTransport } from "./client.js"
@@ -163,6 +165,12 @@ class McpRegistry {
         if (!entry) return
         this.unregisterTools(entry.toolNames)
         entry.toolNames = []
+        recordExtensionFailure({
+          extensionId: `mcp:${name}`,
+          kind: "mcp_server",
+          error,
+          detail: { transport, required: Boolean(config.required) },
+        })
         entry.status = {
           ...entry.status,
           ready: false,
@@ -187,9 +195,21 @@ class McpRegistry {
           tools,
         },
       })
+      recordExtensionRegistryChange({
+        action: "mcp_server_loaded",
+        extensionId: `mcp:${name}`,
+        result: "success",
+        detail: { toolCount: tools.length, transport },
+      })
       log.info(`loaded MCP server ${name} with ${tools.length} tools`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      recordExtensionFailure({
+        extensionId: `mcp:${name}`,
+        kind: "mcp_server",
+        error: message,
+        detail: { transport, required: Boolean(config.required) },
+      })
       this.entries.set(name, {
         client,
         toolNames: [],
@@ -216,6 +236,15 @@ class McpRegistry {
         execute: async (params, ctx): Promise<ToolResult> => {
           try {
             const result = await client.callTool(tool.name, params, ctx.signal)
+            if (result.isError) {
+              recordExtensionToolFailure({
+                toolName: registeredName,
+                error: result.output,
+                runId: ctx.runId,
+                requestGroupId: ctx.requestGroupId ?? null,
+                detail: { serverName: name, toolName: tool.name, isError: true },
+              })
+            }
             return {
               success: !result.isError,
               output: result.output,
@@ -224,10 +253,18 @@ class McpRegistry {
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
+            const sanitized = sanitizeUserFacingError(message)
+            recordExtensionToolFailure({
+              toolName: registeredName,
+              error: message,
+              runId: ctx.runId,
+              requestGroupId: ctx.requestGroupId ?? null,
+              detail: { serverName: name, toolName: tool.name },
+            })
             return {
               success: false,
-              output: `MCP tool error: ${message}`,
-              error: message,
+              output: `MCP tool error: ${sanitized.userMessage}`,
+              error: sanitized.userMessage,
             }
           }
         },

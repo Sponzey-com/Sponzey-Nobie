@@ -4,6 +4,7 @@ interface WebFetchParams {
     mode?: "text" | "screenshot" | "raw-html";
     waitForSelector?: string;
     maxLength?: number;
+    freshnessPolicy?: "normal" | "latest_approximate" | "strict_timestamp";
 }
 export declare const webFetchTool: AgentTool<WebFetchParams>;
 export {};

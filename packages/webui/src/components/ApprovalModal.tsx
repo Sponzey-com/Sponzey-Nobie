@@ -33,7 +33,7 @@ export function ApprovalModal() {
   if (!resolvedApproval || isScreenConfirmation) return null
 
   function respond(decision: "allow_once" | "allow_run" | "deny") {
-    sendWs({ type: "approval.respond", runId: resolvedApproval.runId, toolName: resolvedApproval.toolName, decision })
+    sendWs({ type: "approval.respond", approvalId: resolvedApproval.approvalId, runId: resolvedApproval.runId, toolName: resolvedApproval.toolName, decision })
     setPendingApproval(null)
   }
 

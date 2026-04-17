@@ -5,12 +5,16 @@ export type ProviderAdapterType = "openai_chat" | "openai_codex_oauth" | "openai
 export type ProviderBaseUrlClass = "official_openai" | "chatgpt_codex" | "local" | "custom" | "provider_native" | "none";
 export interface ProviderAuditTrace {
     source: "config.ai.connection";
+    profileId?: string | undefined;
     requestedProviderId: string;
     providerId: string;
     adapterType: ProviderAdapterType;
     baseUrlClass: ProviderBaseUrlClass;
     modelId: string;
     authType: ProviderCredentialKind;
+    credentialSourceKind?: ProviderCredentialKind | undefined;
+    resolverPath?: string | undefined;
+    endpointMismatch?: boolean | undefined;
     configured: boolean;
     healthy: boolean;
     fallbackReason: string | null;

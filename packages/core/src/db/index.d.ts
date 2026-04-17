@@ -88,6 +88,93 @@ export interface DbDecisionTraceInput {
     detail?: Record<string, unknown>;
     createdAt?: number;
 }
+export type DbMessageLedgerStatus = "received" | "pending" | "started" | "generated" | "sent" | "delivered" | "succeeded" | "failed" | "skipped" | "suppressed" | "degraded";
+export interface DbMessageLedgerEvent {
+    id: string;
+    run_id: string | null;
+    request_group_id: string | null;
+    session_key: string | null;
+    thread_key: string | null;
+    channel: string;
+    event_kind: string;
+    delivery_key: string | null;
+    idempotency_key: string | null;
+    status: DbMessageLedgerStatus;
+    summary: string;
+    detail_json: string | null;
+    created_at: number;
+}
+export interface DbMessageLedgerInput {
+    id?: string;
+    runId?: string | null;
+    requestGroupId?: string | null;
+    sessionKey?: string | null;
+    threadKey?: string | null;
+    channel: string;
+    eventKind: string;
+    deliveryKey?: string | null;
+    idempotencyKey?: string | null;
+    status: DbMessageLedgerStatus;
+    summary: string;
+    detail?: Record<string, unknown>;
+    createdAt?: number;
+}
+export type DbQueueBackpressureEventKind = "queued" | "running" | "completed" | "failed" | "timeout" | "rejected" | "retry_scheduled" | "dead_letter" | "reset";
+export interface DbQueueBackpressureEvent {
+    id: string;
+    created_at: number;
+    queue_name: string;
+    event_kind: DbQueueBackpressureEventKind;
+    run_id: string | null;
+    request_group_id: string | null;
+    pending_count: number;
+    retry_count: number;
+    retry_budget_remaining: number | null;
+    recovery_key: string | null;
+    action_taken: string;
+    detail_json: string | null;
+}
+export interface DbQueueBackpressureEventInput {
+    id?: string;
+    createdAt?: number;
+    queueName: string;
+    eventKind: DbQueueBackpressureEventKind;
+    runId?: string | null;
+    requestGroupId?: string | null;
+    pendingCount?: number;
+    retryCount?: number;
+    retryBudgetRemaining?: number | null;
+    recoveryKey?: string | null;
+    actionTaken: string;
+    detail?: Record<string, unknown>;
+}
+export type DbControlEventSeverity = "debug" | "info" | "warning" | "error";
+export interface DbControlEvent {
+    id: string;
+    created_at: number;
+    event_type: string;
+    correlation_id: string;
+    run_id: string | null;
+    request_group_id: string | null;
+    session_key: string | null;
+    component: string;
+    severity: DbControlEventSeverity;
+    summary: string;
+    detail_json: string | null;
+}
+export interface DbControlEventInput {
+    id?: string;
+    createdAt?: number;
+    eventType: string;
+    correlationId: string;
+    runId?: string | null;
+    requestGroupId?: string | null;
+    sessionKey?: string | null;
+    component: string;
+    severity?: DbControlEventSeverity;
+    summary: string;
+    detail?: Record<string, unknown>;
+}
 export type DbChannelSmokeRunMode = "dry-run" | "live-run";
 export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped";
 export type DbChannelSmokeStepStatus = "passed" | "failed" | "skipped";
@@ -230,6 +317,32 @@ export declare function getMessagesForRun(sessionId: string, runId: string): DbM
 export declare function insertAuditLog(log: DbAuditLogInput): void;
 export declare function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): string;
 export declare function insertDecisionTrace(input: DbDecisionTraceInput): string;
+export declare function insertMessageLedgerEvent(input: DbMessageLedgerInput): string | null;
+export declare function getMessageLedgerEventByIdempotencyKey(idempotencyKey: string): DbMessageLedgerEvent | undefined;
+export declare function insertQueueBackpressureEvent(input: DbQueueBackpressureEventInput): string;
+export declare function listQueueBackpressureEvents(input?: {
+    queueName?: string;
+    eventKind?: DbQueueBackpressureEventKind;
+    recoveryKey?: string;
+    limit?: number;
+}): DbQueueBackpressureEvent[];
+export declare function listMessageLedgerEvents(params?: {
+    runId?: string;
+    requestGroupId?: string;
+    sessionKey?: string;
+    threadKey?: string;
+    limit?: number;
+}): DbMessageLedgerEvent[];
+export declare function insertControlEvent(input: DbControlEventInput): string;
+export declare function listControlEvents(params?: {
+    runId?: string;
+    requestGroupId?: string;
+    correlationId?: string;
+    eventType?: string;
+    component?: string;
+    severity?: DbControlEventSeverity;
+    limit?: number;
+}): DbControlEvent[];
 export declare function findChannelMessageRef(params: {
     source: string;
     externalChatId: string;
@@ -284,10 +397,12 @@ export interface DbMemoryChunk {
     token_estimate: number;
     content: string;
     checksum: string;
+    source_checksum: string | null;
     metadata_json: string | null;
     created_at: number;
     updated_at: number;
 }
+export type MemoryIndexJobStatus = "queued" | "indexing" | "embedded" | "failed" | "stale" | "disabled";
 export type MemoryWritebackStatus = "pending" | "writing" | "failed" | "completed" | "discarded";
 export interface DbMemoryWritebackCandidate {
     id: string;
@@ -340,6 +455,7 @@ export interface MemorySearchFilters {
     includeSchedule?: boolean;
     includeArtifact?: boolean;
     includeDiagnostic?: boolean;
+    includeFlashFeedback?: boolean;
 }
 export declare function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemoryDocumentResult;
 export declare function insertMemoryEmbeddingIfMissing(input: {
@@ -352,6 +468,8 @@ export declare function insertMemoryEmbeddingIfMissing(input: {
 }): string;
 export declare function rebuildMemorySearchIndexes(): void;
 export declare function markMemoryIndexJobCompleted(documentId: string): void;
+export declare function markMemoryIndexJobDisabled(documentId: string, reason: string): void;
+export declare function markMemoryIndexJobStale(documentId: string, reason: string): void;
 export declare function markMemoryIndexJobFailed(documentId: string, error: string): void;
 export declare function recordMemoryAccessLog(input: {
     runId?: string;
@@ -359,11 +477,31 @@ export declare function recordMemoryAccessLog(input: {
     requestGroupId?: string;
     documentId?: string;
     chunkId?: string;
+    sourceChecksum?: string | null;
+    scope?: MemoryScope | string | null;
     query: string;
     resultSource: string;
     score?: number;
     latencyMs?: number;
+    reason?: string;
 }): string;
+export interface DbMemoryAccessTraceRow {
+    id: string;
+    run_id: string | null;
+    session_id: string | null;
+    request_group_id: string | null;
+    document_id: string | null;
+    chunk_id: string | null;
+    source_checksum: string | null;
+    scope: string | null;
+    query: string;
+    result_source: string;
+    score: number | null;
+    latency_ms: number | null;
+    reason: string | null;
+    created_at: number;
+}
+export declare function listMemoryAccessTraceForRun(runId: string, limit?: number): DbMemoryAccessTraceRow[];
 export declare function insertFlashFeedback(input: {
     sessionId: string;
     content: string;

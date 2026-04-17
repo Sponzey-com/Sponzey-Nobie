@@ -1,6 +1,8 @@
 import type { AgentContextMode } from "../agent/index.js";
+import type { IntentContract } from "../contracts/index.js";
 import { analyzeRequestEntrySemantics, type RequestEntrySemantics } from "./entry-semantics.js";
 import { type RequestContinuationDecision } from "./entry-comparison.js";
+import { buildIncomingIntentContract, type ActiveRunContractProjection } from "./active-run-projection.js";
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups } from "./store.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
@@ -19,15 +21,16 @@ export interface StartPlan {
     effectiveContextMode: AgentContextMode;
     workerSessionId?: string | undefined;
     reusableWorkerSessionRun?: RootRun | undefined;
+    latencyEvents: string[];
 }
 interface StartPlanDependencies {
     analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics;
     isReusableRequestGroup: typeof isReusableRequestGroup;
     listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups;
     compareRequestContinuation: (params: {
-        message: string;
+        incomingContract: ReturnType<typeof buildIncomingIntentContract>;
         sessionId: string;
-        candidates: RootRun[];
+        candidates: ActiveRunContractProjection[];
         model?: string;
     }) => Promise<RequestContinuationDecision>;
     getRequestGroupDelegationTurnCount: typeof getRequestGroupDelegationTurnCount;
@@ -47,7 +50,11 @@ export declare function buildStartPlan(params: {
     message: string;
     sessionId: string;
     runId: string;
+    targetRunId?: string | undefined;
+    source?: RootRun["source"] | undefined;
+    incomingIntentContract?: IntentContract | undefined;
     requestGroupId?: string | undefined;
+    approvalId?: string | undefined;
     forceRequestGroupReuse?: boolean | undefined;
     contextMode?: AgentContextMode | undefined;
     taskProfile?: TaskProfile | undefined;

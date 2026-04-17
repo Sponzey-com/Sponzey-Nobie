@@ -74,6 +74,7 @@ export declare function buildMemoryContext(params: {
     includeSchedule?: boolean;
     includeArtifact?: boolean;
     includeDiagnostic?: boolean;
+    includeFlashFeedback?: boolean;
     budget?: MemoryContextBudget;
 }): Promise<string>;
 //# sourceMappingURL=store.d.ts.map

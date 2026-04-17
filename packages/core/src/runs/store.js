@@ -1,6 +1,9 @@
 import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interruptUnfinishedScheduleRunsOnStartup, upsertTaskContinuity } from "../db/index.js";
+import { assertMigrationWriteAllowed } from "../db/migration-safety.js";
 import { eventBus } from "../events/index.js";
+import { getLastRuntimeManifest, refreshRuntimeManifest } from "../runtime/manifest.js";
 import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js";
+import { finalizeDeliveryForRun, recordMessageLedgerEvent } from "./message-ledger.js";
 import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun } from "./startup-recovery.js";
 import { DEFAULT_RUN_STEPS } from "./types.js";
 const activeRunControllers = new Map();
@@ -107,6 +110,7 @@ function parsePromptSourceSnapshot(value) {
 }
 function hydrateRun(row) {
     const db = getDb();
+    assertMigrationWriteAllowed(db, "run.create");
     const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot);
     const steps = db
         .prepare(`SELECT run_id, step_key, title, step_index, status, summary, started_at, finished_at
@@ -139,6 +143,7 @@ function hydrateRun(row) {
         contextMode: row.context_mode ?? "full",
         delegationTurnCount: row.delegation_turn_count,
         maxDelegationTurns: row.max_delegation_turns,
+        ...(row.runtime_manifest_id ? { runtimeManifestId: row.runtime_manifest_id } : {}),
         currentStepKey: row.current_step_key,
         currentStepIndex: row.current_step_index,
         totalSteps: row.total_steps,
@@ -461,6 +466,17 @@ export function createRootRun(params) {
     const taskProfile = params.taskProfile ?? "general_chat";
     const summary = params.prompt.trim();
     const title = truncateTitle(params.prompt);
+    const runtimeManifestId = (() => {
+        const current = getLastRuntimeManifest();
+        if (current)
+            return current.id;
+        try {
+            return refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false }).id;
+        }
+        catch {
+            return null;
+        }
+    })();
     const db = getDb();
     const identifiers = resolveRunFlowIdentifiers({
         runId: params.id,
@@ -476,8 +492,8 @@ export function createRootRun(params) {
         title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
-        total_steps, summary, can_cancel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, now, now);
+        total_steps, summary, can_cancel, runtime_manifest_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, runtimeManifestId, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -489,6 +505,21 @@ export function createRootRun(params) {
     });
     tx();
     const run = getRootRun(params.id);
+    recordMessageLedgerEvent({
+        runId: params.id,
+        requestGroupId: run.requestGroupId,
+        sessionKey: params.sessionId,
+        channel: params.source,
+        eventKind: "ingress_received",
+        idempotencyKey: `ingress:${params.id}`,
+        status: "received",
+        summary: "요청을 수신했습니다.",
+        detail: {
+            source: params.source,
+            promptLength: params.prompt.length,
+            taskProfile,
+        },
+    });
     eventBus.emit("run.created", { run });
     eventBus.emit("run.progress", { run });
     return run;
@@ -516,25 +547,39 @@ export function updateRunStatus(runId, status, summary, canCancel) {
     const current = getRootRun(runId);
     if (!current)
         return undefined;
-    const transition = canTransitionRunStatus(current.status, status);
+    let nextStatus = status;
+    let nextSummary = summary ?? current.summary;
+    let nextCanCancel = canCancel ?? current.canCancel;
+    if ((status === "failed" || status === "cancelled" || status === "interrupted") && current.status !== "completed") {
+        const finalizer = finalizeDeliveryForRun({
+            runId,
+            requestedStatus: status,
+            ...(summary !== undefined ? { requestedSummary: summary } : {}),
+        });
+        if (finalizer.shouldProtectDeliveredAnswer && finalizer.runStatus) {
+            nextStatus = finalizer.runStatus;
+            nextSummary = finalizer.summary ?? nextSummary;
+            nextCanCancel = false;
+            appendRunEvent(runId, `delivery_finalizer:${finalizer.outcome}`);
+        }
+    }
+    const transition = canTransitionRunStatus(current.status, nextStatus);
     if (!transition.allowed) {
         appendRunEvent(runId, `status_transition_blocked:${transition.reason}`);
         return current;
     }
-    const nextSummary = summary ?? current.summary;
-    const nextCanCancel = canCancel ?? current.canCancel;
     getDb()
         .prepare(`UPDATE root_runs SET status = ?, summary = ?, can_cancel = ?, updated_at = ? WHERE id = ?`)
-        .run(status, nextSummary, nextCanCancel ? 1 : 0, now, runId);
+        .run(nextStatus, nextSummary, nextCanCancel ? 1 : 0, now, runId);
     const run = getRootRun(runId);
     if (run) {
         eventBus.emit("run.status", { run });
         eventBus.emit("run.progress", { run });
-        if (status === "completed")
+        if (nextStatus === "completed")
             eventBus.emit("run.completed", { run });
-        if (status === "failed")
+        if (nextStatus === "failed")
             eventBus.emit("run.failed", { run });
-        if (status === "cancelled")
+        if (nextStatus === "cancelled")
             eventBus.emit("run.cancelled", { run });
     }
     return run;

@@ -3,6 +3,7 @@ import type { ControlPlaneAdapter, MqttRuntimeResponse, ResetSetupResponse, Setu
 import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { ConfigExportResult, ConfigurationOperationsSnapshot, DatabaseBackupResult, MigrationDryRunResult, PromptSourceExportResult, PromptSourceImportResult } from "../contracts/config-operations"
+import type { DoctorMode, DoctorResponse } from "../contracts/doctor"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
 import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
@@ -80,6 +81,8 @@ export const api = {
   disconnectMqttExtension: (extensionId: string) => getControlPlaneAdapter().disconnectMqttExtension(extensionId),
   updateStatus: () => request<UpdateSnapshot>("/api/update/status"),
   checkForUpdates: () => request<UpdateSnapshot>("/api/update/check", { method: "POST" }),
+  doctor: (mode: DoctorMode = "quick", write = false) =>
+    request<DoctorResponse>(`/api/doctor?mode=${encodeURIComponent(mode)}${write ? "&write=1" : ""}`),
 
   instructionsActive: (workDir?: string) =>
     request<ActiveInstructionsResponse>(
@@ -194,6 +197,9 @@ export const api = {
 
   runTimeline: (runId: string) => request<{ events: RunEvent[] }>(`/api/runs/${runId}/timeline`),
 
+  runMemoryTrace: (runId: string, limit = 100) =>
+    request<{ traces: MemoryAccessTraceItem[] }>(`/api/runs/${encodeURIComponent(runId)}/memory-trace?limit=${encodeURIComponent(String(limit))}`),
+
   createRun: (message: string, sessionId?: string) =>
     request<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>("/api/runs", {
       method: "POST",
@@ -251,6 +257,30 @@ export const api = {
 
   auditExport: (runId: string, format: "json" | "markdown" = "markdown") =>
     request<AuditExportResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
+
+  controlTimeline: (params: { runId?: string; requestGroupId?: string; correlationId?: string; eventType?: string; component?: string; severity?: ControlEventSeverity; limit?: number; audience?: ControlExportAudience } = {}) => {
+    const q = new URLSearchParams()
+    if (params.runId) q.set("runId", params.runId)
+    if (params.requestGroupId) q.set("requestGroupId", params.requestGroupId)
+    if (params.correlationId) q.set("correlationId", params.correlationId)
+    if (params.eventType) q.set("eventType", params.eventType)
+    if (params.component) q.set("component", params.component)
+    if (params.severity) q.set("severity", params.severity)
+    if (params.limit) q.set("limit", String(params.limit))
+    if (params.audience) q.set("audience", params.audience)
+    return request<ControlTimelineResponse>(`/api/control/timeline?${q.toString()}`)
+  },
+
+  controlTimelineExport: (params: { runId?: string; requestGroupId?: string; correlationId?: string; audience?: ControlExportAudience; format?: "json" | "markdown"; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.runId) q.set("runId", params.runId)
+    if (params.requestGroupId) q.set("requestGroupId", params.requestGroupId)
+    if (params.correlationId) q.set("correlationId", params.correlationId)
+    if (params.audience) q.set("audience", params.audience)
+    if (params.format) q.set("format", params.format)
+    if (params.limit) q.set("limit", String(params.limit))
+    return request<ControlTimelineExportResponse>(`/api/control/timeline/export?${q.toString()}`)
+  },
 
   promoteAuditEventToErrorCorpus: (eventId: string, note?: string) =>
     request<AuditPromotionResponse>(`/api/audit/events/${encodeURIComponent(eventId)}/promote-error-corpus`, {
@@ -397,6 +427,56 @@ export interface AuditExportResponse {
   format: "json" | "markdown"
   content: string
   events: AuditEvent[]
+}
+
+export type ControlEventSeverity = "debug" | "info" | "warning" | "error"
+export type ControlExportAudience = "user" | "developer"
+
+export interface ControlTimelineEvent {
+  id: string
+  at: number
+  eventType: string
+  correlationId: string
+  runId: string | null
+  requestGroupId: string | null
+  sessionKey: string | null
+  component: string
+  severity: ControlEventSeverity
+  summary: string
+  detail: unknown
+  duplicate?: {
+    kind: "tool" | "answer" | "delivery" | "recovery"
+    key: string
+    firstEventId: string
+    occurrence: number
+  }
+}
+
+export interface ControlTimelineSummary {
+  total: number
+  duplicateToolCount: number
+  duplicateAnswerCount: number
+  deliveryRetryCount: number
+  recoveryReentryCount: number
+  severityCounts: Record<ControlEventSeverity, number>
+}
+
+export interface ControlTimeline {
+  events: ControlTimelineEvent[]
+  summary: ControlTimelineSummary
+}
+
+export interface ControlTimelineResponse {
+  timeline: ControlTimeline
+}
+
+export interface ControlTimelineExportResponse {
+  export: {
+    audience: ControlExportAudience
+    format: "json" | "markdown"
+    content: string
+    timeline: ControlTimeline
+  }
 }
 
 export interface AuditCleanupResponse {
@@ -611,6 +691,23 @@ export interface MemoryQualitySnapshot {
     scheduleMemoryDefaultInjection: boolean
   }
   lastFailure: string | null
+}
+
+export interface MemoryAccessTraceItem {
+  id: string
+  run_id: string | null
+  session_id: string | null
+  request_group_id: string | null
+  document_id: string | null
+  chunk_id: string | null
+  source_checksum: string | null
+  scope: string | null
+  query: string
+  result_source: string
+  score: number | null
+  latency_ms: number | null
+  reason: string | null
+  created_at: number
 }
 
 export interface MemoryWritebackReviewItem {

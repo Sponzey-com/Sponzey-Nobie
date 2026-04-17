@@ -2,6 +2,7 @@ import { createServer } from "node:net";
 import aedesPackage from "aedes";
 import { getConfig } from "../config/index.js";
 import { createLogger } from "../logger/index.js";
+import { eventBus } from "../events/index.js";
 const log = createLogger("mqtt:broker");
 const MQTT_DISABLED_REASON = "MQTT 브로커가 비활성화되어 있습니다.";
 const MQTT_STOPPED_REASON = "MQTT 브로커가 중지되었습니다.";
@@ -116,6 +117,14 @@ function releaseExtensionClaimsForClient(clientId) {
                     state: "offline",
                     message: "MQTT connection disconnected.",
                     lastSeenAt: Date.now(),
+                });
+                eventBus.emit("yeonjang.heartbeat", {
+                    extensionId,
+                    state: "offline",
+                    message: "MQTT connection disconnected.",
+                    lastSeenAt: Date.now(),
+                    methodCount: current.methods.length,
+                    capabilityHash: current.capabilityHash ?? null,
                 });
             }
         }
@@ -242,6 +251,14 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         lastSeenAt: now,
     };
     extensionSnapshots.set(extensionId, next);
+    eventBus.emit("yeonjang.heartbeat", {
+        extensionId,
+        state: next.state,
+        message: next.message,
+        lastSeenAt: next.lastSeenAt,
+        methodCount: next.methods.length,
+        capabilityHash: next.capabilityHash ?? null,
+    });
 }
 function readString(payload, ...keys) {
     if (!payload)

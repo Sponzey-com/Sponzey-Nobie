@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { api, type AuditEvent } from "../api/client"
+import { api, type AuditEvent, type ControlExportAudience, type ControlTimeline } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
 import { ErrorState } from "../components/ErrorState"
 import { FeatureGate } from "../components/FeatureGate"
@@ -62,6 +62,10 @@ export function AuditPage() {
   const [total, setTotal] = useState(0)
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
   const [promotionMessage, setPromotionMessage] = useState<string | null>(null)
+  const [controlTimeline, setControlTimeline] = useState<ControlTimeline | null>(null)
+  const [controlAudience, setControlAudience] = useState<ControlExportAudience>("user")
+  const [controlLoading, setControlLoading] = useState(false)
+  const [controlError, setControlError] = useState<string | null>(null)
 
   const selectedMeta = useMemo(() => {
     if (!selected) return ""
@@ -105,6 +109,39 @@ export function AuditPage() {
     if (!targetRunId) return
     const response = await api.auditExport(targetRunId, "markdown")
     downloadText(`audit-${targetRunId}.md`, response.content)
+  }
+
+  async function loadControlTimeline(): Promise<void> {
+    const targetRequestGroupId = selected?.requestGroupId ?? ""
+    const targetRunId = selected?.runId ?? runId.trim()
+    if (!targetRequestGroupId && !targetRunId) return
+    setControlLoading(true)
+    setControlError(null)
+    try {
+      const response = await api.controlTimeline({
+        ...(targetRequestGroupId ? { requestGroupId: targetRequestGroupId } : { runId: targetRunId }),
+        audience: controlAudience,
+        limit: 500,
+      })
+      setControlTimeline(response.timeline)
+    } catch (err) {
+      setControlError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
+  async function exportControl(): Promise<void> {
+    const targetRequestGroupId = selected?.requestGroupId ?? ""
+    const targetRunId = selected?.runId ?? runId.trim()
+    if (!targetRequestGroupId && !targetRunId) return
+    const response = await api.controlTimelineExport({
+      ...(targetRequestGroupId ? { requestGroupId: targetRequestGroupId } : { runId: targetRunId }),
+      audience: controlAudience,
+      format: "markdown",
+      limit: 1000,
+    })
+    downloadText(`control-timeline-${targetRequestGroupId || targetRunId}.md`, response.export.content)
   }
 
   async function cleanupOldAudit(): Promise<void> {
@@ -153,6 +190,9 @@ export function AuditPage() {
             </button>
             <button className="rounded-full border border-stone-200 px-4 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-40" onClick={() => void exportSelected()} disabled={!selected?.runId && !runId.trim()}>
               {text("타임라인 내보내기", "Export timeline")}
+            </button>
+            <button className="rounded-full border border-stone-200 px-4 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-40" onClick={() => void loadControlTimeline()} disabled={controlLoading || (!selected?.requestGroupId && !selected?.runId && !runId.trim())}>
+              {controlLoading ? text("흐름 확인 중", "Loading flow") : text("실행 흐름 확인", "Inspect flow")}
             </button>
             <button className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50" onClick={() => void cleanupOldAudit()}>
               {text("오래된 로그 정리", "Clean old logs")}
@@ -205,6 +245,57 @@ export function AuditPage() {
         </div>
 
         {error ? <div className="mt-6"><ErrorState title={text("감사 로그를 불러오지 못했습니다", "Failed to load audit logs")} description={error} /></div> : null}
+
+        <div className="mt-6 rounded-[1.75rem] border border-stone-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-stone-900">{text("실행 흐름 타임라인", "Control flow timeline")}</div>
+              <p className="mt-1 text-xs leading-5 text-stone-500">
+                {text("감사 로그와 분리된 실행 흐름입니다. 중복 도구 호출, 중복 답변, 전달 재시도, 복구 재진입을 확인합니다.", "Separate from audit logs. Inspect duplicate tools, duplicate answers, delivery retries, and recovery reentries.")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select className="rounded-full border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700" value={controlAudience} onChange={(event) => setControlAudience(event.target.value as ControlExportAudience)}>
+                <option value="user">{text("사용자 요약", "User summary")}</option>
+                <option value="developer">{text("개발자 진단", "Developer diagnostics")}</option>
+              </select>
+              <button className="rounded-full border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-40" onClick={() => void loadControlTimeline()} disabled={controlLoading || (!selected?.requestGroupId && !selected?.runId && !runId.trim())}>
+                {text("조회", "Load")}
+              </button>
+              <button className="rounded-full border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-40" onClick={() => void exportControl()} disabled={!controlTimeline || (!selected?.requestGroupId && !selected?.runId && !runId.trim())}>
+                {text("내보내기", "Export")}
+              </button>
+            </div>
+          </div>
+          {controlError ? <div className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{controlError}</div> : null}
+          {controlTimeline ? (
+            <div className="mt-4">
+              <div className="grid gap-2 text-xs sm:grid-cols-5">
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">total</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.total}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">tool duplicates</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateToolCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">answer duplicates</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateAnswerCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">delivery retries</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.deliveryRetryCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">recovery reentries</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.recoveryReentryCount}</div></div>
+              </div>
+              <div className="mt-4 max-h-72 space-y-2 overflow-auto">
+                {controlTimeline.events.length === 0 ? (
+                  <div className="rounded-2xl border border-stone-200 px-4 py-3 text-sm text-stone-500">{text("표시할 실행 흐름이 없습니다.", "No control flow events to show.")}</div>
+                ) : controlTimeline.events.map((event) => (
+                  <div key={event.id} className="rounded-2xl border border-stone-200 px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusClass(event.severity === "error" ? "failed" : event.severity === "warning" ? "partial" : "info")}`}>{event.severity}</span>
+                      <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold text-stone-600">{event.component}</span>
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">{event.eventType}</span>
+                      {event.duplicate ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">duplicate {event.duplicate.kind} #{event.duplicate.occurrence}</span> : null}
+                      <span className="ml-auto text-xs text-stone-500">{formatTime(event.at)}</span>
+                    </div>
+                    <div className="mt-2 font-semibold text-stone-900">{event.summary}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
           <div className="rounded-[1.75rem] border border-stone-200 bg-white p-4">

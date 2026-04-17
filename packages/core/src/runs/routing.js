@@ -1,5 +1,6 @@
 import { buildSetupDraft } from "../control-plane/index.js";
 import { resolveProviderForConnection, } from "../ai/index.js";
+import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js";
 export function resolveRunRoute(input) {
     return resolveRunRouteFromDraft(buildSetupDraft(), input);
 }
@@ -56,7 +57,7 @@ function resolveBackend(backend, _fallbackModel, _options) {
         providerId: resolved.providerId,
         model: resolved.model,
         provider: resolved.provider,
-        providerTrace: resolved.resolution.auditTrace,
+        providerTrace: attachCapabilityProfileToTrace(resolved.resolution.auditTrace, backend.capabilityMatrix ?? getProviderCapabilityMatrix({ connection })),
     };
 }
 function backendToConnection(backend) {

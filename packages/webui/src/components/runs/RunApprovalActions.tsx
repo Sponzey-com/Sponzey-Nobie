@@ -10,6 +10,7 @@ export function RunApprovalActions({ approval }: { approval: ApprovalRequest }) 
   function respond(decision: "allow_run" | "allow_once" | "deny") {
     sendWs({
       type: "approval.respond",
+      approvalId: approval.approvalId,
       runId: approval.runId,
       toolName: approval.toolName,
       decision,

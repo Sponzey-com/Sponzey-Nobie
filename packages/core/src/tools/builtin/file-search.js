@@ -156,7 +156,7 @@ function searchContentNode(searchPaths, query, caseSensitive, maxResults, exclud
 }
 export const fileSearchTool = {
     name: "file_search",
-    description: "파일명 또는 파일 내용을 검색합니다. 정규식 패턴 지원.",
+    description: "로컬 workspace의 파일명 또는 파일 내용을 검색합니다. 정규식 패턴 지원. 웹 검색 결과, 브라우저 HTML, 실시간 시세/날씨 값 추출에는 사용하지 마세요.",
     parameters: {
         type: "object",
         properties: {

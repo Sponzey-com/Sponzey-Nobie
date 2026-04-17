@@ -6,6 +6,10 @@ export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system"
 
 export interface NobieEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
+  "gateway.started": { host: string; port: number }
+  "channel.connected": { channel: "webui" | "telegram" | "slack" | "mqtt"; sessionId?: string | null; detail?: Record<string, unknown> }
+  "yeonjang.heartbeat": { extensionId: string; state?: string | null; message?: string | null; lastSeenAt: number; methodCount?: number; capabilityHash?: string | null }
+  "doctor.checked": { reportId: string; mode: "quick" | "full"; overallStatus: "ok" | "warning" | "blocked" | "unknown"; runtimeManifestId: string }
   "agent.start": { sessionId: string; runId: string }
   "agent.stream": { sessionId: string; runId: string; delta: string }
   "agent.artifact": {
@@ -41,14 +45,17 @@ export interface NobieEvents {
     durationMs: number
   }
   "approval.request": {
+    approvalId?: string
     runId: string
     toolName: string
     params: unknown
     kind?: ApprovalKind
     guidance?: string
+    expiresAt?: number | null
     resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
   }
   "approval.resolved": {
+    approvalId?: string
     runId: string
     decision: ApprovalDecision
     toolName: string

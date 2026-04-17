@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { insertMemoryEmbeddingIfMissing, insertMemoryItem, markMemoryIndexJobCompleted, markMemoryIndexJobFailed, recordMemoryAccessLog, searchMemoryItems, getRecentMemoryItems, getDb, storeMemoryDocument as storeMemoryDocumentRecord, } from "../db/index.js";
+import { insertMemoryEmbeddingIfMissing, insertMemoryItem, markMemoryIndexJobCompleted, markMemoryIndexJobDisabled, markMemoryIndexJobFailed, recordMemoryAccessLog, searchMemoryItems, getRecentMemoryItems, getDb, storeMemoryDocument as storeMemoryDocumentRecord, } from "../db/index.js";
 import { getEmbeddingProvider, encodeEmbedding } from "./embedding.js";
 import { getConfig } from "../config/index.js";
 import { searchMemoryChunks, searchMemoryItems2 } from "./search.js";
@@ -86,7 +86,7 @@ export async function storeMemoryDocument(params) {
 async function ensureChunkEmbeddings(documentId, chunkIds) {
     const provider = getEmbeddingProvider();
     if (provider.dimensions <= 0 || chunkIds.length === 0) {
-        markMemoryIndexJobCompleted(documentId);
+        markMemoryIndexJobDisabled(documentId, "embedding provider is not configured");
         return;
     }
     try {
@@ -191,10 +191,13 @@ export async function searchMemoryDetailed(query, limit = 5, filters) {
             ...(filters?.requestGroupId ? { requestGroupId: filters.requestGroupId } : {}),
             documentId: result.chunk.document_id,
             chunkId: result.chunkId,
+            sourceChecksum: result.chunk.source_checksum,
+            scope: result.chunk.scope,
             query,
             resultSource: result.source,
             score: result.score,
             latencyMs: result.latencyMs,
+            reason: "accepted_retrieval_candidate",
         });
     }
     appendMemorySearchLatencyEvents(filters?.runId, results);
@@ -276,6 +279,7 @@ export async function buildMemoryContext(params) {
             ...(params.includeSchedule ? { includeSchedule: params.includeSchedule } : {}),
             ...(params.includeArtifact ? { includeArtifact: params.includeArtifact } : {}),
             ...(params.includeDiagnostic ? { includeDiagnostic: params.includeDiagnostic } : {}),
+            ...(params.includeFlashFeedback ? { includeFlashFeedback: params.includeFlashFeedback } : {}),
         }),
         Promise.resolve(buildMemoryJournalContext(params.query, {
             limit: 6,

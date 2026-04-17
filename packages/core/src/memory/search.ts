@@ -3,7 +3,7 @@
  * using Reciprocal Rank Fusion (RRF).
  */
 
-import { searchMemoryItems, getDb, insertDiagnosticEvent, type DbMemoryChunkSearchRow, type DbMemoryItem, type MemorySearchFilters } from "../db/index.js"
+import { searchMemoryItems, getDb, insertDiagnosticEvent, markMemoryIndexJobStale, type DbMemoryChunkSearchRow, type DbMemoryItem, type MemorySearchFilters } from "../db/index.js"
 import { getEmbeddingProvider, decodeEmbedding, cosineSimilarity, type EmbeddingProvider } from "./embedding.js"
 
 const RRF_K = 60  // RRF constant
@@ -120,15 +120,29 @@ function isFlashFeedbackActive(metadata: Record<string, unknown>, nowMs = Date.n
   return typeof expiresAt !== "number" || expiresAt > nowMs
 }
 
-function isVisibleMemoryChunkRow(row: DbMemoryChunkSearchRow, filters?: MemorySearchFilters): boolean {
-  if (row.scope === "diagnostic" && !filters?.includeDiagnostic) return false
-  if (row.scope === "artifact" && !filters?.includeArtifact) return false
-  if (row.scope === "schedule" && !filters?.includeSchedule) return false
+function getMemoryVisibilityRejectionReason(row: DbMemoryChunkSearchRow, filters?: MemorySearchFilters): string | null {
+  if (row.scope === "diagnostic" && !filters?.includeDiagnostic) return "diagnostic_scope_excluded"
+  if (row.scope === "artifact" && !filters?.includeArtifact) return "artifact_scope_excluded"
+  if (row.scope === "schedule" && !filters?.includeSchedule) return "schedule_scope_excluded"
+  if (row.scope === "flash-feedback" && !filters?.includeFlashFeedback) return "flash_feedback_scope_excluded"
 
   const metadata = parseMetadataJson(row.document_metadata_json)
-  if (row.scope === "long-term" && !isLongTermReviewApproved(metadata)) return false
-  if (row.scope === "flash-feedback" && !isFlashFeedbackActive(metadata)) return false
-  return true
+  if (row.scope === "long-term" && !isLongTermReviewApproved(metadata)) return "long_term_review_pending"
+  if (row.scope === "flash-feedback" && !isFlashFeedbackActive(metadata)) return "flash_feedback_expired"
+  return null
+}
+
+function filterVisibleMemoryRows(rows: DbMemoryChunkSearchRow[], filters?: MemorySearchFilters): DbMemoryChunkSearchRow[] {
+  const visible: DbMemoryChunkSearchRow[] = []
+  for (const row of rows) {
+    const rejectionReason = getMemoryVisibilityRejectionReason(row, filters)
+    if (!rejectionReason) {
+      visible.push(row)
+      continue
+    }
+    recordMemoryScopeRejection(filters, row, rejectionReason)
+  }
+  return visible
 }
 
 function recordMemoryVectorDiagnostic(filters: MemorySearchFilters | undefined, diagnostic: MemoryVectorDiagnostic): void {
@@ -150,6 +164,29 @@ function recordMemoryVectorDiagnostic(filters: MemorySearchFilters | undefined, 
     })
   } catch {
     // Retrieval diagnostics must never affect memory search.
+  }
+}
+
+function recordMemoryScopeRejection(filters: MemorySearchFilters | undefined, row: DbMemoryChunkSearchRow, reason: string): void {
+  if (!filters?.runId && !filters?.sessionId && !filters?.requestGroupId) return
+  try {
+    insertDiagnosticEvent({
+      kind: "memory_scope_rejected",
+      summary: `memory chunk rejected by scope guard: ${reason}`,
+      ...(filters?.runId ? { runId: filters.runId } : {}),
+      ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
+      ...(filters?.requestGroupId ? { requestGroupId: filters.requestGroupId } : {}),
+      recoveryKey: `memory_scope:${reason}:${row.scope}`,
+      detail: {
+        reason,
+        scope: row.scope,
+        chunkId: row.id,
+        documentId: row.document_id,
+        sourceChecksum: row.source_checksum,
+      },
+    })
+  } catch {
+    // Scope diagnostics are best-effort.
   }
 }
 
@@ -251,8 +288,12 @@ function buildChunkScopeWhere(filters?: MemorySearchFilters, alias = "c"): { cla
   const values: string[] = []
 
   if (filters?.sessionId) {
-    clauses.push(`(${prefix}scope IN ('session', 'short-term', 'flash-feedback') AND ${prefix}owner_id = ?)`)
+    clauses.push(`(${prefix}scope IN ('session', 'short-term') AND ${prefix}owner_id = ?)`)
     values.push(filters.sessionId)
+    if (filters.includeFlashFeedback) {
+      clauses.push(`(${prefix}scope = 'flash-feedback' AND ${prefix}owner_id = ?)`)
+      values.push(filters.sessionId)
+    }
   }
 
   const taskOwners = uniqueValues([filters?.requestGroupId, filters?.runId])
@@ -296,7 +337,7 @@ function buildLegacyItemScopeWhere(filters?: {
   const values: string[] = []
 
   if (filters?.sessionId) {
-    clauses.push("(memory_scope IN ('session', 'short-term', 'flash-feedback') AND session_id = ?)")
+    clauses.push("(memory_scope IN ('session', 'short-term') AND session_id = ?)")
     values.push(filters.sessionId)
   }
 
@@ -347,7 +388,7 @@ export function ftsChunkSearch(query: string, limit: number, filters?: MemorySea
 
   const scope = buildChunkScopeWhere(filters)
   try {
-    const rows = getDb()
+    const rawRows = getDb()
       .prepare<unknown[], DbMemoryChunkSearchRow>(
         `SELECT c.*, d.title AS document_title, d.source_type AS document_source_type,
                 d.source_ref AS document_source_ref, d.metadata_json AS document_metadata_json,
@@ -362,8 +403,7 @@ export function ftsChunkSearch(query: string, limit: number, filters?: MemorySea
          LIMIT ?`,
       )
       .all(sanitized, ...scope.values, limit * 3)
-      .filter((row) => isVisibleMemoryChunkRow(row, filters))
-      .slice(0, limit)
+    const rows = filterVisibleMemoryRows(rawRows, filters).slice(0, limit)
     const results = mapChunkRows(rows, "fts", startedAt)
     recordRetrievalLatencyDiagnostic(filters, { source: "fts", latencyMs: results[0]?.latencyMs ?? 0, candidateCount: rows.length })
     return results
@@ -378,7 +418,7 @@ export function likeChunkSearch(query: string, limit: number, filters?: MemorySe
   if (!normalized) return []
   const pattern = `%${escapeLike(normalized)}%`
   const scope = buildChunkScopeWhere(filters)
-  const rows = getDb()
+  const rawRows = getDb()
     .prepare<unknown[], DbMemoryChunkSearchRow>(
       `SELECT c.*, d.title AS document_title, d.source_type AS document_source_type,
               d.source_ref AS document_source_ref, d.metadata_json AS document_metadata_json,
@@ -392,8 +432,7 @@ export function likeChunkSearch(query: string, limit: number, filters?: MemorySe
        LIMIT ?`,
     )
     .all(pattern, ...scope.values, limit * 3)
-    .filter((row) => isVisibleMemoryChunkRow(row, filters))
-    .slice(0, limit)
+  const rows = filterVisibleMemoryRows(rawRows, filters).slice(0, limit)
   const results = mapChunkRows(rows, "like", startedAt)
   recordRetrievalLatencyDiagnostic(filters, { source: "like", latencyMs: results[0]?.latencyMs ?? 0, candidateCount: rows.length })
   return results
@@ -476,7 +515,7 @@ export async function vectorChunkSearch(query: string, limit: number, filters?: 
   }
 
   const scope = buildChunkScopeWhere(filters)
-  const rows = getDb()
+  const rawRows = getDb()
     .prepare<unknown[], ChunkVectorRow>(
       `SELECT c.*, d.title AS document_title, d.source_type AS document_source_type,
               d.source_ref AS document_source_ref, d.metadata_json AS document_metadata_json,
@@ -489,10 +528,15 @@ export async function vectorChunkSearch(query: string, limit: number, filters?: 
          AND ${scope.clause}`,
     )
     .all(...scope.values)
-    .filter((row) => isVisibleMemoryChunkRow(row, filters))
+  const rows = filterVisibleMemoryRows(rawRows, filters) as ChunkVectorRow[]
 
   for (const diagnostic of diagnoseVectorEmbeddingRows(rows, provider)) {
     recordMemoryVectorDiagnostic(filters, diagnostic)
+  }
+  for (const row of rows) {
+    if (row.text_checksum !== row.checksum) {
+      markMemoryIndexJobStale(row.document_id, "stored memory embedding checksum is stale for the current chunk text")
+    }
   }
 
   const eligibleRows = rows.filter((row) =>

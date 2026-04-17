@@ -3,6 +3,8 @@ import { Browser, Builder, By, until } from "selenium-webdriver"
 import chrome from "selenium-webdriver/chrome.js"
 import edge from "selenium-webdriver/edge.js"
 import firefox from "selenium-webdriver/firefox.js"
+import { recordBrowserSearchEvidence } from "../../../runs/web-retrieval-policy.js"
+import { sanitizeUserFacingError } from "../../../runs/error-sanitizer.js"
 import type { SearchResult } from "./brave.js"
 
 export type { SearchResult }
@@ -20,14 +22,70 @@ interface BrowserSpec {
   label: string
 }
 
+interface SearchEvidenceContext {
+  runId?: string | null
+  requestGroupId?: string | null
+  directFetchSearch?: ((searchUrl: string, maxResults: number) => Promise<SearchResult[]>) | undefined
+  seleniumSearch?: ((query: string, maxResults: number) => Promise<SearchResult[]>) | undefined
+}
+
 export class DuckDuckGoSearchProvider {
+  constructor(private readonly evidenceContext: SearchEvidenceContext = {}) {}
+
   async search(
     query: string,
     options: { maxResults?: number | undefined },
   ): Promise<SearchResult[]> {
     const maxResults = options.maxResults ?? 10
-    return searchWithSelenium(query, maxResults)
+    const searchUrl = buildSearchUrl(query)
+    const directFetchSearch = this.evidenceContext.directFetchSearch ?? searchWithDirectFetch
+    const seleniumSearch = this.evidenceContext.seleniumSearch ?? searchWithSelenium
+
+    try {
+      return await seleniumSearch(query, maxResults)
+    } catch (seleniumError) {
+      try {
+        return await directFetchSearch(searchUrl, maxResults)
+      } catch (directError) {
+        const directMessage = sanitizeUserFacingError(directError instanceof Error ? directError.message : String(directError)).userMessage
+        const seleniumMessage = sanitizeUserFacingError(seleniumError instanceof Error ? seleniumError.message : String(seleniumError)).userMessage
+        recordBrowserSearchEvidence({
+          query,
+          url: searchUrl,
+          extractedText: `selenium_error=${seleniumMessage}\nduckduckgo_lite_error=${directMessage}`,
+          timeoutReason: "selenium_first_duckduckgo_lite_fallback_failed",
+          error: directError,
+          runId: this.evidenceContext.runId ?? null,
+          requestGroupId: this.evidenceContext.requestGroupId ?? null,
+        })
+        throw new Error(`DuckDuckGo search failed. browser=${seleniumMessage}; duckduckgo_lite=${directMessage}`)
+      }
+    }
   }
+}
+
+function buildSearchUrl(query: string): string {
+  return `${LITE_URL}?q=${encodeURIComponent(query)}&kl=wt-wt`
+}
+
+async function searchWithDirectFetch(searchUrl: string, maxResults: number): Promise<SearchResult[]> {
+  const response = await fetch(searchUrl, {
+    headers: {
+      "Accept": "text/html,application/xhtml+xml,*/*",
+      "User-Agent": USER_AGENT,
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(8_000),
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`)
+  }
+  const html = await response.text()
+  const results = parseWithCheerio(html, maxResults)
+  if (results.length === 0) {
+    throw new Error("no search results parsed")
+  }
+  return results
 }
 
 function parseWithCheerio(html: string, maxResults: number): SearchResult[] {
@@ -126,7 +184,7 @@ async function buildDriver(spec: BrowserSpec) {
 }
 
 async function searchWithSelenium(query: string, maxResults: number): Promise<SearchResult[]> {
-  const searchUrl = `${LITE_URL}?q=${encodeURIComponent(query)}&kl=wt-wt`
+  const searchUrl = buildSearchUrl(query)
   const errors: string[] = []
 
   for (const spec of getBrowserSpecs()) {

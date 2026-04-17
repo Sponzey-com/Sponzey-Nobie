@@ -29,12 +29,16 @@ export type ProviderBaseUrlClass =
 
 export interface ProviderAuditTrace {
   source: "config.ai.connection"
+  profileId?: string | undefined
   requestedProviderId: string
   providerId: string
   adapterType: ProviderAdapterType
   baseUrlClass: ProviderBaseUrlClass
   modelId: string
   authType: ProviderCredentialKind
+  credentialSourceKind?: ProviderCredentialKind | undefined
+  resolverPath?: string | undefined
+  endpointMismatch?: boolean | undefined
   configured: boolean
   healthy: boolean
   fallbackReason: string | null
@@ -417,12 +421,15 @@ export function shouldForceReasoningMode(providerId: string, model: string): boo
 export function formatProviderAuditTrace(trace: ProviderAuditTrace): string {
   return [
     "provider_trace",
+    ...(trace.profileId ? [`profile=${trace.profileId}`] : []),
     `provider=${trace.providerId || "none"}`,
     `requested=${trace.requestedProviderId || "none"}`,
+    ...(trace.resolverPath ? [`resolver=${trace.resolverPath}`] : []),
     `adapter=${trace.adapterType}`,
     `base=${trace.baseUrlClass}`,
     `model=${trace.modelId || "model_missing"}`,
-    `auth=${trace.authType}`,
+    `auth=${trace.credentialSourceKind ?? trace.authType}`,
+    ...(trace.endpointMismatch !== undefined ? [`endpoint_mismatch=${trace.endpointMismatch ? "true" : "false"}`] : []),
     `healthy=${trace.healthy ? "true" : "false"}`,
     ...(trace.fallbackReason ? [`reason=${trace.fallbackReason}`] : []),
   ].join(" ")

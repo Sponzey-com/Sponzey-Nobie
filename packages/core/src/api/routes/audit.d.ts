@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace";
+type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace" | "message_ledger" | "queue_backpressure";
 type AuditTimelineKind = "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion";
 interface AuditQuery {
     page?: string;

@@ -8,5 +8,9 @@ export declare const MIGRATIONS: Migration[];
 export declare function getAppliedMigrationVersions(db: Database.Database): number[];
 export declare function getPendingMigrationVersions(db: Database.Database): number[];
 export declare function createPreMigrationBackupIfNeeded(db: Database.Database, dbPath: string, backupDir: string): string | null;
-export declare function runMigrations(db: Database.Database): void;
+export interface RunMigrationsOptions {
+    backupSnapshotId?: string | null;
+    lockedBy?: string;
+}
+export declare function runMigrations(db: Database.Database, options?: RunMigrationsOptions): void;
 //# sourceMappingURL=migrations.d.ts.map

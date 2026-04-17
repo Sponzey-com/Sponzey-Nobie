@@ -194,6 +194,77 @@ WITH audit_events AS (
     reason_code AS stop_reason,
     sanitized_detail_json AS detail_json
   FROM decision_traces
+
+  UNION ALL
+
+  SELECT
+    id,
+    created_at AS at,
+    'message_ledger' AS kind,
+    CASE
+      WHEN lower(event_kind) LIKE '%ingress%' OR lower(event_kind) LIKE '%receipt%' THEN 'ingress'
+      WHEN lower(event_kind) LIKE '%approval%' THEN 'intake'
+      WHEN lower(event_kind) LIKE '%tool%' THEN 'tool'
+      WHEN lower(event_kind) LIKE '%delivery%' OR lower(event_kind) LIKE '%delivered%' OR lower(event_kind) LIKE '%artifact%' THEN 'delivery'
+      WHEN lower(event_kind) LIKE '%recovery%' THEN 'recovery'
+      WHEN lower(event_kind) LIKE '%final%' OR lower(event_kind) LIKE '%answer%' THEN 'completion'
+      ELSE 'contract'
+    END AS timeline_kind,
+    status,
+    summary,
+    channel AS source,
+    session_key AS session_id,
+    run_id,
+    request_group_id,
+    channel,
+    event_kind AS tool_name,
+    idempotency_key AS params,
+    delivery_key AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    CASE WHEN status IN ('failed', 'degraded', 'suppressed') THEN event_kind ELSE NULL END AS error_code,
+    NULL AS retry_count,
+    CASE WHEN status IN ('failed', 'degraded', 'suppressed', 'skipped') THEN event_kind ELSE NULL END AS stop_reason,
+    detail_json
+  FROM message_ledger
+
+  UNION ALL
+
+  SELECT
+    id,
+    created_at AS at,
+    'queue_backpressure' AS kind,
+    CASE
+      WHEN queue_name IN ('fast_receipt', 'interactive_run', 'schedule_tick') THEN 'intake'
+      WHEN queue_name IN ('tool_execution', 'web_browser') THEN 'tool'
+      WHEN queue_name = 'delivery' THEN 'delivery'
+      WHEN queue_name IN ('memory_index', 'diagnostic') THEN 'memory'
+      ELSE 'contract'
+    END AS timeline_kind,
+    CASE
+      WHEN event_kind IN ('dead_letter', 'rejected', 'timeout') THEN 'failed'
+      WHEN event_kind = 'retry_scheduled' THEN 'degraded'
+      WHEN event_kind = 'queued' THEN 'pending'
+      ELSE 'info'
+    END AS status,
+    queue_name || ': ' || action_taken AS summary,
+    'system' AS source,
+    NULL AS session_id,
+    run_id,
+    request_group_id,
+    NULL AS channel,
+    queue_name AS tool_name,
+    recovery_key AS params,
+    action_taken AS output,
+    NULL AS duration_ms,
+    0 AS approval_required,
+    NULL AS approved_by,
+    event_kind AS error_code,
+    retry_count,
+    CASE WHEN event_kind IN ('dead_letter', 'rejected', 'timeout') THEN action_taken ELSE NULL END AS stop_reason,
+    detail_json
+  FROM queue_backpressure_events
 )
 `;
 function parsePositiveInt(value, fallback, max) {
@@ -441,7 +512,8 @@ export function registerAuditRoute(app) {
         const auditLogs = db.prepare("DELETE FROM audit_logs WHERE timestamp < ?").run(before).changes;
         const diagnosticEvents = db.prepare("DELETE FROM diagnostic_events WHERE created_at < ?").run(before).changes;
         const decisionTraces = db.prepare("DELETE FROM decision_traces WHERE created_at < ?").run(before).changes;
-        return { ok: true, deleted: { auditLogs, diagnosticEvents, decisionTraces }, before };
+        const messageLedger = db.prepare("DELETE FROM message_ledger WHERE created_at < ?").run(before).changes;
+        return { ok: true, deleted: { auditLogs, diagnosticEvents, decisionTraces, messageLedger }, before };
     });
 }
 //# sourceMappingURL=audit.js.map

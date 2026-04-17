@@ -3,6 +3,7 @@ import {
   insertMemoryEmbeddingIfMissing,
   insertMemoryItem,
   markMemoryIndexJobCompleted,
+  markMemoryIndexJobDisabled,
   markMemoryIndexJobFailed,
   recordMemoryAccessLog,
   searchMemoryItems,
@@ -121,7 +122,7 @@ export async function storeMemoryDocument(params: StoreMemoryDocumentParams): Pr
 async function ensureChunkEmbeddings(documentId: string, chunkIds: string[]): Promise<void> {
   const provider = getEmbeddingProvider()
   if (provider.dimensions <= 0 || chunkIds.length === 0) {
-    markMemoryIndexJobCompleted(documentId)
+    markMemoryIndexJobDisabled(documentId, "embedding provider is not configured")
     return
   }
 
@@ -254,10 +255,13 @@ export async function searchMemoryDetailed(query: string, limit = 5, filters?: M
       ...(filters?.requestGroupId ? { requestGroupId: filters.requestGroupId } : {}),
       documentId: result.chunk.document_id,
       chunkId: result.chunkId,
+      sourceChecksum: result.chunk.source_checksum,
+      scope: result.chunk.scope,
       query,
       resultSource: result.source,
       score: result.score,
       latencyMs: result.latencyMs,
+      reason: "accepted_retrieval_candidate",
     })
   }
   appendMemorySearchLatencyEvents(filters?.runId, results)
@@ -353,6 +357,7 @@ export async function buildMemoryContext(params: {
   includeSchedule?: boolean
   includeArtifact?: boolean
   includeDiagnostic?: boolean
+  includeFlashFeedback?: boolean
   budget?: MemoryContextBudget
 }): Promise<string> {
   const memoryBudget = params.budget ?? {}
@@ -366,6 +371,7 @@ export async function buildMemoryContext(params: {
       ...(params.includeSchedule ? { includeSchedule: params.includeSchedule } : {}),
       ...(params.includeArtifact ? { includeArtifact: params.includeArtifact } : {}),
       ...(params.includeDiagnostic ? { includeDiagnostic: params.includeDiagnostic } : {}),
+      ...(params.includeFlashFeedback ? { includeFlashFeedback: params.includeFlashFeedback } : {}),
     }),
     Promise.resolve(buildMemoryJournalContext(params.query, {
       limit: 6,

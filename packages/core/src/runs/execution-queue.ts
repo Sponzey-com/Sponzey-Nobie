@@ -1,4 +1,5 @@
 import type { RootRun } from "./types.js"
+import { recordQueueBackpressureEvent } from "./queue-backpressure.js"
 
 interface ExecutionQueueLoggingDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
@@ -44,6 +45,14 @@ export function enqueueRequestGroupExecution(
       requestGroupId: params.requestGroupId,
     })
     appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_waiting")
+    recordQueueBackpressureEvent({
+      queueName: "interactive_run",
+      eventKind: "queued",
+      actionTaken: "wait_request_group_execution",
+      runId: params.runId,
+      requestGroupId: params.requestGroupId,
+      pendingCount: 1,
+    })
   }
 
   const next = (previous ?? Promise.resolve<RootRun | undefined>(undefined))
@@ -55,6 +64,13 @@ export function enqueueRequestGroupExecution(
     })
     .then(() => {
       appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_running")
+      recordQueueBackpressureEvent({
+        queueName: "interactive_run",
+        eventKind: "running",
+        actionTaken: "run_request_group_execution",
+        runId: params.runId,
+        requestGroupId: params.requestGroupId,
+      })
       return params.task()
     })
     .catch((error) => {
@@ -63,6 +79,14 @@ export function enqueueRequestGroupExecution(
         requestGroupId: params.requestGroupId,
         error: error instanceof Error ? error.message : String(error),
       })
+      recordQueueBackpressureEvent({
+        queueName: "interactive_run",
+        eventKind: "failed",
+        actionTaken: "request_group_execution_failed",
+        runId: params.runId,
+        requestGroupId: params.requestGroupId,
+        detail: { error: error instanceof Error ? error.message : String(error) },
+      })
       return dependencies.getRootRun(params.runId)
     })
     .finally(() => {
@@ -70,6 +94,13 @@ export function enqueueRequestGroupExecution(
         requestGroupExecutionQueues.delete(params.requestGroupId)
       }
       appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_released")
+      recordQueueBackpressureEvent({
+        queueName: "interactive_run",
+        eventKind: "completed",
+        actionTaken: "release_request_group_execution",
+        runId: params.runId,
+        requestGroupId: params.requestGroupId,
+      })
     })
 
   requestGroupExecutionQueues.set(params.requestGroupId, next)

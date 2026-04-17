@@ -31,13 +31,15 @@ function setupEventForwarding() {
     eventBus.on("run.cancelled", (e) => broadcast({ type: "run.cancelled", ...e }));
     eventBus.on("tool.before", (e) => broadcast({ type: "tool.before", ...e }));
     eventBus.on("tool.after", (e) => broadcast({ type: "tool.after", ...e }));
-    eventBus.on("approval.request", ({ runId, toolName, params, kind, guidance, resolve }) => {
-        registerApprovalFromWs(runId, resolve);
-        log.info(`approval.request registered for runId=${runId} tool=${toolName}`);
-        broadcast({ type: "approval.request", runId, toolName, params, kind, guidance });
+    eventBus.on("approval.request", ({ approvalId, runId, toolName, params, kind, guidance, expiresAt, resolve }) => {
+        registerApprovalFromWs(runId, resolve, approvalId);
+        log.info(`approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`);
+        broadcast({ type: "approval.request", approvalId, runId, toolName, params, kind, guidance, expiresAt });
     });
     eventBus.on("approval.resolved", (e) => {
         pendingApprovals.delete(e.runId);
+        if (e.approvalId)
+            pendingApprovals.delete(e.approvalId);
         log.info(`approval.resolved runId=${e.runId} decision=${e.decision} tool=${e.toolName}`);
         broadcast({ type: "approval.resolved", ...e });
     });
@@ -49,8 +51,10 @@ function setupEventForwarding() {
 }
 // Map of runId → approval resolve fn (for WebSocket-based approval)
 const pendingApprovals = new Map();
-export function registerApprovalFromWs(runId, resolve) {
+export function registerApprovalFromWs(runId, resolve, approvalId) {
     pendingApprovals.set(runId, resolve);
+    if (approvalId)
+        pendingApprovals.set(approvalId, resolve);
 }
 export function resolveWebUiApprovalResponse(msg) {
     if (msg.type !== "approval.respond" || !msg.runId)
@@ -61,11 +65,16 @@ export function resolveWebUiApprovalResponse(msg) {
         : msg.decision === "allow_once"
             ? "allow_once"
             : "deny";
-    const resolve = pendingApprovals.get(msg.runId);
+    const resolve = typeof msg.approvalId === "string"
+        ? pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId)
+        : pendingApprovals.get(msg.runId);
     if (resolve) {
         resolve(decision, "user");
         pendingApprovals.delete(msg.runId);
+        if (typeof msg.approvalId === "string")
+            pendingApprovals.delete(msg.approvalId);
         eventBus.emit("approval.resolved", {
+            ...(typeof msg.approvalId === "string" ? { approvalId: msg.approvalId } : {}),
             runId: msg.runId,
             decision,
             toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
@@ -76,6 +85,7 @@ export function resolveWebUiApprovalResponse(msg) {
     if (resolvePendingInteraction(msg.runId, decision)) {
         log.info(`approval.respond fallback resolved runId=${msg.runId} decision=${decision}`);
         eventBus.emit("approval.resolved", {
+            ...(typeof msg.approvalId === "string" ? { approvalId: msg.approvalId } : {}),
             runId: msg.runId,
             decision,
             toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",

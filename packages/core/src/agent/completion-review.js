@@ -2,6 +2,7 @@ import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/ind
 import { createLogger } from "../logger/index.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { buildUserProfilePromptContext } from "./profile-context.js";
+import { chatWithContextPreflight } from "../runs/context-preflight.js";
 const log = createLogger("agent:completion-review");
 export async function reviewTaskCompletion(params) {
     const originalRequest = params.originalRequest.trim();
@@ -31,7 +32,8 @@ export async function reviewTaskCompletion(params) {
         },
     ];
     let raw = "";
-    for await (const chunk of provider.chat({
+    for await (const chunk of chatWithContextPreflight({
+        provider,
         model,
         messages,
         system: [
@@ -41,6 +43,7 @@ export async function reviewTaskCompletion(params) {
         ].join("\n"),
         tools: [],
         signal: new AbortController().signal,
+        metadata: { operation: "completion_review" },
     })) {
         if (chunk.type === "text_delta")
             raw += chunk.delta;
@@ -76,6 +79,8 @@ export function buildCompletionReviewSystemPrompt() {
         "- Choose complete when the original request is already satisfied.",
         "- Choose followup when work is still missing but the system can continue autonomously without user input.",
         "- Choose ask_user when required information is missing, the request is ambiguous, or the assistant explicitly needs user confirmation.",
+        "- If the original request asked for a current/latest externally retrievable value and the latest result only says the value was not extracted, cannot be confirmed, or asks whether to continue checking, choose followup instead of complete or ask_user.",
+        "- For that followup, instruct the next pass to use a different concrete source path such as web_fetch on an already discovered result URL or a known direct source URL. Do not repeat only the same web_search query.",
         "- If you choose followup, provide a focused followup_prompt that tells the next agent pass exactly what remains to be done.",
         "- The followup_prompt must avoid repeating already completed work.",
         "- Be conservative: do not request followup unless something concrete is still missing.",

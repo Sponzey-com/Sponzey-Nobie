@@ -270,7 +270,7 @@ export function looksLikePlainTextInformationRequest(value: string): boolean {
   const normalized = value.trim()
   if (!normalized) return false
 
-  const asksForInformation = /(?:날씨|기온|온도|습도|바람|강수|뉴스|소식|환율|주가|시세|검색|조회|알려|어때|뭐야|몇|weather|temperature|humidity|wind|forecast|news|exchange rate|stock|price|current|today|now)/iu.test(normalized)
+  const asksForInformation = /(?:날씨|기온|온도|습도|바람|강수|뉴스|소식|환율|주가|시세|증시|지수|코스피|코스닥|나스닥|검색|조회|알려|어때|뭐야|얼마|몇|weather|temperature|humidity|wind|forecast|news|exchange rate|stock|price|market|index|quote|kospi|kosdaq|nasdaq|current|today|now)/iu.test(normalized)
   if (!asksForInformation) return false
 
   const requestsArtifact = /(?:화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영|파일|문서|첨부|이미지|다운로드|보고서\s*파일|screenshot|screen\s*capture|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture|file|attachment|image|download)/iu.test(normalized)

@@ -24,8 +24,11 @@ export interface ChunkDeliveryReceipt {
     textDeliveries?: SuccessfulTextDelivery[];
 }
 export interface DeliveryOutcome {
+    mode?: "reply" | "direct_artifact" | "channel_message" | "none";
     directArtifactDeliveryRequested: boolean;
     hasSuccessfulArtifactDelivery: boolean;
+    hasSuccessfulTextDelivery?: boolean;
+    textDeliverySatisfied?: boolean;
     deliverySatisfied: boolean;
     deliverySummary?: string;
     requiresDirectArtifactRecovery: boolean;
@@ -91,6 +94,7 @@ export declare function resendArtifact<T>(params: Omit<ArtifactDeliveryOnceParam
 export declare function resolveDeliveryOutcome(params: {
     wantsDirectArtifactDelivery: boolean;
     deliveries: SuccessfulFileDelivery[];
+    textDeliveries?: SuccessfulTextDelivery[];
 }): DeliveryOutcome;
 export declare function emitAssistantTextDelivery(params: {
     runId: string;

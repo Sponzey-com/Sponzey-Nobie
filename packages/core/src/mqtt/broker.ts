@@ -3,6 +3,7 @@ import aedesPackage, { type Client } from "aedes"
 import { getConfig } from "../config/index.js"
 import { createLogger } from "../logger/index.js"
 import type { MqttConfig } from "../config/types.js"
+import { eventBus } from "../events/index.js"
 
 interface AedesBroker {
   connectedClients: number
@@ -184,6 +185,14 @@ function releaseExtensionClaimsForClient(clientId: string | null | undefined): v
           message: "MQTT connection disconnected.",
           lastSeenAt: Date.now(),
         })
+        eventBus.emit("yeonjang.heartbeat", {
+          extensionId,
+          state: "offline",
+          message: "MQTT connection disconnected.",
+          lastSeenAt: Date.now(),
+          methodCount: current.methods.length,
+          capabilityHash: current.capabilityHash ?? null,
+        })
       }
     }
   }
@@ -326,6 +335,14 @@ function updateExtensionSnapshotFromPayload(
   }
 
   extensionSnapshots.set(extensionId, next)
+  eventBus.emit("yeonjang.heartbeat", {
+    extensionId,
+    state: next.state,
+    message: next.message,
+    lastSeenAt: next.lastSeenAt,
+    methodCount: next.methods.length,
+    capabilityHash: next.capabilityHash ?? null,
+  })
 }
 
 function readString(payload: Record<string, unknown> | null, ...keys: string[]): string | null {

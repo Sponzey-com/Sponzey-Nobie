@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { parseCompletionReviewResult } from "../packages/core/src/agent/completion-review.ts"
+import { buildCompletionReviewSystemPrompt, parseCompletionReviewResult } from "../packages/core/src/agent/completion-review.ts"
 
 describe("parseCompletionReviewResult", () => {
   it("parses followup review results", () => {
@@ -28,5 +28,14 @@ describe("parseCompletionReviewResult", () => {
     expect(parsed?.status).toBe("ask_user")
     expect(parsed?.userMessage).toBe("어느 파일을 수정해야 하나요?")
     expect(parsed?.remainingItems).toEqual(["대상 파일 확인"])
+  })
+
+  it("instructs current value misses to continue with concrete fetch sources", () => {
+    const prompt = buildCompletionReviewSystemPrompt()
+
+    expect(prompt).toContain("current/latest externally retrievable value")
+    expect(prompt).toContain("choose followup")
+    expect(prompt).toContain("web_fetch")
+    expect(prompt).toContain("Do not repeat only the same web_search query")
   })
 })
