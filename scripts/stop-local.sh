@@ -9,6 +9,9 @@ WEBUI_PID_FILE="$PIDS_DIR/nobie-webui.pid"
 
 GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
 WEBUI_PORT="${NOBIE_WEBUI_PORT:-5173}"
+LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
+GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
+WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
 
 read_pid() {
   local pid_file="$1"
@@ -48,6 +51,18 @@ pid_belongs_to_repo() {
   [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   [[ "$cmd" == *"$ROOT_DIR"* ]] && return 0
   return 1
+}
+
+can_use_launchctl() {
+  [[ "${NOBIE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
+    && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
+    && command -v launchctl >/dev/null 2>&1
+}
+
+remove_launchctl_job() {
+  local label="$1"
+  can_use_launchctl || return 0
+  launchctl remove "$label" >/dev/null 2>&1 || true
 }
 
 pids_for_port() {
@@ -149,6 +164,9 @@ stop_repo_owned_port_orphans() {
     fi
   done <<< "$pids"
 }
+
+remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
+remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
 
 stop_process "WebUI" "$WEBUI_PID_FILE"
 stop_process "Gateway" "$GATEWAY_PID_FILE"

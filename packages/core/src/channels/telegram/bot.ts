@@ -4,6 +4,7 @@ import { eventBus } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
+import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
 import { isAllowedUser } from "./auth.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
 import { TypingIndicator } from "./typing.js"
@@ -143,8 +144,7 @@ export class TelegramChannel {
 
       const activeSessionStatus = this.getSessionStatus(sessionKey)
       if (activeSessionStatus.running && replyToMessageId === undefined) {
-        log.warn(`Session ${sessionKey} already running, ignoring message`)
-        return
+        log.info(`Session ${sessionKey} already running; accepting message as a new independent run`)
       }
 
       // Determine message text and handle file attachments
@@ -260,6 +260,24 @@ export class TelegramChannel {
         this.addSessionRun(sessionKey, started.runId)
         if (receipt.text.trim()) {
           const receiptMessageId = await responder.sendReceipt(receipt.text)
+          const startedRun = getRootRun(startedRunId)
+          recordMessageLedgerEvent({
+            runId: startedRunId,
+            requestGroupId: startedRun?.requestGroupId ?? startedRunId,
+            sessionKey: sessionId,
+            threadKey: sessionKey,
+            channel: "telegram",
+            eventKind: "fast_receipt_sent",
+            deliveryKey: `telegram:receipt:${chatId}:${threadId ?? "main"}:${receiptMessageId}`,
+            idempotencyKey: `telegram:receipt:${startedRunId}:${receiptMessageId}`,
+            status: "sent",
+            summary: "Telegram 접수 메시지를 전송했습니다.",
+            detail: {
+              chatId: String(chatId),
+              ...(threadId !== undefined ? { threadId } : {}),
+              messageId: receiptMessageId,
+            },
+          })
           this.recordOutgoingMessageRef({
             sessionId,
             runId: startedRunId,
@@ -315,6 +333,7 @@ export class TelegramChannel {
         onStart: () => {
           startupSettled = true
           setTelegramRuntimeError(null)
+          eventBus.emit("channel.connected", { channel: "telegram", detail: { transport: "long_polling" } })
           resolve()
         },
       })

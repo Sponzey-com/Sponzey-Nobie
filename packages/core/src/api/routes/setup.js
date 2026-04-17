@@ -53,7 +53,7 @@ export function registerSetupRoute(app) {
                     ...(credentials.oauthAuthFilePath ? { oauthAuthFilePath: credentials.oauthAuthFilePath } : {}),
                 },
             }).auditTrace;
-            return { ok: true, ...result, providerResolution };
+            return { ok: true, ...result, providerResolution, capabilityMatrix: result.capabilityMatrix };
         }
         catch (error) {
             const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error));

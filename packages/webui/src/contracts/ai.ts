@@ -20,6 +20,43 @@ export interface AIProviderCredentialField {
   required: boolean
 }
 
+export type ProviderCapabilityStatus = "supported" | "unsupported" | "warning" | "unknown"
+
+export interface ProviderCapabilityItem {
+  status: ProviderCapabilityStatus
+  detail: string
+}
+
+export interface ProviderCapabilityMatrix {
+  profileId: string
+  providerId: string
+  adapterType: string
+  authType: string
+  baseUrlClass: string
+  endpoint: string
+  modelId: string
+  chatCompletions: ProviderCapabilityItem
+  responsesApi: ProviderCapabilityItem
+  streaming: ProviderCapabilityItem
+  toolCalling: ProviderCapabilityItem
+  jsonSchemaOutput: ProviderCapabilityItem
+  embeddings: ProviderCapabilityItem
+  modelListing: ProviderCapabilityItem
+  imageInput: ProviderCapabilityItem
+  imageOutput: ProviderCapabilityItem
+  contextWindow: ProviderCapabilityItem & { tokens: number | null }
+  authRefresh: ProviderCapabilityItem
+  endpointMismatch: ProviderCapabilityItem
+  createdAt: string
+  expiresAt: string
+  lastCheckResult: {
+    status: "ok" | "warning" | "failed" | "not_checked"
+    checkedAt: string | null
+    message: string
+    sourceUrl: string | null
+  }
+}
+
 export interface AIBackendCard {
   id: string
   label: string
@@ -36,6 +73,7 @@ export interface AIBackendCard {
   tags: string[]
   reason?: string
   endpoint?: string
+  capabilityMatrix?: ProviderCapabilityMatrix
 }
 
 export interface NewAIBackendInput {

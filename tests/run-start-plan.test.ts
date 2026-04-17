@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 
 function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan>[1]>) {
@@ -40,6 +41,11 @@ describe("build start plan", () => {
       runId: "run-1",
       taskProfile: "coding",
       targetId: "provider:openai",
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-1",
+        source: "webui",
+        targetId: "provider:openai",
+      }),
     }, dependencies)
 
     expect(result.requestGroupId).toBe("group-prev")
@@ -80,6 +86,11 @@ describe("build start plan", () => {
       message: "continue the work",
       sessionId: "session-2",
       runId: "run-2",
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-2",
+        source: "webui",
+        targetId: "run:ambiguous",
+      }),
     }, dependencies)
 
     expect(result.reconnectNeedsClarification).toBe(true)
@@ -132,6 +143,54 @@ describe("build start plan", () => {
 
     expect(compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("run-4")
+    expect(result.isRootRequest).toBe(true)
+  })
+
+  it("does not compare raw standalone questions against active runs before intake contracts exist", async () => {
+    const compareRequestContinuation = vi.fn(async () => ({
+      kind: "clarify",
+      decisionSource: "contract_ai",
+      reason: "should not be used for raw standalone questions",
+    } as const))
+    const dependencies = createDependencies({ compareRequestContinuation })
+
+    const result = await buildStartPlan({
+      message: "오늘 나스닥 지수 얼마야?",
+      sessionId: "session-raw-question",
+      runId: "run-raw-question",
+      source: "telegram",
+    }, dependencies)
+
+    expect(dependencies.listActiveSessionRequestGroups).not.toHaveBeenCalled()
+    expect(compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.reconnectNeedsClarification).toBe(false)
+    expect(result.requestGroupId).toBe("run-raw-question")
+    expect(result.isRootRequest).toBe(true)
+  })
+
+  it("skips active-run reconnect comparison for standalone local execution requests", async () => {
+    const compareRequestContinuation = vi.fn(async () => ({
+      kind: "clarify",
+      decisionSource: "contract_ai",
+      reason: "should not be used for screen capture",
+    } as const))
+    const dependencies = createDependencies({ compareRequestContinuation })
+
+    const result = await buildStartPlan({
+      message: "메인 화면 캡쳐해서 보여줘",
+      sessionId: "session-capture",
+      runId: "run-capture",
+      source: "telegram",
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-capture",
+        source: "telegram",
+        targetId: "display:main",
+      }),
+    }, dependencies)
+
+    expect(compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.reconnectNeedsClarification).toBe(false)
+    expect(result.requestGroupId).toBe("run-capture")
     expect(result.isRootRequest).toBe(true)
   })
 

@@ -4,9 +4,30 @@ import { insertAuditLog, upsertTaskContinuity } from "../db/index.js"
 import { createLogger } from "../logger/index.js"
 import { getConfig } from "../config/index.js"
 import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus } from "../runs/store.js"
+import {
+  consumeApprovalRegistryDecision,
+  createApprovalRegistryRequest,
+  expireApprovalRegistryRequest,
+  resolveApprovalRegistryDecision,
+} from "../runs/approval-registry.js"
+import { evaluateAndRecordToolPolicy, sanitizePolicyDenialForUser } from "../security/tool-policy.js"
+import { isToolExtensionSelectable } from "../security/extension-governance.js"
+import {
+  buildToolCallIdempotencyKey,
+  findDuplicateToolCall,
+  getAllowRepeatReason,
+  isDedupeTargetTool,
+  recordMessageLedgerEvent,
+} from "../runs/message-ledger.js"
+import { buildWebRetrievalPolicyDecision } from "../runs/web-retrieval-policy.js"
 import type { AgentTool, AnyTool, ToolContext, ToolResult } from "./types.js"
 
 const log = createLogger("tools:dispatcher")
+
+interface ToolApprovalGrant {
+  decision: ApprovalDecision
+  approvalId?: string
+}
 
 function rememberApprovalContinuity(runId: string, params: {
   pendingApprovals?: string[]
@@ -80,7 +101,7 @@ export class ToolDispatcher {
   private tools = new Map<string, AnyTool>()
   private runApprovalScopes = new Map<string, "allow_run">()
   private runSingleApprovalScopes = new Set<string>()
-  private pendingInteractionKinds = new Map<string, { toolName: string; kind: ApprovalKind; stepKey: "awaiting_approval" | "awaiting_user" }>()
+  private pendingInteractionKinds = new Map<string, { approvalId?: string; toolName: string; kind: ApprovalKind; stepKey: "awaiting_approval" | "awaiting_user" }>()
 
   constructor() {
     eventBus.on("run.completed", ({ run }) => {
@@ -131,8 +152,9 @@ export class ToolDispatcher {
     this.tools.delete(name)
   }
 
-  getAll(): AnyTool[] {
-    return [...this.tools.values()]
+  getAll(options: { includeIsolated?: boolean } = {}): AnyTool[] {
+    const tools = [...this.tools.values()]
+    return options.includeIsolated ? tools : tools.filter((tool) => isToolExtensionSelectable(tool.name))
   }
 
   get(name: string): AnyTool | undefined {
@@ -173,6 +195,82 @@ export class ToolDispatcher {
       }
     }
 
+    if (!isToolExtensionSelectable(name)) {
+      return {
+        success: false,
+        output: `${name} 확장 기능은 반복 실패로 격리되어 현재 자동 선택과 실행에서 제외되었습니다. Doctor에서 extension.registry 상태를 확인하세요.`,
+        error: "EXTENSION_ISOLATED",
+        details: { kind: "extension_isolated", toolName: name },
+      }
+    }
+
+    const requestGroupId = ctx.requestGroupId ?? getRootRun(ctx.runId)?.requestGroupId ?? ctx.runId
+    const webRetrievalPolicy = buildWebRetrievalPolicyDecision({
+      toolName: name,
+      params,
+      userMessage: ctx.userMessage,
+    })
+    const idempotencyParams = webRetrievalPolicy?.canonicalParams ?? params
+    const allowRepeatReason = getAllowRepeatReason(params)
+    const toolIdempotencyBase = buildToolCallIdempotencyKey({
+      runId: ctx.runId,
+      requestGroupId,
+      toolName: name,
+      params: idempotencyParams,
+    })
+    const executionLedgerKey = allowRepeatReason ? `${toolIdempotencyBase}:repeat:${Date.now()}` : toolIdempotencyBase
+    if (isDedupeTargetTool(name) && !allowRepeatReason) {
+      const duplicate = findDuplicateToolCall({ runId: ctx.runId, requestGroupId, toolName: name, params: idempotencyParams })
+      if (duplicate) {
+        const result: ToolResult = {
+          success: true,
+          output: webRetrievalPolicy
+            ? `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일한 웹 검색/수집 근거가 이미 실행됐습니다. dedupeKey=${webRetrievalPolicy.dedupeKey}`
+            : `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일 파라미터로 이미 실행된 도구입니다.`,
+          details: {
+            kind: "duplicate_tool_suppressed",
+            previousEventId: duplicate.id,
+            previousStatus: duplicate.status,
+            ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+          },
+        }
+        recordMessageLedgerEvent({
+          runId: ctx.runId,
+          requestGroupId,
+          sessionKey: ctx.sessionId,
+          channel: ctx.source,
+          eventKind: "tool_skipped",
+          idempotencyKey: `${toolIdempotencyBase}:skipped:${Date.now()}`,
+          status: "skipped",
+          summary: `${name} duplicate suppressed`,
+          detail: {
+            toolName: name,
+            previousEventId: duplicate.id,
+            previousStatus: duplicate.status,
+            ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+          },
+        })
+        this.writeAudit(ctx, name, params, result, 0, false, "system:dedupe")
+        return result
+      }
+    }
+
+    recordMessageLedgerEvent({
+      runId: ctx.runId,
+      requestGroupId,
+      sessionKey: ctx.sessionId,
+      channel: ctx.source,
+      eventKind: "tool_started",
+      idempotencyKey: `${executionLedgerKey}:started`,
+      status: "started",
+      summary: `${name} started`,
+      detail: {
+        toolName: name,
+        ...(allowRepeatReason ? { allowRepeatReason } : {}),
+        ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+      },
+    })
+
     eventBus.emit("tool.before", {
       sessionId: ctx.sessionId,
       runId: ctx.runId,
@@ -184,24 +282,79 @@ export class ToolDispatcher {
     let result: ToolResult
     const approvalRequired = this.shouldRequireApproval(tool)
     let approvedBy: string | undefined
+    let approvalGrant: ToolApprovalGrant | undefined
 
     if (approvalRequired) {
-      const decision = await this.requestApproval(name, params, ctx)
-      if (decision === "deny") {
+      approvalGrant = await this.requestApproval(name, params, ctx, tool.riskLevel)
+      if (approvalGrant.decision === "deny") {
         result = {
           success: false,
           output: `Execution of "${name}" was denied. The current request was cancelled.`,
           error: "denied",
         }
+        recordMessageLedgerEvent({
+          runId: ctx.runId,
+          requestGroupId,
+          sessionKey: ctx.sessionId,
+          channel: ctx.source,
+          eventKind: "tool_failed",
+          idempotencyKey: `${executionLedgerKey}:result`,
+          status: "failed",
+          summary: `${name} denied`,
+          detail: { toolName: name, error: "denied" },
+        })
         this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, "user:deny")
         return result
       }
 
-      approvedBy = decision === "allow_run" ? "user:allow_run" : "user:allow_once"
+      approvedBy = approvalGrant.decision === "allow_run" ? "user:allow_run" : "user:allow_once"
+    }
+
+    const policyDecision = evaluateAndRecordToolPolicy({
+      toolName: name,
+      riskLevel: tool.riskLevel,
+      params,
+      ctx,
+      ...(approvalGrant?.approvalId ? { approvalId: approvalGrant.approvalId } : {}),
+      ...(approvalGrant?.decision && approvalGrant.decision !== "deny" ? { approvalDecision: approvalGrant.decision } : {}),
+    })
+    if (policyDecision.decision === "deny") {
+      result = {
+        success: false,
+        output: sanitizePolicyDenialForUser(policyDecision),
+        error: policyDecision.reasonCode,
+        details: {
+          kind: "tool_policy_denied",
+          decisionId: policyDecision.id,
+          reasonCode: policyDecision.reasonCode,
+        },
+      }
+      recordMessageLedgerEvent({
+        runId: ctx.runId,
+        requestGroupId,
+        sessionKey: ctx.sessionId,
+        channel: ctx.source,
+        eventKind: "tool_failed",
+        idempotencyKey: `${executionLedgerKey}:policy-denied`,
+        status: "failed",
+        summary: `${name} policy denied`,
+        detail: { toolName: name, reasonCode: policyDecision.reasonCode, decisionId: policyDecision.id },
+      })
+      this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, approvedBy ?? "policy:deny")
+      return result
     }
 
     try {
       result = await tool.execute(params, ctx)
+      if (webRetrievalPolicy) {
+        result = {
+          ...result,
+          details: {
+            ...(result.details && typeof result.details === "object" && !Array.isArray(result.details) ? result.details as Record<string, unknown> : { rawDetails: result.details ?? null }),
+            webRetrievalPolicy,
+          },
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       log.error(`Tool "${name}" threw an error: ${msg}`)
@@ -219,6 +372,22 @@ export class ToolDispatcher {
     })
 
     this.writeAudit(ctx, name, params, result, durationMs, approvalRequired, approvedBy)
+    recordMessageLedgerEvent({
+      runId: ctx.runId,
+      requestGroupId,
+      sessionKey: ctx.sessionId,
+      channel: ctx.source,
+      eventKind: result.success ? "tool_done" : "tool_failed",
+      idempotencyKey: `${executionLedgerKey}:result`,
+      status: result.success ? "succeeded" : "failed",
+      summary: result.success ? `${name} done` : `${name} failed`,
+      detail: {
+        toolName: name,
+        durationMs,
+        ...(result.error ? { error: result.error } : {}),
+        ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+      },
+    })
 
     return result
   }
@@ -246,14 +415,35 @@ export class ToolDispatcher {
     toolName: string,
     params: Record<string, unknown>,
     ctx: ToolContext,
-  ): Promise<ApprovalDecision> {
+    riskLevel: string,
+  ): Promise<ToolApprovalGrant> {
     const ownerKey = this.getApprovalOwnerKey(ctx.runId)
     if (this.runApprovalScopes.get(ownerKey) === "allow_run") {
-      return Promise.resolve("allow_run")
+      recordMessageLedgerEvent({
+        runId: ctx.runId,
+        requestGroupId: ctx.requestGroupId ?? ownerKey,
+        sessionKey: ctx.sessionId,
+        channel: ctx.source,
+        eventKind: "approval_received",
+        idempotencyKey: `approval:${ctx.runId}:${toolName}:allow_run:scope`,
+        status: "succeeded",
+        summary: `${toolName} 기존 전체 승인 사용`,
+      })
+      return Promise.resolve({ decision: "allow_run" })
     }
     if (this.runSingleApprovalScopes.has(ownerKey)) {
       this.runSingleApprovalScopes.delete(ownerKey)
-      return Promise.resolve("allow_once")
+      recordMessageLedgerEvent({
+        runId: ctx.runId,
+        requestGroupId: ctx.requestGroupId ?? ownerKey,
+        sessionKey: ctx.sessionId,
+        channel: ctx.source,
+        eventKind: "approval_received",
+        idempotencyKey: `approval:${ctx.runId}:${toolName}:allow_once:scope`,
+        status: "succeeded",
+        summary: `${toolName} 기존 1회 승인 사용`,
+      })
+      return Promise.resolve({ decision: "allow_once" })
     }
 
     const kind: ApprovalKind = SCREEN_INTERACTION_TOOL_NAMES.has(toolName) ? "screen_confirmation" : "approval"
@@ -263,19 +453,46 @@ export class ToolDispatcher {
         ? `${toolName} 실행 전 화면 준비 확인을 기다립니다.`
         : `${toolName} 실행 승인을 기다립니다.`
     const guidance = this.getInteractionGuidance(kind, toolName, params)
+    const timeoutMs = kind === "screen_confirmation" ? null : 60_000
+    const expiresAt = timeoutMs === null ? null : Date.now() + timeoutMs
+    const approval = createApprovalRegistryRequest({
+      runId: ctx.runId,
+      requestGroupId: ctx.requestGroupId ?? ownerKey,
+      channel: ctx.source,
+      toolName,
+      riskLevel,
+      kind,
+      params,
+      expiresAt,
+      metadata: {
+        sessionId: ctx.sessionId,
+        workDir: ctx.workDir,
+      },
+    })
 
-    log.info(`requesting ${kind} runId=${ctx.runId} tool=${toolName}`)
-    this.pendingInteractionKinds.set(ctx.runId, { toolName, kind, stepKey })
+    log.info(`requesting ${kind} approvalId=${approval.id} runId=${ctx.runId} tool=${toolName}`)
+    recordMessageLedgerEvent({
+      runId: ctx.runId,
+      requestGroupId: ctx.requestGroupId ?? ownerKey,
+      sessionKey: ctx.sessionId,
+      channel: ctx.source,
+      eventKind: "approval_requested",
+      idempotencyKey: `approval:${approval.id}:requested`,
+      status: "pending",
+      summary,
+      detail: { approvalId: approval.id, toolName, kind, expiresAt },
+    })
+    this.pendingInteractionKinds.set(ctx.runId, { approvalId: approval.id, toolName, kind, stepKey })
     appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`)
     setRunStepStatus(ctx.runId, stepKey, "running", summary)
     updateRunStatus(ctx.runId, stepKey, summary, true)
     rememberApprovalContinuity(ctx.runId, {
-      pendingApprovals: [`${kind}:${toolName}`],
+      pendingApprovals: [`${kind}:${toolName}:${approval.id}`],
       status: kind === "screen_confirmation" ? "awaiting_user" : "awaiting_approval",
       lastGoodState: summary,
     })
 
-    return new Promise<ApprovalDecision>((resolve) => {
+    return new Promise<ToolApprovalGrant>((resolve) => {
       let resolved = false
       const timeout =
         kind === "screen_confirmation"
@@ -283,33 +500,59 @@ export class ToolDispatcher {
           : setTimeout(() => {
               if (!resolved) {
                 resolved = true
-                log.warn(`Approval timeout for tool "${toolName}" — denying by default`)
+                log.warn(`Approval timeout for approvalId=${approval.id} tool="${toolName}"`)
+                expireApprovalRegistryRequest(approval.id)
                 this.finishApproval(ctx.runId, toolName, "deny", "timeout")
-                eventBus.emit("approval.resolved", { runId: ctx.runId, decision: "deny", toolName, kind, reason: "timeout" })
-                resolve("deny")
+                eventBus.emit("approval.resolved", { approvalId: approval.id, runId: ctx.runId, decision: "deny", toolName, kind, reason: "timeout" })
+                resolve({ decision: "deny", approvalId: approval.id })
               }
-            }, 60_000)
+            }, timeoutMs ?? 60_000)
 
       ctx.signal.addEventListener("abort", () => {
         if (resolved) return
         resolved = true
         if (timeout) clearTimeout(timeout)
+        resolveApprovalRegistryDecision({
+          approvalId: approval.id,
+          decision: "deny",
+          decisionBy: "system",
+          decisionSource: "abort",
+        })
         this.pendingInteractionKinds.delete(ctx.runId)
-        resolve("deny")
+        resolve({ decision: "deny", approvalId: approval.id })
       }, { once: true })
 
       eventBus.emit("approval.request", {
+        approvalId: approval.id,
         runId: ctx.runId,
         toolName,
         params,
         kind,
         ...(guidance ? { guidance } : {}),
+        expiresAt,
         resolve: (decision, reason = "user") => {
           if (!resolved) {
+            const decisionResult = resolveApprovalRegistryDecision({
+              approvalId: approval.id,
+              decision,
+              decisionBy: reason === "user" ? ctx.source : "system",
+              decisionSource: reason,
+            })
+            if (!decisionResult.accepted) {
+              log.warn(`Ignoring stale approval decision approvalId=${approval.id} status=${decisionResult.status}`)
+              return
+            }
+            if (decision !== "deny") {
+              const consumed = consumeApprovalRegistryDecision(approval.id)
+              if (!consumed.accepted) {
+                log.warn(`Approved decision was not consumable approvalId=${approval.id} status=${consumed.status}`)
+                return
+              }
+            }
             resolved = true
             if (timeout) clearTimeout(timeout)
             this.finishApproval(ctx.runId, toolName, decision, reason)
-            resolve(decision)
+            resolve({ decision, approvalId: approval.id })
           }
         },
       })
@@ -319,16 +562,30 @@ export class ToolDispatcher {
   resolvePendingInteraction(runId: string, decision: ApprovalDecision): boolean {
     const interaction = this.pendingInteractionKinds.get(runId)
     if (!interaction) return false
+    if (interaction.approvalId) {
+      const decisionResult = resolveApprovalRegistryDecision({
+        approvalId: interaction.approvalId,
+        decision,
+        decisionBy: "webui",
+        decisionSource: "user",
+      })
+      if (!decisionResult.accepted) return false
+      if (decision !== "deny") {
+        const consumed = consumeApprovalRegistryDecision(interaction.approvalId)
+        if (!consumed.accepted) return false
+      }
+    }
     this.finishApproval(runId, interaction.toolName, decision)
     return true
   }
 
-  listPendingInteractions(): Array<{ runId: string; toolName: string; kind: ApprovalKind; guidance?: string }> {
+  listPendingInteractions(): Array<{ approvalId?: string; runId: string; toolName: string; kind: ApprovalKind; guidance?: string }> {
     return [...this.pendingInteractionKinds.entries()].map(([runId, interaction]) => {
       const guidance = this.getInteractionGuidance(interaction.kind, interaction.toolName, {})
       if (guidance) {
         return {
           runId,
+          ...(interaction.approvalId ? { approvalId: interaction.approvalId } : {}),
           toolName: interaction.toolName,
           kind: interaction.kind,
           guidance,
@@ -337,6 +594,7 @@ export class ToolDispatcher {
 
       return {
         runId,
+        ...(interaction.approvalId ? { approvalId: interaction.approvalId } : {}),
         toolName: interaction.toolName,
         kind: interaction.kind,
       }
@@ -355,6 +613,15 @@ export class ToolDispatcher {
     const ownerKey = this.getApprovalOwnerKey(runId)
     this.pendingInteractionKinds.delete(runId)
     log.info(`finish approval runId=${runId} tool=${toolName} decision=${decision} kind=${kind}`)
+    recordMessageLedgerEvent({
+      runId,
+      requestGroupId: ownerKey,
+      eventKind: "approval_received",
+      idempotencyKey: `approval:${runId}:${toolName}:${decision}:${reason}`,
+      status: decision === "deny" ? "failed" : "succeeded",
+      summary: `${toolName} approval ${decision}`,
+      detail: { toolName, kind, decision, reason },
+    })
 
     if (decision === "allow_run") {
       this.runApprovalScopes.set(ownerKey, "allow_run")

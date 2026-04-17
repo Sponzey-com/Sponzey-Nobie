@@ -3,12 +3,27 @@ export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/in
 export { generateAuthToken } from "./config/auth.js";
 export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
 export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath } from "./version.js";
+// Runtime manifest and diagnostics
+export { buildRuntimeManifest, getLastRuntimeManifest, refreshRuntimeManifest } from "./runtime/manifest.js";
+export { buildRolloutSafetySnapshot, ensureRolloutSafetyTables, getFeatureFlag, listFeatureFlags, recordRolloutEvidence, recordShadowCompare, setFeatureFlagMode, shouldReadCompatibilityPath, shouldShadowWrite, shouldUseNewPath, } from "./runtime/rollout-safety.js";
+export { MIGRATION_ROLLBACK_RUNBOOK_REF, assertMigrationWriteAllowed, beginMigrationLock, checkMigrationWriteGuard, ensureMigrationSafetyTables, failMigrationLock, getActiveMigrationLock, getLatestMigrationLock, releaseMigrationLock, updateMigrationLockPhase, verifyMigrationState, } from "./db/migration-safety.js";
+export { lastDoctorReportExists, runDoctor, writeDoctorReportArtifact } from "./diagnostics/doctor.js";
+export { buildReleaseNoteEvidenceSummary, parseTaskMetadata, runPlanDriftCheck } from "./diagnostics/plan-drift.js";
+export { attachCapabilityProfileToTrace, buildProviderProfileId, clearProviderCapabilityCache, getProviderCapabilityMatrix, resolveEmbeddingProviderResolutionSnapshot, } from "./ai/capabilities.js";
 // Release package
 export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, writeReleasePackage, } from "./release/package.js";
 // Logger
 export { createLogger, logger } from "./logger/index.js";
 // Events
 export { eventBus } from "./events/index.js";
+// Control-plane timeline
+export { exportControlTimeline, getControlTimeline, installControlEventProjection, recordControlEvent, recordControlEventFromLedger, resetControlEventProjectionForTest, } from "./control-plane/timeline.js";
+// Message ledger and delivery finalization
+export { buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildMessageLedgerTextDeliveryKey, buildToolCallIdempotencyKey, finalizeDeliveryForRun, findDuplicateToolCall, getAllowRepeatReason, hashLedgerValue, isDedupeTargetTool, recordMessageLedgerEvent, stableStringify, } from "./runs/message-ledger.js";
+export { DEFAULT_QUEUE_BUDGETS, QUEUE_NAMES, QueueBackpressureError, buildBackpressureUserMessage, buildQueueBackpressureSnapshot, enqueueBackpressureTask, recordQueueBackpressureEvent, recordRetryBudgetAttempt, resetQueueBackpressureState, resetRetryBudget, } from "./runs/queue-backpressure.js";
+export { ContextPreflightBlockedError, chatWithContextPreflight, estimateContextTokens, estimateMessagesTokens, prepareChatContext, pruneMessagesForContext, runContextPreflight, } from "./runs/context-preflight.js";
+export { activateExtensionWithTrustPolicy, buildExtensionRegistrySnapshot, createExtensionRollbackPoint, extensionIdsForToolName, getExtensionFailureState, isToolExtensionSelectable, listExtensionFailureStates, recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure, resetExtensionFailureState, rollbackExtensionToPoint, runExtensionHookSafely, } from "./security/extension-governance.js";
+export { buildAnswerDirective, buildWebRetrievalPolicyDecision, evaluateSourceReliabilityGuard, extractSourceTimestampFromHtml, recordBrowserSearchEvidence, } from "./runs/web-retrieval-policy.js";
 // Contracts
 export { CANONICAL_JSON_POLICY, CONTRACT_SCHEMA_VERSION, buildDeliveryDedupeKey, buildDeliveryKey, buildDeliveryProjection, buildPayloadHash, buildScheduleIdentityKey, buildScheduleIdentityProjection, buildSchedulePayloadProjection, buildToolTargetProjection, formatContractValidationFailureForUser, stableContractHash, toCanonicalJson, validateDeliveryContract, validateIntentContract, validateScheduleContract, validateToolTargetContract, } from "./contracts/index.js";
 export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js";
@@ -67,6 +82,7 @@ import { startServer as _startServer } from "./api/server.js";
 import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js";
 import { startMqttBroker as _startMqttBroker, stopMqttBroker as _stopMqttBroker } from "./mqtt/broker.js";
 import { startChannels as _startChannels } from "./channels/index.js";
+import { refreshRuntimeManifest as _refreshRuntimeManifest } from "./runtime/manifest.js";
 export function bootstrap() {
     _loadConfig();
     _getDb();
@@ -106,6 +122,12 @@ export function bootstrap() {
         }
     }
     _registerBuiltinTools();
+    try {
+        _refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false });
+    }
+    catch {
+        // Runtime manifest failures are surfaced through doctor checks; bootstrap must stay alive.
+    }
 }
 export async function bootstrapRuntime() {
     bootstrap();

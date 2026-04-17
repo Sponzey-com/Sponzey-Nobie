@@ -4,7 +4,9 @@ import { randomBytes } from "node:crypto"
 import JSON5 from "json5"
 import { getConfig, PATHS, reloadConfig, type NobieConfig } from "../config/index.js"
 import { resetAIProviderCache } from "../ai/index.js"
+import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { DEFAULT_CONFIG } from "../config/types.js"
+import type { AIConnectionConfig } from "../config/types.js"
 import {
   buildMcpSetupDraft,
   buildSkillsSetupDraft,
@@ -15,6 +17,7 @@ import {
 } from "./setup-extensions.js"
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
 import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js"
+import { resetEmbeddingProvider } from "../memory/embedding.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js"
@@ -68,6 +71,7 @@ export interface AIBackendCard {
   tags: string[]
   reason?: string
   endpoint?: string
+  capabilityMatrix?: ProviderCapabilityMatrix
 }
 
 export interface RoutingProfile {
@@ -269,6 +273,7 @@ function writeRawConfig(raw: JsonObject): void {
   writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
   reloadConfig()
   resetAIProviderCache()
+  resetEmbeddingProvider()
 }
 
 function defaultSetupState(): SetupState {
@@ -364,6 +369,33 @@ function hasConfiguredConnection(config: NobieConfig, providerType: AIBackendCar
   return false
 }
 
+function connectionForBackend(
+  backend: Pick<AIBackendCard, "providerType" | "authMode" | "credentials" | "defaultModel" | "endpoint">,
+): AIConnectionConfig {
+  return {
+    provider: backend.providerType,
+    model: backend.defaultModel,
+    ...(backend.endpoint?.trim() ? { endpoint: backend.endpoint.trim() } : {}),
+    auth: {
+      mode: backend.authMode ?? "api_key",
+      ...(backend.credentials.apiKey?.trim() ? { apiKey: backend.credentials.apiKey.trim() } : {}),
+      ...(backend.credentials.username?.trim() ? { username: backend.credentials.username.trim() } : {}),
+      ...(backend.credentials.password ? { password: backend.credentials.password } : {}),
+      ...(backend.credentials.oauthAuthFilePath?.trim() ? { oauthAuthFilePath: backend.credentials.oauthAuthFilePath.trim() } : {}),
+    },
+  }
+}
+
+function withBackendCapability(config: NobieConfig, backend: AIBackendCard): AIBackendCard {
+  return {
+    ...backend,
+    capabilityMatrix: getProviderCapabilityMatrix({
+      connection: connectionForBackend(backend),
+      memory: config.memory,
+    }),
+  }
+}
+
 function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
   const connection = config.ai.connection
   const openaiAuthMode = isActiveConnection(config, "openai")
@@ -378,7 +410,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
   const ollamaEndpoint = isActiveConnection(config, "ollama") ? connection.endpoint?.trim() || undefined : undefined
   const llamaEndpoint = isActiveConnection(config, "llama") ? connection.endpoint?.trim() || undefined : undefined
 
-  return [
+  const backends: AIBackendCard[] = [
     {
       id: "provider:openai",
       label: "범용 원격 추론",
@@ -468,6 +500,7 @@ function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
       tags: ["coding", "operations", "review", "general"],
     },
   ]
+  return backends.map((backend) => withBackendCapability(config, backend))
 }
 
 function normalizeBackendProviderType(value: unknown): AIBackendCard["providerType"] | undefined {
@@ -605,7 +638,7 @@ export function buildSetupDraft(): SetupDraft {
         summary: "",
         tags: ["general"],
         ...(config.ai.connection.endpoint?.trim() ? { endpoint: config.ai.connection.endpoint.trim() } : {}),
-      }]
+      }].map((backend) => withBackendCapability(config, backend))
     : []
   const activeTarget = [...defaults, ...customBackends].find((backend) => backend.enabled)?.id
 
@@ -1193,10 +1226,36 @@ export async function discoverModelsFromEndpoint(
   providerType: AIBackendCard["providerType"] = "custom",
   credentials: AIBackendCard["credentials"] = {},
   authMode: AIBackendCard["authMode"] = "api_key",
-): Promise<{ models: string[]; sourceUrl: string }> {
+): Promise<{ models: string[]; sourceUrl: string; capabilityMatrix: ProviderCapabilityMatrix }> {
   const normalized = normalizeEndpoint(endpoint)
   if (!normalized) {
     throw new Error("엔드포인트를 먼저 입력하세요.")
+  }
+
+  const buildCheckedCapability = (status: ProviderCapabilityMatrix["lastCheckResult"]["status"], message: string, sourceUrl: string | null, models: string[]) => {
+    const matrix = getProviderCapabilityMatrix({
+      connection: {
+        provider: providerType,
+        model: models[0] ?? "",
+        endpoint: normalized,
+        auth: {
+          mode: authMode,
+          ...(credentials.apiKey?.trim() ? { apiKey: credentials.apiKey.trim() } : {}),
+          ...(credentials.username?.trim() ? { username: credentials.username.trim() } : {}),
+          ...(credentials.password ? { password: credentials.password } : {}),
+          ...(credentials.oauthAuthFilePath?.trim() ? { oauthAuthFilePath: credentials.oauthAuthFilePath.trim() } : {}),
+        },
+      },
+      memory: getConfig().memory,
+      forceRefresh: true,
+      checkResult: {
+        status,
+        checkedAt: new Date().toISOString(),
+        message,
+        sourceUrl,
+      },
+    })
+    return matrix
   }
 
   if (providerType === "openai" && authMode === "chatgpt_oauth") {
@@ -1233,11 +1292,13 @@ export async function discoverModelsFromEndpoint(
     return {
       models: [...OPENAI_CODEX_KNOWN_MODELS],
       sourceUrl,
+      capabilityMatrix: buildCheckedCapability("ok", "ChatGPT OAuth Codex responses probe succeeded.", sourceUrl, [...OPENAI_CODEX_KNOWN_MODELS]),
     }
   }
 
   const headers = await createDiscoveryHeaders(providerType, credentials, authMode)
   const errors: string[] = []
+  let unsupportedModelListingUrl: string | null = null
   for (const candidate of candidateUrls(normalized, providerType)) {
     try {
       const response = await fetch(candidate, {
@@ -1245,17 +1306,35 @@ export async function discoverModelsFromEndpoint(
         headers,
       })
       if (!response.ok) {
+        if ([404, 405, 501].includes(response.status) && !unsupportedModelListingUrl) unsupportedModelListingUrl = candidate
         errors.push(`${candidate}: ${response.status} ${response.statusText}`)
         continue
       }
       const payload = await response.json()
       const models = parseCommonModels(payload)
       if (models.length > 0) {
-        return { models, sourceUrl: candidate }
+        return {
+          models,
+          sourceUrl: candidate,
+          capabilityMatrix: buildCheckedCapability("ok", `모델 ${models.length}개를 확인했습니다.`, candidate, models),
+        }
       }
       errors.push(`${candidate}: 모델 없음`)
     } catch (error) {
       errors.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  if (unsupportedModelListingUrl && (providerType === "custom" || providerType === "llama" || providerType === "openai")) {
+    return {
+      models: [],
+      sourceUrl: unsupportedModelListingUrl,
+      capabilityMatrix: buildCheckedCapability(
+        "warning",
+        "모델 목록 endpoint는 지원하지 않지만 OpenAI-compatible chat endpoint일 수 있어 설정을 차단하지 않습니다.",
+        unsupportedModelListingUrl,
+        [],
+      ),
     }
   }
 

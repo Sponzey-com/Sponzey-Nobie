@@ -5,6 +5,8 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { buildBackupTargetInventory, buildMigrationPreflightReport, type MigrationPreflightReport } from "../config/backup-rehearsal.js"
 import { getWorkspaceRootPath, getCurrentAppVersion, getCurrentDisplayVersion } from "../version.js"
 import { loadPromptSourceRegistry, type PromptSourceMetadata } from "../memory/nobie-md.js"
+import { buildRolloutSafetySnapshot, type FeatureFlagMode } from "../runtime/rollout-safety.js"
+import { runPlanDriftCheck, type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -59,6 +61,9 @@ export interface ReleaseManifest {
   }
   updatePreflight: ReleaseUpdatePreflightReport
   migrationPreflight: Pick<MigrationPreflightReport, "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions">
+  featureFlags: ReleaseFeatureFlagState[]
+  rolloutEvidence: ReleaseRolloutEvidenceSummary
+  planEvidence: PlanDriftReleaseNoteEvidence
   pipeline: ReleasePipelinePlan
   rollback: ReleaseRollbackRunbook
   cleanInstallChecklist: ReleaseChecklistItem[]
@@ -71,6 +76,20 @@ export interface ReleasePipelineStep {
   required: boolean
   smoke: boolean
   description: string
+}
+
+export interface ReleaseFeatureFlagState {
+  featureKey: string
+  mode: FeatureFlagMode
+  compatibilityMode: boolean
+  source: "default" | "db"
+}
+
+export interface ReleaseRolloutEvidenceSummary {
+  mismatchCount: number
+  warningCount: number
+  blockedCount: number
+  latest: Array<{ featureKey: string; stage: string; status: string; summary: string }>
 }
 
 export interface ReleasePipelinePlan {
@@ -141,6 +160,8 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
   const backupInventory = safeBackupInventory(rootDir)
   const migrationPreflight = buildMigrationPreflightReport({ providerConfigSane: true, canWrite: true })
   const updatePreflight = buildReleaseUpdatePreflightReport({ rootDir, targetPlatforms, promptSourceCount: promptSources.length })
+  const rollout = buildRolloutSafetySnapshot()
+  const planDrift = safePlanDrift(rootDir)
 
   return {
     kind: "nobie.release.package",
@@ -171,6 +192,19 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
       latestSchemaVersion: migrationPreflight.latestSchemaVersion,
       pendingVersions: migrationPreflight.pendingVersions,
     },
+    featureFlags: rollout.featureFlags.map((flag) => ({
+      featureKey: flag.featureKey,
+      mode: flag.mode,
+      compatibilityMode: flag.compatibilityMode,
+      source: flag.source,
+    })),
+    rolloutEvidence: {
+      mismatchCount: rollout.shadowCompare.mismatchCount,
+      warningCount: rollout.evidence.warningCount,
+      blockedCount: rollout.evidence.blockedCount,
+      latest: rollout.evidence.latest.map((item) => ({ featureKey: item.feature_key, stage: item.stage, status: item.status, summary: item.summary })),
+    },
+    planEvidence: planDrift.releaseNoteEvidence,
     pipeline: buildReleasePipelinePlan({ targetPlatforms }),
     rollback: buildReleaseRollbackRunbook(),
     cleanInstallChecklist: buildCleanMachineInstallChecklist(),
@@ -240,6 +274,8 @@ export function buildReleasePipelinePlan(input: { targetPlatforms?: ReleaseTarge
   if (targetPlatforms.has("windows")) steps.push(step("yeonjang-windows", "Yeonjang Windows package", ["scripts\\build-yeonjang-windows.bat"], false, true, "Build Windows tray executable on Windows or a Windows build host."))
   if (targetPlatforms.has("linux")) steps.push(step("yeonjang-linux", "Yeonjang Linux package", ["cargo", "build", "--manifest-path", "Yeonjang/Cargo.toml", "--release"], false, true, "Build Linux Yeonjang binary on a Linux build host."))
   steps.push(step("package-manifest", "Package manifest and checksums", ["node", "scripts/release-package.mjs"], true, false, "Copy release payload entries and generate manifest.json plus SHA256SUMS."))
+  steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."))
+  steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."))
   steps.push(step("live-smoke-gate", "Live smoke gate", ["pnpm", "exec", "nobie", "smoke", "channels", "--live"], false, true, "Run at least one real channel live smoke before publishing a public release."))
   return { dryRunSafe: true, order: steps.map((item) => item.id), steps }
 }
@@ -293,6 +329,8 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
     { id: "state-dir", required: true, description: "A writable NOBIE_STATE_DIR or default ~/.nobie state directory exists." },
     { id: "prompt-seed", required: true, description: "Prompt seed files are present and prompt source registry loads without sys_prop dependency." },
     { id: "db-migration", required: true, description: "Initial DB migration applies cleanly from an empty database." },
+    { id: "feature-flags", required: true, description: "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout." },
+    { id: "plan-drift", required: true, description: "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings." },
     { id: "webui", required: true, description: "WebUI static files are served and /api/status returns displayVersion." },
     { id: "yeonjang-macos", required: false, description: "macOS Yeonjang app enters tray and publishes MQTT capability status." },
     { id: "yeonjang-windows", required: false, description: "Windows Yeonjang starts without console and screen capture smoke passes." },
@@ -465,6 +503,28 @@ function safeBackupInventory(rootDir: string): { included: number; excluded: num
     }
   } catch {
     return { included: 0, excluded: 0, promptSources: 0, logicalCoverage: [] }
+  }
+}
+
+function safePlanDrift(rootDir: string): { releaseNoteEvidence: PlanDriftReleaseNoteEvidence } {
+  try {
+    return { releaseNoteEvidence: runPlanDriftCheck({ rootDir }).releaseNoteEvidence }
+  } catch {
+    return {
+      releaseNoteEvidence: {
+        verifiedTasks: [],
+        manualOnlyTasks: [],
+        unverifiedTasks: [],
+        pendingTasks: [],
+        warningsByCode: {
+          phase_plan_missing: 0,
+          missing_required_section: 0,
+          completed_without_evidence: 0,
+          missing_referenced_path: 0,
+          plan_outdated_claim: 0,
+        },
+      },
+    }
   }
 }
 

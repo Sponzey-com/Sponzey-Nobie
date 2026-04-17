@@ -1,6 +1,9 @@
 import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interruptUnfinishedScheduleRunsOnStartup, upsertTaskContinuity } from "../db/index.js"
+import { assertMigrationWriteAllowed } from "../db/migration-safety.js"
 import { eventBus } from "../events/index.js"
+import { getLastRuntimeManifest, refreshRuntimeManifest } from "../runtime/manifest.js"
 import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js"
+import { finalizeDeliveryForRun, recordMessageLedgerEvent } from "./message-ledger.js"
 import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun, type StartupRecoveryRunSummary } from "./startup-recovery.js"
 import type { RootRun, RunContextMode, RunEvent, RunScope, RunStatus, RunStep, RunStepStatus, TaskProfile } from "./types.js"
 import { DEFAULT_RUN_STEPS } from "./types.js"
@@ -33,6 +36,7 @@ interface RootRunRow {
   created_at: number
   updated_at: number
   prompt_source_snapshot: string | null
+  runtime_manifest_id: string | null
 }
 
 interface RunStepRow {
@@ -182,6 +186,7 @@ function parsePromptSourceSnapshot(value: string | null): Record<string, unknown
 
 function hydrateRun(row: RootRunRow): RootRun {
   const db = getDb()
+  assertMigrationWriteAllowed(db, "run.create")
   const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot)
   const steps = db
     .prepare<[string], RunStepRow>(
@@ -219,6 +224,7 @@ function hydrateRun(row: RootRunRow): RootRun {
     contextMode: row.context_mode ?? "full",
     delegationTurnCount: row.delegation_turn_count,
     maxDelegationTurns: row.max_delegation_turns,
+    ...(row.runtime_manifest_id ? { runtimeManifestId: row.runtime_manifest_id } : {}),
     currentStepKey: row.current_step_key,
     currentStepIndex: row.current_step_index,
     totalSteps: row.total_steps,
@@ -638,6 +644,15 @@ export function createRootRun(params: {
   const taskProfile = params.taskProfile ?? "general_chat"
   const summary = params.prompt.trim()
   const title = truncateTitle(params.prompt)
+  const runtimeManifestId = (() => {
+    const current = getLastRuntimeManifest()
+    if (current) return current.id
+    try {
+      return refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false }).id
+    } catch {
+      return null
+    }
+  })()
   const db = getDb()
   const identifiers = resolveRunFlowIdentifiers({
     runId: params.id,
@@ -655,8 +670,8 @@ export function createRootRun(params: {
         title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
-        total_steps, summary, can_cancel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        total_steps, summary, can_cancel, runtime_manifest_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       params.id,
       params.sessionId,
@@ -682,6 +697,7 @@ export function createRootRun(params: {
       totalSteps,
       summary,
       1,
+      runtimeManifestId,
       now,
       now,
     )
@@ -715,6 +731,21 @@ export function createRootRun(params: {
   tx()
 
   const run = getRootRun(params.id)!
+  recordMessageLedgerEvent({
+    runId: params.id,
+    requestGroupId: run.requestGroupId,
+    sessionKey: params.sessionId,
+    channel: params.source,
+    eventKind: "ingress_received",
+    idempotencyKey: `ingress:${params.id}`,
+    status: "received",
+    summary: "요청을 수신했습니다.",
+    detail: {
+      source: params.source,
+      promptLength: params.prompt.length,
+      taskProfile,
+    },
+  })
   eventBus.emit("run.created", { run })
   eventBus.emit("run.progress", { run })
   return run
@@ -744,25 +775,41 @@ export function updateRunStatus(runId: string, status: RunStatus, summary?: stri
   const now = Date.now()
   const current = getRootRun(runId)
   if (!current) return undefined
-  const transition = canTransitionRunStatus(current.status, status)
+  let nextStatus = status
+  let nextSummary = summary ?? current.summary
+  let nextCanCancel = canCancel ?? current.canCancel
+
+  if ((status === "failed" || status === "cancelled" || status === "interrupted") && current.status !== "completed") {
+    const finalizer = finalizeDeliveryForRun({
+      runId,
+      requestedStatus: status,
+      ...(summary !== undefined ? { requestedSummary: summary } : {}),
+    })
+    if (finalizer.shouldProtectDeliveredAnswer && finalizer.runStatus) {
+      nextStatus = finalizer.runStatus
+      nextSummary = finalizer.summary ?? nextSummary
+      nextCanCancel = false
+      appendRunEvent(runId, `delivery_finalizer:${finalizer.outcome}`)
+    }
+  }
+
+  const transition = canTransitionRunStatus(current.status, nextStatus)
   if (!transition.allowed) {
     appendRunEvent(runId, `status_transition_blocked:${transition.reason}`)
     return current
   }
-  const nextSummary = summary ?? current.summary
-  const nextCanCancel = canCancel ?? current.canCancel
 
   getDb()
     .prepare(`UPDATE root_runs SET status = ?, summary = ?, can_cancel = ?, updated_at = ? WHERE id = ?`)
-    .run(status, nextSummary, nextCanCancel ? 1 : 0, now, runId)
+    .run(nextStatus, nextSummary, nextCanCancel ? 1 : 0, now, runId)
 
   const run = getRootRun(runId)
   if (run) {
     eventBus.emit("run.status", { run })
     eventBus.emit("run.progress", { run })
-    if (status === "completed") eventBus.emit("run.completed", { run })
-    if (status === "failed") eventBus.emit("run.failed", { run })
-    if (status === "cancelled") eventBus.emit("run.cancelled", { run })
+    if (nextStatus === "completed") eventBus.emit("run.completed", { run })
+    if (nextStatus === "failed") eventBus.emit("run.failed", { run })
+    if (nextStatus === "cancelled") eventBus.emit("run.cancelled", { run })
   }
   return run
 }

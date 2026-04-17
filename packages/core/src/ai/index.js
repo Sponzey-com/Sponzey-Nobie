@@ -335,12 +335,15 @@ export function shouldForceReasoningMode(providerId, model) {
 export function formatProviderAuditTrace(trace) {
     return [
         "provider_trace",
+        ...(trace.profileId ? [`profile=${trace.profileId}`] : []),
         `provider=${trace.providerId || "none"}`,
         `requested=${trace.requestedProviderId || "none"}`,
+        ...(trace.resolverPath ? [`resolver=${trace.resolverPath}`] : []),
         `adapter=${trace.adapterType}`,
         `base=${trace.baseUrlClass}`,
         `model=${trace.modelId || "model_missing"}`,
-        `auth=${trace.authType}`,
+        `auth=${trace.credentialSourceKind ?? trace.authType}`,
+        ...(trace.endpointMismatch !== undefined ? [`endpoint_mismatch=${trace.endpointMismatch ? "true" : "false"}`] : []),
         `healthy=${trace.healthy ? "true" : "false"}`,
         ...(trace.fallbackReason ? [`reason=${trace.fallbackReason}`] : []),
     ].join(" ");

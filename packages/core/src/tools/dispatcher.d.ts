@@ -13,7 +13,9 @@ export declare class ToolDispatcher {
     grantRunSingleApproval(runId: string): void;
     registerAll(tools: AnyTool[]): void;
     unregister(name: string): void;
-    getAll(): AnyTool[];
+    getAll(options?: {
+        includeIsolated?: boolean;
+    }): AnyTool[];
     get(name: string): AnyTool | undefined;
     isToolAvailableForSource(tool: AnyTool, source: ToolContext["source"]): boolean;
     dispatch(name: string, params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
@@ -22,6 +24,7 @@ export declare class ToolDispatcher {
     private requestApproval;
     resolvePendingInteraction(runId: string, decision: ApprovalDecision): boolean;
     listPendingInteractions(): Array<{
+        approvalId?: string;
         runId: string;
         toolName: string;
         kind: ApprovalKind;

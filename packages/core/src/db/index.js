@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { PATHS } from "../config/index.js";
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
+import { assertMigrationWriteAllowed } from "./migration-safety.js";
 import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
 let _db = null;
 export function getDb() {
@@ -14,9 +15,10 @@ export function getDb() {
     _db.pragma("journal_mode = WAL");
     _db.pragma("foreign_keys = ON");
     _db.pragma("synchronous = NORMAL");
-    if (dbExisted)
-        createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"));
-    runMigrations(_db);
+    const backupSnapshotId = dbExisted
+        ? createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"))
+        : null;
+    runMigrations(_db, { backupSnapshotId, lockedBy: `gateway:${process.pid}` });
     return _db;
 }
 export function closeDb() {
@@ -102,6 +104,143 @@ export function insertDecisionTrace(input) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, input.runId ?? null, input.requestGroupId ?? null, input.sessionId ?? null, input.source ?? null, input.channel ?? null, input.decisionKind, input.reasonCode, input.inputContractIds ? JSON.stringify(input.inputContractIds) : null, input.receiptIds ? JSON.stringify(input.receiptIds) : null, toJsonOrNull(input.detail), input.createdAt ?? Date.now());
     return id;
+}
+export function insertMessageLedgerEvent(input) {
+    const id = input.id ?? crypto.randomUUID();
+    try {
+        getDb()
+            .prepare(`INSERT INTO message_ledger
+         (id, run_id, request_group_id, session_key, thread_key, channel, event_kind,
+          delivery_key, idempotency_key, status, summary, detail_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(id, input.runId ?? null, input.requestGroupId ?? null, input.sessionKey ?? null, input.threadKey ?? null, input.channel, input.eventKind, input.deliveryKey ?? null, input.idempotencyKey ?? null, input.status, input.summary, toJsonOrNull(input.detail), input.createdAt ?? Date.now());
+        return id;
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("unique") && message.includes("message_ledger")) {
+            return null;
+        }
+        throw error;
+    }
+}
+export function getMessageLedgerEventByIdempotencyKey(idempotencyKey) {
+    return getDb()
+        .prepare(`SELECT *
+       FROM message_ledger
+       WHERE idempotency_key = ?
+       ORDER BY created_at DESC
+       LIMIT 1`)
+        .get(idempotencyKey);
+}
+export function insertQueueBackpressureEvent(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO queue_backpressure_events
+       (id, created_at, queue_name, event_kind, run_id, request_group_id, pending_count,
+        retry_count, retry_budget_remaining, recovery_key, action_taken, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.createdAt ?? Date.now(), input.queueName, input.eventKind, input.runId ?? null, input.requestGroupId ?? null, input.pendingCount ?? 0, input.retryCount ?? 0, input.retryBudgetRemaining ?? null, input.recoveryKey ?? null, input.actionTaken, toJsonOrNull(input.detail));
+    return id;
+}
+export function listQueueBackpressureEvents(input = {}) {
+    const conditions = [];
+    const bindings = [];
+    if (input.queueName) {
+        conditions.push("queue_name = ?");
+        bindings.push(input.queueName);
+    }
+    if (input.eventKind) {
+        conditions.push("event_kind = ?");
+        bindings.push(input.eventKind);
+    }
+    if (input.recoveryKey) {
+        conditions.push("recovery_key = ?");
+        bindings.push(input.recoveryKey);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)));
+    return getDb()
+        .prepare(`SELECT * FROM queue_backpressure_events ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
+        .all(...bindings, limit);
+}
+export function listMessageLedgerEvents(params = {}) {
+    const where = [];
+    const values = [];
+    if (params.runId) {
+        where.push("run_id = ?");
+        values.push(params.runId);
+    }
+    if (params.requestGroupId) {
+        where.push("request_group_id = ?");
+        values.push(params.requestGroupId);
+    }
+    if (params.sessionKey) {
+        where.push("session_key = ?");
+        values.push(params.sessionKey);
+    }
+    if (params.threadKey) {
+        where.push("thread_key = ?");
+        values.push(params.threadKey);
+    }
+    const limit = Math.max(1, Math.min(1000, Math.floor(params.limit ?? 500)));
+    values.push(limit);
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT *
+       FROM message_ledger
+       ${whereSql}
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`)
+        .all(...values);
+}
+export function insertControlEvent(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO control_events
+       (id, created_at, event_type, correlation_id, run_id, request_group_id, session_key,
+        component, severity, summary, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.createdAt ?? Date.now(), input.eventType, input.correlationId, input.runId ?? null, input.requestGroupId ?? null, input.sessionKey ?? null, input.component, input.severity ?? "info", input.summary, toJsonOrNull(input.detail));
+    return id;
+}
+export function listControlEvents(params = {}) {
+    const where = [];
+    const values = [];
+    if (params.runId) {
+        where.push("run_id = ?");
+        values.push(params.runId);
+    }
+    if (params.requestGroupId) {
+        where.push("request_group_id = ?");
+        values.push(params.requestGroupId);
+    }
+    if (params.correlationId) {
+        where.push("correlation_id = ?");
+        values.push(params.correlationId);
+    }
+    if (params.eventType) {
+        where.push("event_type = ?");
+        values.push(params.eventType);
+    }
+    if (params.component) {
+        where.push("component = ?");
+        values.push(params.component);
+    }
+    if (params.severity) {
+        where.push("severity = ?");
+        values.push(params.severity);
+    }
+    const limit = Math.max(1, Math.min(2_000, Math.floor(params.limit ?? 500)));
+    values.push(limit);
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT *
+       FROM control_events
+       ${whereSql}
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`)
+        .all(...values);
 }
 export function findChannelMessageRef(params) {
     const withThread = params.externalThreadId
@@ -267,18 +406,18 @@ export function storeMemoryDocument(input) {
      (id, scope, owner_id, source_type, source_ref, title, raw_text, checksum, metadata_json, archived_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`);
     const insertChunk = db.prepare(`INSERT INTO memory_chunks
-     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+     (id, document_id, scope, owner_id, ordinal, token_estimate, content, checksum, source_checksum, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertChunkFts = db.prepare(`INSERT INTO memory_chunks_fts(rowid, content, metadata_json)
      SELECT rowid, content, metadata_json FROM memory_chunks WHERE id = ?`);
     const insertIndexJob = db.prepare(`INSERT INTO memory_index_jobs (id, document_id, status, retry_count, created_at, updated_at)
-     VALUES (?, ?, 'pending', 0, ?, ?)`);
+     VALUES (?, ?, 'queued', 0, ?, ?)`);
     const tx = db.transaction(() => {
         insertDocument.run(documentId, input.scope, ownerId, input.sourceType, input.sourceRef ?? null, input.title ?? null, input.rawText, input.checksum, toJsonOrNull(input.metadata), now, now);
         for (const chunk of input.chunks) {
             const chunkId = crypto.randomUUID();
             chunkIds.push(chunkId);
-            insertChunk.run(chunkId, documentId, input.scope, ownerId, chunk.ordinal, chunk.tokenEstimate, chunk.content, chunk.checksum, toJsonOrNull(chunk.metadata), now, now);
+            insertChunk.run(chunkId, documentId, input.scope, ownerId, chunk.ordinal, chunk.tokenEstimate, chunk.content, chunk.checksum, input.checksum, toJsonOrNull(chunk.metadata), now, now);
             insertChunkFts.run(chunkId);
         }
         insertIndexJob.run(crypto.randomUUID(), documentId, now, now);
@@ -307,8 +446,22 @@ export function rebuildMemorySearchIndexes() {
 }
 export function markMemoryIndexJobCompleted(documentId) {
     getDb()
-        .prepare(`UPDATE memory_index_jobs SET status = 'completed', updated_at = ? WHERE document_id = ?`)
+        .prepare(`UPDATE memory_index_jobs SET status = 'embedded', updated_at = ? WHERE document_id = ?`)
         .run(Date.now(), documentId);
+}
+export function markMemoryIndexJobDisabled(documentId, reason) {
+    getDb()
+        .prepare(`UPDATE memory_index_jobs
+       SET status = 'disabled', last_error = ?, updated_at = ?
+       WHERE document_id = ?`)
+        .run(reason, Date.now(), documentId);
+}
+export function markMemoryIndexJobStale(documentId, reason) {
+    getDb()
+        .prepare(`UPDATE memory_index_jobs
+       SET status = 'stale', last_error = ?, updated_at = ?
+       WHERE document_id = ? AND status != 'failed'`)
+        .run(reason, Date.now(), documentId);
 }
 export function markMemoryIndexJobFailed(documentId, error) {
     getDb()
@@ -321,10 +474,23 @@ export function recordMemoryAccessLog(input) {
     const id = crypto.randomUUID();
     getDb()
         .prepare(`INSERT INTO memory_access_log
-       (id, run_id, session_id, request_group_id, document_id, chunk_id, query, result_source, score, latency_ms, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, input.documentId ?? null, input.chunkId ?? null, input.query, input.resultSource, input.score ?? null, input.latencyMs ?? null, Date.now());
+       (id, run_id, session_id, request_group_id, document_id, chunk_id, source_checksum, scope, query, result_source, score, latency_ms, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, input.documentId ?? null, input.chunkId ?? null, input.sourceChecksum ?? null, input.scope ?? null, input.query, input.resultSource, input.score ?? null, input.latencyMs ?? null, input.reason ?? null, Date.now());
     return id;
+}
+export function listMemoryAccessTraceForRun(runId, limit = 100) {
+    const normalized = runId.trim();
+    if (!normalized)
+        return [];
+    return getDb()
+        .prepare(`SELECT id, run_id, session_id, request_group_id, document_id, chunk_id,
+              source_checksum, scope, query, result_source, score, latency_ms, reason, created_at
+       FROM memory_access_log
+       WHERE run_id = ?
+       ORDER BY created_at DESC
+       LIMIT ?`)
+        .all(normalized, Math.max(1, Math.min(500, Math.floor(limit))));
 }
 export function insertFlashFeedback(input) {
     const sessionId = input.sessionId.trim();
@@ -344,6 +510,7 @@ export function upsertScheduleMemoryEntry(input) {
     const scheduleId = input.scheduleId.trim();
     if (!scheduleId)
         throw new Error("schedule memory requires a schedule id");
+    assertMigrationWriteAllowed(getDb(), "schedule.memory.upsert");
     const id = crypto.randomUUID();
     const now = Date.now();
     getDb()
@@ -715,6 +882,7 @@ export function isLegacySchedule(schedule) {
     return !schedule.contract_json || schedule.contract_schema_version == null;
 }
 export function insertSchedule(s) {
+    assertMigrationWriteAllowed(getDb(), "schedule.insert");
     const contractFields = s.contract
         ? prepareScheduleContractPersistence(s.contract)
         : {
@@ -730,6 +898,7 @@ export function insertSchedule(s) {
         .run(s.id, s.name, s.cron_expression, s.timezone ?? null, s.prompt, s.enabled, s.target_channel, s.target_session_id, s.execution_driver, s.origin_run_id, s.origin_request_group_id, s.model, s.max_retries, s.timeout_sec, contractFields.contract_json, contractFields.identity_key, contractFields.payload_hash, contractFields.delivery_key, contractFields.contract_schema_version, s.created_at, s.updated_at);
 }
 export function updateSchedule(id, fields) {
+    assertMigrationWriteAllowed(getDb(), "schedule.update");
     const sets = [];
     const vals = [];
     for (const [k, v] of Object.entries(fields)) {
@@ -742,6 +911,7 @@ export function updateSchedule(id, fields) {
     getDb().prepare(`UPDATE schedules SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(...vals);
 }
 export function deleteSchedule(id) {
+    assertMigrationWriteAllowed(getDb(), "schedule.delete");
     getDb().prepare("DELETE FROM schedules WHERE id = ?").run(id);
 }
 export function getScheduleRuns(scheduleId, limit, offset) {

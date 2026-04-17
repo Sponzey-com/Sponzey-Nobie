@@ -5,6 +5,7 @@ import {
   type ProviderAuditTrace,
 } from "../ai/index.js"
 import type { AIConnectionConfig } from "../config/types.js"
+import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
 export interface RouteActionInput {
@@ -95,7 +96,10 @@ function resolveBackend(
     providerId: resolved.providerId,
     model: resolved.model,
     provider: resolved.provider,
-    providerTrace: resolved.resolution.auditTrace,
+    providerTrace: attachCapabilityProfileToTrace(
+      resolved.resolution.auditTrace,
+      backend.capabilityMatrix ?? getProviderCapabilityMatrix({ connection }),
+    ),
   }
 }
 

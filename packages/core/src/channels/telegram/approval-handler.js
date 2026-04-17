@@ -1,6 +1,7 @@
 import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { getRootRun } from "../../runs/store.js";
+import { attachApprovalChannelMessage, describeLateApproval, getLatestApprovalForRun } from "../../runs/approval-registry.js";
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js";
 const log = createLogger("channel:telegram:approval");
 // Map from runId → pending approval data
@@ -28,16 +29,14 @@ export function clearActiveChatForSession(sessionId) {
 }
 export function registerApprovalHandler(bot) {
     detachTelegramApprovalRequestListener?.();
-    detachTelegramApprovalRequestListener = eventBus.on("approval.request", async ({ runId, toolName, params, kind = "approval", guidance, resolve }) => {
+    const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, toolName, params, kind = "approval", guidance, resolve }) => {
         const run = getRootRun(runId);
         if (run?.source !== "telegram") {
             return;
         }
         const target = (run ? activeChats.get(run.sessionId) : undefined) ?? latestActiveChat;
         if (target === undefined) {
-            log.warn(`approval.request for runId=${runId} but no active chat — auto-denying`);
-            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" });
-            resolve("deny", "system");
+            log.warn(`approval.request for runId=${runId} but no active chat`);
             return;
         }
         const paramsStr = JSON.stringify(params, null, 2).slice(0, 300);
@@ -58,39 +57,32 @@ export function registerApprovalHandler(bot) {
         catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             log.error(`Failed to send approval message: ${errMsg}`);
-            eventBus.emit("approval.resolved", { runId, decision: "deny", toolName, kind, reason: "system" });
-            resolve("deny", "system");
             return;
         }
-        const timeout = kind === "screen_confirmation"
-            ? null
-            : setTimeout(async () => {
-                const entry = pending.get(runId);
-                if (entry === undefined)
-                    return;
-                pending.delete(runId);
-                log.warn(`Approval timeout for runId=${runId} — auto-denying`);
-                try {
-                    await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
-                        reply_markup: buildResultKeyboard("❌ 시스템이 타임아웃으로 거부함"),
-                    });
-                }
-                catch {
-                    // best-effort
-                }
-                eventBus.emit("approval.resolved", { runId, decision: "deny", toolName: entry.toolName, kind: entry.kind, reason: "timeout" });
-                entry.resolve("deny", "timeout");
-            }, 60_000);
+        if (approvalId) {
+            attachApprovalChannelMessage(approvalId, telegramApprovalChannelMessageId(target.chatId, target.threadId, sentMsgId));
+        }
         pending.set(runId, {
+            ...(approvalId ? { approvalId } : {}),
             resolve,
             chatId: target.chatId,
             messageId: sentMsgId,
             requesterId: target.userId,
             toolName,
             kind,
-            timeout,
+            timeout: null,
         });
     });
+    const detachResolved = eventBus.on("approval.resolved", ({ runId }) => {
+        const entry = pending.get(runId);
+        if (entry?.timeout)
+            clearTimeout(entry.timeout);
+        pending.delete(runId);
+    });
+    detachTelegramApprovalRequestListener = () => {
+        detachRequest();
+        detachResolved();
+    };
     bot.on("callback_query:data", async (ctx) => {
         const data = ctx.callbackQuery.data;
         const from = ctx.from;
@@ -108,7 +100,7 @@ export function registerApprovalHandler(bot) {
         }
         const entry = pending.get(runId);
         if (entry === undefined) {
-            await ctx.answerCallbackQuery("이미 처리된 요청입니다.");
+            await ctx.answerCallbackQuery(describeLateApproval(getLatestApprovalForRun(runId)));
             return;
         }
         if (from.id !== entry.requesterId) {
@@ -154,7 +146,7 @@ export function registerApprovalHandler(bot) {
                 : decision === "allow_once"
                     ? "🔹 이번 단계 승인"
                     : "❌ 거부 후 취소");
-        eventBus.emit("approval.resolved", { runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" });
+        eventBus.emit("approval.resolved", { ...(entry.approvalId ? { approvalId: entry.approvalId } : {}), runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" });
         entry.resolve(decision, "user");
     });
 }
@@ -169,5 +161,8 @@ export function resetTelegramApprovalStateForTest() {
     activeChats.clear();
     activeChatRefs.clear();
     latestActiveChat = undefined;
+}
+function telegramApprovalChannelMessageId(chatId, threadId, messageId) {
+    return `telegram:${chatId}:${threadId ?? "main"}:${messageId}`;
 }
 //# sourceMappingURL=approval-handler.js.map

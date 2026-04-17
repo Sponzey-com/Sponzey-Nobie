@@ -1,5 +1,5 @@
 import type { FeatureCapability } from "../../contracts/capabilities"
-import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../../contracts/ai"
+import type { AIAuthMode, AIBackendCredentials, AIProviderType, ProviderCapabilityMatrix } from "../../contracts/ai"
 import type { McpServersResponse } from "../../contracts/mcp"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../../contracts/setup"
 
@@ -113,6 +113,7 @@ export interface TestBackendResponse {
   ok: boolean
   models?: string[]
   sourceUrl?: string
+  capabilityMatrix?: ProviderCapabilityMatrix
   error?: string
 }
 

@@ -8,6 +8,7 @@ import { memoryInitCommand, memoryShowCommand } from "./commands/memory.js"
 import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
 import { scheduleRunCommand } from "./commands/schedule.js"
 import { channelSmokeCommand } from "./commands/smoke.js"
+import { doctorCommand } from "./commands/doctor.js"
 import { getCurrentDisplayVersion } from "@nobie/core"
 import {
   pluginListCommand,
@@ -101,6 +102,20 @@ smoke
   .option("--json", "결과를 JSON으로 출력")
   .action((options: { channel?: string; live?: boolean; json?: boolean }) => {
     channelSmokeCommand(options).catch((err: unknown) => {
+      console.error("Error:", err instanceof Error ? err.message : String(err))
+      process.exit(1)
+    })
+  })
+
+program
+  .command("doctor")
+  .description("런타임 매니페스트와 운영 진단 체크를 실행합니다")
+  .option("--quick", "로컬 빠른 진단만 실행합니다")
+  .option("--full", "환경/릴리즈 preflight까지 포함해 진단합니다")
+  .option("--json", "결과를 JSON으로 출력합니다")
+  .option("--write", "진단 보고서를 state diagnostics 디렉토리에 저장합니다")
+  .action((options: { quick?: boolean; full?: boolean; json?: boolean; write?: boolean }) => {
+    doctorCommand(options).catch((err: unknown) => {
       console.error("Error:", err instanceof Error ? err.message : String(err))
       process.exit(1)
     })

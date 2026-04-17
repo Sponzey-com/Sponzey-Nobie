@@ -1,95 +1,147 @@
 import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/index.js";
+import { buildIntentComparisonProjection, hasPersistedComparableContract, serializeActiveRunCandidateForComparison, } from "./active-run-projection.js";
+import { stableContractHash } from "../contracts/index.js";
+import { chatWithContextPreflight } from "./context-preflight.js";
+function safeFallbackDecision(candidateCount, reason) {
+    return {
+        kind: candidateCount > 1 ? "clarify" : "new_run",
+        decisionSource: "safe_fallback",
+        reason,
+    };
+}
+function withTimeoutSignal(timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(100, timeoutMs));
+    return {
+        signal: controller.signal,
+        clear: () => clearTimeout(timer),
+    };
+}
+function buildIncomingComparisonProjection(contract) {
+    return buildIntentComparisonProjection(contract);
+}
+function findCandidateByAnyId(candidates, parsed) {
+    const requestGroupId = parsed.request_group_id?.trim();
+    const runId = parsed.run_id?.trim();
+    const approvalId = parsed.approval_id?.trim();
+    return candidates.find((candidate) => ((requestGroupId && candidate.requestGroupId === requestGroupId)
+        || (runId && candidate.runId === runId)
+        || (approvalId && candidate.approvalId === approvalId)));
+}
 export async function compareRequestContinuationWithAI(params) {
-    const message = params.message.trim();
-    if (!message || params.candidates.length === 0) {
-        return { kind: "new", reason: "no candidates" };
+    if (params.candidates.length === 0) {
+        return { kind: "new_run", decisionSource: "safe_fallback", reason: "no candidates" };
+    }
+    const comparableCandidates = params.candidates.filter(hasPersistedComparableContract);
+    if (comparableCandidates.length === 0) {
+        return safeFallbackDecision(params.candidates.length, "active candidates are legacy items without persisted contracts");
+    }
+    const incomingProjection = buildIncomingComparisonProjection(params.incomingContract);
+    const incomingHash = stableContractHash(incomingProjection, "active-run");
+    const exactMatches = comparableCandidates.filter((candidate) => candidate.comparisonHash === incomingHash);
+    if (exactMatches.length > 1) {
+        return { kind: "clarify", decisionSource: "safe_fallback", reason: "multiple active runs share the same contract projection" };
+    }
+    const exactMatch = exactMatches[0];
+    if (exactMatch) {
+        return {
+            kind: "same_run",
+            requestGroupId: exactMatch.requestGroupId,
+            runId: exactMatch.runId,
+            decisionSource: "contract_exact",
+            reason: "incoming contract matched active run projection hash",
+        };
     }
     const model = params.model?.trim() || getDefaultModel();
     const providerId = params.providerId?.trim() || detectAvailableProvider();
     if (!model || !providerId) {
-        return { kind: "new", reason: "no configured provider" };
+        return safeFallbackDecision(params.candidates.length, "no configured provider");
     }
     const provider = params.provider ?? getProvider(providerId);
-    const allowedIds = new Set(params.candidates.map((candidate) => candidate.requestGroupId));
+    // nobie-critical-decision-audit: entry-comparison.contract_projection_comparison
+    // Comparator inputs are canonical contract projections and stable ids only.
     const messages = [
         {
             role: "user",
             content: [
-                `Incoming user request:\n${message}`,
+                "Incoming intent contract projection:",
+                JSON.stringify(incomingProjection),
                 "",
-                "Active task candidates:",
-                ...params.candidates.map((candidate, index) => [
-                    `${index + 1}. request_group_id=${candidate.requestGroupId}`,
-                    `title=${candidate.title || "(empty)"}`,
-                    `prompt=${candidate.prompt || "(empty)"}`,
-                    `summary=${candidate.summary || "(empty)"}`,
-                    `status=${candidate.status}`,
-                    `updated_at=${candidate.updatedAt}`,
-                ].join("\n")),
+                "Active run contract candidates:",
+                JSON.stringify(comparableCandidates.map(serializeActiveRunCandidateForComparison)),
             ].join("\n"),
         },
     ];
+    const timeout = withTimeoutSignal(params.timeoutMs ?? 1800);
     let raw = "";
-    for await (const chunk of provider.chat({
-        model,
-        messages,
-        system: buildRequestContinuationSystemPrompt(),
-        tools: [],
-        maxTokens: 220,
-        signal: new AbortController().signal,
-    })) {
-        if (chunk.type === "text_delta")
-            raw += chunk.delta;
+    try {
+        for await (const chunk of chatWithContextPreflight({
+            provider,
+            model,
+            messages,
+            system: buildRequestContinuationSystemPrompt(),
+            tools: [],
+            maxTokens: 260,
+            signal: timeout.signal,
+            metadata: { operation: "request_continuation_comparison" },
+        })) {
+            if (chunk.type === "text_delta")
+                raw += chunk.delta;
+        }
+    }
+    catch {
+        return safeFallbackDecision(params.candidates.length, "contract comparison failed or timed out");
+    }
+    finally {
+        timeout.clear();
     }
     const parsed = parseRequestContinuationDecision(raw);
     if (!parsed) {
-        return { kind: "new", reason: "unparseable ai comparison result" };
+        return safeFallbackDecision(params.candidates.length, "unparseable contract comparison result");
     }
-    if (parsed.decision === "reuse") {
-        const requestGroupId = parsed.request_group_id?.trim();
-        if (!requestGroupId || !allowedIds.has(requestGroupId)) {
-            return { kind: "clarify", reason: parsed.reason?.trim() || "invalid candidate selection" };
-        }
+    if (parsed.decision === "clarify" || parsed.decision === "new_run") {
         return {
-            kind: "reuse",
-            requestGroupId,
-            reason: parsed.reason?.trim() || "matched active task",
+            kind: parsed.decision,
+            decisionSource: "contract_ai",
+            reason: parsed.reason?.trim() || (parsed.decision === "clarify" ? "ambiguous active run target" : "new independent run"),
         };
     }
-    if (parsed.decision === "clarify") {
-        return {
-            kind: "clarify",
-            reason: parsed.reason?.trim() || "ambiguous continuation",
-        };
+    const selected = findCandidateByAnyId(comparableCandidates, parsed);
+    if (!selected) {
+        return safeFallbackDecision(params.candidates.length, "contract comparison selected an unknown target");
     }
     return {
-        kind: "new",
-        reason: parsed.reason?.trim() || "new independent task",
+        kind: parsed.decision,
+        requestGroupId: selected.requestGroupId,
+        runId: selected.runId,
+        ...(selected.approvalId ? { approvalId: selected.approvalId } : {}),
+        decisionSource: "contract_ai",
+        reason: parsed.reason?.trim() || "matched active run contract",
     };
 }
 export function buildRequestContinuationSystemPrompt() {
     return [
         "You are Nobie's isolated request-continuation classifier.",
-        "",
-        "Decide whether the incoming user request should continue one existing active task or start a new independent task.",
-        "This classifier is memoryless.",
-        "Use only the incoming request text and the provided candidate task list.",
-        "Do not assume any other conversation history, memory, or hidden context.",
+        "You are memoryless. Use only the provided JSON contract projections.",
+        "Raw user prompts, summaries, titles, and chat history are intentionally unavailable.",
         "Return valid JSON only.",
         "",
         "JSON shape:",
         "{",
-        '  "decision": "new | reuse | clarify",',
-        '  "request_group_id": "required only when decision = reuse",',
+        '  "decision": "same_run | new_run | clarify | cancel_target | update_target",',
+        '  "request_group_id": "required for same_run, cancel_target, update_target",',
+        '  "run_id": "optional selected active run id",',
+        '  "approval_id": "optional selected approval id",',
         '  "reason": "short explanation in the user language"',
         "}",
         "",
         "Rules:",
-        "- Choose reuse only when the incoming request clearly continues or modifies one candidate task.",
-        "- Choose new when the incoming request is a new task, even if it is on a related topic.",
-        "- Choose clarify when more than one candidate is plausible and the request does not clearly identify one.",
-        "- Never invent a request_group_id. Use only one from the candidate list.",
-        "- Be conservative. If continuation is not clear, choose new or clarify.",
+        "- Choose same_run only when the incoming contract clearly targets the same active run contract.",
+        "- Choose cancel_target or update_target only when incoming actionType requires it and exactly one candidate contract is the target.",
+        "- Choose clarify when multiple active candidates could match or the contract lacks enough target identity.",
+        "- Choose new_run when the incoming contract is independent from all candidates.",
+        "- Never invent ids. Use only request_group_id, run_id, or approval_id from the candidate list.",
+        "- Ignore display names and legacy labels for identity.",
     ].join("\n");
 }
 export function parseRequestContinuationDecision(raw) {
@@ -98,17 +150,36 @@ export function parseRequestContinuationDecision(raw) {
         return null;
     try {
         const parsed = JSON.parse(jsonLike);
-        const decision = parsed.decision;
-        if (decision !== "new" && decision !== "reuse" && decision !== "clarify")
+        const rawDecision = parsed.decision;
+        const decision = normalizeDecision(rawDecision);
+        if (!decision)
             return null;
         return {
             decision,
             ...(typeof parsed.request_group_id === "string" ? { request_group_id: parsed.request_group_id } : {}),
+            ...(typeof parsed.run_id === "string" ? { run_id: parsed.run_id } : {}),
+            ...(typeof parsed.approval_id === "string" ? { approval_id: parsed.approval_id } : {}),
             ...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
         };
     }
     catch {
         return null;
+    }
+}
+function normalizeDecision(value) {
+    switch (value) {
+        case "same_run":
+        case "new_run":
+        case "clarify":
+        case "cancel_target":
+        case "update_target":
+            return value;
+        case "reuse":
+            return "same_run";
+        case "new":
+            return "new_run";
+        default:
+            return null;
     }
 }
 function extractJsonObject(text) {

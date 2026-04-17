@@ -1,3 +1,4 @@
+import { type ProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { type SetupMcpServerDraft, type SetupSkillDraftItem } from "./setup-extensions.js";
 export type CapabilityStatus = "ready" | "disabled" | "planned" | "error";
 export interface FeatureCapability {
@@ -37,6 +38,7 @@ export interface AIBackendCard {
     tags: string[];
     reason?: string;
     endpoint?: string;
+    capabilityMatrix?: ProviderCapabilityMatrix;
 }
 export interface RoutingProfile {
     id: "default" | "general_chat" | "planning" | "coding" | "review" | "research" | "private_local" | "summarization" | "operations";
@@ -130,5 +132,6 @@ export declare function getPrimaryAiTarget(): string | null;
 export declare function discoverModelsFromEndpoint(endpoint: string, providerType?: AIBackendCard["providerType"], credentials?: AIBackendCard["credentials"], authMode?: AIBackendCard["authMode"]): Promise<{
     models: string[];
     sourceUrl: string;
+    capabilityMatrix: ProviderCapabilityMatrix;
 }>;
 //# sourceMappingURL=index.d.ts.map

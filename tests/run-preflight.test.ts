@@ -116,6 +116,27 @@ describe("start preflight", () => {
     expect(failure?.code).toBe("yeonjang_unavailable")
   })
 
+  it("marks direct screen capture messages as Yeonjang-bound before intake semantics are available", () => {
+    const failure = resolveStartPreflightFailure({
+      source: "telegram",
+      message: "메인 화면 캡쳐해서 보여줘",
+      providerId: "openai",
+      model: "gpt-5",
+      onChunk: vi.fn(),
+    })
+
+    const plan = resolveStartContextPlan({
+      source: "telegram",
+      message: "메인 화면 캡쳐해서 보여줘",
+      providerId: "openai",
+      model: "gpt-5",
+      onChunk: vi.fn(),
+    })
+
+    expect(failure?.code).toBe("yeonjang_unavailable")
+    expect(plan.toolPolicy.requiresYeonjang).toBe(true)
+  })
+
   it("allows Yeonjang-bound requests to reach request-time method refresh when a snapshot is connected", () => {
     getMqttExtensionSnapshotsMock.mockReturnValueOnce([{
       extensionId: "yeonjang-main",

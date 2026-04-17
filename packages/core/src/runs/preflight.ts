@@ -62,6 +62,7 @@ const YEONJANG_APPROVAL_TOOL_PATTERN =
   /^(screen_capture|screen_find_text|mouse_|keyboard_|shell_exec|app_launch|process_kill|window_|yeonjang_)/u
 const SCHEDULE_MEMORY_REQUEST_PATTERN =
   /(?:예약|스케줄|일정|알림|schedule|scheduled|cron|reminder|alarm)/iu
+const LOCAL_EXECUTION_ACTION_PATTERN = /(?=.*(?:화면|스크린|모니터|디스플레이|카메라|사진|마우스|키보드|창|윈도우|프로세스|앱|프로그램|screen|monitor|display|camera|photo|mouse|keyboard|window|process|app))(?=.*(?:캡처|캡쳐|스크린샷|촬영|클릭|입력|이동|열어|실행|종료|죽여|capture|screenshot|photo|click|type|move|focus|launch|open|kill))(?=.*(?:해줘|보여줘|보내줘|전송|저장|찍어|실행|종료|send|show|take|capture|run|open|kill))/iu
 
 function normalize(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? ""
@@ -83,6 +84,7 @@ function requiresYeonjangRuntime(input: StartPreflightInput): boolean {
   if (input.toolsEnabled === false) return false
   const approvalTool = input.executionSemantics?.approvalTool?.trim()
   if (approvalTool && YEONJANG_APPROVAL_TOOL_PATTERN.test(approvalTool)) return true
+  if (LOCAL_EXECUTION_ACTION_PATTERN.test(input.message)) return true
 
   const targetText = [
     input.targetId,

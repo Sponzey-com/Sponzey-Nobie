@@ -1,6 +1,17 @@
 import type Database from "better-sqlite3"
+import { randomUUID } from "node:crypto"
 import { copyFileSync, existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
+import {
+  beginMigrationLock,
+  ensureMigrationSafetyTables,
+  failMigrationLock,
+  getActiveMigrationLock,
+  releaseMigrationLock,
+  updateMigrationLockPhase,
+  verifyMigrationState,
+  type MigrationVerificationReport,
+} from "./migration-safety.js"
 
 export interface Migration {
   version: number
@@ -990,6 +1001,357 @@ export const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    version: 26,
+    up(db) {
+      const rootRunColumns = db.prepare(`PRAGMA table_info(root_runs)`).all() as Array<{ name: string }>
+      if (!rootRunColumns.some((column) => column.name === "runtime_manifest_id")) {
+        db.exec(`ALTER TABLE root_runs ADD COLUMN runtime_manifest_id TEXT`)
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_root_runs_runtime_manifest ON root_runs(runtime_manifest_id, updated_at DESC)`)
+    },
+  },
+  {
+    version: 27,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS message_ledger (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          request_group_id TEXT,
+          session_key TEXT,
+          thread_key TEXT,
+          channel TEXT NOT NULL,
+          event_kind TEXT NOT NULL,
+          delivery_key TEXT,
+          idempotency_key TEXT,
+          status TEXT NOT NULL CHECK(status IN ('received', 'pending', 'started', 'generated', 'sent', 'delivered', 'succeeded', 'failed', 'skipped', 'suppressed', 'degraded')),
+          summary TEXT NOT NULL,
+          detail_json TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_message_ledger_run
+          ON message_ledger(run_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_message_ledger_request_group
+          ON message_ledger(request_group_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_message_ledger_thread
+          ON message_ledger(channel, session_key, thread_key, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_message_ledger_delivery
+          ON message_ledger(delivery_key, created_at DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ledger_idempotency
+          ON message_ledger(idempotency_key)
+          WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+      `)
+    },
+  },
+  {
+    version: 28,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS approval_registry (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          request_group_id TEXT,
+          channel TEXT NOT NULL,
+          channel_message_id TEXT,
+          tool_name TEXT NOT NULL,
+          risk_level TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('approval', 'screen_confirmation')),
+          status TEXT NOT NULL CHECK(status IN ('requested', 'approved_once', 'approved_run', 'denied', 'expired', 'superseded', 'consumed')),
+          params_hash TEXT NOT NULL,
+          params_preview_json TEXT,
+          requested_at INTEGER NOT NULL,
+          expires_at INTEGER,
+          consumed_at INTEGER,
+          decision_at INTEGER,
+          decision_by TEXT,
+          decision_source TEXT,
+          superseded_by TEXT,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_approval_registry_run_status
+          ON approval_registry(run_id, status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_registry_request_group_status
+          ON approval_registry(request_group_id, status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_registry_channel_message
+          ON approval_registry(channel, channel_message_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_registry_expires
+          ON approval_registry(status, expires_at);
+      `)
+    },
+  },
+  {
+    version: 29,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tool_policy_decisions (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          request_group_id TEXT,
+          session_id TEXT,
+          channel TEXT,
+          tool_name TEXT NOT NULL,
+          risk_level TEXT NOT NULL,
+          source_trust TEXT NOT NULL,
+          approval_id TEXT,
+          permission_scope TEXT NOT NULL,
+          params_hash TEXT NOT NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('allow', 'deny')),
+          reason_code TEXT NOT NULL,
+          user_message TEXT,
+          diagnostic_json TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tool_policy_decisions_run
+          ON tool_policy_decisions(run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_tool_policy_decisions_request_group
+          ON tool_policy_decisions(request_group_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_tool_policy_decisions_tool
+          ON tool_policy_decisions(tool_name, decision, created_at DESC);
+      `)
+    },
+  },
+  {
+    version: 30,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS queue_backpressure_events (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          queue_name TEXT NOT NULL,
+          event_kind TEXT NOT NULL,
+          run_id TEXT,
+          request_group_id TEXT,
+          pending_count INTEGER NOT NULL DEFAULT 0,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          retry_budget_remaining INTEGER,
+          recovery_key TEXT,
+          action_taken TEXT NOT NULL,
+          detail_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_queue_backpressure_events_queue
+          ON queue_backpressure_events(queue_name, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_queue_backpressure_events_run
+          ON queue_backpressure_events(run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_queue_backpressure_events_request_group
+          ON queue_backpressure_events(request_group_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_queue_backpressure_events_recovery_key
+          ON queue_backpressure_events(recovery_key, created_at DESC);
+      `)
+    },
+  },
+  {
+    version: 31,
+    up(db) {
+      const tableColumns = (table: string): Set<string> => new Set(
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name),
+      )
+
+      const chunkColumns = tableColumns("memory_chunks")
+      if (!chunkColumns.has("source_checksum")) {
+        db.exec(`ALTER TABLE memory_chunks ADD COLUMN source_checksum TEXT`)
+      }
+      db.exec(`
+        UPDATE memory_chunks
+        SET source_checksum = (
+          SELECT checksum FROM memory_documents d WHERE d.id = memory_chunks.document_id
+        )
+        WHERE source_checksum IS NULL OR source_checksum = '';
+
+        CREATE INDEX IF NOT EXISTS idx_memory_chunks_source_checksum
+          ON memory_chunks(source_checksum);
+      `)
+
+      const accessColumns = tableColumns("memory_access_log")
+      if (!accessColumns.has("source_checksum")) {
+        db.exec(`ALTER TABLE memory_access_log ADD COLUMN source_checksum TEXT`)
+      }
+      if (!accessColumns.has("scope")) {
+        db.exec(`ALTER TABLE memory_access_log ADD COLUMN scope TEXT`)
+      }
+      if (!accessColumns.has("reason")) {
+        db.exec(`ALTER TABLE memory_access_log ADD COLUMN reason TEXT`)
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_access_log_scope
+          ON memory_access_log(scope, created_at DESC);
+      `)
+
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+
+        CREATE TABLE IF NOT EXISTS memory_index_jobs_v31 (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'indexing', 'embedded', 'failed', 'stale', 'disabled')),
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES memory_documents(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO memory_index_jobs_v31
+          (id, document_id, status, retry_count, last_error, created_at, updated_at)
+        SELECT
+          id,
+          document_id,
+          CASE status
+            WHEN 'pending' THEN 'queued'
+            WHEN 'completed' THEN 'embedded'
+            ELSE status
+          END AS status,
+          retry_count,
+          last_error,
+          created_at,
+          updated_at
+        FROM memory_index_jobs;
+
+        DROP TABLE memory_index_jobs;
+        ALTER TABLE memory_index_jobs_v31 RENAME TO memory_index_jobs;
+
+        CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_status
+          ON memory_index_jobs(status, updated_at ASC);
+        CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_document
+          ON memory_index_jobs(document_id, updated_at DESC);
+
+        PRAGMA foreign_keys = ON;
+      `)
+    },
+  },
+  {
+    version: 32,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS control_events (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          correlation_id TEXT NOT NULL,
+          run_id TEXT,
+          request_group_id TEXT,
+          session_key TEXT,
+          component TEXT NOT NULL,
+          severity TEXT NOT NULL CHECK(severity IN ('debug', 'info', 'warning', 'error')),
+          summary TEXT NOT NULL,
+          detail_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_control_events_request_group
+          ON control_events(request_group_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_control_events_run
+          ON control_events(run_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_control_events_correlation
+          ON control_events(correlation_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_control_events_type
+          ON control_events(event_type, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_control_events_created
+          ON control_events(created_at DESC);
+      `)
+    },
+  },
+  {
+    version: 33,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS migration_locks (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK(status IN ('active', 'released', 'failed')),
+          locked_by TEXT NOT NULL,
+          phase TEXT NOT NULL CHECK(phase IN ('preflight', 'backup', 'lock', 'apply', 'verify', 'unlock', 'failed')),
+          started_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          released_at INTEGER,
+          backup_snapshot_id TEXT,
+          pending_versions_json TEXT,
+          verify_report_json TEXT,
+          error_message TEXT,
+          rollback_runbook_ref TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_migration_locks_status
+          ON migration_locks(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS runtime_feature_flags (
+          feature_key TEXT PRIMARY KEY,
+          mode TEXT NOT NULL CHECK(mode IN ('off', 'shadow', 'dual_write', 'enforced', 'rollback')),
+          compatibility_mode INTEGER NOT NULL DEFAULT 1,
+          updated_at INTEGER NOT NULL,
+          updated_by TEXT,
+          reason TEXT,
+          evidence_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_feature_flags_mode
+          ON runtime_feature_flags(mode, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS rollout_shadow_compares (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          feature_key TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          target_id TEXT,
+          run_id TEXT,
+          request_group_id TEXT,
+          old_hash TEXT NOT NULL,
+          new_hash TEXT NOT NULL,
+          match INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          detail_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rollout_shadow_compares_feature
+          ON rollout_shadow_compares(feature_key, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_rollout_shadow_compares_run
+          ON rollout_shadow_compares(run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_rollout_shadow_compares_request_group
+          ON rollout_shadow_compares(request_group_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS rollout_evidence (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          feature_key TEXT NOT NULL,
+          mode TEXT NOT NULL CHECK(mode IN ('off', 'shadow', 'dual_write', 'enforced', 'rollback')),
+          stage TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('ok', 'warning', 'blocked')),
+          run_id TEXT,
+          request_group_id TEXT,
+          summary TEXT NOT NULL,
+          detail_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rollout_evidence_feature
+          ON rollout_evidence(feature_key, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_rollout_evidence_status
+          ON rollout_evidence(status, created_at DESC);
+      `)
+    },
+  },
 ]
 
 function schemaMigrationsTableExists(db: Database.Database): boolean {
@@ -1038,7 +1400,13 @@ export function createPreMigrationBackupIfNeeded(
   return backupPath
 }
 
-export function runMigrations(db: Database.Database): void {
+export interface RunMigrationsOptions {
+  backupSnapshotId?: string | null
+  lockedBy?: string
+}
+
+export function runMigrations(db: Database.Database, options: RunMigrationsOptions = {}): void {
+  ensureMigrationSafetyTables(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version    INTEGER PRIMARY KEY,
@@ -1050,26 +1418,61 @@ export function runMigrations(db: Database.Database): void {
     "SELECT version FROM schema_migrations ORDER BY version",
   )
   const applied = new Set(appliedStmt.all().map((r) => r.version))
+  const pendingMigrations = MIGRATIONS.filter((migration) => !applied.has(migration.version))
+  if (pendingMigrations.length === 0) return
 
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.version)) continue
+  const activeLock = getActiveMigrationLock(db)
+  if (activeLock) return
 
-    if (migration.transaction === false) {
-      migration.up(db)
-      db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
-        migration.version,
-        Date.now(),
-      )
-      continue
+  const lock = beginMigrationLock(db, {
+    id: `migration-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    pendingVersions: pendingMigrations.map((migration) => migration.version),
+    backupSnapshotId: options.backupSnapshotId ?? null,
+    ...(options.lockedBy ? { lockedBy: options.lockedBy } : {}),
+  })
+
+  try {
+    updateMigrationLockPhase(db, lock.id, "apply")
+    for (const migration of pendingMigrations) {
+      if (applied.has(migration.version)) continue
+
+      if (migration.transaction === false) {
+        migration.up(db)
+        db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
+          migration.version,
+          Date.now(),
+        )
+        continue
+      }
+
+      const apply = db.transaction(() => {
+        migration.up(db)
+        db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
+          migration.version,
+          Date.now(),
+        )
+      })
+      apply()
     }
 
-    const apply = db.transaction(() => {
-      migration.up(db)
-      db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
-        migration.version,
-        Date.now(),
-      )
+    updateMigrationLockPhase(db, lock.id, "verify")
+    const verifyReport = verifyMigrationState(db)
+    if (!verifyReport.ok) {
+      throw new Error(`Migration verify failed: missing tables=${verifyReport.missingTables.join(",")}; missing indexes=${verifyReport.missingIndexes.join(",")}; integrity=${verifyReport.integrityCheck}`)
+    }
+    releaseMigrationLock(db, { lockId: lock.id, verifyReport })
+  } catch (error) {
+    let verifyReport: MigrationVerificationReport | null = null
+    try {
+      verifyReport = verifyMigrationState(db)
+    } catch {
+      verifyReport = null
+    }
+    failMigrationLock(db, {
+      lockId: lock.id,
+      error: error instanceof Error ? error.message : String(error),
+      verifyReport,
     })
-    apply()
+    throw error
   }
 }

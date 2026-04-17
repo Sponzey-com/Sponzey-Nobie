@@ -1,5 +1,6 @@
 import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/index.js";
 import { buildDeliveryProjection, buildScheduleIdentityProjection, buildSchedulePayloadProjection, toCanonicalJson, } from "../contracts/index.js";
+import { chatWithContextPreflight } from "../runs/context-preflight.js";
 const DEFAULT_TIMEOUT_MS = 2_000;
 function comparisonProjection(contract) {
     // nobie-critical-decision-audit: schedules.comparison.contract_projection_only
@@ -147,13 +148,15 @@ export async function compareScheduleContractsWithAI(params) {
     const provider = params.provider ?? getProvider(providerId);
     let raw = "";
     try {
-        for await (const chunk of provider.chat({
+        for await (const chunk of chatWithContextPreflight({
+            provider,
             model,
             messages: buildComparisonPrompt({ incoming: params.incoming, candidates: params.candidates }),
             system: buildScheduleContractComparisonSystemPrompt(),
             tools: [],
             maxTokens: 260,
             signal: controller.signal,
+            metadata: { operation: "schedule_contract_comparison" },
         })) {
             if (chunk.type === "text_delta")
                 raw += chunk.delta;

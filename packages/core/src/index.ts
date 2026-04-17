@@ -41,6 +41,74 @@ export type {
 } from "./config/index.js"
 export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath } from "./version.js"
 
+// Runtime manifest and diagnostics
+export { buildRuntimeManifest, getLastRuntimeManifest, refreshRuntimeManifest } from "./runtime/manifest.js"
+export {
+  buildRolloutSafetySnapshot,
+  ensureRolloutSafetyTables,
+  getFeatureFlag,
+  listFeatureFlags,
+  recordRolloutEvidence,
+  recordShadowCompare,
+  setFeatureFlagMode,
+  shouldReadCompatibilityPath,
+  shouldShadowWrite,
+  shouldUseNewPath,
+} from "./runtime/rollout-safety.js"
+export type {
+  RuntimeManifest,
+  RuntimeManifestChannelSummary,
+  RuntimeManifestDatabase,
+  RuntimeManifestEnvironment,
+  RuntimeManifestMemory,
+  RuntimeManifestOptions,
+  RuntimeManifestPromptSources,
+  RuntimeManifestProviderProfile,
+  RuntimeManifestReleasePackage,
+  RuntimeManifestYeonjangNode,
+} from "./runtime/manifest.js"
+export type {
+  FeatureFlagChangeResult,
+  FeatureFlagMode,
+  RolloutEvidenceRecord,
+  RolloutEvidenceStatus,
+  RolloutSafetySnapshot,
+  RuntimeFeatureFlag,
+  ShadowCompareRecord,
+  ShadowCompareResult,
+} from "./runtime/rollout-safety.js"
+export {
+  MIGRATION_ROLLBACK_RUNBOOK_REF,
+  assertMigrationWriteAllowed,
+  beginMigrationLock,
+  checkMigrationWriteGuard,
+  ensureMigrationSafetyTables,
+  failMigrationLock,
+  getActiveMigrationLock,
+  getLatestMigrationLock,
+  releaseMigrationLock,
+  updateMigrationLockPhase,
+  verifyMigrationState,
+} from "./db/migration-safety.js"
+export type { MigrationLockPhase, MigrationLockRow, MigrationLockStatus, MigrationVerificationReport, MigrationWriteGuardResult } from "./db/migration-safety.js"
+export { lastDoctorReportExists, runDoctor, writeDoctorReportArtifact } from "./diagnostics/doctor.js"
+export type { DoctorCheckName, DoctorCheckResult, DoctorMode, DoctorReport, DoctorStatus, RunDoctorOptions } from "./diagnostics/doctor.js"
+export { buildReleaseNoteEvidenceSummary, parseTaskMetadata, runPlanDriftCheck } from "./diagnostics/plan-drift.js"
+export type { PlanDriftReport, PlanDriftReleaseNoteEvidence, PlanDriftWarning, TaskEvidenceMetadata } from "./diagnostics/plan-drift.js"
+export {
+  attachCapabilityProfileToTrace,
+  buildProviderProfileId,
+  clearProviderCapabilityCache,
+  getProviderCapabilityMatrix,
+  resolveEmbeddingProviderResolutionSnapshot,
+} from "./ai/capabilities.js"
+export type {
+  EmbeddingProviderResolutionSnapshot,
+  ProviderCapabilityItem,
+  ProviderCapabilityMatrix,
+  ProviderCapabilityStatus,
+} from "./ai/capabilities.js"
+
 // Release package
 export {
   buildCleanMachineInstallChecklist,
@@ -75,6 +143,121 @@ export type { Logger } from "./logger/index.js"
 // Events
 export { eventBus } from "./events/index.js"
 export type { NobieEvents, WizbyEvents, HowieEvents } from "./events/index.js"
+
+// Control-plane timeline
+export {
+  exportControlTimeline,
+  getControlTimeline,
+  installControlEventProjection,
+  recordControlEvent,
+  recordControlEventFromLedger,
+  resetControlEventProjectionForTest,
+} from "./control-plane/timeline.js"
+export type {
+  ControlEventInput,
+  ControlEventSeverity,
+  ControlExportAudience,
+  ControlExportFormat,
+  ControlTimeline,
+  ControlTimelineEvent,
+  ControlTimelineExport,
+  ControlTimelineQuery,
+  ControlTimelineSummary,
+} from "./control-plane/timeline.js"
+
+// Message ledger and delivery finalization
+export {
+  buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey,
+  buildTextDeliveryKey as buildMessageLedgerTextDeliveryKey,
+  buildToolCallIdempotencyKey,
+  finalizeDeliveryForRun,
+  findDuplicateToolCall,
+  getAllowRepeatReason,
+  hashLedgerValue,
+  isDedupeTargetTool,
+  recordMessageLedgerEvent,
+  stableStringify,
+} from "./runs/message-ledger.js"
+export type { DeliveryFinalizerResult, MessageLedgerEventInput, MessageLedgerEventKind } from "./runs/message-ledger.js"
+export {
+  DEFAULT_QUEUE_BUDGETS,
+  QUEUE_NAMES,
+  QueueBackpressureError,
+  buildBackpressureUserMessage,
+  buildQueueBackpressureSnapshot,
+  enqueueBackpressureTask,
+  recordQueueBackpressureEvent,
+  recordRetryBudgetAttempt,
+  resetQueueBackpressureState,
+  resetRetryBudget,
+} from "./runs/queue-backpressure.js"
+export type { QueueBudget, QueueName, QueueSnapshotItem, RetryBudgetDecision } from "./runs/queue-backpressure.js"
+export {
+  ContextPreflightBlockedError,
+  chatWithContextPreflight,
+  estimateContextTokens,
+  estimateMessagesTokens,
+  prepareChatContext,
+  pruneMessagesForContext,
+  runContextPreflight,
+} from "./runs/context-preflight.js"
+export type {
+  ContextPreflightBreakdown,
+  ContextPreflightMetadata,
+  ContextPreflightPreparedChat,
+  ContextPreflightResult,
+  ContextPreflightStatus,
+  ContextPruningDecision,
+} from "./runs/context-preflight.js"
+export {
+  activateExtensionWithTrustPolicy,
+  buildExtensionRegistrySnapshot,
+  createExtensionRollbackPoint,
+  extensionIdsForToolName,
+  getExtensionFailureState,
+  isToolExtensionSelectable,
+  listExtensionFailureStates,
+  recordExtensionFailure,
+  recordExtensionRegistryChange,
+  recordExtensionToolFailure,
+  resetExtensionFailureState,
+  rollbackExtensionToPoint,
+  runExtensionHookSafely,
+} from "./security/extension-governance.js"
+export type {
+  ExtensionActivationResult,
+  ExtensionFailureState,
+  ExtensionKind,
+  ExtensionPermissionScope,
+  ExtensionRegistryEntry,
+  ExtensionRegistrySnapshot,
+  ExtensionRollbackPoint,
+  ExtensionStatus,
+  ExtensionTrustLevel,
+  ExtensionTrustPolicy,
+  MinimalMcpServerStatus,
+  MinimalMcpToolStatus,
+} from "./security/extension-governance.js"
+export {
+  buildAnswerDirective,
+  buildWebRetrievalPolicyDecision,
+  evaluateSourceReliabilityGuard,
+  extractSourceTimestampFromHtml,
+  recordBrowserSearchEvidence,
+} from "./runs/web-retrieval-policy.js"
+export type {
+  BrowserSearchEvidenceArtifact,
+  BrowserSearchEvidenceInput,
+  SourceCompletionStatus,
+  SourceEvidence,
+  SourceFreshnessPolicy,
+  SourceKind,
+  SourceReliability,
+  SourceReliabilityGuardResult,
+  WebRetrievalMethod,
+  WebRetrievalPolicyDecision,
+  WebRetrievalPolicyInput,
+} from "./runs/web-retrieval-policy.js"
 
 // Contracts
 export {
@@ -397,6 +580,7 @@ import { startServer as _startServer } from "./api/server.js"
 import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js"
 import { startMqttBroker as _startMqttBroker, stopMqttBroker as _stopMqttBroker } from "./mqtt/broker.js"
 import { startChannels as _startChannels } from "./channels/index.js"
+import { refreshRuntimeManifest as _refreshRuntimeManifest } from "./runtime/manifest.js"
 
 export function bootstrap(): void {
   _loadConfig()
@@ -435,6 +619,11 @@ export function bootstrap(): void {
     }
   }
   _registerBuiltinTools()
+  try {
+    _refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false })
+  } catch {
+    // Runtime manifest failures are surfaced through doctor checks; bootstrap must stay alive.
+  }
 }
 
 export async function bootstrapRuntime(): Promise<void> {

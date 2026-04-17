@@ -9,6 +9,7 @@ import {
 } from "../db/index.js"
 import { createHash } from "node:crypto"
 import { storeMemoryDocument } from "./store.js"
+import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag, type TrustTag } from "../security/trust-boundary.js"
 
 export type RunWritebackKind = "instruction" | "success" | "failure" | "tool_result" | "flash_feedback"
 
@@ -134,6 +135,32 @@ function readStringArrayMetadata(metadata: Record<string, unknown>, key: string)
     : []
 }
 
+function readTrustTagMetadata(metadata: Record<string, unknown> | undefined): TrustTag | undefined {
+  const value = metadata?.["sourceTrust"]
+  return typeof value === "string" && [
+    "trusted",
+    "user_input",
+    "channel_input",
+    "web_content",
+    "file_content",
+    "tool_result",
+    "mcp_result",
+    "yeonjang_result",
+    "diagnostic",
+  ].includes(value)
+    ? value as TrustTag
+    : undefined
+}
+
+function resolveWritebackSourceTrust(params: BuildRunWritebackCandidatesParams): TrustTag {
+  if (params.kind === "tool_result") return "tool_result"
+  if (params.kind === "failure") return "diagnostic"
+  if (params.source === "webui" || params.source === "cli" || params.source === "telegram" || params.source === "slack") {
+    return sourceToTrustTag(params.source)
+  }
+  return "trusted"
+}
+
 function maskSecrets(value: string): { content: string; masked: boolean } {
   let masked = false
   const content = value
@@ -206,6 +233,8 @@ export function inspectMemoryWritebackSafety(input: {
 
 export function prepareMemoryWritebackQueueInput(candidate: MemoryWritebackCandidate): PreparedMemoryWritebackCandidate {
   const safety = inspectMemoryWritebackSafety(candidate)
+  const sourceTrust = readTrustTagMetadata(candidate.metadata)
+  const untrustedInjectionBlocked = sourceTrust !== undefined && isUntrustedTag(sourceTrust) && containsPromptInjectionDirective(safety.content)
   const reviewDedupeKey = buildReviewDedupeKey({
     scope: candidate.scope,
     sourceType: candidate.sourceType,
@@ -216,14 +245,18 @@ export function prepareMemoryWritebackQueueInput(candidate: MemoryWritebackCandi
     return metadata["reviewDedupeKey"] === reviewDedupeKey
       || (row.scope === candidate.scope && row.source_type === candidate.sourceType && normalizedContent(row.content) === normalizedContent(safety.content))
   })
+  const blockReasons = [
+    ...safety.blockReasons,
+    ...(untrustedInjectionBlocked ? ["untrusted_prompt_injection"] : []),
+    ...(previouslyDiscarded ? ["previously_discarded"] : []),
+  ]
   const metadata = {
     ...(candidate.metadata ?? {}),
     reviewDedupeKey,
     ...(safety.masked ? { safetyMasked: true } : {}),
-    ...(safety.blockReasons.length ? { safetyBlockReasons: safety.blockReasons, reviewBlocked: true } : {}),
+    ...(blockReasons.length ? { safetyBlockReasons: blockReasons, reviewBlocked: true } : {}),
     ...(previouslyDiscarded ? { reviewDedupeBlocked: true } : {}),
   }
-  const blockReasons = [...safety.blockReasons, ...(previouslyDiscarded ? ["previously_discarded"] : [])]
   return {
     ...candidate,
     content: safety.content,
@@ -267,9 +300,11 @@ export function shouldPromoteFlashFeedback(params: { content: string; repeatCoun
 export function buildRunWritebackCandidates(params: BuildRunWritebackCandidatesParams): MemoryWritebackCandidate[] {
   const content = normalizedContent(params.content)
   if (!content) return []
+  const sourceTrust = resolveWritebackSourceTrust(params)
 
   const commonMetadata = {
     ...(params.metadata ?? {}),
+    sourceTrust,
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     ...(params.runId ? { runId: params.runId } : {}),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary } from "../api/client"
+import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary, type MemoryAccessTraceItem } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
@@ -314,6 +314,66 @@ function OperationsHealthPanel({
   )
 }
 
+function MemoryTracePanel({
+  traces,
+  loading,
+  error,
+  text,
+  displayText,
+  formatTime,
+}: {
+  traces: MemoryAccessTraceItem[]
+  loading: boolean
+  error: string
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+  formatTime: (value: number) => string
+}) {
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("메모리 참조 추적", "Memory access trace")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("답변에 사용된 메모리 chunk와 source checksum을 운영 진단용으로 표시합니다.", "Shows memory chunks and source checksums used by the answer for diagnostics.")}
+          </div>
+        </div>
+        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-600">
+          {traces.length}
+        </span>
+      </div>
+      {error ? <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{displayText(error)}</div> : null}
+      <div className="mt-4 space-y-2">
+        {traces.length > 0 ? traces.slice(0, 8).map((trace) => {
+          const score = trace.score == null ? "n/a" : Number(trace.score).toFixed(3)
+          const checksum = trace.source_checksum ? trace.source_checksum.slice(0, 12) : "n/a"
+          return (
+            <div key={trace.id} className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-600">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-stone-900">{displayText(trace.scope ?? "unknown")} · {displayText(trace.result_source)}</span>
+                <span>{formatTime(trace.created_at)}</span>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div>{text("청크", "Chunk")}: {displayText(trace.chunk_id ?? "n/a")}</div>
+                <div>{text("체크섬", "Checksum")}: {displayText(checksum)}</div>
+                <div>{text("점수", "Score")}: {score}</div>
+                <div>{text("지연", "Latency")}: {trace.latency_ms ?? 0}ms</div>
+              </div>
+              <div className="mt-2 break-words text-stone-500 [overflow-wrap:anywhere]">
+                {displayText(trace.reason ?? "accepted")}
+              </div>
+            </div>
+          )
+        }) : (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
+            {loading ? text("메모리 추적을 불러오는 중입니다.", "Loading memory trace.") : text("이 실행의 메모리 참조 기록이 없습니다.", "No memory trace for this run.")}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ChannelSmokePanel({
   text,
   formatTime,
@@ -439,6 +499,9 @@ export function RunsPage() {
   } = useRunsStore()
   const [viewMode, setViewMode] = useState<TaskMonitorViewMode>("normal")
   const [cleanupRunning, setCleanupRunning] = useState(false)
+  const [memoryTrace, setMemoryTrace] = useState<MemoryAccessTraceItem[]>([])
+  const [memoryTraceLoading, setMemoryTraceLoading] = useState(false)
+  const [memoryTraceError, setMemoryTraceError] = useState("")
 
   useEffect(() => {
     ensureInitialized()
@@ -457,6 +520,32 @@ export function RunsPage() {
     ["completed", "failed", "cancelled", "interrupted"].includes(card.representative.status),
   )
   const canDeleteSelected = Boolean(selectedRun && ["completed", "failed", "cancelled", "interrupted"].includes(selectedRun.status))
+
+  useEffect(() => {
+    if (!diagnosticMode || !selectedRun) {
+      setMemoryTrace([])
+      setMemoryTraceError("")
+      setMemoryTraceLoading(false)
+      return
+    }
+    let cancelled = false
+    setMemoryTraceLoading(true)
+    api.runMemoryTrace(selectedRun.id, 100).then(
+      (response) => {
+        if (cancelled) return
+        setMemoryTrace(response.traces)
+        setMemoryTraceError("")
+      },
+      (error) => {
+        if (cancelled) return
+        setMemoryTrace([])
+        setMemoryTraceError(error instanceof Error ? error.message : String(error))
+      },
+    ).finally(() => {
+      if (!cancelled) setMemoryTraceLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [diagnosticMode, selectedRun?.id])
 
   async function handleDeleteSelected(): Promise<void> {
     if (!selectedRun) return
@@ -658,6 +747,16 @@ export function RunsPage() {
                 displayText={displayText}
                 formatTime={formatTime}
               />
+              {diagnosticMode ? (
+                <MemoryTracePanel
+                  traces={memoryTrace}
+                  loading={memoryTraceLoading}
+                  error={memoryTraceError}
+                  text={text}
+                  displayText={displayText}
+                  formatTime={formatTime}
+                />
+              ) : null}
               <ChannelSmokePanel text={text} formatTime={formatTime} />
               <RunEventFeed
                 events={visibleTimeline.map((item) => ({

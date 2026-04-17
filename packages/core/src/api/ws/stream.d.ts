@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/index.js";
-export declare function registerApprovalFromWs(runId: string, resolve: (d: ApprovalDecision, reason?: ApprovalResolutionReason) => void): void;
+export declare function registerApprovalFromWs(runId: string, resolve: (d: ApprovalDecision, reason?: ApprovalResolutionReason) => void, approvalId?: string): void;
 export interface WebUiApprovalResponseMessage {
     type?: string;
+    approvalId?: string;
     runId?: string;
     decision?: string;
     toolName?: string;

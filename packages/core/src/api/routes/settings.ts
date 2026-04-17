@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import JSON5 from "json5"
 import { getConfig, reloadConfig } from "../../config/index.js"
 import { getProvider, getDefaultModel, resetAIProviderCache, resolveProviderResolutionSnapshot } from "../../ai/index.js"
+import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../../ai/capabilities.js"
 import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
@@ -11,8 +12,9 @@ import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramCh
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js"
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
-import { getVectorBackendStatus } from "../../memory/embedding.js"
+import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/embedding.js"
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
+import { chatWithContextPreflight } from "../../runs/context-preflight.js"
 
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
@@ -21,6 +23,7 @@ function buildLegacySettingsSnapshot() {
   const telegramRuntime = getTelegramRuntimeStatus()
   const slackRuntime = getSlackRuntimeStatus()
   const connection = cfg.ai.connection
+  const providerCapability = getProviderCapabilityMatrix({ connection, memory: cfg.memory })
   return {
     ai: {
       provider: connection.provider,
@@ -29,6 +32,7 @@ function buildLegacySettingsSnapshot() {
       endpoint: connection.endpoint ?? "",
       hasApiKey: Boolean(connection.auth?.apiKey),
       oauthAuthFilePath: connection.auth?.oauthAuthFilePath ?? "",
+      providerCapability,
     },
     security: {
       approvalMode: cfg.security.approvalMode,
@@ -235,6 +239,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
       writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
       const reloaded = reloadConfig()
       resetAIProviderCache()
+      resetEmbeddingProvider()
       updateActiveRunsMaxDelegationTurns(reloaded.orchestration.maxDelegationTurns)
       try {
         await restartMqttBrokerFromConfig()
@@ -265,6 +270,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
   app.post("/api/settings/reload", { preHandler: authMiddleware }, async () => {
     reloadConfig()
     resetAIProviderCache()
+    resetEmbeddingProvider()
     try {
       await restartMqttBrokerFromConfig()
     } catch {
@@ -334,19 +340,22 @@ export function registerSettingsRoute(app: FastifyInstance): void {
     try {
       const model = getDefaultModel()
       const provider = getProvider()
-      const providerResolution = resolveProviderResolutionSnapshot()
+      const providerCapability = getProviderCapabilityMatrix({ connection: getConfig().ai.connection, memory: getConfig().memory })
+      const providerResolution = attachCapabilityProfileToTrace(resolveProviderResolutionSnapshot().auditTrace, providerCapability)
       const chunks: string[] = []
-      for await (const chunk of provider.chat({
+      for await (const chunk of chatWithContextPreflight({
+        provider,
         model,
         messages: [{ role: "user", content: "Reply with just: OK" }],
         system: "You are a connection test. Reply with exactly: OK",
         tools: [],
         signal: new AbortController().signal,
+        metadata: { operation: "settings_test_ai" },
       })) {
         if (chunk.type === "text_delta") chunks.push(chunk.delta)
         if (chunk.type === "message_stop") break
       }
-      return { ok: true, response: chunks.join("").trim(), model, providerResolution: providerResolution.auditTrace }
+      return { ok: true, response: chunks.join("").trim(), model, providerResolution, providerCapability }
     } catch (err) {
       const sanitized = sanitizeUserFacingError(err instanceof Error ? err.message : String(err))
       return reply.status(503).send({

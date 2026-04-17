@@ -1,4 +1,6 @@
 import { getConfig } from "../../config/index.js";
+import { buildWebRetrievalPolicyDecision, evaluateSourceReliabilityGuard, } from "../../runs/web-retrieval-policy.js";
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { BraveSearchProvider } from "./search-providers/brave.js";
 import { DuckDuckGoSearchProvider } from "./search-providers/duckduckgo.js";
 function dateRangeToBraveFreshness(dateRange) {
@@ -27,6 +29,32 @@ function formatResults(results) {
     })
         .join("\n\n");
 }
+function domainFromUrl(url) {
+    try {
+        return new URL(url).hostname.toLowerCase();
+    }
+    catch {
+        return null;
+    }
+}
+function buildPolicyFooter(policy, guard) {
+    if (!policy)
+        return "";
+    const lines = [
+        `[검색 수집: ${policy.fetchTimestamp}]`,
+        `[검색 방식: ${policy.method}]`,
+        `[최신성 정책: ${policy.freshnessPolicy}]`,
+        `[출처 성격: ${policy.sourceKind}/${policy.reliability}]`,
+        `[응답 지침: ${policy.answerDirective}]`,
+    ];
+    if (guard && guard.status !== "ready") {
+        lines.push(`[확정성: ${guard.status} - ${guard.userMessage}]`);
+    }
+    if (policy.freshnessPolicy === "latest_approximate") {
+        lines.push("[후속 조치: web_search 결과에 요청 값이 직접 보이지 않으면, 값 미추출로 답하기 전에 결과 URL 또는 직접 시세 URL을 web_fetch로 최소 1회 확인하세요. 같은 검색어 반복과 file_search 우회는 금지합니다.]");
+    }
+    return `\n\n${lines.join("\n")}`;
+}
 export const webSearchTool = {
     name: "web_search",
     description: "인터넷에서 정보를 검색합니다.",
@@ -45,10 +73,15 @@ export const webSearchTool = {
     },
     riskLevel: "safe",
     requiresApproval: false,
-    async execute(params, _ctx) {
+    async execute(params, ctx) {
         const config = getConfig();
         // 설정 없으면 DuckDuckGo로 폴백
         const searchCfg = config.search.web ?? { provider: "duckduckgo", maxResults: 5 };
+        const webRetrievalPolicy = buildWebRetrievalPolicyDecision({
+            toolName: "web_search",
+            params: params,
+            userMessage: ctx.userMessage,
+        });
         const maxResults = params.maxResults ?? searchCfg.maxResults ?? 5;
         let results;
         try {
@@ -64,7 +97,10 @@ export const webSearchTool = {
                 results = await provider.search(params.query, { maxResults, dateRange: freshness });
             }
             else if (searchCfg.provider === "duckduckgo") {
-                const provider = new DuckDuckGoSearchProvider();
+                const provider = new DuckDuckGoSearchProvider({
+                    runId: ctx.runId,
+                    ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+                });
                 results = await provider.search(params.query, { maxResults });
             }
             else {
@@ -76,12 +112,40 @@ export const webSearchTool = {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { success: false, output: `검색 오류: ${msg}`, error: msg };
+            const sanitized = sanitizeUserFacingError(msg);
+            return { success: false, output: `검색 오류: ${sanitized.userMessage}`, error: sanitized.userMessage, details: { errorKind: sanitized.kind } };
         }
+        const sourceEvidence = results.map((result) => ({
+            method: webRetrievalPolicy?.method ?? "fast_text_search",
+            sourceKind: webRetrievalPolicy?.sourceKind ?? "search_index",
+            reliability: webRetrievalPolicy?.reliability ?? "medium",
+            sourceUrl: result.url,
+            sourceDomain: domainFromUrl(result.url),
+            sourceTimestamp: result.publishedDate ?? null,
+            fetchTimestamp: webRetrievalPolicy?.fetchTimestamp ?? new Date().toISOString(),
+            freshnessPolicy: webRetrievalPolicy?.freshnessPolicy ?? "normal",
+        }));
+        const sourceGuard = evaluateSourceReliabilityGuard(sourceEvidence[0] ?? {
+            method: webRetrievalPolicy?.method ?? "fast_text_search",
+            sourceKind: webRetrievalPolicy?.sourceKind ?? "search_index",
+            reliability: results.length > 0 ? (webRetrievalPolicy?.reliability ?? "medium") : "unknown",
+            sourceUrl: null,
+            sourceDomain: null,
+            sourceTimestamp: null,
+            fetchTimestamp: webRetrievalPolicy?.fetchTimestamp ?? new Date().toISOString(),
+            freshnessPolicy: webRetrievalPolicy?.freshnessPolicy ?? "normal",
+        });
         return {
             success: true,
-            output: formatResults(results),
-            details: { query: params.query, provider: searchCfg.provider, count: results.length },
+            output: `${formatResults(results)}${buildPolicyFooter(webRetrievalPolicy, sourceGuard)}`,
+            details: {
+                query: params.query,
+                provider: searchCfg.provider,
+                count: results.length,
+                sourceEvidence,
+                sourceGuard,
+                ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+            },
         };
     },
 };

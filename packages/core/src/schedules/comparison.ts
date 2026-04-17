@@ -7,6 +7,7 @@ import {
   toCanonicalJson,
   type ScheduleContract,
 } from "../contracts/index.js"
+import { chatWithContextPreflight } from "../runs/context-preflight.js"
 
 export type ScheduleContractComparisonDecision = "same" | "different" | "clarify"
 
@@ -224,13 +225,15 @@ export async function compareScheduleContractsWithAI(params: {
   let raw = ""
 
   try {
-    for await (const chunk of provider.chat({
+    for await (const chunk of chatWithContextPreflight({
+      provider,
       model,
       messages: buildComparisonPrompt({ incoming: params.incoming, candidates: params.candidates }),
       system: buildScheduleContractComparisonSystemPrompt(),
       tools: [],
       maxTokens: 260,
       signal: controller.signal,
+      metadata: { operation: "schedule_contract_comparison" },
     })) {
       if (chunk.type === "text_delta") raw += chunk.delta
     }

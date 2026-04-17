@@ -3,15 +3,67 @@ import { Browser, Builder, By, until } from "selenium-webdriver";
 import chrome from "selenium-webdriver/chrome.js";
 import edge from "selenium-webdriver/edge.js";
 import firefox from "selenium-webdriver/firefox.js";
+import { recordBrowserSearchEvidence } from "../../../runs/web-retrieval-policy.js";
+import { sanitizeUserFacingError } from "../../../runs/error-sanitizer.js";
 const LITE_URL = "https://lite.duckduckgo.com/lite/";
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const PAGE_LOAD_TIMEOUT_MS = 30_000;
 const RESULT_WAIT_TIMEOUT_MS = 10_000;
 export class DuckDuckGoSearchProvider {
+    evidenceContext;
+    constructor(evidenceContext = {}) {
+        this.evidenceContext = evidenceContext;
+    }
     async search(query, options) {
         const maxResults = options.maxResults ?? 10;
-        return searchWithSelenium(query, maxResults);
+        const searchUrl = buildSearchUrl(query);
+        const directFetchSearch = this.evidenceContext.directFetchSearch ?? searchWithDirectFetch;
+        const seleniumSearch = this.evidenceContext.seleniumSearch ?? searchWithSelenium;
+        try {
+            return await seleniumSearch(query, maxResults);
+        }
+        catch (seleniumError) {
+            try {
+                return await directFetchSearch(searchUrl, maxResults);
+            }
+            catch (directError) {
+                const directMessage = sanitizeUserFacingError(directError instanceof Error ? directError.message : String(directError)).userMessage;
+                const seleniumMessage = sanitizeUserFacingError(seleniumError instanceof Error ? seleniumError.message : String(seleniumError)).userMessage;
+                recordBrowserSearchEvidence({
+                    query,
+                    url: searchUrl,
+                    extractedText: `selenium_error=${seleniumMessage}\nduckduckgo_lite_error=${directMessage}`,
+                    timeoutReason: "selenium_first_duckduckgo_lite_fallback_failed",
+                    error: directError,
+                    runId: this.evidenceContext.runId ?? null,
+                    requestGroupId: this.evidenceContext.requestGroupId ?? null,
+                });
+                throw new Error(`DuckDuckGo search failed. browser=${seleniumMessage}; duckduckgo_lite=${directMessage}`);
+            }
+        }
     }
+}
+function buildSearchUrl(query) {
+    return `${LITE_URL}?q=${encodeURIComponent(query)}&kl=wt-wt`;
+}
+async function searchWithDirectFetch(searchUrl, maxResults) {
+    const response = await fetch(searchUrl, {
+        headers: {
+            "Accept": "text/html,application/xhtml+xml,*/*",
+            "User-Agent": USER_AGENT,
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+    const html = await response.text();
+    const results = parseWithCheerio(html, maxResults);
+    if (results.length === 0) {
+        throw new Error("no search results parsed");
+    }
+    return results;
 }
 function parseWithCheerio(html, maxResults) {
     const $ = cheerio.load(html);
@@ -91,7 +143,7 @@ async function buildDriver(spec) {
     return driver;
 }
 async function searchWithSelenium(query, maxResults) {
-    const searchUrl = `${LITE_URL}?q=${encodeURIComponent(query)}&kl=wt-wt`;
+    const searchUrl = buildSearchUrl(query);
     const errors = [];
     for (const spec of getBrowserSpecs()) {
         let driver;

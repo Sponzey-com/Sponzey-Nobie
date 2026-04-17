@@ -10,6 +10,7 @@ import { buildUserProfilePromptContext } from "./profile-context.js";
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js";
 import { describeCron } from "../scheduler/cron.js";
 import { parseTelegramSessionKey } from "../channels/telegram/session.js";
+import { chatWithContextPreflight } from "../runs/context-preflight.js";
 const log = createLogger("agent:intake");
 export function defaultTaskExecutionSemantics() {
     return {
@@ -512,7 +513,8 @@ export async function analyzeTaskIntake(params) {
         },
     ];
     let raw = "";
-    for await (const chunk of provider.chat({
+    for await (const chunk of chatWithContextPreflight({
+        provider,
         model,
         messages,
         system: [
@@ -522,6 +524,11 @@ export async function analyzeTaskIntake(params) {
         ].join("\n"),
         tools: [],
         signal: new AbortController().signal,
+        metadata: {
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+            operation: "task_intake",
+        },
     })) {
         if (chunk.type === "text_delta")
             raw += chunk.delta;

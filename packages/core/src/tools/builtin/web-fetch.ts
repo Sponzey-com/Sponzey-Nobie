@@ -1,7 +1,16 @@
 import { JSDOM } from "jsdom"
 import { Readability } from "@mozilla/readability"
 import TurndownService from "turndown"
-import type { AgentTool, ToolResult } from "../types.js"
+import {
+  buildWebRetrievalPolicyDecision,
+  evaluateSourceReliabilityGuard,
+  extractSourceTimestampFromHtml,
+  recordBrowserSearchEvidence,
+  type BrowserSearchEvidenceArtifact,
+  type SourceEvidence,
+} from "../../runs/web-retrieval-policy.js"
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
+import type { AgentTool, ToolContext, ToolResult } from "../types.js"
 
 const USER_AGENT = "Sponzey Nobie/0.1.0"
 const BLOCKED_SCHEMES = ["file:", "data:", "javascript:"]
@@ -11,6 +20,7 @@ interface WebFetchParams {
   mode?: "text" | "screenshot" | "raw-html"
   waitForSelector?: string
   maxLength?: number
+  freshnessPolicy?: "normal" | "latest_approximate" | "strict_timestamp"
 }
 
 function isBlockedScheme(url: string): boolean {
@@ -72,6 +82,50 @@ function extractText(html: string, url: string): string {
   return td.turndown(html)
 }
 
+function domainFromUrl(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function buildSourceEvidence(input: {
+  url: string
+  sourceTimestamp: string | null
+  policy: ReturnType<typeof buildWebRetrievalPolicyDecision>
+}): SourceEvidence {
+  return {
+    method: input.policy?.method ?? "direct_fetch",
+    sourceKind: input.policy?.sourceKind ?? "third_party",
+    reliability: input.policy?.reliability ?? "medium",
+    sourceUrl: input.url,
+    sourceDomain: domainFromUrl(input.url),
+    sourceTimestamp: input.sourceTimestamp,
+    fetchTimestamp: input.policy?.fetchTimestamp ?? new Date().toISOString(),
+    freshnessPolicy: input.policy?.freshnessPolicy ?? "normal",
+  }
+}
+
+function buildPolicyFooter(input: {
+  url: string
+  sourceTimestamp: string | null
+  policy: ReturnType<typeof buildWebRetrievalPolicyDecision>
+  guard: ReturnType<typeof evaluateSourceReliabilityGuard>
+}): string {
+  const lines = [
+    `[출처: ${input.url}]`,
+    `[수집: ${input.policy?.fetchTimestamp ?? new Date().toISOString()}]`,
+    `[출처 시각: ${input.sourceTimestamp ?? "확인 불가"}]`,
+    `[수집 방식: ${input.policy?.method ?? "direct_fetch"}]`,
+    `[최신성 정책: ${input.policy?.freshnessPolicy ?? "normal"}]`,
+    `[출처 성격: ${input.policy?.sourceKind ?? "third_party"}/${input.policy?.reliability ?? "medium"}]`,
+  ]
+  if (input.policy) lines.push(`[응답 지침: ${input.policy.answerDirective}]`)
+  if (input.guard.status !== "ready") lines.push(`[확정성: ${input.guard.status} - ${input.guard.userMessage}]`)
+  return lines.join("\n")
+}
+
 export const webFetchTool: AgentTool<WebFetchParams> = {
   name: "web_fetch",
   description: "URL의 웹 페이지 내용을 가져와 텍스트(마크다운)로 반환합니다. 뉴스, 문서, 공식 사이트 등 정보 수집에 사용하세요.",
@@ -92,49 +146,92 @@ export const webFetchTool: AgentTool<WebFetchParams> = {
         type: "number",
         description: "반환할 텍스트 최대 길이. 기본: 20000자",
       },
+      freshnessPolicy: {
+        type: "string",
+        enum: ["normal", "latest_approximate", "strict_timestamp"],
+        description: "출처 기준 시각 처리 정책. 기본: 소스 계약 기반 자동 결정. latest_approximate: 수집 시각 기준 근사값 허용. strict_timestamp: 기준 시각 없으면 수치 확정 금지.",
+      },
     },
     required: ["url"],
   },
   riskLevel: "safe",
   requiresApproval: false,
 
-  async execute(params: WebFetchParams): Promise<ToolResult> {
+  async execute(params: WebFetchParams, ctx: ToolContext): Promise<ToolResult> {
     const { url, mode = "text", waitForSelector, maxLength = 20_000 } = params
+    const webRetrievalPolicy = buildWebRetrievalPolicyDecision({
+      toolName: "web_fetch",
+      params: params as unknown as Record<string, unknown>,
+      userMessage: ctx.userMessage,
+    })
 
     if (isBlockedScheme(url)) {
       return { success: false, output: `차단된 URI 스킴입니다: ${url}` }
     }
 
-    const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
-
     try {
       // Screenshot mode
       if (mode === "screenshot") {
-        const b64 = await screenshotWithPlaywright(url)
+        let b64: string
+        try {
+          b64 = await screenshotWithPlaywright(url)
+        } catch (error) {
+          const browserEvidence = recordBrowserSearchEvidence({
+            query: url,
+            url,
+            timeoutReason: "playwright_screenshot_failed",
+            error,
+            runId: ctx.runId,
+            requestGroupId: ctx.requestGroupId ?? null,
+          })
+          const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
+          return {
+            success: false,
+            output: `웹 페이지 스크린샷 실패: ${sanitized.userMessage}`,
+            error: sanitized.userMessage,
+            details: { browserEvidence, ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}) },
+          }
+        }
+        const sourceEvidence = buildSourceEvidence({ url, sourceTimestamp: null, policy: webRetrievalPolicy })
+        const sourceGuard = evaluateSourceReliabilityGuard(sourceEvidence)
         return {
           success: true,
-          output: `[스크린샷 캡처 완료] base64 PNG (${Math.round(b64.length / 1024)}KB)\n[URL: ${url}]\n[캡처: ${now}]`,
-          details: { screenshot: b64 },
+          output: `[스크린샷 캡처 완료] base64 PNG (${Math.round(b64.length / 1024)}KB)\n${buildPolicyFooter({ url, sourceTimestamp: null, policy: webRetrievalPolicy, guard: sourceGuard })}`,
+          details: { screenshot: b64, sourceEvidence, sourceGuard, ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}) },
         }
       }
 
       // Fetch HTML — use Playwright if waitForSelector is specified
       let html: string
+      let browserEvidence: BrowserSearchEvidenceArtifact | null = null
       if (waitForSelector) {
         try {
           html = await fetchWithPlaywright(url, waitForSelector)
-        } catch {
+        } catch (error) {
+          browserEvidence = recordBrowserSearchEvidence({
+            query: url,
+            url,
+            timeoutReason: "playwright_fetch_failed_fallback_to_direct_fetch",
+            error,
+            runId: ctx.runId,
+            requestGroupId: ctx.requestGroupId ?? null,
+          })
           html = await fetchHtml(url)
         }
       } else {
         html = await fetchHtml(url)
       }
 
+      const sourceTimestamp = extractSourceTimestampFromHtml(html)
+      const sourceEvidence = buildSourceEvidence({ url, sourceTimestamp, policy: webRetrievalPolicy })
+      const sourceGuard = evaluateSourceReliabilityGuard(sourceEvidence)
+
       if (mode === "raw-html") {
         const truncated = html.length > maxLength
         return {
           success: true,
           output: html.slice(0, maxLength) + (truncated ? `\n\n... (총 ${html.length}자 중 ${maxLength}자 반환)` : ""),
+          details: { sourceEvidence, sourceGuard, browserEvidence, ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}) },
         }
       }
 
@@ -147,10 +244,11 @@ export const webFetchTool: AgentTool<WebFetchParams> = {
 
       return {
         success: true,
-        output: `${text}\n\n[출처: ${url}]\n[수집: ${now}]`,
+        output: `${text}\n\n${buildPolicyFooter({ url, sourceTimestamp, policy: webRetrievalPolicy, guard: sourceGuard })}`,
+        details: { sourceEvidence, sourceGuard, browserEvidence, ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}) },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = sanitizeUserFacingError(err instanceof Error ? err.message : String(err)).userMessage
       return { success: false, output: `웹 페이지 가져오기 실패: ${msg}`, error: msg }
     }
   },

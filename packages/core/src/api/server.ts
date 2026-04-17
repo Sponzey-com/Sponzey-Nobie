@@ -26,7 +26,10 @@ import { registerMemoryRoute } from "./routes/memory.js"
 import { registerPromptSourcesRoute } from "./routes/prompt-sources.js"
 import { registerConfigOperationsRoute } from "./routes/config-operations.js"
 import { registerChannelSmokeRoute } from "./routes/channel-smoke.js"
+import { registerDoctorRoute } from "./routes/doctor.js"
+import { registerControlTimelineRoute } from "./routes/control-timeline.js"
 import { registerWsRoute } from "./ws/stream.js"
+import { eventBus } from "../events/index.js"
 import { stopActiveSlackChannel } from "../channels/slack/runtime.js"
 import { stopActiveTelegramChannel } from "../channels/telegram/runtime.js"
 import { startScheduler, stopScheduler } from "../scheduler/index.js"
@@ -34,6 +37,7 @@ import { pluginLoader } from "../plugins/loader.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { stopMqttBroker } from "../mqtt/broker.js"
 import { startArtifactCleanupScheduler, stopArtifactCleanupScheduler } from "../artifacts/lifecycle.js"
+import { installControlEventProjection } from "../control-plane/timeline.js"
 
 const log = createLogger("api:server")
 
@@ -44,6 +48,7 @@ export async function startServer(): Promise<void> {
   if (!cfg.webui.enabled) return
 
   server = Fastify({ logger: false })
+  installControlEventProjection()
 
   await server.register(cors, { origin: true })
   await server.register(websocketPlugin)
@@ -84,11 +89,15 @@ export async function startServer(): Promise<void> {
   registerPromptSourcesRoute(server)
   registerConfigOperationsRoute(server)
   registerChannelSmokeRoute(server)
+  registerDoctorRoute(server)
+  registerControlTimelineRoute(server)
   registerWsRoute(server)
 
   const { host, port } = cfg.webui
   await server.listen({ host, port })
   log.info(`WebUI server listening on http://${host}:${port}`)
+  eventBus.emit("gateway.started", { host, port })
+  eventBus.emit("channel.connected", { channel: "webui", detail: { host, port } })
 
   startArtifactCleanupScheduler()
   startScheduler()

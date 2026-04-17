@@ -74,7 +74,7 @@ export function registerSetupRoute(app: FastifyInstance): void {
             ...(credentials.oauthAuthFilePath ? { oauthAuthFilePath: credentials.oauthAuthFilePath } : {}),
           },
         }).auditTrace
-        return { ok: true, ...result, providerResolution }
+        return { ok: true, ...result, providerResolution, capabilityMatrix: result.capabilityMatrix }
       } catch (error) {
         const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
         return reply.status(400).send({

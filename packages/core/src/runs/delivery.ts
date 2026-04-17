@@ -6,6 +6,12 @@ import { recordArtifactMetadata, type ArtifactRetentionPolicy } from "../artifac
 import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertDiagnosticEvent, insertMessage, upsertTaskContinuity } from "../db/index.js"
 import { eventBus } from "../events/index.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
+import {
+  buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey,
+  buildTextDeliveryKey as buildLedgerTextDeliveryKey,
+  recordMessageLedgerEvent,
+} from "./message-ledger.js"
+import { enqueueBackpressureTask, recordRetryBudgetAttempt } from "./queue-backpressure.js"
 import { getRootRun } from "./store.js"
 
 export interface SuccessfulFileDelivery {
@@ -206,8 +212,44 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
             // Delivery already succeeded; persistence is best-effort for restart dedupe.
           }
         }
+        recordMessageLedgerEvent({
+          runId,
+          requestGroupId: run?.requestGroupId ?? runId,
+          channel: params.channel,
+          eventKind: "artifact_delivered",
+          deliveryKey: buildLedgerArtifactDeliveryKey(params.channel, params.channelTarget, params.filePath),
+          idempotencyKey: `artifact-delivered:${key}`,
+          status: "delivered",
+          summary: `${params.channel} artifact delivered: ${displayHomePath(params.filePath)}`,
+          detail: {
+            filePath: displayHomePath(params.filePath),
+            channel: params.channel,
+            ...(params.channelTarget ? { channelTarget: params.channelTarget } : {}),
+            ...(params.mimeType ? { mimeType: params.mimeType } : {}),
+            ...(params.sizeBytes !== undefined ? { sizeBytes: params.sizeBytes } : {}),
+            ...(params.force ? { resend: true } : {}),
+          },
+        })
       }
       return result
+    })
+    .catch((error) => {
+      recordMessageLedgerEvent({
+        runId,
+        requestGroupId: run?.requestGroupId ?? runId,
+        channel: params.channel,
+        eventKind: "artifact_delivery_failed",
+        deliveryKey: buildLedgerArtifactDeliveryKey(params.channel, params.channelTarget, params.filePath),
+        idempotencyKey: `artifact-failed:${key}:${Date.now()}`,
+        status: "failed",
+        summary: `${params.channel} artifact delivery failed: ${displayHomePath(params.filePath)}`,
+        detail: {
+          filePath: displayHomePath(params.filePath),
+          channel: params.channel,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      })
+      throw error
     })
     .finally(() => {
       if (activeArtifactDeliveryLocks.get(key) === delivery) {
@@ -372,11 +414,30 @@ export async function emitAssistantTextDelivery(params: {
     doneDelivered = !doneDeliveryFailed
   }
 
-  return {
+  const receipt = {
     persisted: params.persistMessage !== false,
     textDelivered: params.onChunk == null || !textDeliveryFailed,
     doneDelivered,
   }
+  const delivered = receipt.textDelivered
+  recordMessageLedgerEvent({
+    runId: params.runId,
+    sessionKey: params.sessionId,
+    channel: params.source,
+    eventKind: delivered ? "text_delivered" : "text_delivery_failed",
+    deliveryKey: buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized),
+    idempotencyKey: `text-delivery:${params.runId}:${params.source}:${buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized)}`,
+    status: delivered ? "delivered" : "failed",
+    summary: delivered ? "응답 텍스트 전달 완료" : "응답 텍스트 전달 실패",
+    detail: {
+      persisted: receipt.persisted,
+      textDelivered: receipt.textDelivered,
+      doneDelivered: receipt.doneDelivered,
+      textLength: normalized.length,
+    },
+  })
+
+  return receipt
 }
 
 export function resolveAssistantTextDeliveryOutcome(
@@ -417,14 +478,47 @@ export async function deliverChunk(params: {
   onError?: (message: string) => void
 }): Promise<ChunkDeliveryReceipt | undefined> {
   if (!params.onChunk) return undefined
+  const recoveryKey = buildChunkDeliveryRecoveryKey(params.runId, params.chunk)
   try {
-    return (await params.onChunk(params.chunk)) ?? undefined
+    return (await enqueueBackpressureTask({
+      queueName: "delivery",
+      runId: params.runId,
+      recoveryKey,
+      task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
+    })) ?? undefined
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error)
     const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`)
-    const message = `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage}`
+    const retryDecision = recordRetryBudgetAttempt({
+      queueName: "delivery",
+      runId: params.runId,
+      recoveryKey,
+      reason: sanitized.kind,
+    })
+    const message = retryDecision.allowed
+      ? `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage}`
+      : `runId=${params.runId} chunk delivery failed: ${retryDecision.userMessage}`
     params.onError?.(message)
     return undefined
+  }
+}
+
+function buildChunkDeliveryRecoveryKey(runId: string, chunk: AgentChunk): string {
+  switch (chunk.type) {
+    case "text":
+      return `chunk:${runId}:text`
+    case "done":
+      return `chunk:${runId}:done`
+    case "tool_start":
+      return `chunk:${runId}:tool_start:${chunk.toolName}`
+    case "tool_end":
+      return `chunk:${runId}:tool_end:${chunk.toolName}`
+    case "execution_recovery":
+      return `chunk:${runId}:execution_recovery`
+    case "ai_recovery":
+      return `chunk:${runId}:ai_recovery`
+    case "error":
+      return `chunk:${runId}:error`
   }
 }
 
@@ -482,6 +576,24 @@ export function applyChunkDeliveryReceipt(params: {
       pendingDelivery: [],
       status: "delivered",
     })
+    recordMessageLedgerEvent({
+      runId: params.runId,
+      channel: delivery.channel,
+      eventKind: "artifact_delivered",
+      deliveryKey: buildLedgerArtifactDeliveryKey(delivery.channel, delivery.url ?? delivery.downloadUrl ?? delivery.previewUrl, delivery.filePath),
+      idempotencyKey: `chunk-artifact:${params.runId}:${delivery.channel}:${delivery.toolName}:${delivery.filePath}`,
+      status: "delivered",
+      summary: `${delivery.channel} artifact delivered: ${describeArtifactForUser(delivery)}`,
+      detail: {
+        toolName: delivery.toolName,
+        filePath: displayHomePath(delivery.filePath),
+        ...(delivery.url ? { url: delivery.url } : {}),
+        ...(delivery.previewUrl ? { previewUrl: delivery.previewUrl } : {}),
+        ...(delivery.downloadUrl ? { downloadUrl: delivery.downloadUrl } : {}),
+        ...(delivery.mimeType ? { mimeType: delivery.mimeType } : {}),
+        ...(delivery.sizeBytes !== undefined ? { sizeBytes: delivery.sizeBytes } : {}),
+      },
+    })
   }
 
   for (const delivery of params.receipt?.textDeliveries ?? []) {
@@ -506,6 +618,19 @@ export function applyChunkDeliveryReceipt(params: {
       lastDeliveryReceipt: `${delivery.channel}:text`,
       pendingDelivery: [],
       status: "delivered",
+    })
+    recordMessageLedgerEvent({
+      runId: params.runId,
+      channel: delivery.channel,
+      eventKind: "text_delivered",
+      deliveryKey: buildLedgerTextDeliveryKey(delivery.channel, JSON.stringify(delivery.messageIds ?? []), delivery.text),
+      idempotencyKey: `chunk-text:${params.runId}:${delivery.channel}:${JSON.stringify(delivery.messageIds ?? [])}`,
+      status: "delivered",
+      summary: `${delivery.channel} text delivered`,
+      detail: {
+        textLength: delivery.text.length,
+        ...(delivery.messageIds ? { messageIds: delivery.messageIds } : {}),
+      },
     })
   }
 }

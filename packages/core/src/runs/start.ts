@@ -8,6 +8,7 @@ import { getConfig } from "../config/index.js"
 import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js"
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js"
 import { detectAvailableProvider, formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js"
+import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { createLogger } from "../logger/index.js"
 import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/latency.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
@@ -154,7 +155,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)
     const providerTrace = params.providerTrace ?? (() => {
       try {
-        return resolveProviderResolutionSnapshot(params.providerId).auditTrace
+        const cfg = getConfig()
+        const snapshot = resolveProviderResolutionSnapshot(params.providerId)
+        const matrix = getProviderCapabilityMatrix({ connection: cfg.ai.connection, memory: cfg.memory })
+        return attachCapabilityProfileToTrace(snapshot.auditTrace, matrix)
       } catch {
         return undefined
       }

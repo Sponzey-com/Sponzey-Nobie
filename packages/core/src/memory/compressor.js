@@ -1,3 +1,4 @@
+import { chatWithContextPreflight } from "../runs/context-preflight.js";
 export const COMPRESS_THRESHOLD = 120_000; // tokens
 export const COMPRESS_MSG_COUNT = 40; // message count
 const TAIL_SIZE = 10; // keep last N messages uncompressed
@@ -27,10 +28,12 @@ export async function compressContext(messages, dbMessages, provider, model) {
     }).join("\n\n");
     // Call the configured AI backend to summarize
     let summary = "";
-    for await (const chunk of provider.chat({
+    for await (const chunk of chatWithContextPreflight({
+        provider,
         model,
         messages: [{ role: "user", content: `${SUMMARIZE_PROMPT}\n${conversationText}` }],
         maxTokens: 500,
+        metadata: { operation: "session_compaction_summary" },
     })) {
         if (chunk.type === "text_delta")
             summary += chunk.delta;

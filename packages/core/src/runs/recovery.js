@@ -1,6 +1,8 @@
 import { displayHomePath } from "./delivery.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
 export function buildRecoveryKey(parts) {
+    // nobie-critical-decision-audit: recovery.normalized_error_key
+    // Recovery dedupe is based on structured tool/action/target/channel plus sanitized error kind, not user request text.
     const errorKind = sanitizeUserFacingError(parts.error).kind;
     return [
         "recovery",
@@ -31,6 +33,8 @@ function normalizeCommandFailureKey(toolName, output) {
     });
 }
 export function describeCommandFailureReason(output) {
+    // nobie-critical-decision-audit: recovery.command_failure_reason
+    // Error-message classification only selects recovery candidates; it must not decide user intent or schedule identity.
     if (/(not found|command not found|enoent|is not recognized)/i.test(output)) {
         return "실행 명령을 찾지 못해 다른 명령이나 다른 도구 경로를 찾아야 합니다.";
     }
@@ -264,7 +268,10 @@ export function buildAiRecoveryAvoidTargets(targetId, workerRuntimeKind) {
 export function buildAiRecoveryKey(params) {
     const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default";
     const fingerprint = normalizeAiRecoveryFingerprint(params.reason, params.message);
-    return `${route}::${fingerprint}`;
+    const credentialPath = normalizeAiRecoveryCredentialPath(params.reason, params.message);
+    return credentialPath === "auth=unknown"
+        ? `${route}::${fingerprint}`
+        : `${route}::${credentialPath}::${fingerprint}`;
 }
 export function buildWorkerRuntimeRecoveryKey(params) {
     const route = params.workerRuntimeKind || params.targetId || params.providerId || params.model || "default";
@@ -291,6 +298,14 @@ function normalizeAiRecoveryFingerprint(reason, message) {
     if (/network|socket|connect|connection|reset|refused|econn|dns|fetch failed/i.test(combined))
         return "network";
     return combined.slice(0, 160);
+}
+function normalizeAiRecoveryCredentialPath(reason, message) {
+    const combined = `${reason}\n${message}`.toLowerCase();
+    if (/(chatgpt|codex|oauth|auth\.json|refresh token|access token|토큰 갱신)/i.test(combined))
+        return "auth=chatgpt-oauth";
+    if (/(api key|apikey|openai_api_key|x-api-key|bearer|sk-)/i.test(combined))
+        return "auth=api-key";
+    return "auth=unknown";
 }
 function inferCommandFailureAlternatives(failedTool) {
     const alternatives = [{ kind: "other_tool", label: "다른 도구 경로 재시도" }];

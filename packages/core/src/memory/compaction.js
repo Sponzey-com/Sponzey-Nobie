@@ -1,3 +1,4 @@
+import { enqueueMemoryWritebackCandidate, upsertSessionSnapshot } from "../db/index.js";
 export const SESSION_COMPACTION_TOKEN_THRESHOLD = 120_000;
 export const SESSION_COMPACTION_MESSAGE_THRESHOLD = 40;
 const DEFAULT_SNAPSHOT_SUMMARY_CHARS = 1_200;
@@ -51,6 +52,49 @@ export function buildSessionCompactionSnapshot(input) {
             ...pendingDelivery.map((item) => `pending_delivery:${item}`),
         ],
         activeTaskIds: [...activeTaskIds],
+    };
+}
+export function runSilentMemoryFlushBeforeCompaction(input) {
+    const durableFacts = input.durableFacts?.map((item) => item.trim()).filter(Boolean) ?? [];
+    const pendingApprovals = input.pendingApprovals?.map((item) => item.trim()).filter(Boolean) ?? [];
+    const pendingDelivery = input.pendingDelivery?.map((item) => item.trim()).filter(Boolean) ?? [];
+    const lines = [
+        input.requestGroupId ? `request_group:${input.requestGroupId}` : "",
+        ...durableFacts.map((item) => `fact:${item}`),
+        ...pendingApprovals.map((item) => `pending_approval:${item}`),
+        ...pendingDelivery.map((item) => `pending_delivery:${item}`),
+    ].filter(Boolean);
+    if (lines.length === 0)
+        return undefined;
+    return enqueueMemoryWritebackCandidate({
+        scope: "session",
+        ownerId: input.sessionId,
+        sourceType: "compaction_silent_flush",
+        content: lines.join("\n"),
+        ...(input.runId ? { runId: input.runId } : {}),
+        metadata: {
+            sessionId: input.sessionId,
+            ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
+            pendingApprovalCount: pendingApprovals.length,
+            pendingDeliveryCount: pendingDelivery.length,
+            durableFactCount: durableFacts.length,
+            silent: true,
+        },
+    });
+}
+export function persistSessionCompactionMaintenance(input) {
+    const flushCandidateId = runSilentMemoryFlushBeforeCompaction(input);
+    const snapshot = buildSessionCompactionSnapshot(input);
+    const snapshotId = upsertSessionSnapshot({
+        sessionId: snapshot.sessionId,
+        summary: snapshot.summary,
+        preservedFacts: snapshot.preservedFacts,
+        activeTaskIds: snapshot.activeTaskIds,
+    });
+    return {
+        snapshotId,
+        snapshot,
+        ...(flushCandidateId ? { flushCandidateId } : {}),
     };
 }
 export function hasBalancedToolUsePairs(messages) {

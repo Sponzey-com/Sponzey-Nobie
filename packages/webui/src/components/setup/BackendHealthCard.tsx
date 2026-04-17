@@ -13,6 +13,7 @@ import {
   type AIAuthMode,
   type RoutingProfile,
   type AIProviderType,
+  type ProviderCapabilityItem,
 } from "../../contracts/ai"
 import { getAIProviderDisplayLabel, getBackendDisplayLabel, getRoutingProfileDisplayLabel } from "../../lib/ai-display"
 import { useUiI18n } from "../../lib/ui-i18n"
@@ -27,6 +28,32 @@ function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string)
   return mode === "chatgpt_oauth"
     ? text("ChatGPT OAuth", "ChatGPT OAuth")
     : text("API Key", "API Key")
+}
+
+function capabilityTone(status: ProviderCapabilityItem["status"]): string {
+  switch (status) {
+    case "supported":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800"
+    case "warning":
+      return "border-amber-200 bg-amber-50 text-amber-800"
+    case "unsupported":
+      return "border-stone-200 bg-stone-50 text-stone-500"
+    case "unknown":
+      return "border-sky-200 bg-sky-50 text-sky-800"
+  }
+}
+
+function capabilityStatusLabel(status: ProviderCapabilityItem["status"], text: (ko: string, en: string) => string): string {
+  switch (status) {
+    case "supported":
+      return text("지원", "Supported")
+    case "warning":
+      return text("주의", "Warning")
+    case "unsupported":
+      return text("미지원", "Unsupported")
+    case "unknown":
+      return text("확인 필요", "Unknown")
+  }
 }
 
 export function BackendHealthCard({
@@ -79,6 +106,7 @@ export function BackendHealthCard({
         defaultModel: result.models.includes(backend.defaultModel) ? backend.defaultModel : result.models[0] ?? "",
         status: "ready",
         reason: undefined,
+        ...(result.capabilityMatrix ? { capabilityMatrix: result.capabilityMatrix } : {}),
       })
       setSourceUrl(result.sourceUrl)
       setSuccessMessage(
@@ -158,6 +186,7 @@ export function BackendHealthCard({
   const credentialFields = getAIProviderCredentialFields(backend.providerType, backend.authMode ?? "api_key")
   const isOpenAIOAuthMode = backend.providerType === "openai" && (backend.authMode ?? "api_key") === "chatgpt_oauth"
   const isBuiltinBackend = isBuiltinBackendId(backend.id)
+  const capabilityMatrix = backend.capabilityMatrix
   const canLoadModels =
     Boolean(backend.endpoint?.trim()) && hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key")
 
@@ -338,6 +367,46 @@ export function BackendHealthCard({
                   </button>
                 )
               })}
+            </div>
+          </div>
+        ) : null}
+
+        {capabilityMatrix ? (
+          <div className="rounded-xl border border-stone-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-stone-900">{text("Provider 기능", "Provider capabilities")}</div>
+                <div className="mt-1 font-mono text-[11px] text-stone-500">profile {capabilityMatrix.profileId} · {capabilityMatrix.adapterType} · {capabilityMatrix.authType}</div>
+              </div>
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${capabilityTone(capabilityMatrix.endpointMismatch.status)}`}>
+                {capabilityMatrix.endpointMismatch.status === "supported" ? text("endpoint 일치", "endpoint ok") : text("endpoint 확인", "check endpoint")}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {[
+                [text("Chat", "Chat"), capabilityMatrix.chatCompletions],
+                [text("Responses", "Responses"), capabilityMatrix.responsesApi],
+                [text("도구 호출", "Tool calling"), capabilityMatrix.toolCalling],
+                [text("JSON 출력", "JSON output"), capabilityMatrix.jsonSchemaOutput],
+                [text("모델 목록", "Model listing"), capabilityMatrix.modelListing],
+                [text("Embedding", "Embedding"), capabilityMatrix.embeddings],
+                [text("Auth refresh", "Auth refresh"), capabilityMatrix.authRefresh],
+                [text("Context", "Context"), capabilityMatrix.contextWindow],
+              ].map(([label, item]) => {
+                const capability = item as ProviderCapabilityItem
+                return (
+                  <div key={String(label)} className={`rounded-lg border px-3 py-2 ${capabilityTone(capability.status)}`}>
+                    <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                      <span>{String(label)}</span>
+                      <span>{capabilityStatusLabel(capability.status, text)}</span>
+                    </div>
+                    <div className="mt-1 text-[11px] leading-5 opacity-90">{displayText(capability.detail)}</div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="mt-3 text-[11px] leading-5 text-stone-500">
+              {text("마지막 확인", "Last check")}: {capabilityMatrix.lastCheckResult.status} · {displayText(capabilityMatrix.lastCheckResult.message)}
             </div>
           </div>
         ) : null}

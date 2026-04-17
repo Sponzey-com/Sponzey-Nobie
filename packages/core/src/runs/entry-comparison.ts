@@ -7,6 +7,7 @@ import {
   type ActiveRunContractProjection,
 } from "./active-run-projection.js"
 import { stableContractHash, type IntentContract, type JsonObject } from "../contracts/index.js"
+import { chatWithContextPreflight } from "./context-preflight.js"
 
 export type RequestContinuationDecisionKind = "same_run" | "new_run" | "clarify" | "cancel_target" | "update_target"
 
@@ -123,13 +124,15 @@ export async function compareRequestContinuationWithAI(params: {
   const timeout = withTimeoutSignal(params.timeoutMs ?? 1800)
   let raw = ""
   try {
-    for await (const chunk of provider.chat({
+    for await (const chunk of chatWithContextPreflight({
+      provider,
       model,
       messages,
       system: buildRequestContinuationSystemPrompt(),
       tools: [],
       maxTokens: 260,
       signal: timeout.signal,
+      metadata: { operation: "request_continuation_comparison" },
     })) {
       if (chunk.type === "text_delta") raw += chunk.delta
     }
