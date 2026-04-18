@@ -24,6 +24,10 @@ export const DEFAULT_CONFIG = {
         enabled: true,
         port: 18888,
         host: "127.0.0.1",
+        preferredUiMode: "beginner",
+        admin: {
+            enabled: false,
+        },
         auth: {
             enabled: false,
         },

@@ -74,7 +74,9 @@ program
 program
   .command("serve")
   .description("Start 스폰지 노비 · Sponzey Nobie as a background daemon (WebUI + scheduler + Telegram)")
-  .action(() => {
+  .option("--admin-ui", "Enable Admin UI for this serve process")
+  .action((options: { adminUi?: boolean }) => {
+    if (options.adminUi) process.env["NOBIE_ADMIN_UI"] = "1"
     serveCommand().catch((err: unknown) => {
       console.error("Fatal:", err instanceof Error ? err.message : String(err))
       process.exit(1)

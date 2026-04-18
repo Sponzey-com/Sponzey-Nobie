@@ -58,6 +58,10 @@ export interface WebuiConfig {
   enabled: boolean
   port: number
   host: string
+  preferredUiMode?: "beginner" | "advanced"
+  admin: {
+    enabled: boolean
+  }
   auth: {
     enabled: boolean
     token?: string
@@ -186,6 +190,10 @@ export const DEFAULT_CONFIG: NobieConfig = {
     enabled: true,
     port: 18888,
     host: "127.0.0.1",
+    preferredUiMode: "beginner",
+    admin: {
+      enabled: false,
+    },
     auth: {
       enabled: false,
     },

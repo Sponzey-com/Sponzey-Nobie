@@ -16,9 +16,24 @@ GATEWAY_HOST="${NOBIE_GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
 WEBUI_HOST="${NOBIE_WEBUI_HOST:-127.0.0.1}"
 WEBUI_PORT="${NOBIE_WEBUI_PORT:-5173}"
+ADMIN_UI="${NOBIE_ADMIN_UI:-0}"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --admin|--admin-ui)
+      ADMIN_UI="1"
+      shift
+      ;;
+    *)
+      echo "알 수 없는 옵션: $1"
+      echo "사용법: bash scripts/start-local.sh [--admin-ui]"
+      exit 1
+      ;;
+  esac
+done
 
 mkdir -p "$PIDS_DIR" "$LOGS_DIR"
 
@@ -299,8 +314,8 @@ start_gateway() {
   if can_use_launchctl; then
     remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
     local command
-    printf -v command 'cd %q && export NOBIE_STATE_DIR=%q NOBIE_LOG_LEVEL=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
-      "$ROOT_DIR" "$STATE_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$PATH" "$GATEWAY_LOG_FILE"
+    printf -v command 'cd %q && export NOBIE_STATE_DIR=%q NOBIE_LOG_LEVEL=%q NOBIE_ADMIN_UI=%q NOBIE_ADMIN_UI_SOURCE=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
+      "$ROOT_DIR" "$STATE_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$ADMIN_UI" "local-script" "$PATH" "$GATEWAY_LOG_FILE"
     launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"
     wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"
   else
@@ -308,6 +323,8 @@ start_gateway() {
       cd "$ROOT_DIR"
       export NOBIE_STATE_DIR="$STATE_DIR"
       export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
+      export NOBIE_ADMIN_UI="$ADMIN_UI"
+      export NOBIE_ADMIN_UI_SOURCE="local-script"
       exec nohup node packages/cli/dist/index.js serve </dev/null
     ) >>"$GATEWAY_LOG_FILE" 2>&1 &
     echo "$!" > "$GATEWAY_PID_FILE"
@@ -371,6 +388,7 @@ echo
 echo "스폰지 노비 · Sponzey Nobie 로컬 실행이 완료되었습니다."
 echo "  Gateway : http://$GATEWAY_HOST:$GATEWAY_PORT"
 echo "  WebUI   : http://$WEBUI_HOST:$WEBUI_PORT"
+echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"
 echo "  State   : $STATE_DIR"
 echo "  Logs    : $GATEWAY_LOG_FILE / $WEBUI_LOG_FILE"
 echo "  Status  : bash scripts/status-local.sh"
