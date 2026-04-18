@@ -254,3 +254,4 @@ export declare function shouldStopRepeatedFailure(input: {
     seenCount: number;
     threshold: number;
 }): RepeatedFailureStopDecision;
+//# sourceMappingURL=soak-retention.d.ts.map

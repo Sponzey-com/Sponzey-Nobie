@@ -31,6 +31,7 @@ function createPromptFixture(): string {
     "planner.md",
     "memory_policy.md",
     "tool_policy.md",
+    "web_retrieval_planner.md",
     "recovery_policy.md",
     "completion_policy.md",
     "output_policy.md",
@@ -66,6 +67,7 @@ describe("prompt source registry", () => {
       "planner",
       "memory_policy",
       "tool_policy",
+      "web_retrieval_planner",
       "recovery_policy",
       "completion_policy",
       "output_policy",
@@ -156,12 +158,14 @@ describe("prompt source registry", () => {
     expect(first.created).toContain("planner.md")
     expect(first.created).toContain("memory_policy.md")
     expect(first.created).toContain("tool_policy.md")
+    expect(first.created).toContain("web_retrieval_planner.md")
     expect(first.created).toContain("recovery_policy.md")
     expect(first.created).toContain("completion_policy.md")
     expect(first.created).toContain("output_policy.md")
     expect(first.created).toContain("channel.md")
     expect(first.created).toContain("bootstrap.md")
     expect(existsSync(join(first.promptsDir, "user.md.en"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "web_retrieval_planner.md.en"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "output_policy.md.en"))).toBe(true)
 
     const userPromptPath = join(first.promptsDir, "user.md")
@@ -202,7 +206,7 @@ describe("prompt source registry", () => {
 
     bootstrap()
     const firstCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count
-    expect(firstCount).toBe(24)
+    expect(firstCount).toBe(26)
     expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "ko")).toBe(true)
 
     bootstrap()

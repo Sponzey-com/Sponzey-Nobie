@@ -80,6 +80,7 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
         preview: params.preview,
         wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
         successfulFileDeliveries: params.successfulFileDeliveries,
+        successfulTextDeliveries: params.successfulTextDeliveries ?? [],
         successfulTools: params.successfulTools,
         sawRealFilesystemMutation: params.sawRealFilesystemMutation,
         source: params.source,

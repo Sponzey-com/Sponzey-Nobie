@@ -1,5 +1,10 @@
 import { buildStructuredExecutionBrief } from "./request-prompt.js";
-const TOOL_REQUIRING_TASK_PATTERN = /\b(file|files|code|repo|repository|command|commands|shell|terminal|browser|click|open|search|web|website|url|link|process|run|execute|edit|write|read|fetch|download)\b|파일|코드|저장소|명령|쉘|터미널|브라우저|클릭|열어|검색|웹|사이트|링크|주소|프로세스|실행|수정|작성|읽기|가져와|다운로드/u;
+const TOOL_REQUIRING_TASK_PATTERN = 
+// nobie-critical-decision-audit: scheduled.tool_disable_keyword_guard
+// Legacy fallback only. New ScheduleContract schedules bypass this language-sensitive tool decision.
+/\b(file|files|code|repo|repository|command|commands|shell|terminal|browser|click|open|search|web|website|url|link|process|run|execute|edit|write|read|fetch|download)\b|파일|코드|저장소|명령|쉘|터미널|브라우저|클릭|열어|검색|웹|사이트|링크|주소|프로세스|실행|수정|작성|읽기|가져와|다운로드/u;
+// nobie-critical-decision-audit: scheduled.direct_literal_extraction
+// Legacy fallback only. Contract schedules store literal delivery in ScheduleContract payloads.
 const DIRECT_DELIVERY_PATTERNS = [
     /^(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:(?:메신저|메시지|텔레그램)(?:로)?\s*)?(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,
     /^(?:"([^"\n]+)"|'([^'\n]+)'|“([^”\n]+)”|‘([^’\n]+)’|(.+?))\s*(?:이?라고)\s*(?:말해줘|말해 줘|알려줘|알려 줘|보내줘|보내 줘|해줘|해 줘|해주세요|해 주세요)$/u,

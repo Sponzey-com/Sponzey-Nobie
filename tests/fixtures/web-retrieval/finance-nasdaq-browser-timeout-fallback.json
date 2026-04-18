@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "finance-nasdaq-browser-timeout-fallback",
+  "title": "NASDAQ browser timeout falls back to known source adapter",
+  "freshnessPolicy": "latest_approximate",
+  "target": {
+    "kind": "finance_index",
+    "rawQuery": "지금 나스닥 지수 얼마야",
+    "canonicalName": "NASDAQ Composite",
+    "symbols": ["IXIC", "NASDAQ Composite"],
+    "market": "NASDAQ",
+    "locale": "ko-KR"
+  },
+  "sources": [
+    {
+      "id": "nasdaq-browser-timeout",
+      "method": "browser_search",
+      "status": "failed",
+      "toolName": "web_fetch",
+      "sourceKind": "browser_evidence",
+      "reliability": "medium",
+      "sourceDomain": "www.google.com",
+      "sourceUrl": "https://www.google.com/finance/quote/.IXIC:INDEXNASDAQ",
+      "fetchTimestamp": "2026-04-17T06:31:00.000Z",
+      "inputKind": "browser_text",
+      "content": "",
+      "errorKind": "browser_timeout",
+      "stopReason": "fallback_required"
+    },
+    {
+      "id": "nasdaq-known-adapter",
+      "method": "known_source_adapter",
+      "toolName": "known_source_adapter",
+      "sourceKind": "first_party",
+      "reliability": "high",
+      "sourceDomain": "finance.yahoo.com",
+      "sourceUrl": "https://finance.yahoo.com/quote/%5EIXIC/",
+      "sourceLabel": "Yahoo Finance quote card",
+      "fetchTimestamp": "2026-04-17T06:31:05.000Z",
+      "inputKind": "plain_text",
+      "hints": {
+        "quoteCardLabel": "NASDAQ Composite IXIC"
+      },
+      "content": "NASDAQ Composite IXIC 24,102.50 points market data"
+    }
+  ],
+  "expected": {
+    "canAnswer": true,
+    "acceptedValue": "24102.5",
+    "evidenceSufficiency": "sufficient_approximate",
+    "minAttempts": 2
+  }
+}

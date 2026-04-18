@@ -22,6 +22,7 @@ export interface RootRun {
     workerSessionId?: string;
     contextMode: RunContextMode;
     promptSourceSnapshot?: Record<string, unknown>;
+    runtimeManifestId?: string;
     delegationTurnCount: number;
     maxDelegationTurns: number;
     currentStepKey: string;

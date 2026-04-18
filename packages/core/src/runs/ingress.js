@@ -1,8 +1,12 @@
 import { startRootRun } from "./start.js";
+import { recordLatencyMetric } from "../observability/latency.js";
+import { createInboundMessageRecord } from "./request-isolation.js";
 function normalizeIngressIdentityPart(value) {
     return value == null ? "-" : String(value).trim() || "-";
 }
 export function buildIngressDedupeKey(identity) {
+    // nobie-critical-decision-audit: ingress.external_identity_dedupe
+    // Preferred fast path: dedupe by channel ids, never by natural-language message text.
     return [
         identity.source,
         identity.sessionId,
@@ -50,13 +54,30 @@ export function resolveIngressStartParams(params) {
 // Downstream execution keeps using startRootRun, but channel/API entry points
 // should start from this helper instead of assembling receipt logic themselves.
 export function startIngressRun(params) {
+    const startedAt = Date.now();
     const resolved = resolveIngressStartParams(params);
+    const inboundMessage = resolved.inboundMessage ?? createInboundMessageRecord({
+        source: resolved.source,
+        sessionId: resolved.sessionId,
+        channelEventId: resolved.runId,
+        externalMessageId: resolved.runId,
+        rawText: resolved.message,
+    });
+    const receipt = buildIngressReceipt(resolved.message);
+    recordLatencyMetric({
+        name: "ingress_ack_latency_ms",
+        durationMs: Date.now() - startedAt,
+        runId: resolved.runId,
+        sessionId: resolved.sessionId,
+        source: resolved.source,
+    });
     return {
         requestId: resolved.runId,
         sessionId: resolved.sessionId,
         source: resolved.source,
-        receipt: buildIngressReceipt(resolved.message),
-        started: startRootRun(resolved),
+        inboundMessage,
+        receipt,
+        started: startRootRun({ ...resolved, inboundMessage }),
     };
 }
 //# sourceMappingURL=ingress.js.map

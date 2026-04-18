@@ -492,8 +492,8 @@ export function createRootRun(params) {
         title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
-        total_steps, summary, can_cancel, runtime_manifest_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, runtimeManifestId, now, now);
+        total_steps, summary, can_cancel, prompt_source_snapshot, runtime_manifest_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, params.promptSourceSnapshot ? JSON.stringify(params.promptSourceSnapshot) : null, runtimeManifestId, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);

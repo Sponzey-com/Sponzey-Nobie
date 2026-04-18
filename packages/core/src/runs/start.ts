@@ -20,6 +20,7 @@ import {
   prepareStartLaunch,
 } from "./start-launch.js"
 import type { RootRun, TaskProfile } from "./types.js"
+import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import {
   appendRunEvent,
@@ -72,6 +73,7 @@ export interface StartRootRunParams {
   intentEnvelope?: TaskIntentEnvelope | undefined
   immediateCompletionText?: string | undefined
   onChunk?: RunChunkDeliveryHandler
+  inboundMessage?: InboundMessageRecord | undefined
 }
 
 export interface StartedRootRun {
@@ -150,6 +152,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
       ...(params.model ? { model: params.model } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+      ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
       hasRequestGroupExecutionQueue,
     })
     appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)

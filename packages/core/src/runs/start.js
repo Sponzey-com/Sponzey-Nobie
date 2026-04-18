@@ -75,6 +75,7 @@ export function startRootRun(params) {
             ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
             ...(params.model ? { model: params.model } : {}),
             ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+            ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
             hasRequestGroupExecutionQueue,
         });
         appendRunEvent(runId, `preflight_ms=${Date.now() - now}`);

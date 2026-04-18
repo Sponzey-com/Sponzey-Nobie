@@ -47,6 +47,7 @@ export declare function createRootRun(params: {
     workerRuntimeKind?: string;
     workerSessionId?: string;
     contextMode?: RunContextMode;
+    promptSourceSnapshot?: Record<string, unknown>;
     maxDelegationTurns?: number;
     delegationTurnCount?: number;
 }): RootRun;

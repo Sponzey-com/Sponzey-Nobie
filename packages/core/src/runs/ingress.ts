@@ -1,5 +1,6 @@
 import { startRootRun, type StartedRootRun, type StartRootRunParams } from "./start.js"
 import { recordLatencyMetric } from "../observability/latency.js"
+import { createInboundMessageRecord, type InboundMessageRecord } from "./request-isolation.js"
 
 export type IngressReceiptLanguage = "ko" | "en" | "mixed" | "unknown"
 
@@ -20,6 +21,7 @@ export interface StartedIngressRun {
   requestId: string
   sessionId: string
   source: StartRootRunParams["source"]
+  inboundMessage: InboundMessageRecord
   receipt: IngressReceipt
   started: StartedRootRun
 }
@@ -88,6 +90,13 @@ export function resolveIngressStartParams(params: StartRootRunParams): ResolvedI
 export function startIngressRun(params: StartRootRunParams): StartedIngressRun {
   const startedAt = Date.now()
   const resolved = resolveIngressStartParams(params)
+  const inboundMessage = resolved.inboundMessage ?? createInboundMessageRecord({
+    source: resolved.source,
+    sessionId: resolved.sessionId,
+    channelEventId: resolved.runId,
+    externalMessageId: resolved.runId,
+    rawText: resolved.message,
+  })
   const receipt = buildIngressReceipt(resolved.message)
   recordLatencyMetric({
     name: "ingress_ack_latency_ms",
@@ -100,7 +109,8 @@ export function startIngressRun(params: StartRootRunParams): StartedIngressRun {
     requestId: resolved.runId,
     sessionId: resolved.sessionId,
     source: resolved.source,
+    inboundMessage,
     receipt,
-    started: startRootRun(resolved),
+    started: startRootRun({ ...resolved, inboundMessage }),
   }
 }

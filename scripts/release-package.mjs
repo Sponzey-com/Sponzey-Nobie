@@ -54,6 +54,7 @@ function filterPipelineSteps(steps, options) {
     if (options.skipTests && (step.id === "unit-tests" || step.id === "typecheck")) return false
     if (options.skipSmoke && step.smoke) return false
     if (options.skipYeonjang && step.id.startsWith("yeonjang-")) return false
+    if (step.id === "web-retrieval-live-smoke" && process.env.NOBIE_LIVE_WEB_SMOKE !== "1") return false
     if (step.id === "environment-preflight" || step.id === "package-manifest" || step.id === "live-smoke-gate") return false
     return true
   })

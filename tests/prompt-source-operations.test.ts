@@ -33,6 +33,8 @@ function createPromptFixture(): string {
     ["memory_policy.md.en", "Memory Policy"],
     ["tool_policy.md", "도구 정책"],
     ["tool_policy.md.en", "Tool Policy"],
+    ["web_retrieval_planner.md", "웹 검색 회복 플래너"],
+    ["web_retrieval_planner.md.en", "Web Retrieval Recovery Planner"],
     ["recovery_policy.md", "복구 정책"],
     ["recovery_policy.md.en", "Recovery Policy"],
     ["completion_policy.md", "완료 정책"],

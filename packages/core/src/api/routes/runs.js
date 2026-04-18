@@ -4,10 +4,24 @@ import { listTaskContinuityForLineages, listMemoryAccessTraceForRun, } from "../
 import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listActiveRootRuns, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
 import { buildActiveRunProjections } from "../../runs/active-run-projection.js";
 import { startIngressRun } from "../../runs/ingress.js";
+import { createInboundMessageRecord } from "../../runs/request-isolation.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { buildTaskModels } from "../../runs/task-model.js";
 import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js";
 import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js";
+import { exportRetrievalEvidenceTimeline, getRetrievalEvidenceTimeline, } from "../../control-plane/timeline.js";
+function parseTimelineLimit(value) {
+    const parsed = Number.parseInt(value ?? "", 10);
+    if (!Number.isFinite(parsed) || parsed <= 0)
+        return undefined;
+    return Math.min(parsed, 2_000);
+}
+function parseTimelineAudience(value) {
+    return value === "developer" ? "developer" : "user";
+}
+function parseTimelineFormat(value) {
+    return value === "json" ? "json" : "markdown";
+}
 export async function startLocalRun(params) {
     const runId = crypto.randomUUID();
     const sessionId = params.sessionId ?? crypto.randomUUID();
@@ -15,6 +29,15 @@ export async function startLocalRun(params) {
         ...params,
         runId,
         sessionId,
+        inboundMessage: createInboundMessageRecord({
+            source: params.source,
+            sessionId,
+            channelEventId: runId,
+            externalChatId: sessionId,
+            externalThreadId: sessionId,
+            externalMessageId: runId,
+            rawText: params.message,
+        }),
         ...(params.source === "webui"
             ? { onChunk: createWebUiChunkDeliveryHandler({ sessionId, runId }) }
             : {}),
@@ -108,6 +131,32 @@ export function registerRunsRoute(app) {
         if (!run)
             return reply.status(404).send({ error: "Run not found" });
         return { events: run.recentEvents };
+    });
+    app.get("/api/runs/:id/retrieval-timeline", { preHandler: authMiddleware }, async (req, reply) => {
+        const run = getRootRun(req.params.id);
+        if (!run)
+            return reply.status(404).send({ error: "Run not found" });
+        const limit = parseTimelineLimit(req.query.limit);
+        return {
+            timeline: getRetrievalEvidenceTimeline({
+                requestGroupId: run.requestGroupId || run.id,
+                ...(limit !== undefined ? { limit } : {}),
+            }, parseTimelineAudience(req.query.audience)),
+        };
+    });
+    app.get("/api/runs/:id/retrieval-timeline/export", { preHandler: authMiddleware }, async (req, reply) => {
+        const run = getRootRun(req.params.id);
+        if (!run)
+            return reply.status(404).send({ error: "Run not found" });
+        const limit = parseTimelineLimit(req.query.limit);
+        return {
+            export: exportRetrievalEvidenceTimeline({
+                requestGroupId: run.requestGroupId || run.id,
+                audience: parseTimelineAudience(req.query.audience),
+                format: parseTimelineFormat(req.query.format),
+                ...(limit !== undefined ? { limit } : {}),
+            }),
+        };
     });
     app.get("/api/runs/:id/memory-trace", { preHandler: authMiddleware }, async (req, reply) => {
         const run = getRootRun(req.params.id);

@@ -636,6 +636,7 @@ export function createRootRun(params: {
   workerRuntimeKind?: string
   workerSessionId?: string
   contextMode?: RunContextMode
+  promptSourceSnapshot?: Record<string, unknown>
   maxDelegationTurns?: number
   delegationTurnCount?: number
 }): RootRun {
@@ -670,8 +671,8 @@ export function createRootRun(params: {
         title, prompt, source, status, task_profile, target_id, target_label,
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
-        total_steps, summary, can_cancel, runtime_manifest_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        total_steps, summary, can_cancel, prompt_source_snapshot, runtime_manifest_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       params.id,
       params.sessionId,
@@ -697,6 +698,7 @@ export function createRootRun(params: {
       totalSteps,
       summary,
       1,
+      params.promptSourceSnapshot ? JSON.stringify(params.promptSourceSnapshot) : null,
       runtimeManifestId,
       now,
       now,

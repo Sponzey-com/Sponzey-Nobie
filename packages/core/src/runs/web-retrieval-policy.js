@@ -5,6 +5,7 @@ import { PATHS } from "../config/index.js";
 import { insertDiagnosticEvent } from "../db/index.js";
 import { recordArtifactMetadata } from "../artifacts/lifecycle.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
+export const WEB_RETRIEVAL_POLICY_VERSION = "2026.04.18-task009";
 const TRACKING_QUERY_KEYS = new Set([
     "fbclid",
     "gclid",

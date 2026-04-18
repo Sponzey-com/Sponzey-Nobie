@@ -7,6 +7,7 @@ import { getWorkspaceRootPath, getCurrentAppVersion, getCurrentDisplayVersion } 
 import { loadPromptSourceRegistry } from "../memory/nobie-md.js";
 import { buildRolloutSafetySnapshot } from "../runtime/rollout-safety.js";
 import { runPlanDriftCheck } from "../diagnostics/plan-drift.js";
+import { buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, } from "../runs/web-retrieval-smoke.js";
 const DEFAULT_TARGET_PLATFORMS = ["macos", "windows", "linux"];
 export function buildReleaseManifest(options = {}) {
     const rootDir = resolve(options.rootDir ?? getWorkspaceRootPath());
@@ -23,6 +24,10 @@ export function buildReleaseManifest(options = {}) {
     const updatePreflight = buildReleaseUpdatePreflightReport({ rootDir, targetPlatforms, promptSourceCount: promptSources.length });
     const rollout = buildRolloutSafetySnapshot();
     const planDrift = safePlanDrift(rootDir);
+    const webRetrievalEvidence = buildWebRetrievalReleaseGateSummary({
+        fixtureRegression: safeWebRetrievalFixtureRegression(rootDir),
+        liveSmoke: null,
+    });
     return {
         kind: "nobie.release.package",
         version: 1,
@@ -65,6 +70,7 @@ export function buildReleaseManifest(options = {}) {
             latest: rollout.evidence.latest.map((item) => ({ featureKey: item.feature_key, stage: item.stage, status: item.status, summary: item.summary })),
         },
         planEvidence: planDrift.releaseNoteEvidence,
+        webRetrievalEvidence,
         pipeline: buildReleasePipelinePlan({ targetPlatforms }),
         rollback: buildReleaseRollbackRunbook(),
         cleanInstallChecklist: buildCleanMachineInstallChecklist(),
@@ -116,6 +122,7 @@ export function buildReleasePipelinePlan(input = {}) {
         step("clean-build", "Clean build", ["pnpm", "-r", "build"], true, false, "Build Gateway, CLI, Core, and WebUI from a clean checkout."),
         step("typecheck", "Typecheck", ["pnpm", "-r", "typecheck"], true, false, "Run TypeScript type checks before packaging."),
         step("unit-tests", "Unit and integration tests", ["pnpm", "test"], true, false, "Run automated regression tests."),
+        step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
         step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
         step("channel-smoke-dry-run", "Channel smoke dry-run", ["pnpm", "run", "smoke:channels"], true, true, "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured."),
     ];
@@ -128,6 +135,7 @@ export function buildReleasePipelinePlan(input = {}) {
     steps.push(step("package-manifest", "Package manifest and checksums", ["node", "scripts/release-package.mjs"], true, false, "Copy release payload entries and generate manifest.json plus SHA256SUMS."));
     steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."));
     steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."));
+    steps.push(step("web-retrieval-live-smoke", "Web retrieval live smoke", ["env", "NOBIE_LIVE_WEB_SMOKE=1", "pnpm", "test", "tests/task008-live-web-smoke-dry-run.test.ts"], false, true, "Opt-in latest-value smoke gate for KOSPI, KOSDAQ, NASDAQ, and weather; exact values are not asserted."));
     steps.push(step("live-smoke-gate", "Live smoke gate", ["pnpm", "exec", "nobie", "smoke", "channels", "--live"], false, true, "Run at least one real channel live smoke before publishing a public release."));
     return { dryRunSafe: true, order: steps.map((item) => item.id), steps };
 }
@@ -181,6 +189,7 @@ export function buildCleanMachineInstallChecklist() {
         { id: "db-migration", required: true, description: "Initial DB migration applies cleanly from an empty database." },
         { id: "feature-flags", required: true, description: "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout." },
         { id: "plan-drift", required: true, description: "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings." },
+        { id: "web-retrieval-fixtures", required: true, description: "Offline web retrieval fixture regression passes and release manifest includes retrieval policy evidence." },
         { id: "webui", required: true, description: "WebUI static files are served and /api/status returns displayVersion." },
         { id: "yeonjang-macos", required: false, description: "macOS Yeonjang app enters tray and publishes MQTT capability status." },
         { id: "yeonjang-windows", required: false, description: "Windows Yeonjang starts without console and screen capture smoke passes." },
@@ -343,6 +352,14 @@ function safePlanDrift(rootDir) {
                 },
             },
         };
+    }
+}
+function safeWebRetrievalFixtureRegression(rootDir) {
+    try {
+        return buildFixtureRegressionFromWorkspace(rootDir);
+    }
+    catch {
+        return null;
     }
 }
 function readGitValue(rootDir, args) {

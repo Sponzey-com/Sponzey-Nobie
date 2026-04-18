@@ -1,7 +1,9 @@
 import type { AgentContextMode } from "../agent/index.js";
+import type { IntentContract } from "../contracts/index.js";
 import { analyzeRequestEntrySemantics } from "./entry-semantics.js";
 import { compareRequestContinuationWithAI } from "./entry-comparison.js";
 import type { RootRun, TaskProfile } from "./types.js";
+import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import { buildStartPlan, type StartPlan } from "./start-plan.js";
 import { applyStartInitialization } from "./start-initialization.js";
@@ -43,7 +45,9 @@ export declare function prepareStartLaunch(params: {
     message: string;
     sessionId: string;
     runId: string;
+    targetRunId?: string | undefined;
     source: RootRun["source"];
+    incomingIntentContract?: IntentContract | undefined;
     controller: AbortController;
     now: number;
     maxDelegationTurns: number;
@@ -60,6 +64,7 @@ export declare function prepareStartLaunch(params: {
     targetLabel?: string | undefined;
     model?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
+    inboundMessage?: InboundMessageRecord | undefined;
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean;
 }, dependencies?: StartLaunchDependencies): Promise<PreparedStartLaunch>;
 export {};

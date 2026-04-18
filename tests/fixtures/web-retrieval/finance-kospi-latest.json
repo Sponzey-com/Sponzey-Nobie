@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "finance-kospi-latest",
+  "title": "KOSPI latest approximate from search snippet",
+  "freshnessPolicy": "latest_approximate",
+  "target": {
+    "kind": "finance_index",
+    "rawQuery": "지금 코스피 지수 얼마야",
+    "canonicalName": "KOSPI",
+    "symbols": ["KOSPI"],
+    "market": "KRX",
+    "locale": "ko-KR"
+  },
+  "sources": [
+    {
+      "id": "kospi-search-snippet",
+      "method": "fast_text_search",
+      "toolName": "web_search",
+      "sourceKind": "search_index",
+      "reliability": "medium",
+      "sourceDomain": "investing.example",
+      "sourceLabel": "Investing search snippet",
+      "fetchTimestamp": "2026-04-17T06:30:00.000Z",
+      "inputKind": "search_snippet",
+      "content": "KOSPI 현재 지수 3,085.42 포인트, 수집 시각 기준 최신 근사값"
+    }
+  ],
+  "expected": {
+    "canAnswer": true,
+    "acceptedValue": "3085.42",
+    "evidenceSufficiency": "sufficient_approximate",
+    "minAttempts": 1
+  }
+}

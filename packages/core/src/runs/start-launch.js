@@ -30,6 +30,9 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         message: params.message,
         sessionId: params.sessionId,
         runId: params.runId,
+        ...(params.targetRunId ? { targetRunId: params.targetRunId } : {}),
+        source: params.source,
+        ...(params.incomingIntentContract ? { incomingIntentContract: params.incomingIntentContract } : {}),
         ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
         ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
         ...(params.contextMode ? { contextMode: params.contextMode } : {}),
@@ -66,6 +69,9 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
         ...(startPlan.workerSessionId ? { workerSessionId: startPlan.workerSessionId } : {}),
         contextMode: startPlan.effectiveContextMode,
+        ...(params.inboundMessage
+            ? { promptSourceSnapshot: { inboundMessage: params.inboundMessage } }
+            : {}),
     });
     const startInitialization = dependencies.applyStartInitialization({
         runId: params.runId,

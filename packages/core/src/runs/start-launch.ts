@@ -3,6 +3,7 @@ import type { IntentContract } from "../contracts/index.js"
 import { analyzeRequestEntrySemantics } from "./entry-semantics.js"
 import { compareRequestContinuationWithAI } from "./entry-comparison.js"
 import type { RootRun, TaskProfile } from "./types.js"
+import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
 import { applyStartInitialization } from "./start-initialization.js"
@@ -107,6 +108,7 @@ export async function prepareStartLaunch(
     targetLabel?: string | undefined
     model?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
+    inboundMessage?: InboundMessageRecord | undefined
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
   },
   dependencies: StartLaunchDependencies = defaultDependencies,
@@ -156,6 +158,9 @@ export async function prepareStartLaunch(
     ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
     ...(startPlan.workerSessionId ? { workerSessionId: startPlan.workerSessionId } : {}),
     contextMode: startPlan.effectiveContextMode,
+    ...(params.inboundMessage
+      ? { promptSourceSnapshot: { inboundMessage: params.inboundMessage } }
+      : {}),
   })
 
   const startInitialization = dependencies.applyStartInitialization({

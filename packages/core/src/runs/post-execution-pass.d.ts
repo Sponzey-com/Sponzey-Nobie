@@ -1,5 +1,5 @@
 import { insertMessage } from "../db/index.js";
-import { logAssistantReply, type DeliveryOutcome, type RunChunkDeliveryHandler, type SuccessfulFileDelivery } from "./delivery.js";
+import { logAssistantReply, type DeliveryOutcome, type RunChunkDeliveryHandler, type SuccessfulFileDelivery, type SuccessfulTextDelivery } from "./delivery.js";
 import { runDeliveryPass } from "./delivery-pass.js";
 import { decideExecutionPostPassRecovery, type ExecutionRecoveryPayload } from "./execution-postpass.js";
 import { applyExecutionPostPassDecision } from "./execution-postpass-application.js";
@@ -54,6 +54,7 @@ export declare function runPostExecutionPass(params: {
     activeWorkerRuntime: boolean;
     workerSessionId?: string;
     successfulFileDeliveries: SuccessfulFileDelivery[];
+    successfulTextDeliveries?: SuccessfulTextDelivery[];
     successfulTools: SuccessfulToolEvidence[];
     sawRealFilesystemMutation: boolean;
     filesystemMutationRecoveryAttempted: boolean;
