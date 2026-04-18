@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary, type MemoryAccessTraceItem, type RetrievalTimeline } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
@@ -8,8 +9,25 @@ import { RunStepTimeline } from "../components/runs/RunStepTimeline"
 import { RunSummaryPanel } from "../components/runs/RunSummaryPanel"
 import { TaskChecklistPanel } from "../components/runs/TaskChecklistPanel"
 import { TaskFailurePanel } from "../components/runs/TaskFailurePanel"
+import {
+  buildAdvancedDiagnosticStatuses,
+  buildAdvancedRunListItems,
+  buildAdvancedRunSummaryCards,
+  buildCleanupNoticeFromDeleteResult,
+  buildCleanupNoticeFromStaleResult,
+  buildDoctorActionGuides,
+  type AdvancedCleanupNotice,
+  type AdvancedDiagnosticStatusKind,
+  type AdvancedDiagnosticStatusView,
+  type AdvancedDoctorGuideView,
+  type AdvancedRunListItemView,
+  type AdvancedRunSummaryCard,
+  type AdvancedRunStatusView,
+  type AdvancedStatusTone,
+} from "../lib/advanced-runs"
 import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliveryStatus, filterTaskTimelineForMode } from "../lib/task-monitor"
 import type { TaskMonitorCard, TaskMonitorViewMode } from "../lib/task-monitor"
+import type { DoctorReport, DoctorStatus } from "../contracts/doctor"
 import type { OperationsHealthItem, OperationsSummary } from "../contracts/operations"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useRunsStore } from "../stores/runs"
@@ -45,6 +63,207 @@ function TaskMonitorBadges({
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("결과 전달", "Result delivery")} {deliveryLabel}
       </span>
+    </div>
+  )
+}
+
+function advancedToneClassName(tone: AdvancedStatusTone): string {
+  switch (tone) {
+    case "blue":
+      return "border-sky-100 bg-sky-50 text-sky-800"
+    case "amber":
+      return "border-amber-100 bg-amber-50 text-amber-800"
+    case "emerald":
+      return "border-emerald-100 bg-emerald-50 text-emerald-800"
+    case "rose":
+      return "border-rose-100 bg-rose-50 text-rose-800"
+    case "red":
+      return "border-red-100 bg-red-50 text-red-800"
+    case "stone":
+      return "border-stone-200 bg-stone-50 text-stone-700"
+  }
+}
+
+function diagnosticToneClassName(status: AdvancedDiagnosticStatusKind): string {
+  switch (status) {
+    case "ok":
+      return "border-emerald-100 bg-emerald-50 text-emerald-800"
+    case "degraded":
+      return "border-amber-100 bg-amber-50 text-amber-800"
+    case "down":
+      return "border-rose-100 bg-rose-50 text-rose-800"
+    case "idle":
+      return "border-stone-200 bg-stone-50 text-stone-700"
+  }
+}
+
+function doctorToneClassName(status: DoctorStatus): string {
+  switch (status) {
+    case "ok":
+      return "border-emerald-100 bg-emerald-50 text-emerald-800"
+    case "warning":
+      return "border-amber-100 bg-amber-50 text-amber-800"
+    case "blocked":
+      return "border-red-100 bg-red-50 text-red-800"
+    case "unknown":
+      return "border-stone-200 bg-stone-50 text-stone-700"
+  }
+}
+
+function AdvancedRunStatusPill({ status }: { status: AdvancedRunStatusView }) {
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${advancedToneClassName(status.tone)}`}>
+      {status.label}
+    </span>
+  )
+}
+
+function AdvancedRunSummaryStrip({ cards }: { cards: AdvancedRunSummaryCard[] }) {
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2 xl:grid-cols-5">
+      {cards.map((card) => (
+        <div key={card.id} className={`rounded-xl border px-3 py-2 ${advancedToneClassName(card.tone)}`}>
+          <div className="text-[11px] font-semibold opacity-80">{card.label}</div>
+          <div className="mt-1 text-lg font-semibold">{card.value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AdvancedRunListMeta({ item, formatTime, text, displayText }: {
+  item: AdvancedRunListItemView
+  formatTime: (value: number) => string
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+}) {
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex flex-wrap gap-2 text-[11px] text-stone-600">
+        <AdvancedRunStatusPill status={item.status} />
+        <span className="rounded-full bg-stone-100 px-2.5 py-1">{text("채널", "Channel")} {item.channelLabel}</span>
+        <span className="rounded-full bg-stone-100 px-2.5 py-1">{text("요청자", "Requester")} {displayText(item.requesterLabel)}</span>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-4 text-stone-500">
+        <div>{text("시작", "Started")}: {formatTime(item.startedAt)}</div>
+        <div>{text("최근", "Updated")}: {formatTime(item.updatedAt)}</div>
+        <div className="break-words [overflow-wrap:anywhere]">{displayText(item.resultSummary || item.actionHint)}</div>
+      </div>
+    </div>
+  )
+}
+
+function AdvancedRunOperationalPanel({ item, text, displayText, formatTime }: {
+  item: AdvancedRunListItemView
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+  formatTime: (value: number) => string
+}) {
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("운영 요약", "Operational summary")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("실행 상태, 전달 상태, 요청 채널을 분리해서 표시합니다.", "Shows execution, delivery, and request channel separately.")}
+          </div>
+        </div>
+        <AdvancedRunStatusPill status={item.status} />
+      </div>
+      <div className="mt-4 grid gap-3 text-xs text-stone-600 md:grid-cols-2">
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("요청 채널", "Request channel")}</div>
+          <div className="mt-1">{item.sourceLabel}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("결과 채널", "Result channel")}</div>
+          <div className="mt-1">{item.channelLabel}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+          <div className="font-semibold text-stone-800">{text("시작", "Started")}</div>
+          <div className="mt-1">{formatTime(item.startedAt)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+          <div className="font-semibold text-stone-800">{item.finishedAt ? text("종료", "Finished") : text("최근 갱신", "Updated")}</div>
+          <div className="mt-1">{formatTime(item.finishedAt ?? item.updatedAt)}</div>
+        </div>
+      </div>
+      <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
+        <div className="font-semibold text-stone-800">{text("상태 설명", "Status note")}</div>
+        <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(item.status.summary)}</div>
+        <div className="mt-2 break-words [overflow-wrap:anywhere]">{displayText(item.actionHint)}</div>
+        {item.duplicateExecutionRisk ? (
+          <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-amber-800">
+            {text("중복 응답 또는 중복 도구 실행 위험이 감지됐습니다.", "Duplicate answer or duplicate tool execution risk detected.")}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function AdvancedDiagnosticsSummaryPanel({
+  statuses,
+  doctorGuides,
+  doctorLoading,
+  doctorError,
+  onRefreshDoctor,
+  text,
+  displayText,
+}: {
+  statuses: AdvancedDiagnosticStatusView[]
+  doctorGuides: AdvancedDoctorGuideView[]
+  doctorLoading: boolean
+  doctorError: string
+  onRefreshDoctor: () => void
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+}) {
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("진단 요약", "Diagnostics summary")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("고급 화면은 조치 중심 요약만 보여주고 원본 이벤트는 어드민/감사 화면으로 분리합니다.", "Advanced view shows action-oriented summaries; raw events are kept in admin/audit views.")}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefreshDoctor}
+          disabled={doctorLoading}
+          className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:border-stone-100 disabled:text-stone-400"
+        >
+          {doctorLoading ? text("확인 중", "Checking") : text("진단 갱신", "Refresh doctor")}
+        </button>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-2">
+        {statuses.map((status) => (
+          <div key={status.key} className={`rounded-xl border px-3 py-3 text-xs leading-5 ${diagnosticToneClassName(status.status)}`}>
+            <div className="font-semibold">{status.label} · {status.status}</div>
+            <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(status.summary)}</div>
+            <div className="mt-1 opacity-80">{displayText(status.action)}</div>
+          </div>
+        ))}
+      </div>
+      {doctorError ? <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{displayText(doctorError)}</div> : null}
+      <div className="mt-4 space-y-2">
+        {doctorGuides.map((guide) => (
+          <div key={guide.key} className={`rounded-xl border px-3 py-3 text-xs leading-5 ${doctorToneClassName(guide.status)}`}>
+            <div className="font-semibold">{displayText(guide.label)} · {guide.status}</div>
+            <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(guide.message)}</div>
+            <div className="mt-1 opacity-80">{displayText(guide.guide)}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs">
+        <Link to="/advanced/audit" className="rounded-xl border border-stone-200 px-3 py-2 font-semibold text-stone-700 hover:bg-stone-50">
+          {text("감사 로그 열기", "Open audit logs")}
+        </Link>
+        <Link to="/admin" className="rounded-xl border border-stone-200 px-3 py-2 font-semibold text-stone-700 hover:bg-stone-50">
+          {text("어드민 원본 보기", "Open admin raw view")}
+        </Link>
+      </div>
     </div>
   )
 }
@@ -572,6 +791,10 @@ export function RunsPage() {
   } = useRunsStore()
   const [viewMode, setViewMode] = useState<TaskMonitorViewMode>("normal")
   const [cleanupRunning, setCleanupRunning] = useState(false)
+  const [cleanupNotice, setCleanupNotice] = useState<AdvancedCleanupNotice | null>(null)
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null)
+  const [doctorLoading, setDoctorLoading] = useState(false)
+  const [doctorError, setDoctorError] = useState("")
   const [memoryTrace, setMemoryTrace] = useState<MemoryAccessTraceItem[]>([])
   const [memoryTraceLoading, setMemoryTraceLoading] = useState(false)
   const [memoryTraceError, setMemoryTraceError] = useState("")
@@ -584,7 +807,10 @@ export function RunsPage() {
   }, [ensureInitialized])
 
   const cards = buildTaskMonitorCards(tasks, runs, text)
+  const advancedRunItems = buildAdvancedRunListItems(cards, text)
+  const advancedRunSummaryCards = buildAdvancedRunSummaryCards(advancedRunItems, text)
   const selectedCard = cards.find((card) => card.key === selectedRunId || card.representative.id === selectedRunId) ?? cards[0] ?? null
+  const selectedAdvancedRunItem = advancedRunItems.find((item) => item.key === selectedCard?.key) ?? advancedRunItems[0] ?? null
   const selectedRun = selectedCard?.representative ?? null
   const selectedTimeline = selectedCard?.timeline ?? []
   const visibleTimeline = filterTaskTimelineForMode(selectedTimeline, viewMode)
@@ -596,6 +822,26 @@ export function RunsPage() {
     ["completed", "failed", "cancelled", "interrupted"].includes(card.representative.status),
   )
   const canDeleteSelected = Boolean(selectedRun && ["completed", "failed", "cancelled", "interrupted"].includes(selectedRun.status))
+  const diagnosticStatuses = buildAdvancedDiagnosticStatuses(operationsSummary, retrievalTimeline, text)
+  const doctorGuides = buildDoctorActionGuides(doctorReport, text)
+
+  async function refreshDoctor(): Promise<void> {
+    setDoctorLoading(true)
+    try {
+      const response = await api.doctor("quick")
+      setDoctorReport(response.report)
+      setDoctorError("")
+    } catch (error) {
+      setDoctorError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDoctorLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!diagnosticMode || doctorReport || doctorLoading) return
+    void refreshDoctor()
+  }, [diagnosticMode])
 
   useEffect(() => {
     if (!diagnosticMode || !selectedRun) {
@@ -658,7 +904,16 @@ export function RunsPage() {
       ),
     )
     if (!confirmed) return
-    await deleteRunHistory(selectedRun.id)
+    try {
+      const result = await deleteRunHistory(selectedRun.id)
+      setCleanupNotice(buildCleanupNoticeFromDeleteResult(result.deletedRunCount, text))
+    } catch (error) {
+      setCleanupNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+        auditHint: text("실행 기록 정리에 실패했습니다. 감사 로그와 서버 로그를 확인하세요.", "Failed to clear activity history. Check audit logs and server logs."),
+      })
+    }
   }
 
   async function handleClearHistoricalHistory(): Promise<void> {
@@ -670,7 +925,16 @@ export function RunsPage() {
       ),
     )
     if (!confirmed) return
-    await clearHistoricalRunHistory()
+    try {
+      const result = await clearHistoricalRunHistory()
+      setCleanupNotice(buildCleanupNoticeFromDeleteResult(result.deletedRunCount, text))
+    } catch (error) {
+      setCleanupNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+        auditHint: text("이전 기록 정리에 실패했습니다. 감사 로그와 서버 로그를 확인하세요.", "Failed to clear past activity history. Check audit logs and server logs."),
+      })
+    }
   }
 
   async function handleCleanupStaleRuns(): Promise<void> {
@@ -684,7 +948,14 @@ export function RunsPage() {
     if (!confirmed) return
     setCleanupRunning(true)
     try {
-      await cleanupStaleRuns()
+      const result = await cleanupStaleRuns()
+      setCleanupNotice(buildCleanupNoticeFromStaleResult(result, text))
+    } catch (error) {
+      setCleanupNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+        auditHint: text("오래된 대기 정리에 실패했습니다. 운영 상태와 감사 로그를 확인하세요.", "Failed to clean stale waits. Check operational health and audit logs."),
+      })
     } finally {
       setCleanupRunning(false)
     }
@@ -692,7 +963,7 @@ export function RunsPage() {
 
   return (
     <div className="flex h-full overflow-hidden bg-stone-100">
-      <div className="w-[28rem] shrink-0 border-r border-stone-200 bg-white">
+      <div className="flex w-[28rem] shrink-0 flex-col border-r border-stone-200 bg-white">
         <div className="border-b border-stone-200 px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -723,8 +994,9 @@ export function RunsPage() {
               </button>
             ))}
           </div>
+          <AdvancedRunSummaryStrip cards={advancedRunSummaryCards} />
         </div>
-        <div className="h-[calc(100%-6.25rem)] overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="space-y-3">
             {cards.map((card) => (
               <RunStatusCard
@@ -735,14 +1007,24 @@ export function RunsPage() {
                 onSelect={() => selectRun(card.key)}
                 onCancel={card.representative.canCancel ? () => void cancelRun(card.representative.id) : undefined}
                 extraContent={(
-                  <TaskMonitorBadges
-                    attemptCount={card.attempts.length}
-                    internalAttemptCount={card.internalAttempts.length}
-                    checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
-                    deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
-                    showDiagnostics={diagnosticMode}
-                    text={text}
-                  />
+                  <div className="space-y-3">
+                    {advancedRunItems.find((item) => item.key === card.key) ? (
+                      <AdvancedRunListMeta
+                        item={advancedRunItems.find((item) => item.key === card.key)!}
+                        formatTime={formatTime}
+                        text={text}
+                        displayText={displayText}
+                      />
+                    ) : null}
+                    <TaskMonitorBadges
+                      attemptCount={card.attempts.length}
+                      internalAttemptCount={card.internalAttempts.length}
+                      checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
+                      deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
+                      showDiagnostics={diagnosticMode}
+                      text={text}
+                    />
+                  </div>
                 )}
               />
             ))}
@@ -751,9 +1033,23 @@ export function RunsPage() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">
+        {cleanupNotice ? (
+          <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm leading-6 ${cleanupNotice.kind === "success" ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-rose-100 bg-rose-50 text-rose-800"}`}>
+            <div className="font-semibold">{displayText(cleanupNotice.message)}</div>
+            <div className="text-xs opacity-80">{displayText(cleanupNotice.auditHint)}</div>
+          </div>
+        ) : null}
         {selectedRun ? (
           <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-6">
+              {selectedAdvancedRunItem ? (
+                <AdvancedRunOperationalPanel
+                  item={selectedAdvancedRunItem}
+                  text={text}
+                  displayText={displayText}
+                  formatTime={formatTime}
+                />
+              ) : null}
               <RunSummaryPanel
                 run={selectedRun}
                 diagnosticMode={diagnosticMode}
@@ -848,6 +1144,15 @@ export function RunsPage() {
                 text={text}
                 displayText={displayText}
                 formatTime={formatTime}
+              />
+              <AdvancedDiagnosticsSummaryPanel
+                statuses={diagnosticStatuses}
+                doctorGuides={doctorGuides}
+                doctorLoading={doctorLoading}
+                doctorError={doctorError}
+                onRefreshDoctor={() => void refreshDoctor()}
+                text={text}
+                displayText={displayText}
               />
               {diagnosticMode ? (
                 <MemoryTracePanel

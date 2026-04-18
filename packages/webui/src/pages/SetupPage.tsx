@@ -21,10 +21,23 @@ import { SetupStepShell } from "../components/setup/SetupStepShell"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
-import { type AIBackendCard, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
+import { AI_PROVIDER_OPTIONS, getAIProviderDefaultEndpoint, type AIBackendCard, type AIProviderType, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
 import type { SetupDraft, SetupState, SetupStepMeta } from "../contracts/setup"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
+import {
+  buildBeginnerConnectionCards,
+  buildBeginnerSetupSmokeResult,
+  buildBeginnerSetupSteps,
+  getBeginnerActiveAiBackend,
+  markBeginnerAiTestResult,
+  sanitizeBeginnerSetupError,
+  upsertBeginnerAiBackend,
+  type BeginnerConnectionStatus,
+  type BeginnerSetupStepId,
+  type BeginnerSetupStepStatus,
+} from "../lib/beginner-setup"
+import { uiCatalogText } from "../lib/message-catalog"
 import {
   canSkipSetupStep,
   hasEditableSetupStep,
@@ -36,6 +49,7 @@ import {
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
 import { pickUiText, useUiLanguageStore, type UiLanguage } from "../stores/uiLanguage"
+import { useUiModeStore } from "../stores/uiMode"
 
 function cloneDraft(draft: SetupDraft): SetupDraft {
   return JSON.parse(JSON.stringify(draft)) as SetupDraft
@@ -69,6 +83,27 @@ export function SetupPage() {
   const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
   const [showValidation, setShowValidation] = useState(false)
   const uiLanguage = useUiLanguageStore((state) => state.language)
+  const uiMode = useUiModeStore((state) => state.mode)
+  const uiShell = useUiModeStore((state) => state.shell)
+  const [beginnerStepId, setBeginnerStepId] = useState<BeginnerSetupStepId>("ai")
+  const [beginnerAiInput, setBeginnerAiInput] = useState<{
+    providerType: AIProviderType
+    authMode: "api_key" | "chatgpt_oauth"
+    endpoint: string
+    defaultModel: string
+    apiKey: string
+    oauthAuthFilePath: string
+  }>({
+    providerType: "ollama" as AIProviderType,
+    authMode: "api_key",
+    endpoint: getAIProviderDefaultEndpoint("ollama"),
+    defaultModel: "",
+    apiKey: "",
+    oauthAuthFilePath: "",
+  })
+  const [beginnerAiTestOk, setBeginnerAiTestOk] = useState<boolean | null>(null)
+  const [beginnerTestingAi, setBeginnerTestingAi] = useState(false)
+  const [beginnerNotice, setBeginnerNotice] = useState("")
   const [testingMcpServerId, setTestingMcpServerId] = useState<string | null>(null)
   const [testingSkillId, setTestingSkillId] = useState<string | null>(null)
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -98,7 +133,32 @@ export function SetupPage() {
     setSelectedAiBackendId((current) => getPreferredSingleAiBackendId(activeDraft.aiBackends, current))
   }, [activeDraft])
 
+  useEffect(() => {
+    const backend = getBeginnerActiveAiBackend(activeDraft)
+    if (!backend) return
+    setBeginnerAiInput({
+      providerType: backend.providerType,
+      authMode: backend.authMode,
+      endpoint: backend.endpoint ?? getAIProviderDefaultEndpoint(backend.providerType),
+      defaultModel: backend.defaultModel,
+      apiKey: backend.credentials.apiKey ?? "",
+      oauthAuthFilePath: backend.credentials.oauthAuthFilePath ?? "",
+    })
+  }, [activeDraft])
+
   const steps = useMemo(() => createSetupSteps(capabilities, activeDraft, state, uiLanguage), [capabilities, activeDraft, state, uiLanguage])
+  const beginnerSteps = useMemo(
+    () => buildBeginnerSetupSteps({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage, aiTestOk: beginnerAiTestOk }),
+    [activeDraft, checks, uiShell, uiLanguage, beginnerAiTestOk],
+  )
+  const beginnerConnections = useMemo(
+    () => buildBeginnerConnectionCards({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage }),
+    [activeDraft, checks, uiShell, uiLanguage],
+  )
+  const beginnerSmoke = useMemo(
+    () => buildBeginnerSetupSmokeResult({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage }),
+    [activeDraft, checks, uiShell, uiLanguage],
+  )
   const currentStep = steps.find((step) => step.id === state.currentStep) ?? steps[0]!
   const currentIndex = steps.findIndex((step) => step.id === state.currentStep)
   const nextStepMeta = currentIndex >= 0 ? steps[Math.min(currentIndex + 1, steps.length - 1)] ?? null : null
@@ -425,11 +485,323 @@ export function SetupPage() {
     setStep(nextStepMeta.id)
   }
 
+  function patchBeginnerAiInput(patch: Partial<typeof beginnerAiInput>) {
+    setBeginnerAiInput((current) => {
+      const nextProvider = patch.providerType ?? current.providerType
+      const endpointPatch = Object.prototype.hasOwnProperty.call(patch, "providerType")
+        ? getAIProviderDefaultEndpoint(nextProvider)
+        : patch.endpoint
+      return {
+        ...current,
+        ...patch,
+        providerType: nextProvider,
+        ...(endpointPatch !== undefined ? { endpoint: endpointPatch } : {}),
+        ...(nextProvider !== "openai" && patch.providerType ? { authMode: "api_key" as const } : {}),
+      }
+    })
+    setBeginnerNotice("")
+  }
+
+  async function handleSaveBeginnerAi() {
+    setBeginnerNotice("")
+    setBeginnerAiTestOk(null)
+    const nextDraft = upsertBeginnerAiBackend(activeDraft, {
+      providerType: beginnerAiInput.providerType,
+      authMode: beginnerAiInput.authMode,
+      endpoint: beginnerAiInput.endpoint,
+      defaultModel: beginnerAiInput.defaultModel,
+      credentials: {
+        ...(beginnerAiInput.apiKey.trim() ? { apiKey: beginnerAiInput.apiKey.trim() } : {}),
+        ...(beginnerAiInput.oauthAuthFilePath.trim() ? { oauthAuthFilePath: beginnerAiInput.oauthAuthFilePath.trim() } : {}),
+      },
+    })
+    setLocalDraft(nextDraft)
+    const saved = await saveDraftSnapshot(nextDraft)
+    if (!saved) {
+      setBeginnerNotice(sanitizeBeginnerSetupError(lastError || "save failed", uiLanguage))
+      return
+    }
+
+    const backend = getBeginnerActiveAiBackend(nextDraft)
+    if (!backend) return
+    setBeginnerTestingAi(true)
+    try {
+      const result = await api.testBackend(backend.endpoint ?? getAIProviderDefaultEndpoint(backend.providerType), backend.providerType, backend.credentials, backend.authMode)
+      const testedDraft = markBeginnerAiTestResult(nextDraft, backend.id, {
+        ok: result.ok,
+        ...(result.models ? { models: result.models } : {}),
+        message: result.ok ? uiCatalogText(uiLanguage, "beginner.setup.testReady") : result.error,
+      })
+      setLocalDraft(testedDraft)
+      await saveDraftSnapshot(testedDraft)
+      setBeginnerAiTestOk(result.ok)
+      setBeginnerNotice(result.ok ? uiCatalogText(uiLanguage, "beginner.setup.testReady") : sanitizeBeginnerSetupError(result.error ?? "AI test failed", uiLanguage))
+    } catch (error) {
+      const testedDraft = markBeginnerAiTestResult(nextDraft, backend.id, { ok: false, message: sanitizeBeginnerSetupError(error, uiLanguage) })
+      setLocalDraft(testedDraft)
+      await saveDraftSnapshot(testedDraft)
+      setBeginnerAiTestOk(false)
+      setBeginnerNotice(sanitizeBeginnerSetupError(error, uiLanguage))
+    } finally {
+      setBeginnerTestingAi(false)
+    }
+  }
+
+  async function handleSaveBeginnerChannels() {
+    setBeginnerNotice("")
+    const success = await saveDraftSnapshot(activeDraft, { syncChannelRuntime: true })
+    setBeginnerNotice(success ? uiCatalogText(uiLanguage, "beginner.setup.saved") : sanitizeBeginnerSetupError(lastError || "save failed", uiLanguage))
+  }
+
+  async function handleSaveBeginnerComputer() {
+    setBeginnerNotice("")
+    const success = await saveDraftSnapshot(activeDraft)
+    setBeginnerNotice(success ? uiCatalogText(uiLanguage, "beginner.setup.saved") : sanitizeBeginnerSetupError(lastError || "save failed", uiLanguage))
+  }
+
+  async function handleFinishBeginnerSetup() {
+    setBeginnerNotice("")
+    await saveDraftSnapshot(activeDraft)
+    await completeSetup()
+    setBeginnerNotice(lastError ? sanitizeBeginnerSetupError(lastError, uiLanguage) : uiCatalogText(uiLanguage, "beginner.setup.saved"))
+  }
+
+  function beginnerStepTone(status: BeginnerSetupStepStatus): string {
+    switch (status) {
+      case "done": return "border-emerald-200 bg-emerald-50 text-emerald-800"
+      case "needs_attention": return "border-amber-200 bg-amber-50 text-amber-800"
+      case "skipped": return "border-stone-200 bg-stone-50 text-stone-700"
+    }
+  }
+
+  function beginnerConnectionTone(status: BeginnerConnectionStatus): string {
+    switch (status) {
+      case "ready": return "border-emerald-200 bg-emerald-50 text-emerald-800"
+      case "needs_attention": return "border-amber-200 bg-amber-50 text-amber-800"
+      case "idle": return "border-stone-200 bg-stone-50 text-stone-700"
+    }
+  }
+
+  function renderBeginnerSetupBody() {
+    switch (beginnerStepId) {
+      case "ai":
+        return (
+          <section id="setup-ai" className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.aiTitle")}</h2>
+                <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.step.aiDesc")}</p>
+              </div>
+              <Link to="/advanced/ai" className="text-sm font-semibold text-stone-600 underline underline-offset-4">{uiCatalogText(uiLanguage, "beginner.setup.openAdvanced")}</Link>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                {uiCatalogText(uiLanguage, "beginner.setup.provider")}
+                <select
+                  value={beginnerAiInput.providerType}
+                  onChange={(event) => patchBeginnerAiInput({ providerType: event.target.value as AIProviderType })}
+                  className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10"
+                >
+                  {AI_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                {beginnerAiInput.providerType === "openai" && beginnerAiInput.authMode === "chatgpt_oauth" ? uiCatalogText(uiLanguage, "beginner.setup.authFile") : uiCatalogText(uiLanguage, "beginner.setup.apiKey")}
+                <input
+                  value={beginnerAiInput.providerType === "openai" && beginnerAiInput.authMode === "chatgpt_oauth" ? beginnerAiInput.oauthAuthFilePath : beginnerAiInput.apiKey}
+                  onChange={(event) => beginnerAiInput.providerType === "openai" && beginnerAiInput.authMode === "chatgpt_oauth"
+                    ? patchBeginnerAiInput({ oauthAuthFilePath: event.target.value })
+                    : patchBeginnerAiInput({ apiKey: event.target.value })}
+                  type={beginnerAiInput.providerType === "openai" && beginnerAiInput.authMode === "chatgpt_oauth" ? "text" : "password"}
+                  placeholder={beginnerAiInput.providerType === "openai" && beginnerAiInput.authMode === "chatgpt_oauth" ? "~/.codex/auth.json" : "optional"}
+                  className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10"
+                />
+              </label>
+            </div>
+            {beginnerAiInput.providerType === "openai" ? (
+              <div className="mt-4 flex flex-wrap gap-2 text-sm">
+                {(["api_key", "chatgpt_oauth"] as const).map((authMode) => (
+                  <button
+                    key={authMode}
+                    type="button"
+                    onClick={() => patchBeginnerAiInput({ authMode })}
+                    className={`rounded-full border px-3 py-1.5 font-semibold ${beginnerAiInput.authMode === authMode ? "border-stone-900 bg-stone-900 text-white" : "border-stone-200 bg-white text-stone-700"}`}
+                  >
+                    {authMode === "api_key" ? "API Key" : "ChatGPT OAuth"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <details className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-stone-800">{uiCatalogText(uiLanguage, "beginner.setup.advancedOptions")}</summary>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                  {uiCatalogText(uiLanguage, "beginner.setup.endpoint")}
+                  <input
+                    value={beginnerAiInput.endpoint}
+                    onChange={(event) => patchBeginnerAiInput({ endpoint: event.target.value })}
+                    className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10"
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                  {uiCatalogText(uiLanguage, "beginner.setup.defaultModel")}
+                  <input
+                    value={beginnerAiInput.defaultModel}
+                    onChange={(event) => patchBeginnerAiInput({ defaultModel: event.target.value })}
+                    className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10"
+                  />
+                </label>
+              </div>
+            </details>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void handleSaveBeginnerAi()}
+                disabled={saving || beginnerTestingAi || !beginnerAiInput.defaultModel.trim()}
+                className="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {beginnerTestingAi ? uiCatalogText(uiLanguage, "beginner.setup.testing") : uiCatalogText(uiLanguage, "beginner.setup.saveAndTestAi")}
+              </button>
+              <button type="button" onClick={() => setBeginnerStepId("channels")} className="rounded-2xl border border-stone-200 px-5 py-3 text-sm font-semibold text-stone-700">{pickUiText(uiLanguage, "다음", "Next")}</button>
+            </div>
+          </section>
+        )
+      case "channels":
+        return (
+          <section id="setup-channels" className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.channelTitle")}</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.step.channelsDesc")}</p>
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-stone-800">
+                  <input type="checkbox" checked={activeDraft.channels.telegramEnabled} onChange={(event) => patchDraft("channels", { ...activeDraft.channels, telegramEnabled: event.target.checked })} />
+                  {uiCatalogText(uiLanguage, "beginner.setup.enableTelegram")}
+                </label>
+                <label className="mt-4 grid gap-2 text-sm font-semibold text-stone-700">
+                  {uiCatalogText(uiLanguage, "beginner.setup.telegramToken")}
+                  <input value={activeDraft.channels.botToken} onChange={(event) => patchDraft("channels", { ...activeDraft.channels, botToken: event.target.value })} type="password" className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900" />
+                </label>
+              </div>
+              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-stone-800">
+                  <input type="checkbox" checked={activeDraft.channels.slackEnabled} onChange={(event) => patchDraft("channels", { ...activeDraft.channels, slackEnabled: event.target.checked })} />
+                  {uiCatalogText(uiLanguage, "beginner.setup.enableSlack")}
+                </label>
+                <div className="mt-4 grid gap-4">
+                  <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                    {uiCatalogText(uiLanguage, "beginner.setup.slackBotToken")}
+                    <input value={activeDraft.channels.slackBotToken} onChange={(event) => patchDraft("channels", { ...activeDraft.channels, slackBotToken: event.target.value })} type="password" className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                    {uiCatalogText(uiLanguage, "beginner.setup.slackAppToken")}
+                    <input value={activeDraft.channels.slackAppToken} onChange={(event) => patchDraft("channels", { ...activeDraft.channels, slackAppToken: event.target.value })} type="password" className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900" />
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" onClick={() => void handleSaveBeginnerChannels()} disabled={saving} className="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{uiCatalogText(uiLanguage, "beginner.setup.saveChannel")}</button>
+              <button type="button" onClick={() => setBeginnerStepId("computer")} className="rounded-2xl border border-stone-200 px-5 py-3 text-sm font-semibold text-stone-700">{pickUiText(uiLanguage, "다음", "Next")}</button>
+            </div>
+          </section>
+        )
+      case "computer":
+        return (
+          <section id="setup-computer" className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.computerTitle")}</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.step.computerDesc")}</p>
+            <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+              <label className="flex items-center gap-2 text-sm font-semibold text-stone-800">
+                <input type="checkbox" checked={activeDraft.mqtt.enabled} onChange={(event) => patchDraft("mqtt", { ...activeDraft.mqtt, enabled: event.target.checked })} />
+                {uiCatalogText(uiLanguage, "beginner.setup.enableComputer")}
+              </label>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                  {uiCatalogText(uiLanguage, "beginner.setup.computerHost")}
+                  <input value={activeDraft.mqtt.host} onChange={(event) => patchDraft("mqtt", { ...activeDraft.mqtt, host: event.target.value })} className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900" />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold text-stone-700">
+                  {uiCatalogText(uiLanguage, "beginner.setup.computerPort")}
+                  <input value={activeDraft.mqtt.port} onChange={(event) => patchDraft("mqtt", { ...activeDraft.mqtt, port: Number(event.target.value) || 1883 })} type="number" min={1} max={65535} className="rounded-2xl border border-stone-200 px-4 py-3 text-sm font-normal text-stone-900" />
+                </label>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" onClick={() => void handleSaveBeginnerComputer()} disabled={saving} className="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{uiCatalogText(uiLanguage, "beginner.setup.saveComputer")}</button>
+              <button type="button" onClick={() => setBeginnerStepId("test")} className="rounded-2xl border border-stone-200 px-5 py-3 text-sm font-semibold text-stone-700">{pickUiText(uiLanguage, "다음", "Next")}</button>
+            </div>
+          </section>
+        )
+      case "test":
+        return (
+          <section id="setup-test" className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.testTitle")}</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">{beginnerSmoke.summary}</p>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {beginnerConnections.map((card) => (
+                <a key={card.id} href={card.href} onClick={() => setBeginnerStepId(card.id === "ai" ? "ai" : card.id === "channels" ? "channels" : card.id === "yeonjang" ? "computer" : "test")} className="rounded-2xl border border-stone-200 bg-stone-50 p-4 hover:bg-stone-100">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-stone-900">{card.title}</div>
+                      <div className="mt-2 text-sm leading-6 text-stone-600">{card.summary}</div>
+                    </div>
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${beginnerConnectionTone(card.status)}`}>{card.statusLabel}</span>
+                  </div>
+                  <div className="mt-3 text-xs font-semibold text-stone-500">{card.actionLabel}</div>
+                </a>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" onClick={() => void refreshChecks(true)} disabled={checksLoading} className="rounded-2xl border border-stone-200 px-5 py-3 text-sm font-semibold text-stone-700 disabled:opacity-50">{uiCatalogText(uiLanguage, "beginner.setup.refreshStatus")}</button>
+              <button type="button" onClick={() => void handleFinishBeginnerSetup()} disabled={saving || !beginnerSmoke.ok} className="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{uiCatalogText(uiLanguage, "beginner.setup.finish")}</button>
+            </div>
+          </section>
+        )
+    }
+  }
+
+  function renderBeginnerSetup() {
+    return (
+      <div className="min-h-screen overflow-y-auto bg-stone-100 p-4 sm:p-6">
+        <div className="mx-auto max-w-6xl space-y-5">
+          <BetaWarningNotice language={uiLanguage} />
+          <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+            <aside className="space-y-4">
+              <div className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">{uiCatalogText(uiLanguage, "beginner.setup.title")}</div>
+                <h1 className="mt-2 text-2xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.title")}</h1>
+                <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.description")}</p>
+              </div>
+              <nav className="space-y-2" aria-label={uiCatalogText(uiLanguage, "beginner.setup.title")}>
+                {beginnerSteps.map((step) => (
+                  <button key={step.id} type="button" onClick={() => setBeginnerStepId(step.id)} className={`w-full rounded-2xl border p-4 text-left transition ${beginnerStepId === step.id ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-white hover:bg-stone-50"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-stone-900">{step.label}</div>
+                        <div className="mt-1 text-xs leading-5 text-stone-500">{step.description}</div>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${beginnerStepTone(step.status)}`}>{step.statusLabel}</span>
+                    </div>
+                  </button>
+                ))}
+              </nav>
+            </aside>
+            <main className="space-y-4">
+              {beginnerNotice ? <RuntimeNotice tone={beginnerAiTestOk === false ? "error" : "info"} title={uiCatalogText(uiLanguage, beginnerAiTestOk === false ? "beginner.setup.testNeedsAction" : "beginner.setup.saved")} message={beginnerNotice} /> : null}
+              {renderBeginnerSetupBody()}
+            </main>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   function renderBody() {
     switch (state.currentStep) {
       case "welcome":
         return (
           <div className="space-y-6">
+            <BetaWarningNotice language={uiLanguage} />
             <SectionIntro
               title="처음 설정을 시작합니다"
               description="왼쪽 단계 목록을 따라가며 필수 항목부터 채우면 Nobie를 바로 사용할 수 있습니다. 이 화면에서는 저장 위치와 현재 연결 상태를 먼저 확인합니다."
@@ -859,6 +1231,10 @@ export function SetupPage() {
     }
   }
 
+  if (uiMode === "beginner") {
+    return renderBeginnerSetup()
+  }
+
   return (
     <SetupStepShell
       title={pickUiText(uiLanguage, "처음 설정", "Initial Setup")}
@@ -1018,6 +1394,34 @@ function ValidationNotice({ messages }: { messages: string[] }) {
         ))}
       </ul>
     </div>
+  )
+}
+
+function BetaWarningNotice({ language }: { language: UiLanguage }) {
+  return (
+    <section
+      role="alert"
+      aria-live="polite"
+      className="rounded-[1.75rem] border border-amber-300 bg-amber-50 px-5 py-4 text-amber-950 shadow-sm"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-amber-200 text-base font-black text-amber-900" aria-hidden="true">
+          !
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">
+            {pickUiText(language, "베타 사용 경고", "Beta use warning")}
+          </div>
+          <p className="mt-1 text-sm leading-6">
+            {pickUiText(
+              language,
+              "이 프로그램은 아직 베타입니다. 사용 방식에 따라 파일 변경, 외부 서비스 호출, 화면 제어 같은 위험이 생길 수 있습니다. 중요한 작업은 실행 내용을 확인하고, 승인 요청을 신중하게 처리해 주세요.",
+              "This program is still in beta. Depending on how you use it, it may change files, call external services, or control the screen. Review actions carefully and handle approval requests with caution.",
+            )}
+          </p>
+        </div>
+      </div>
+    </section>
   )
 }
 

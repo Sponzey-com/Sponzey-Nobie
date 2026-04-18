@@ -12,6 +12,10 @@ import {
   buildWebRetrievalReleaseGateSummary,
   type WebRetrievalReleaseGateSummary,
 } from "../runs/web-retrieval-smoke.js"
+import {
+  buildUiModeReleaseGateSummary,
+  type UiModeReleaseGateSummary,
+} from "./ui-mode-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -70,6 +74,7 @@ export interface ReleaseManifest {
   rolloutEvidence: ReleaseRolloutEvidenceSummary
   planEvidence: PlanDriftReleaseNoteEvidence
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
+  uiModeEvidence: UiModeReleaseGateSummary
   pipeline: ReleasePipelinePlan
   rollback: ReleaseRollbackRunbook
   cleanInstallChecklist: ReleaseChecklistItem[]
@@ -172,6 +177,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     fixtureRegression: safeWebRetrievalFixtureRegression(rootDir),
     liveSmoke: null,
   })
+  const uiModeEvidence = buildUiModeReleaseGateSummary()
 
   return {
     kind: "nobie.release.package",
@@ -216,6 +222,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     },
     planEvidence: planDrift.releaseNoteEvidence,
     webRetrievalEvidence,
+    uiModeEvidence,
     pipeline: buildReleasePipelinePlan({ targetPlatforms }),
     rollback: buildReleaseRollbackRunbook(),
     cleanInstallChecklist: buildCleanMachineInstallChecklist(),
@@ -279,6 +286,7 @@ export function buildReleasePipelinePlan(input: { targetPlatforms?: ReleaseTarge
     step("typecheck", "Typecheck", ["pnpm", "-r", "typecheck"], true, false, "Run TypeScript type checks before packaging."),
     step("unit-tests", "Unit and integration tests", ["pnpm", "test"], true, false, "Run automated regression tests."),
     step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
+    step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
     step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
     step("channel-smoke-dry-run", "Channel smoke dry-run", ["pnpm", "run", "smoke:channels"], true, true, "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured."),
   ]
@@ -345,6 +353,7 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
     { id: "feature-flags", required: true, description: "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout." },
     { id: "plan-drift", required: true, description: "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings." },
     { id: "web-retrieval-fixtures", required: true, description: "Offline web retrieval fixture regression passes and release manifest includes retrieval policy evidence." },
+    { id: "ui-mode-release-gate", required: true, description: "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass." },
     { id: "webui", required: true, description: "WebUI static files are served and /api/status returns displayVersion." },
     { id: "yeonjang-macos", required: false, description: "macOS Yeonjang app enters tray and publishes MQTT capability status." },
     { id: "yeonjang-windows", required: false, description: "Windows Yeonjang starts without console and screen capture smoke passes." },
