@@ -2,6 +2,7 @@ import { type MigrationPreflightReport } from "../config/backup-rehearsal.js";
 import { type PromptSourceMetadata } from "../memory/nobie-md.js";
 import { type FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js";
+import { type WebRetrievalReleaseGateSummary } from "../runs/web-retrieval-smoke.js";
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux";
 export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook";
 export type ReleaseArtifactStatus = "present" | "missing_required" | "missing_optional";
@@ -47,6 +48,7 @@ export interface ReleaseManifest {
     featureFlags: ReleaseFeatureFlagState[];
     rolloutEvidence: ReleaseRolloutEvidenceSummary;
     planEvidence: PlanDriftReleaseNoteEvidence;
+    webRetrievalEvidence: WebRetrievalReleaseGateSummary;
     pipeline: ReleasePipelinePlan;
     rollback: ReleaseRollbackRunbook;
     cleanInstallChecklist: ReleaseChecklistItem[];

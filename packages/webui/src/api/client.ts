@@ -197,6 +197,9 @@ export const api = {
 
   runTimeline: (runId: string) => request<{ events: RunEvent[] }>(`/api/runs/${runId}/timeline`),
 
+  runRetrievalTimeline: (runId: string, limit = 500) =>
+    request<{ timeline: RetrievalTimeline }>(`/api/runs/${encodeURIComponent(runId)}/retrieval-timeline?limit=${encodeURIComponent(String(limit))}`),
+
   runMemoryTrace: (runId: string, limit = 100) =>
     request<{ traces: MemoryAccessTraceItem[] }>(`/api/runs/${encodeURIComponent(runId)}/memory-trace?limit=${encodeURIComponent(String(limit))}`),
 
@@ -477,6 +480,60 @@ export interface ControlTimelineExportResponse {
     content: string
     timeline: ControlTimeline
   }
+}
+
+export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "candidate" | "verdict" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic"
+
+export interface RetrievalTimelineEvent {
+  id: string
+  at: number
+  kind: RetrievalTimelineEventKind
+  eventType: string
+  component: string
+  severity: ControlEventSeverity
+  summary: string
+  detail: unknown
+  source: {
+    method: string | null
+    toolName: string | null
+    url: string | null
+    domain: string | null
+  }
+  verdict: {
+    canAnswer: boolean | null
+    acceptedValue: string | null
+    sufficiency: string | null
+    rejectionReason: string | null
+    conflicts: string[]
+  }
+  diagnosticRef: {
+    controlEventId: string
+    eventType: string
+    component: string
+  }
+  duplicate?: ControlTimelineEvent["duplicate"]
+}
+
+export interface RetrievalTimelineSummary {
+  total: number
+  sessionEvents: number
+  attempts: number
+  sources: number
+  candidates: number
+  verdicts: number
+  plannerActions: number
+  deliveryEvents: number
+  dedupeSuppressed: number
+  stops: number
+  conflicts: number
+  finalDeliveryStatus: string | null
+  stopReason: string | null
+  severityCounts: Record<ControlEventSeverity, number>
+}
+
+export interface RetrievalTimeline {
+  events: RetrievalTimelineEvent[]
+  summary: RetrievalTimelineSummary
 }
 
 export interface AuditCleanupResponse {

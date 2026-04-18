@@ -4,9 +4,13 @@ import { getConfig, PATHS } from "../config/index.js"
 import { buildRuntimeManifest, type RuntimeManifest, type RuntimeManifestOptions } from "../runtime/manifest.js"
 import { buildQueueBackpressureSnapshot } from "../runs/queue-backpressure.js"
 import { eventBus } from "../events/index.js"
+import { listControlEvents } from "../db/index.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { buildExtensionRegistrySnapshot } from "../security/extension-governance.js"
 import { toolDispatcher } from "../tools/index.js"
+import { DEFAULT_EVIDENCE_CONFLICT_POLICY } from "../runs/web-conflict-resolver.js"
+import { DEFAULT_RETRIEVAL_CACHE_TTL_POLICY } from "../runs/web-retrieval-cache.js"
+import { buildWebSourceAdapterRegistrySnapshot } from "../runs/web-source-adapters/index.js"
 import { runPlanDriftCheck } from "./plan-drift.js"
 
 export type DoctorStatus = "ok" | "warning" | "blocked" | "unknown"
@@ -17,6 +21,7 @@ export type DoctorCheckName =
   | "provider.chat"
   | "provider.resolver"
   | "provider.embedding"
+  | "web.retrieval"
   | "gateway.exposure"
   | "credential.redaction"
   | "channel.telegram"
@@ -189,6 +194,68 @@ function checkProviderEmbedding(manifest: RuntimeManifest): DoctorCheckResult {
     model: provider.embeddingModel,
     capability: provider.capabilityMatrix.embeddings,
   })
+}
+
+function countRecentWebRetrievalEvents(): {
+  conflictCount: number
+  plannerSchemaFailureCount: number
+  failedAttemptCount: number
+} {
+  const events = listControlEvents({ component: "web_retrieval", limit: 500 })
+  let conflictCount = 0
+  let plannerSchemaFailureCount = 0
+  let failedAttemptCount = 0
+  for (const event of events) {
+    const serialized = `${event.event_type} ${event.summary} ${event.detail_json ?? ""}`.toLocaleLowerCase("en-US")
+    if (serialized.includes("conflict") || serialized.includes("insufficient_conflict")) conflictCount += 1
+    if (serialized.includes("planner_") && (serialized.includes("schema") || serialized.includes("invalid") || serialized.includes("parse_failed"))) plannerSchemaFailureCount += 1
+    if (serialized.includes("attempt") && (serialized.includes("failed") || serialized.includes("timeout") || serialized.includes("error"))) failedAttemptCount += 1
+  }
+  return { conflictCount, plannerSchemaFailureCount, failedAttemptCount }
+}
+
+function checkWebRetrievalCapability(): DoctorCheckResult {
+  try {
+    const cfg = getConfig()
+    const adapters = buildWebSourceAdapterRegistrySnapshot()
+    const recent = countRecentWebRetrievalEvents()
+    const detail = {
+      searchProvider: cfg.search.web?.provider ?? "duckduckgo",
+      configuredMaxResults: cfg.search.web?.maxResults ?? 5,
+      providerOrder: [
+        "web_search: selenium browser first",
+        "web_search: duckduckgo lite fallback",
+        "web_fetch: direct fetch",
+        "known_source_adapter: finance/weather parser",
+        "ai_assisted_planner: bounded next-source planner",
+      ],
+      cacheTtl: DEFAULT_RETRIEVAL_CACHE_TTL_POLICY,
+      conflictPolicy: DEFAULT_EVIDENCE_CONFLICT_POLICY,
+      browser: {
+        driver: "selenium-webdriver",
+        fallback: "duckduckgo_lite",
+        availability: "checked_at_runtime",
+      },
+      adapters: adapters.adapters.map((adapter) => ({
+        adapterId: adapter.adapterId,
+        adapterVersion: adapter.adapterVersion,
+        parserVersion: adapter.parserVersion,
+        checksum: adapter.checksum,
+        status: adapter.status,
+        domains: adapter.sourceDomains,
+        targetKinds: adapter.supportedTargetKinds,
+        degradedReason: adapter.degradedReason ?? null,
+      })),
+      activeAdapterCount: adapters.activeCount,
+      degradedAdapterCount: adapters.degradedCount,
+      recent,
+    }
+    if (adapters.activeCount === 0) return makeCheck("web.retrieval", "blocked", "활성 web source adapter가 없습니다.", detail, "finance/weather adapter registry와 parser checksum을 확인하세요.")
+    if (adapters.degradedCount > 0 || recent.plannerSchemaFailureCount > 0) return makeCheck("web.retrieval", "warning", "Web retrieval에 검토가 필요한 adapter/planner 상태가 있습니다.", detail)
+    return makeCheck("web.retrieval", "ok", "Web retrieval 검색, fallback, adapter 상태가 확인되었습니다.", detail)
+  } catch (error) {
+    return makeCheck("web.retrieval", "unknown", "Web retrieval capability를 확인하지 못했습니다.", { error: error instanceof Error ? error.message : String(error) })
+  }
 }
 
 function checkGatewayExposure(manifest: RuntimeManifest): DoctorCheckResult {
@@ -454,6 +521,7 @@ export function runDoctor(options: RunDoctorOptions = {}): DoctorReport {
       checkProviderChat(manifest),
       checkProviderResolver(manifest),
       checkProviderEmbedding(manifest),
+      checkWebRetrievalCapability(),
     checkGatewayExposure(manifest),
     checkCredentialRedaction(manifest),
     checkTelegram(manifest),

@@ -305,3 +305,4 @@ export function formatInventoryPathForDisplay(path, baseDir) {
     const relativePath = relative(resolvedBase, resolvedPath);
     return relativePath && !relativePath.startsWith("..") && !relativePath.includes(`..${sep}`) ? relativePath : resolvedPath;
 }
+//# sourceMappingURL=backup-rehearsal.js.map

@@ -1,12 +1,12 @@
-const MAX_LATENCY_RECORDS = 1000;
+const MAX_LATENCY_RECORDS = 1_000;
 const DEFAULT_RECENT_WINDOW_MS = 15 * 60 * 1000;
 export const LATENCY_BUDGET_MS = {
     ingress_ack_latency_ms: 800,
     normalizer_latency_ms: 300,
     candidate_search_latency_ms: 250,
-    contract_ai_comparison_latency_ms: 1800,
-    execution_latency_ms: 5000,
-    delivery_latency_ms: 1500,
+    contract_ai_comparison_latency_ms: 1_800,
+    execution_latency_ms: 5_000,
+    delivery_latency_ms: 1_500,
     schedule_tick_direct_execution_latency_ms: 150,
 };
 const latencyRecords = [];
@@ -113,3 +113,4 @@ export function getFastResponseHealthSnapshot(input = {}) {
             .slice(-10),
     };
 }
+//# sourceMappingURL=latency.js.map

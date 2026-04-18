@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "finance-source-conflict",
+  "title": "Finance source conflict must not average NASDAQ values",
+  "freshnessPolicy": "latest_approximate",
+  "target": {
+    "kind": "finance_index",
+    "rawQuery": "지금 나스닥 지수",
+    "canonicalName": "NASDAQ Composite",
+    "symbols": ["IXIC", "^IXIC", ".IXIC"],
+    "market": "INDEXNASDAQ",
+    "locale": "ko-KR"
+  },
+  "sources": [
+    {
+      "id": "google-finance-ixic",
+      "method": "direct_fetch",
+      "sourceKind": "first_party",
+      "reliability": "high",
+      "sourceUrl": "https://www.google.com/finance/quote/.IXIC:INDEXNASDAQ",
+      "sourceDomain": "www.google.com",
+      "sourceLabel": "NASDAQ Composite IXIC",
+      "fetchTimestamp": "2026-04-17T06:30:00.000Z",
+      "inputKind": "plain_text",
+      "content": "NASDAQ Composite IXIC 24,102.50 points",
+      "hints": {
+        "quoteCardLabel": "NASDAQ Composite IXIC"
+      }
+    },
+    {
+      "id": "bad-search-snippet",
+      "method": "fast_text_search",
+      "sourceKind": "search_index",
+      "reliability": "medium",
+      "sourceDomain": "search.example",
+      "sourceLabel": "NASDAQ Composite IXIC",
+      "fetchTimestamp": "2026-04-17T06:30:01.000Z",
+      "inputKind": "search_snippet",
+      "content": "NASDAQ Composite IXIC 17,000.00 points",
+      "hints": {
+        "quoteCardLabel": "NASDAQ Composite IXIC"
+      }
+    }
+  ],
+  "expected": {
+    "canAnswer": false,
+    "evidenceSufficiency": "insufficient_conflict",
+    "minAttempts": 2,
+    "limitedCompletionOk": true
+  }
+}

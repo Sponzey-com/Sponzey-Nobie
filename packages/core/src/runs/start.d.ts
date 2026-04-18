@@ -3,6 +3,7 @@ import { type TaskExecutionSemantics, type TaskIntentEnvelope, type TaskStructur
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { RootRun, TaskProfile } from "./types.js";
+import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface StartRootRunParams {
     runId?: string | undefined;
@@ -35,6 +36,7 @@ export interface StartRootRunParams {
     intentEnvelope?: TaskIntentEnvelope | undefined;
     immediateCompletionText?: string | undefined;
     onChunk?: RunChunkDeliveryHandler;
+    inboundMessage?: InboundMessageRecord | undefined;
 }
 export interface StartedRootRun {
     runId: string;

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "weather-dongcheon-partial",
+  "title": "Dongcheon current weather partial but answerable",
+  "freshnessPolicy": "latest_approximate",
+  "target": {
+    "kind": "weather_current",
+    "rawQuery": "지금 동천동 날씨 어때",
+    "canonicalName": "동천동 현재 날씨",
+    "locationName": "동천동",
+    "locale": "ko-KR"
+  },
+  "sources": [
+    {
+      "id": "dongcheon-weather-text",
+      "method": "direct_fetch",
+      "toolName": "web_fetch",
+      "sourceKind": "third_party",
+      "reliability": "medium",
+      "sourceDomain": "weather.example",
+      "sourceLabel": "weather text page",
+      "fetchTimestamp": "2026-04-17T06:32:00.000Z",
+      "inputKind": "plain_text",
+      "hints": {
+        "locationLabel": "동천동"
+      },
+      "content": "동천동 현재 날씨 18℃, 습도 55%, 바람 약함"
+    }
+  ],
+  "expected": {
+    "canAnswer": true,
+    "acceptedValue": "18",
+    "evidenceSufficiency": "sufficient_approximate",
+    "minAttempts": 1
+  }
+}

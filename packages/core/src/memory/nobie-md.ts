@@ -149,6 +149,7 @@ const PROMPT_SOURCE_DEFINITIONS: PromptSourceDefinition[] = [
   { sourceId: "planner", filenames: { ko: "planner.md", en: "planner.md.en" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "memory_policy", filenames: { ko: "memory_policy.md", en: "memory_policy.md.en" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "tool_policy", filenames: { ko: "tool_policy.md", en: "tool_policy.md.en" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
+  { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.md", en: "web_retrieval_planner.md.en" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
   { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.md", en: "recovery_policy.md.en" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "completion_policy", filenames: { ko: "completion_policy.md", en: "completion_policy.md.en" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "output_policy", filenames: { ko: "output_policy.md", en: "output_policy.md.en" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
@@ -487,6 +488,24 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Do not claim an approval-required tool ran before approval is complete.
 - Preserve binaries, file paths, and receipts returned by tools.
 - Prefer tools deliverable through the active channel and do not switch to another channel tool arbitrarily.
+`,
+  },
+  web_retrieval_planner: {
+    ko: `# 웹 검색 회복 플래너
+
+- 값, 가격, 날씨, 지수, 범위, 결론을 생성하지 않는다.
+- 사용자가 요청한 대상, 지역, 심볼, 시장, 시간 기준을 바꾸지 않는다.
+- 원 요청, target contract, attempted sources, failure summary, allowed methods, freshness policy만 사용한다.
+- 출력은 JSON만 사용하고 nextActions 또는 stopReason만 반환한다.
+- action은 method, query, url, expectedTargetBinding, reason, risk만 포함한다.
+`,
+    en: `# Web Retrieval Recovery Planner
+
+- Do not generate values, prices, weather, index values, ranges, or conclusions.
+- Do not change the requested target, location, symbol, market, or time basis.
+- Use only the original request, target contract, attempted sources, failure summary, allowed methods, and freshness policy.
+- Output JSON only and return only nextActions or stopReason.
+- Each action may contain only method, query, url, expectedTargetBinding, reason, and risk.
 `,
   },
   recovery_policy: {

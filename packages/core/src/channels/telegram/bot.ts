@@ -4,6 +4,7 @@ import { eventBus } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
+import { createInboundMessageRecord } from "../../runs/request-isolation.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
 import { isAllowedUser } from "./auth.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
@@ -253,6 +254,16 @@ export class TelegramChannel {
           ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
           model: undefined,
           source: "telegram",
+          inboundMessage: createInboundMessageRecord({
+            source: "telegram",
+            sessionId,
+            channelEventId: `${chatId}:${threadId ?? "main"}:${message.message_id}`,
+            externalChatId: chatId,
+            externalThreadId: threadId,
+            externalMessageId: message.message_id,
+            userId,
+            rawText: text,
+          }),
           onChunk,
         })
 

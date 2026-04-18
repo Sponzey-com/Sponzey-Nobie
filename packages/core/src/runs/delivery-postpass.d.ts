@@ -1,4 +1,4 @@
-import { type DeliveryOutcome, type DeliverySource, type SuccessfulFileDelivery } from "./delivery.js";
+import { type DeliveryOutcome, type DeliverySource, type SuccessfulFileDelivery, type SuccessfulTextDelivery } from "./delivery.js";
 import { type RecoveryAlternative, type SuccessfulToolEvidence } from "./recovery.js";
 export interface DeliveryPostPassPreview {
     preview: string;
@@ -36,6 +36,7 @@ export declare function decideDirectArtifactDeliveryFlow(params: {
     deliveryOutcome: DeliveryOutcome;
     source: DeliverySource;
     successfulFileDeliveries: SuccessfulFileDelivery[];
+    successfulTextDeliveries?: SuccessfulTextDelivery[];
     seenKeys: Set<string>;
     canRetry: boolean;
     maxTurns: number;

@@ -144,3 +144,4 @@ export declare function verifyBackupSnapshotManifest(manifest: BackupSnapshotMan
 export declare function runRestoreRehearsal(options: RestoreRehearsalOptions): RestoreRehearsalReport;
 export declare function buildMigrationPreflightReport(options?: MigrationPreflightOptions): MigrationPreflightReport;
 export declare function formatInventoryPathForDisplay(path: string, baseDir: string): string;
+//# sourceMappingURL=backup-rehearsal.d.ts.map

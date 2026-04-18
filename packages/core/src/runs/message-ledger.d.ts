@@ -1,6 +1,6 @@
 import { type DbMessageLedgerEvent, type DbMessageLedgerStatus } from "../db/index.js";
 import type { RunStatus } from "./types.js";
-export type MessageLedgerEventKind = "ingress_received" | "fast_receipt_sent" | "approval_requested" | "approval_received" | "tool_started" | "tool_done" | "tool_failed" | "tool_skipped" | "final_answer_generated" | "text_delivered" | "text_delivery_failed" | "artifact_delivered" | "artifact_delivery_failed" | "recovery_stop_generated" | "delivery_finalized";
+export type MessageLedgerEventKind = "ingress_received" | "fast_receipt_sent" | "approval_requested" | "approval_received" | "tool_started" | "tool_done" | "tool_failed" | "tool_skipped" | "progress_message_sent" | "final_answer_generated" | "final_answer_delivered" | "final_answer_suppressed" | "text_delivered" | "text_delivery_failed" | "artifact_delivered" | "artifact_delivery_failed" | "recovery_stop_generated" | "delivery_finalized";
 export interface MessageLedgerEventInput {
     runId?: string | null;
     requestGroupId?: string | null;

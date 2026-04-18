@@ -31,6 +31,11 @@ import {
 } from "./store.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import {
+  detectExplicitToolIntent,
+  hasExplicitContinuationReference,
+  shouldInspectActiveRunCandidates,
+} from "./request-isolation.js"
 
 export interface StartPlan {
   entrySemantics: RequestEntrySemantics
@@ -88,10 +93,8 @@ const defaultDependencies: StartPlanDependencies = {
   findLatestWorkerSessionRun,
 }
 
-const LOCAL_EXECUTION_ACTION_PATTERN = /(?=.*(?:화면|스크린|모니터|디스플레이|카메라|사진|마우스|키보드|창|윈도우|프로세스|앱|프로그램|screen|monitor|display|camera|photo|mouse|keyboard|window|process|app))(?=.*(?:캡처|캡쳐|스크린샷|촬영|클릭|입력|이동|열어|실행|종료|죽여|capture|screenshot|photo|click|type|move|focus|launch|open|kill))(?=.*(?:해줘|보여줘|보내줘|전송|저장|찍어|실행|종료|send|show|take|capture|run|open|kill))/iu
-
-function isStandaloneLocalExecutionAction(message: string): boolean {
-  return LOCAL_EXECUTION_ACTION_PATTERN.test(message)
+function isStandaloneLocalExecutionAction(message: string, explicitContinuationReference: boolean): boolean {
+  return !explicitContinuationReference && detectExplicitToolIntent(message) != null
 }
 
 export async function buildStartPlan(
@@ -130,7 +133,14 @@ export async function buildStartPlan(
   const requestedClosedRequestGroup = Boolean(params.requestGroupId && !params.forceRequestGroupReuse && !explicitReusableRequestGroupId)
   const hasStructuredIncomingContract = params.incomingIntentContract != null
   const hasExplicitCandidateId = Boolean(params.targetRunId || params.approvalId)
-  const shouldInspectActiveRuns = params.requestGroupId == null && (hasStructuredIncomingContract || hasExplicitCandidateId)
+  const shouldInspectActiveRuns = shouldInspectActiveRunCandidates({
+    message: params.message,
+    hasStructuredIncomingContract,
+    hasExplicitCandidateId,
+    hasRequestGroupId: params.requestGroupId != null,
+    ...(params.forceRequestGroupReuse ? { forceRequestGroupReuse: params.forceRequestGroupReuse } : {}),
+    ...(params.incomingIntentContract ? { incomingIntentContract: params.incomingIntentContract } : {}),
+  })
   const reconnectCandidates = shouldInspectActiveRuns
     ? dependencies.listActiveSessionRequestGroups(params.sessionId, params.runId)
     : []
@@ -190,7 +200,8 @@ export async function buildStartPlan(
     ...(params.source ? { source: params.source } : {}),
     ...(params.targetId ? { targetId: params.targetId } : {}),
   })
-  const shouldBypassReconnectComparison = isStandaloneLocalExecutionAction(params.message)
+  const explicitContinuationReference = hasExplicitContinuationReference(params.message)
+  const shouldBypassReconnectComparison = isStandaloneLocalExecutionAction(params.message, explicitContinuationReference)
   const shouldCompareContinuation =
     hasStructuredIncomingContract
     && params.requestGroupId == null
@@ -198,6 +209,7 @@ export async function buildStartPlan(
     && reconnectCandidateProjections.length > 0
     && entrySemanticsBase.active_queue_cancellation_mode == null
     && !shouldBypassReconnectComparison
+    && explicitContinuationReference
   const reconnectDecision: RequestContinuationDecision = shouldCompareContinuation
     ? await (async (): Promise<RequestContinuationDecision> => {
         const comparisonStartedAt = Date.now()

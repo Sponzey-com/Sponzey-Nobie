@@ -90,6 +90,11 @@ export interface ScheduleActionDependencies {
         targetSessionId?: string;
         driver: ScheduleExecutionDriver;
         reason?: string | undefined;
+        duplicate?: {
+            scheduleId: string;
+            title: string;
+            decisionSource: "contract_key";
+        };
     };
     cancelSchedules: (scheduleIds: string[]) => string[];
 }

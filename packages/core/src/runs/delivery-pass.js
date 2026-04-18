@@ -5,6 +5,7 @@ export function runDeliveryPass(params) {
     const deliveryOutcome = resolveDeliveryOutcome({
         wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
         deliveries: params.successfulFileDeliveries,
+        textDeliveries: params.successfulTextDeliveries ?? [],
     });
     const postPassPreview = buildDeliveryPostPassPreview({
         preview: params.preview,
@@ -17,6 +18,7 @@ export function runDeliveryPass(params) {
         deliveryOutcome,
         source: params.source,
         successfulFileDeliveries: params.successfulFileDeliveries,
+        successfulTextDeliveries: params.successfulTextDeliveries ?? [],
         seenKeys: params.seenDeliveryRecoveryKeys,
         canRetry: params.canRetry,
         maxTurns: params.maxTurns,

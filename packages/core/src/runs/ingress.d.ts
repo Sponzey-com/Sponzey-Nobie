@@ -1,4 +1,5 @@
 import { type StartedRootRun, type StartRootRunParams } from "./start.js";
+import { type InboundMessageRecord } from "./request-isolation.js";
 export type IngressReceiptLanguage = "ko" | "en" | "mixed" | "unknown";
 export interface IngressReceipt {
     language: IngressReceiptLanguage;
@@ -15,6 +16,7 @@ export interface StartedIngressRun {
     requestId: string;
     sessionId: string;
     source: StartRootRunParams["source"];
+    inboundMessage: InboundMessageRecord;
     receipt: IngressReceipt;
     started: StartedRootRun;
 }

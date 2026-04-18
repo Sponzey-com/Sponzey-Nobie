@@ -1,7 +1,7 @@
 import { type RuntimeManifest, type RuntimeManifestOptions } from "../runtime/manifest.js";
 export type DoctorStatus = "ok" | "warning" | "blocked" | "unknown";
 export type DoctorMode = "quick" | "full";
-export type DoctorCheckName = "runtime.manifest" | "provider.chat" | "provider.resolver" | "provider.embedding" | "gateway.exposure" | "credential.redaction" | "channel.telegram" | "channel.slack" | "channel.webui" | "yeonjang.mqtt" | "yeonjang.protocol" | "db.migration" | "db.migration.lock" | "prompt.registry" | "memory.fts" | "memory.vector" | "queue.backpressure" | "extension.registry" | "feature.flags" | "rollout.evidence" | "plan.drift" | "artifact.storage" | "schedule.queue" | "release.package";
+export type DoctorCheckName = "runtime.manifest" | "provider.chat" | "provider.resolver" | "provider.embedding" | "web.retrieval" | "gateway.exposure" | "credential.redaction" | "channel.telegram" | "channel.slack" | "channel.webui" | "yeonjang.mqtt" | "yeonjang.protocol" | "db.migration" | "db.migration.lock" | "prompt.registry" | "memory.fts" | "memory.vector" | "queue.backpressure" | "extension.registry" | "feature.flags" | "rollout.evidence" | "plan.drift" | "artifact.storage" | "schedule.queue" | "release.package";
 export interface DoctorCheckResult {
     name: DoctorCheckName;
     status: DoctorStatus;

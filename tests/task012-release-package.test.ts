@@ -142,12 +142,16 @@ describe("task012 release package", () => {
       "clean-build",
       "typecheck",
       "unit-tests",
+      "web-retrieval-fixture-regression",
       "backup-rehearsal",
       "channel-smoke-dry-run",
       "yeonjang-macos",
       "yeonjang-windows",
       "yeonjang-linux",
       "package-manifest",
+      "rollout-shadow-evidence",
+      "plan-drift-evidence",
+      "web-retrieval-live-smoke",
       "live-smoke-gate",
     ])
     expect(pipeline.steps.find((step) => step.id === "live-smoke-gate")?.required).toBe(false)

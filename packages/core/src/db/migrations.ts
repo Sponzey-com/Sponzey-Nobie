@@ -1352,6 +1352,34 @@ export const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    version: 34,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS web_retrieval_cache (
+          cache_key TEXT PRIMARY KEY,
+          target_hash TEXT NOT NULL,
+          source_evidence_id TEXT NOT NULL,
+          verdict_id TEXT NOT NULL,
+          freshness_policy TEXT NOT NULL CHECK(freshness_policy IN ('normal', 'latest_approximate', 'strict_timestamp')),
+          ttl_ms INTEGER NOT NULL,
+          fetch_timestamp TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          value_json TEXT NOT NULL,
+          evidence_json TEXT NOT NULL,
+          verdict_json TEXT NOT NULL,
+          metadata_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_web_retrieval_cache_target
+          ON web_retrieval_cache(target_hash, freshness_policy, expires_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_web_retrieval_cache_expires
+          ON web_retrieval_cache(expires_at ASC);
+      `)
+    },
+  },
 ]
 
 function schemaMigrationsTableExists(db: Database.Database): boolean {

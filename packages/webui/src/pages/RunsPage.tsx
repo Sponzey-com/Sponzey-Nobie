@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary, type MemoryAccessTraceItem } from "../api/client"
+import { api, type ChannelSmokeChannel, type ChannelSmokeRunSummary, type MemoryAccessTraceItem, type RetrievalTimeline } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
@@ -374,6 +374,79 @@ function MemoryTracePanel({
   )
 }
 
+function RetrievalEvidencePanel({
+  timeline,
+  loading,
+  error,
+  text,
+  displayText,
+  formatTime,
+}: {
+  timeline: RetrievalTimeline | null
+  loading: boolean
+  error: string
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+  formatTime: (value: number) => string
+}) {
+  const summary = timeline?.summary ?? null
+  const events = timeline?.events ?? []
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("검색 근거", "Retrieval evidence")}</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500">
+            {text("검색, 후보값, 검증, 전달 상태를 control timeline에서 재구성합니다.", "Reconstructs search, candidates, verdicts, and delivery from the control timeline.")}
+          </div>
+        </div>
+        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-600">
+          {summary?.total ?? 0}
+        </span>
+      </div>
+      {error ? <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{displayText(error)}</div> : null}
+      {summary ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("시도", "Attempts")}: {summary.attempts}</div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("후보/검증", "Candidates/Verdicts")}: {summary.candidates}/{summary.verdicts}</div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("전달", "Delivery")}: {displayText(summary.finalDeliveryStatus ?? "unknown")}</div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("중복 억제", "Dedupe")}: {summary.dedupeSuppressed}</div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("충돌", "Conflicts")}: {summary.conflicts}</div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("중단 사유", "Stop reason")}: {displayText(summary.stopReason ?? "none")}</div>
+        </div>
+      ) : null}
+      <div className="mt-4 space-y-2">
+        {events.length > 0 ? events.slice(0, 12).map((event) => {
+          const sourceLabel = [event.source.toolName, event.source.method, event.source.domain].filter(Boolean).join(" · ")
+          const verdictLabel = event.verdict.acceptedValue
+            ? `${event.verdict.acceptedValue}${event.verdict.sufficiency ? ` · ${event.verdict.sufficiency}` : ""}`
+            : event.verdict.sufficiency ?? event.verdict.rejectionReason ?? ""
+          return (
+            <div key={event.id} className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-600">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-stone-900">{displayText(event.kind)} · {displayText(event.eventType)}</span>
+                <span>{formatTime(event.at)}</span>
+              </div>
+              <div className="mt-1 break-words leading-5 [overflow-wrap:anywhere]">{displayText(event.summary)}</div>
+              {sourceLabel || verdictLabel || event.duplicate ? (
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-stone-500">
+                  {sourceLabel ? <span className="rounded-full bg-white px-2 py-1">{displayText(sourceLabel)}</span> : null}
+                  {verdictLabel ? <span className="rounded-full bg-white px-2 py-1">{displayText(verdictLabel)}</span> : null}
+                  {event.duplicate ? <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">duplicate {event.duplicate.kind} #{event.duplicate.occurrence}</span> : null}
+                </div>
+              ) : null}
+            </div>
+          )
+        }) : (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
+            {loading ? text("검색 근거를 불러오는 중입니다.", "Loading retrieval evidence.") : text("이 실행의 검색 근거 기록이 없습니다.", "No retrieval evidence for this run.")}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ChannelSmokePanel({
   text,
   formatTime,
@@ -502,6 +575,9 @@ export function RunsPage() {
   const [memoryTrace, setMemoryTrace] = useState<MemoryAccessTraceItem[]>([])
   const [memoryTraceLoading, setMemoryTraceLoading] = useState(false)
   const [memoryTraceError, setMemoryTraceError] = useState("")
+  const [retrievalTimeline, setRetrievalTimeline] = useState<RetrievalTimeline | null>(null)
+  const [retrievalTimelineLoading, setRetrievalTimelineLoading] = useState(false)
+  const [retrievalTimelineError, setRetrievalTimelineError] = useState("")
 
   useEffect(() => {
     ensureInitialized()
@@ -543,6 +619,32 @@ export function RunsPage() {
       },
     ).finally(() => {
       if (!cancelled) setMemoryTraceLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [diagnosticMode, selectedRun?.id])
+
+  useEffect(() => {
+    if (!diagnosticMode || !selectedRun) {
+      setRetrievalTimeline(null)
+      setRetrievalTimelineError("")
+      setRetrievalTimelineLoading(false)
+      return
+    }
+    let cancelled = false
+    setRetrievalTimelineLoading(true)
+    api.runRetrievalTimeline(selectedRun.id, 500).then(
+      (response) => {
+        if (cancelled) return
+        setRetrievalTimeline(response.timeline)
+        setRetrievalTimelineError("")
+      },
+      (error) => {
+        if (cancelled) return
+        setRetrievalTimeline(null)
+        setRetrievalTimelineError(error instanceof Error ? error.message : String(error))
+      },
+    ).finally(() => {
+      if (!cancelled) setRetrievalTimelineLoading(false)
     })
     return () => { cancelled = true }
   }, [diagnosticMode, selectedRun?.id])
@@ -752,6 +854,16 @@ export function RunsPage() {
                   traces={memoryTrace}
                   loading={memoryTraceLoading}
                   error={memoryTraceError}
+                  text={text}
+                  displayText={displayText}
+                  formatTime={formatTime}
+                />
+              ) : null}
+              {diagnosticMode ? (
+                <RetrievalEvidencePanel
+                  timeline={retrievalTimeline}
+                  loading={retrievalTimelineLoading}
+                  error={retrievalTimelineError}
                   text={text}
                   displayText={displayText}
                   formatTime={formatTime}

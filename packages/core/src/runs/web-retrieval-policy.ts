@@ -6,6 +6,8 @@ import { insertDiagnosticEvent } from "../db/index.js"
 import { recordArtifactMetadata } from "../artifacts/lifecycle.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
 
+export const WEB_RETRIEVAL_POLICY_VERSION = "2026.04.18-task009"
+
 export type WebRetrievalMethod = "official_api" | "direct_fetch" | "fast_text_search" | "browser_search"
 export type SourceKind = "official" | "first_party" | "search_index" | "third_party" | "browser_evidence" | "unknown"
 export type SourceReliability = "high" | "medium" | "low" | "unknown"
@@ -38,9 +40,14 @@ export interface SourceEvidence {
   reliability: SourceReliability
   sourceUrl?: string | null
   sourceDomain?: string | null
+  sourceLabel?: string | null
   sourceTimestamp?: string | null
   fetchTimestamp: string
   freshnessPolicy?: SourceFreshnessPolicy
+  adapterId?: string | null
+  adapterVersion?: string | null
+  parserVersion?: string | null
+  adapterStatus?: "active" | "degraded" | null
 }
 
 export interface SourceReliabilityGuardResult {

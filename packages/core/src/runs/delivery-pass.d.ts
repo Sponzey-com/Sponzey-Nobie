@@ -1,4 +1,4 @@
-import { type DeliveryOutcome, type DeliverySource, type SuccessfulFileDelivery } from "./delivery.js";
+import { type DeliveryOutcome, type DeliverySource, type SuccessfulFileDelivery, type SuccessfulTextDelivery } from "./delivery.js";
 import { type DirectArtifactDeliveryApplication } from "./delivery-application.js";
 import type { SuccessfulToolEvidence } from "./recovery.js";
 export interface DeliveryPassResult {
@@ -11,6 +11,7 @@ export declare function runDeliveryPass(params: {
     preview: string;
     wantsDirectArtifactDelivery: boolean;
     successfulFileDeliveries: SuccessfulFileDelivery[];
+    successfulTextDeliveries?: SuccessfulTextDelivery[];
     successfulTools: SuccessfulToolEvidence[];
     sawRealFilesystemMutation: boolean;
     source: DeliverySource;

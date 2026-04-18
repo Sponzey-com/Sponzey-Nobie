@@ -2,6 +2,7 @@ import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { cancelRootRun, getRootRun } from "../../runs/store.js";
 import { startIngressRun } from "../../runs/ingress.js";
+import { createInboundMessageRecord } from "../../runs/request-isolation.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { findChannelMessageRef, insertChannelMessageRef } from "../../db/index.js";
 import { createSlackChunkDeliveryHandler } from "./chunk-delivery.js";
@@ -221,6 +222,16 @@ export class SlackChannel {
                 ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
                 model: undefined,
                 source: "slack",
+                inboundMessage: createInboundMessageRecord({
+                    source: "slack",
+                    sessionId,
+                    channelEventId: inboundEventKey,
+                    externalChatId: channelId,
+                    externalThreadId: threadTs,
+                    externalMessageId: messageTs,
+                    userId,
+                    rawText: text,
+                }),
                 onChunk,
             });
             startedRunId = started.runId;

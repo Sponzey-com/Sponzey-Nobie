@@ -21,6 +21,17 @@ export function decideReviewGate(params) {
     }
     if (!params.deliveryOutcome.directArtifactDeliveryRequested
         && state.completionSatisfied
+        && params.deliveryOutcome.hasSuccessfulTextDelivery
+        && !params.requiresFilesystemMutation
+        && !params.sawRealFilesystemMutation) {
+        return {
+            kind: "skip",
+            state,
+            reason: "reply 텍스트 전달 receipt와 checklist 기준 완료 항목이 이미 충족되어 completion review를 생략합니다.",
+        };
+    }
+    if (!params.deliveryOutcome.directArtifactDeliveryRequested
+        && state.completionSatisfied
         && params.successfulTools.length > 0
         && !params.requiresFilesystemMutation
         && !params.sawRealFilesystemMutation) {

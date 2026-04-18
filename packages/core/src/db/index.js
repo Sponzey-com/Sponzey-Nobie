@@ -242,6 +242,57 @@ export function listControlEvents(params = {}) {
        LIMIT ?`)
         .all(...values);
 }
+export function upsertWebRetrievalCacheEntry(input) {
+    getDb()
+        .prepare(`INSERT INTO web_retrieval_cache
+       (cache_key, target_hash, source_evidence_id, verdict_id, freshness_policy, ttl_ms,
+        fetch_timestamp, created_at, expires_at, value_json, evidence_json, verdict_json, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET
+         target_hash = excluded.target_hash,
+         source_evidence_id = excluded.source_evidence_id,
+         verdict_id = excluded.verdict_id,
+         freshness_policy = excluded.freshness_policy,
+         ttl_ms = excluded.ttl_ms,
+         fetch_timestamp = excluded.fetch_timestamp,
+         created_at = excluded.created_at,
+         expires_at = excluded.expires_at,
+         value_json = excluded.value_json,
+         evidence_json = excluded.evidence_json,
+         verdict_json = excluded.verdict_json,
+         metadata_json = excluded.metadata_json`)
+        .run(input.cacheKey, input.targetHash, input.sourceEvidenceId, input.verdictId, input.freshnessPolicy, input.ttlMs, input.fetchTimestamp, input.createdAt, input.expiresAt, JSON.stringify(input.value), JSON.stringify(input.evidence), JSON.stringify(input.verdict), toJsonOrNull(input.metadata));
+}
+export function getWebRetrievalCacheEntry(cacheKey) {
+    return getDb()
+        .prepare(`SELECT * FROM web_retrieval_cache WHERE cache_key = ? LIMIT 1`)
+        .get(cacheKey);
+}
+export function listWebRetrievalCacheEntries(params = {}) {
+    const where = [];
+    const values = [];
+    if (params.targetHash) {
+        where.push("target_hash = ?");
+        values.push(params.targetHash);
+    }
+    if (params.freshnessPolicy) {
+        where.push("freshness_policy = ?");
+        values.push(params.freshnessPolicy);
+    }
+    if (params.now !== undefined) {
+        where.push("expires_at >= ?");
+        values.push(params.now);
+    }
+    const limit = Math.max(1, Math.min(200, Math.floor(params.limit ?? 20)));
+    values.push(limit);
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT * FROM web_retrieval_cache
+       ${whereSql}
+       ORDER BY expires_at DESC, created_at DESC
+       LIMIT ?`)
+        .all(...values);
+}
 export function findChannelMessageRef(params) {
     const withThread = params.externalThreadId
         ? getDb()

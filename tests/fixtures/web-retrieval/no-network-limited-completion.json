@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "no-network-limited-completion",
+  "title": "No network completes deterministically after minimum ladder",
+  "freshnessPolicy": "latest_approximate",
+  "target": {
+    "kind": "finance_index",
+    "rawQuery": "지금 코스닥 지수 알려줘",
+    "canonicalName": "KOSDAQ",
+    "symbols": ["KOSDAQ"],
+    "market": "KRX",
+    "locale": "ko-KR"
+  },
+  "sources": [
+    {
+      "id": "kosdaq-search-network-error",
+      "method": "fast_text_search",
+      "status": "failed",
+      "toolName": "web_search",
+      "sourceKind": "search_index",
+      "reliability": "medium",
+      "sourceDomain": "duckduckgo.example",
+      "fetchTimestamp": "2026-04-17T06:33:00.000Z",
+      "inputKind": "search_snippet",
+      "content": "",
+      "errorKind": "network_unavailable",
+      "stopReason": "try_next_method"
+    },
+    {
+      "id": "kosdaq-direct-network-error",
+      "method": "direct_fetch",
+      "status": "failed",
+      "toolName": "web_fetch",
+      "sourceKind": "third_party",
+      "reliability": "medium",
+      "sourceDomain": "finance.example",
+      "fetchTimestamp": "2026-04-17T06:33:05.000Z",
+      "inputKind": "plain_text",
+      "content": "",
+      "errorKind": "network_unavailable",
+      "stopReason": "try_next_method"
+    },
+    {
+      "id": "kosdaq-browser-network-error",
+      "method": "browser_search",
+      "status": "failed",
+      "toolName": "web_fetch",
+      "sourceKind": "browser_evidence",
+      "reliability": "medium",
+      "sourceDomain": "www.google.com",
+      "fetchTimestamp": "2026-04-17T06:33:10.000Z",
+      "inputKind": "browser_text",
+      "content": "",
+      "errorKind": "network_unavailable",
+      "stopReason": "minimum_ladder_exhausted"
+    }
+  ],
+  "expected": {
+    "canAnswer": false,
+    "evidenceSufficiency": "insufficient_candidate_missing",
+    "minAttempts": 3,
+    "limitedCompletionOk": true
+  }
+}

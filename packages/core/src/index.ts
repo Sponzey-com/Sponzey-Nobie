@@ -180,6 +180,36 @@ export {
 } from "./runs/message-ledger.js"
 export type { DeliveryFinalizerResult, MessageLedgerEventInput, MessageLedgerEventKind } from "./runs/message-ledger.js"
 export {
+  WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION,
+  buildFixtureRegressionFromWorkspace,
+  buildWebRetrievalReleaseGateSummary,
+  createDryRunWebRetrievalLiveSmokeExecutor,
+  fixtureFileNameForId,
+  getDefaultWebRetrievalLiveSmokeScenarios,
+  isLiveWebSmokeEnabled,
+  loadWebRetrievalFixturesFromDir,
+  runWebRetrievalFixtureRegression,
+  runWebRetrievalLiveSmokeScenarios,
+  validateWebRetrievalLiveSmokeTrace,
+  writeWebRetrievalSmokeArtifact,
+} from "./runs/web-retrieval-smoke.js"
+export { WEB_RETRIEVAL_POLICY_VERSION } from "./runs/web-retrieval-policy.js"
+export type {
+  WebRetrievalFixture,
+  WebRetrievalFixtureExpected,
+  WebRetrievalFixtureRegressionResult,
+  WebRetrievalFixtureRegressionSummary,
+  WebRetrievalFixtureSource,
+  WebRetrievalFixtureTargetInput,
+  WebRetrievalLiveSmokeMode,
+  WebRetrievalLiveSmokeResult,
+  WebRetrievalLiveSmokeScenario,
+  WebRetrievalLiveSmokeSummary,
+  WebRetrievalLiveSmokeTrace,
+  WebRetrievalReleaseGateSummary,
+  WebRetrievalSmokeStatus,
+} from "./runs/web-retrieval-smoke.js"
+export {
   DEFAULT_QUEUE_BUDGETS,
   QUEUE_NAMES,
   QueueBackpressureError,
@@ -239,12 +269,116 @@ export type {
   MinimalMcpToolStatus,
 } from "./security/extension-governance.js"
 export {
+  DEFAULT_EVIDENCE_CONFLICT_POLICY,
+  conflictResolutionToVerdict,
+  conflictSufficiencyIsBlocking,
+  resolveEvidenceConflict,
+} from "./runs/web-conflict-resolver.js"
+export {
+  DEFAULT_RETRIEVAL_CACHE_TTL_POLICY,
+  InMemoryRetrievalCache,
+  buildRetrievalCacheEntry,
+  buildRetrievalCacheKey,
+  buildRetrievalTargetHash,
+  createInMemoryRetrievalCache,
+  evaluateRetrievalCacheEntry,
+  getPersistentRetrievalCacheEntry,
+  listPersistentRetrievalCacheEntriesForTarget,
+  putPersistentRetrievalCacheEntry,
+  resolveRetrievalCacheTtlMs,
+} from "./runs/web-retrieval-cache.js"
+export {
   buildAnswerDirective,
   buildWebRetrievalPolicyDecision,
   evaluateSourceReliabilityGuard,
   extractSourceTimestampFromHtml,
   recordBrowserSearchEvidence,
 } from "./runs/web-retrieval-policy.js"
+export {
+  RetrievalSessionController,
+  buildRetrievalDedupeKey,
+  buildRetrievalSessionDirective,
+  createGenericTargetFromPolicy,
+  createRetrievalSessionController,
+  createRetrievalTargetContract,
+  defaultRetrievalBudget,
+  defaultSourceLadder,
+  evaluateLimitedCompletionReadiness,
+  getNextRetrievalMethods,
+  isRetrievalSessionRecoverable,
+} from "./runs/web-retrieval-session.js"
+export {
+  buildCandidateExtractionFailureEvent,
+  extractRetrievedValueCandidates,
+  sourceKindSatisfiesOfficialRequired,
+  verifyRetrievedValueCandidate,
+  verifyRetrievedValueCandidates,
+} from "./runs/web-retrieval-verification.js"
+export {
+  attemptsToPlannerSummaries,
+  buildPlannerCallIdempotencyKey,
+  buildWebRetrievalPlannerPrompt,
+  methodToToolName,
+  runWebRetrievalPlanner,
+  validateWebRetrievalPlannerOutput,
+} from "./runs/web-retrieval-planner.js"
+export {
+  buildFinalAnswerDeliveryKey,
+  buildFinalAnswerIdempotencyKey,
+  buildProgressMessageIdempotencyKey,
+  canGenerateFinalAnswerFromVerdict,
+  finalizeRetrievalCompletion,
+  protectRunFailureAfterFinalAnswer,
+  recordFinalAnswerDelivery,
+  recordProgressMessageSent,
+} from "./runs/retrieval-finalizer.js"
+export {
+  buildFinanceKnownSources,
+  buildFinanceSourceEvidence,
+  buildWeatherKnownSources,
+  buildWeatherSourceEvidence,
+  buildWebSourceAdapterDegradationState,
+  buildWebSourceAdapterRegistrySnapshot,
+  checkAdapterFixtureParserVersions,
+  createFinanceIndexTargetContract,
+  createWeatherTargetContract,
+  createWebLocationContract,
+  FINANCE_ADAPTER_ID,
+  FINANCE_ADAPTER_METADATA,
+  FINANCE_ADAPTER_VERSION,
+  FINANCE_INDEX_DEFINITIONS,
+  FINANCE_PARSER_VERSION,
+  listWebSourceAdapters,
+  locationHierarchyContains,
+  parseFinanceQuoteCandidates,
+  parseWeatherMetricCandidates,
+  rankWebSourceAdaptersForTarget,
+  resolveFinanceIndexTarget,
+  resolveWeatherLocationContract,
+  stableAdapterChecksum,
+  WEATHER_ADAPTER_ID,
+  WEATHER_ADAPTER_METADATA,
+  WEATHER_ADAPTER_VERSION,
+  WEATHER_PARSER_VERSION,
+  DEFAULT_ADAPTER_DEGRADATION_POLICY,
+  withAdapterChecksum,
+} from "./runs/web-source-adapters/index.js"
+export type {
+  EvidenceConflictPolicy,
+  EvidenceConflictResolution,
+  EvidenceConflictResolutionInput,
+  EvidenceConflictResolutionStatus,
+  EvidenceConflictTolerance,
+} from "./runs/web-conflict-resolver.js"
+export type {
+  BuildRetrievalCacheEntryInput,
+  EvaluateRetrievalCacheEntryInput,
+  RetrievalCacheEntry,
+  RetrievalCacheEvaluation,
+  RetrievalCacheScope,
+  RetrievalCacheStatus,
+  RetrievalCacheTtlPolicy,
+} from "./runs/web-retrieval-cache.js"
 export type {
   BrowserSearchEvidenceArtifact,
   BrowserSearchEvidenceInput,
@@ -258,6 +392,84 @@ export type {
   WebRetrievalPolicyDecision,
   WebRetrievalPolicyInput,
 } from "./runs/web-retrieval-policy.js"
+export type {
+  LimitedCompletionReadiness,
+  RecordRetrievalAttemptInput,
+  RetrievalAttempt,
+  RetrievalAttemptStatus,
+  RetrievalBudget,
+  RetrievalSession,
+  RetrievalSessionControllerInput,
+  RetrievalSessionDirective,
+  RetrievalSessionStatus,
+  RetrievalSourceMethod,
+  RetrievalTargetContract,
+  RetrievalTargetKind,
+} from "./runs/web-retrieval-session.js"
+export type {
+  CandidateExtractionFailureEvent,
+  CandidateExtractionHints,
+  CandidateExtractionInput,
+  RetrievedValueCandidate,
+  RetrievalBindingSignal,
+  RetrievalBindingSignalKind,
+  RetrievalBindingStrength,
+  RetrievalEvidenceSufficiency,
+  RetrievalExtractionInputKind,
+  RetrievalExtractionMethod,
+  RetrievalVerificationPolicy,
+  RetrievalVerificationVerdict,
+  VerifyRetrievedValueCandidateInput,
+} from "./runs/web-retrieval-verification.js"
+export type {
+  RejectedPlannerAction,
+  RunWebRetrievalPlannerInput,
+  WebRetrievalPlannerAction,
+  WebRetrievalPlannerAttemptSummary,
+  WebRetrievalPlannerDegradedReason,
+  WebRetrievalPlannerDomainPolicy,
+  WebRetrievalPlannerMethod,
+  WebRetrievalPlannerOutput,
+  WebRetrievalPlannerPromptInput,
+  WebRetrievalPlannerRisk,
+  WebRetrievalPlannerRunResult,
+  WebRetrievalPlannerRunStatus,
+  WebRetrievalPlannerStopReason,
+  WebRetrievalPlannerValidationInput,
+  WebRetrievalPlannerValidationResult,
+} from "./runs/web-retrieval-planner.js"
+export type {
+  FailureProtectionResult,
+  FinalAnswerDeliveryReceipt,
+  FinalAnswerDeliveryStatus,
+  FinalizedRetrievalCompletion,
+  RecordFinalAnswerDeliveryInput,
+  RecordProgressMessageInput,
+  RetrievalCompletionStatus,
+} from "./runs/retrieval-finalizer.js"
+export type {
+  FinanceIndexDefinition,
+  FinanceIndexKey,
+  FinanceKnownSource,
+  FinanceQuoteParseInput,
+  FinanceQuoteParseResult,
+  FinanceTargetResolution,
+  WeatherKnownSource,
+  WeatherLocationBindingScope,
+  WeatherMetric,
+  WeatherMetricCandidate,
+  WeatherParseInput,
+  WeatherParseResult,
+  WebLocationContract,
+  WebLocationResolution,
+  WebSourceAdapterFixtureVersionCheck,
+  WebSourceAdapterDegradationPolicy,
+  WebSourceAdapterDegradationState,
+  WebSourceAdapterFailureSample,
+  WebSourceAdapterMetadata,
+  WebSourceAdapterRegistrySnapshot,
+  WebSourceAdapterStatus,
+} from "./runs/web-source-adapters/index.js"
 
 // Contracts
 export {
@@ -503,6 +715,14 @@ export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js"
 export { buildIngressDedupeKey } from "./runs/ingress.js"
 export type { IngressExternalIdentity, IngressReceipt, IngressReceiptLanguage, ResolvedIngressStartParams, StartedIngressRun } from "./runs/ingress.js"
+export {
+  buildInboundMessageKey,
+  createInboundMessageRecord,
+  detectExplicitToolIntent,
+  hasExplicitContinuationReference,
+  shouldInspectActiveRunCandidates,
+} from "./runs/request-isolation.js"
+export type { ExplicitToolIntentName, InboundMessageInput, InboundMessageRecord } from "./runs/request-isolation.js"
 export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers } from "./runs/flow-contract.js"
 export type { RunCompletionOutcome, RunCompletionOutcomeInput, RunCompletionOutcomeStatus, RunFlowIdentifiers, RunFlowStatusTransitionDecision } from "./runs/flow-contract.js"
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary } from "./runs/startup-recovery.js"

@@ -148,6 +148,36 @@ export interface DbQueueBackpressureEventInput {
     actionTaken: string;
     detail?: Record<string, unknown>;
 }
+export interface DbWebRetrievalCacheEntry {
+    cache_key: string;
+    target_hash: string;
+    source_evidence_id: string;
+    verdict_id: string;
+    freshness_policy: "normal" | "latest_approximate" | "strict_timestamp";
+    ttl_ms: number;
+    fetch_timestamp: string;
+    created_at: number;
+    expires_at: number;
+    value_json: string;
+    evidence_json: string;
+    verdict_json: string;
+    metadata_json: string | null;
+}
+export interface DbWebRetrievalCacheEntryInput {
+    cacheKey: string;
+    targetHash: string;
+    sourceEvidenceId: string;
+    verdictId: string;
+    freshnessPolicy: DbWebRetrievalCacheEntry["freshness_policy"];
+    ttlMs: number;
+    fetchTimestamp: string;
+    createdAt: number;
+    expiresAt: number;
+    value: Record<string, unknown>;
+    evidence: Record<string, unknown>;
+    verdict: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+}
 export type DbControlEventSeverity = "debug" | "info" | "warning" | "error";
 export interface DbControlEvent {
     id: string;
@@ -343,6 +373,14 @@ export declare function listControlEvents(params?: {
     severity?: DbControlEventSeverity;
     limit?: number;
 }): DbControlEvent[];
+export declare function upsertWebRetrievalCacheEntry(input: DbWebRetrievalCacheEntryInput): void;
+export declare function getWebRetrievalCacheEntry(cacheKey: string): DbWebRetrievalCacheEntry | undefined;
+export declare function listWebRetrievalCacheEntries(params?: {
+    targetHash?: string;
+    freshnessPolicy?: DbWebRetrievalCacheEntry["freshness_policy"];
+    now?: number;
+    limit?: number;
+}): DbWebRetrievalCacheEntry[];
 export declare function findChannelMessageRef(params: {
     source: string;
     externalChatId: string;

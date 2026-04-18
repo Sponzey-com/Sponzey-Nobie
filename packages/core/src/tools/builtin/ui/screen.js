@@ -5,7 +5,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { DEFAULT_YEONJANG_EXTENSION_ID, doesYeonjangCapabilitySupportMethod, doesYeonjangCapabilitySupportOutputMode, getYeonjangCapabilities, hasYeonjangCapabilityMatrix, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
+import { DEFAULT_YEONJANG_EXTENSION_ID, doesYeonjangCapabilitySupportMethod, doesYeonjangCapabilitySupportOutputMode, getYeonjangCapabilities, hasYeonjangCapabilityMatrix, invokeYeonjangMethod, isYeonjangUnavailableError, } from "../../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
 import { PATHS } from "../../../config/index.js";
 const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60_000;
