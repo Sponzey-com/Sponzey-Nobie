@@ -37,11 +37,29 @@ Platform binaries are optional on a single-host local release build, but must be
 3. Build packages: `pnpm -r build`.
 4. Typecheck packages: `pnpm -r typecheck`.
 5. Run automated tests: `pnpm test`.
-6. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-7. Run channel smoke dry-run: `pnpm run smoke:channels`.
-8. Build Yeonjang packages for each target OS.
-9. Generate release manifest and checksum files: `pnpm run release:package`.
-10. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+6. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
+7. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+8. Run channel smoke dry-run: `pnpm run smoke:channels`.
+9. Build Yeonjang packages for each target OS.
+10. Generate release manifest and checksum files: `pnpm run release:package`.
+11. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## UI Mode Release Gate
+
+The release manifest must include `uiModeEvidence`. This evidence is a release blocker, not a UI-only checklist.
+
+Required checks:
+
+- Beginner smoke matrix: first-run shell, AI connection save/test, one chat run, one approval action, and result visibility.
+- Advanced smoke matrix: AI settings save, channel status, Yeonjang status, execution monitor, and doctor summary.
+- Admin smoke matrix: explicit admin flag, timeline access, inspectors, and diagnostic export dry-run.
+- Resolver evidence: beginner default, advanced preference, admin request denied without flag, and admin request allowed with flag.
+- Redaction evidence: beginner, advanced, admin, and export surfaces must mask secrets, raw HTML/payloads, and local paths.
+- Admin guard evidence: admin API stays closed by default and in production unless config and runtime flag are both enabled.
+- Route redirect evidence: legacy advanced URLs must redirect into `/advanced/*`; beginner `/chat` must not be redirected.
+- Regression blockers: AI connection save stability, beginner raw error redaction, admin disabled data blocking, final-answer dedupe, and run-state reversal guard.
+
+Do not publish when `uiModeEvidence.gateStatus` is `failed` or when `uiModeEvidence.blockingFailures` is non-empty.
 
 ## Update Preflight
 
@@ -102,6 +120,6 @@ Store these files with every release candidate:
 - `SHA256SUMS` from `scripts/release-package.mjs`.
 - Backup snapshot `manifest.json`.
 - Restore rehearsal report.
+- UI mode release gate summary from `manifest.json` under `uiModeEvidence`.
 - Channel smoke result.
 - Yeonjang smoke result.
-

@@ -11,7 +11,7 @@ function resolveArtifactUrl(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
 }
 
-export function MessageBubble({ msg }: { msg: Message }) {
+export function MessageBubble({ msg, showToolCalls = true }: { msg: Message; showToolCalls?: boolean }) {
   const isUser = msg.role === "user"
   const { displayText } = useUiI18n()
   const renderedContent = isUser ? msg.content : displayText(msg.content)
@@ -19,7 +19,7 @@ export function MessageBubble({ msg }: { msg: Message }) {
   return (
     <div className={`mb-3 flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[80%] min-w-0 ${isUser ? "order-2" : "order-1"}`}>
-        {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
+        {showToolCalls && !isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
           <div className="mb-2">
             {msg.toolCalls.map((tc, i) => (
               <ToolCallPanel key={i} call={tc} />
