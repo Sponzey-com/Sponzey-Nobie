@@ -13,9 +13,7 @@ import {
   importPromptSourcesFromFile,
   loadPromptSourceRegistry,
 } from "../memory/nobie-md.js"
-
-const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|credential|authorization|auth[_-]?token)/iu
-const SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|\d{6,}:[A-Za-z0-9_-]{20,})\b/gu
+import { redactUiValue } from "../ui/redaction.js"
 
 export interface MigrationVersionStatus {
   databasePath: string
@@ -266,25 +264,8 @@ export function importDatabaseFromBackup(input: { backupPath: string; dbPath?: s
 }
 
 export function maskSecretsDeep(value: unknown): { value: unknown; maskedCount: number } {
-  let maskedCount = 0
-  const mask = (item: unknown, key = ""): unknown => {
-    if (typeof item === "string") {
-      if (SECRET_KEY_PATTERN.test(key) || SECRET_VALUE_PATTERN.test(item)) {
-        maskedCount += 1
-        return item ? "***MASKED***" : item
-      }
-      return item
-    }
-    if (Array.isArray(item)) return item.map((entry) => mask(entry, key))
-    if (item && typeof item === "object") {
-      return Object.fromEntries(Object.entries(item as Record<string, unknown>).map(([entryKey, entryValue]) => [
-        entryKey,
-        mask(entryValue, entryKey),
-      ]))
-    }
-    return item
-  }
-  return { value: mask(value), maskedCount }
+  const redacted = redactUiValue(value, { audience: "export" })
+  return { value: redacted.value, maskedCount: redacted.maskedCount }
 }
 
 export function exportMaskedConfig(): ConfigExportResult {

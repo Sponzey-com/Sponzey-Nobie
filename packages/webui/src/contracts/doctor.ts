@@ -53,6 +53,17 @@ export interface DoctorReport {
         lastCheckResult: { status: string; message: string; sourceUrl: string | null }
       }
     }
+    adminUi?: {
+      enabled: boolean
+      configEnabled: boolean
+      runtimeFlagEnabled: boolean
+      envEnabled: boolean
+      cliEnabled: boolean
+      localDevScriptEnabled: boolean
+      productionMode: boolean
+      subscriptionCount?: number
+      reason: string
+    }
   }
 }
 

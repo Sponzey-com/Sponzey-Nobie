@@ -12,6 +12,679 @@ import type { TaskModel } from "../contracts/tasks"
 import type { UpdateSnapshot } from "../contracts/update"
 
 const BASE = ""
+const UI_MODE_FALLBACK_KEY = "nobie_preferred_ui_mode"
+
+export type UiMode = "beginner" | "advanced" | "admin"
+export type PreferredUiMode = "beginner" | "advanced"
+
+export interface UiModeState {
+  mode: UiMode
+  preferredUiMode: PreferredUiMode
+  availableModes: UiMode[]
+  adminEnabled: boolean
+  canSwitchInUi: boolean
+  schemaVersion: 1
+}
+
+export type UiModeSaveResponse = UiModeState & { ok: boolean; fallback?: "browser" }
+
+export interface UiShellResponse {
+  generatedAt: number
+  mode: UiModeState
+  setupState: {
+    completed: boolean
+  }
+  runtimeHealth: {
+    ai: {
+      configured: boolean
+      provider: string | null
+      modelConfigured: boolean
+    }
+    channels: {
+      webui: boolean
+      telegramConfigured: boolean
+      telegramEnabled: boolean
+      slackConfigured: boolean
+      slackEnabled: boolean
+    }
+    yeonjang: {
+      mqttEnabled: boolean
+      connectedExtensions: number
+    }
+  }
+  activeRuns: {
+    total: number
+    pendingApprovals: number
+  }
+  viewModel: UiShellViewModels
+}
+
+export interface AdminShellResponse {
+  ok: boolean
+  shell: {
+    kind: "admin_shell"
+    title: string
+    warning: string
+    badges: Array<{ label: string; tone: string }>
+    dangerousActions: Array<{
+      id: "retry" | "purge" | "replay" | "export"
+      label: string
+      description: string
+      requiredConfirmation: string
+      auditRequired: boolean
+    }>
+    subscriptions: { webSocketClients: number }
+    auditRequired: boolean
+  }
+  mode: UiModeState
+  manifest: { adminUi: { enabled: boolean; subscriptionCount: number; reason: string } }
+}
+
+export interface AdminDangerousActionResponse {
+  ok: boolean
+  action?: "retry" | "purge" | "replay" | "export"
+  targetId?: string | null
+  status?: "needs_confirmation" | "accepted"
+  requiredConfirmation?: string
+  error?: string
+  summary?: string
+}
+
+export interface AdminLiveQuery {
+  runId?: string
+  requestGroupId?: string
+  sessionKey?: string
+  component?: string
+  severity?: "debug" | "info" | "warning" | "error"
+  channel?: string
+  eventKind?: string
+  status?: string
+  deliveryKey?: string
+  idempotencyKey?: string
+  limit?: number
+}
+
+export interface AdminLiveResponse {
+  ok: boolean
+  generatedAt: number
+  filters: Record<string, string | number | null>
+  stream: {
+    status: "connected" | "waiting_for_subscriber" | "backpressure"
+    subscriptionCount: number
+    reconnect: {
+      supported: boolean
+      strategy: string
+      eventType: string
+    }
+    backpressure: {
+      status: "ok" | "waiting" | "recovering" | "stopped"
+      totalQueues: number
+      affectedQueues: number
+      queues: Array<{
+        queueName: string
+        running: number
+        pending: number
+        oldestPendingAgeMs: number
+        retryKeys: number
+        deadLetterCount: number
+        status: "ok" | "waiting" | "recovering" | "stopped"
+      }>
+    }
+  }
+  timeline: {
+    events: Array<{
+      id: string
+      at: number
+      eventType: string
+      correlationId: string
+      runId: string | null
+      requestGroupId: string | null
+      sessionKey: string | null
+      component: string
+      severity: "debug" | "info" | "warning" | "error"
+      summary: string
+      detail: unknown
+    }>
+    summary: {
+      total: number
+      severityCounts: Record<"debug" | "info" | "warning" | "error", number>
+      duplicateToolCount: number
+      duplicateAnswerCount: number
+      deliveryRetryCount: number
+      recoveryReentryCount: number
+    }
+  }
+  runsInspector: {
+    runs: Array<{
+      id: string
+      requestGroupId: string
+      sessionKey: string
+      source: string
+      title: string
+      status: string
+      createdAt: number
+      updatedAt: number
+      failureReversal: boolean
+      lifecycle: Array<{
+        key: string
+        label: string
+        status: "pending" | "running" | "completed" | "warning" | "failed"
+        startedAt: number | null
+        finishedAt: number | null
+        durationMs: number | null
+        eventCount: number
+        ledgerCount: number
+        summary: string | null
+        failureReason: string | null
+      }>
+      delivery: {
+        status: string
+        summary: string | null
+        failureReason: string | null
+        eventCount: number
+      }
+      recovery: {
+        eventCount: number
+        lastSummary: string | null
+      }
+    }>
+  }
+  messageLedger: {
+    events: Array<{
+      id: string
+      runId: string | null
+      requestGroupId: string | null
+      sessionKey: string | null
+      threadKey: string | null
+      channel: string
+      eventKind: string
+      deliveryKey: string | null
+      idempotencyKey: string | null
+      status: string
+      summary: string
+      channelTarget: string | null
+      detail: unknown
+      createdAt: number
+    }>
+    duplicates: Array<{
+      key: string
+      kind: "delivery" | "idempotency"
+      count: number
+      firstAt: number
+      lastAt: number
+      statuses: string[]
+    }>
+    summary: {
+      total: number
+      delivered: number
+      deliveryFailures: number
+      suppressed: number
+      duplicates: number
+      statusCounts: Record<string, number>
+    }
+  }
+}
+
+export interface AdminToolLabResponse {
+  ok: boolean
+  generatedAt: number
+  filters: Record<string, string | number | null>
+  toolCalls: {
+    summary: {
+      total: number
+      failed: number
+      waitingApproval: number
+      redacted: number
+    }
+    calls: Array<{
+      id: string
+      toolName: string
+      status: string
+      approvalState: string
+      runId: string | null
+      requestGroupId: string | null
+      sessionKey: string | null
+      startedAt: number | null
+      finishedAt: number | null
+      durationMs: number | null
+      retryCount: number
+      eventCount: number
+      paramsRedacted: unknown
+      outputRedacted: unknown
+      redactionApplied: boolean
+      resultSummary: string | null
+      lifecycle: Array<{ at: number; source: string; eventKind: string; status: string; summary: string }>
+    }>
+  }
+  webRetrieval: {
+    summary: {
+      sessions: number
+      attempts: number
+      degraded: number
+      answerable: number
+    }
+    sessions: Array<{
+      id: string
+      requestGroupId: string | null
+      runId: string | null
+      sessionKey: string | null
+      target: unknown
+      sourceLadder: Array<{ method: string; url: string; sourceDomain: string; sourceKind: string; reliability: string; sourceLabel: string; expectedTargetBinding: string }>
+      queryVariants: string[]
+      fetchAttempts: Array<{
+        id: string
+        toolName: string
+        status: string
+        method: string
+        sourceKind: string
+        reliability: string
+        freshnessPolicy: string
+        sourceUrl: string | null
+        sourceDomain: string | null
+        fetchTimestamp: string | null
+        sourceTimestamp: string | null
+        durationMs: number | null
+        retryCount: number
+      }>
+      candidateExtraction: { eventCount: number; candidateCount: number; lastSummary: string | null }
+      verification: {
+        canAnswer: boolean | null
+        evidenceSufficiency: string | null
+        acceptedValue: string | null
+        rejectionReason: string | null
+        mustAvoidGuessing: boolean | null
+        policy: string | null
+        completionStrict: boolean
+        semanticComparisonAllowed: boolean
+        verificationMode: string
+      }
+      conflictResolver: { status: string | null; conflicts: string[] }
+      cache: { status: string; entryCount: number; entries: Array<{ status: string; reason: string; value: string | null; unit: string | null; sourceDomain: string | null }> }
+      adapterMetadata: Array<{ adapterId: string; adapterVersion: string; parserVersion: string; checksum: string; status: string; degradedReason?: string | null }>
+      degradedState: { degraded: boolean; reasons: string[] }
+      policySeparation: { discovery: string; completion: string; semanticComparisonAllowed: boolean }
+    }>
+  }
+}
+
+export interface AdminFixtureReplayResponse {
+  ok: boolean
+  generatedAt: number
+  networkUsed: boolean
+  semanticComparisonAllowed: boolean
+  verificationMode: string
+  fixtureCount: number
+  summary: { kind: string; policyVersion: string; status: string; counts: { total: number; passed: number; failed: number; skipped: number } }
+  results: Array<{
+    fixtureId: string
+    title: string
+    status: string
+    attempts: number
+    candidateCount: number
+    canAnswer: boolean
+    acceptedValue: string | null
+    evidenceSufficiency: string
+    failures: string[]
+  }>
+}
+
+export interface AdminRuntimeInspectorsResponse {
+  ok: boolean
+  generatedAt: number
+  filters: Record<string, string | number | null>
+  memory: {
+    summary: {
+      documents: number
+      userDocuments: number
+      diagnosticDocuments: number
+      writebackPending: number
+      writebackFailed: number
+      retrievalTraces: number
+      linkedFailures: number
+    }
+    documents: {
+      items: Array<{
+        id: string
+        scope: string
+        ownerId: string
+        ownerKind: "user" | "diagnostic"
+        sourceType: string
+        sourceRef: string | null
+        title: string | null
+        chunkCount: number
+        ftsCount: number
+        embeddingCount: number
+        ftsStatus: string
+        vectorStatus: string
+        indexStatus: string | null
+        indexRetryCount: number
+        indexLastError: string | null
+        runId: string | null
+        requestGroupId: string | null
+        updatedAt: number
+      }>
+      degradedReasons: string[]
+    }
+    writebackQueue: {
+      items: Array<{
+        id: string
+        scope: string
+        ownerId: string
+        ownerKind: "user" | "diagnostic"
+        sourceType: string
+        status: string
+        retryCount: number
+        lastError: string | null
+        runId: string | null
+        requestGroupId: string | null
+        contentPreview: string
+        updatedAt: number
+      }>
+      degradedReasons: string[]
+    }
+    retrievalTrace: {
+      items: Array<{
+        id: string
+        runId: string | null
+        requestGroupId: string | null
+        sessionKey: string | null
+        documentId: string | null
+        chunkId: string | null
+        scope: string | null
+        resultSource: string
+        score: number | null
+        latencyMs: number | null
+        reason: string | null
+        queryPreview: string
+        createdAt: number
+      }>
+      degradedReasons: string[]
+    }
+    linkedFailures: Array<{ at: number; source: string; component: string; summary: string; runId: string | null; requestGroupId: string | null }>
+  }
+  scheduler: {
+    summary: { schedules: number; enabled: number; missed: number; retrying: number; receipts: number }
+    schedules: Array<{
+      id: string
+      name: string
+      enabled: boolean
+      cronExpression: string
+      timezone: string | null
+      targetChannel: string
+      targetSessionId: string | null
+      executionDriver: string
+      nextRunAt: number | null
+      lastRunAt: number | null
+      queueState: string
+      contract: {
+        hasContract: boolean
+        schemaVersion: number | null
+        identityKey: string | null
+        payloadHash: string | null
+        deliveryKey: string | null
+        payloadKind: string | null
+        deliveryChannel: string | null
+        missedPolicy: string | null
+        timeKind: string
+      }
+      latestRun: {
+        id: string
+        startedAt: number
+        finishedAt: number | null
+        success: boolean | null
+        executionSuccess: boolean | null
+        deliverySuccess: boolean | null
+        deliveryDedupeKey: string | null
+        error: string | null
+      } | null
+      receipts: Array<{ dedupeKey: string; runId: string; dueAt: string; targetChannel: string; status: string; summary: string | null; error: string | null; updatedAt: number }>
+    }>
+    timelineLinks: Array<{ at: number; eventType: string; component: string; summary: string; runId: string | null; requestGroupId: string | null }>
+    fieldChecks: { comparisonMode: string; naturalLanguageMatchingAllowed: boolean; requiredKeys: string[] }
+    degradedReasons: string[]
+  }
+  channels: {
+    summary: { channels: number; inbound: number; outbound: number; approvals: number; receipts: number }
+    mappings: Array<{
+      channel: string
+      inboundCount: number
+      outboundCount: number
+      approvalCount: number
+      receiptCount: number
+      latestAt: number | null
+      refs: Array<{ id: string; sessionKey: string; rootRunId: string; requestGroupId: string; chatId: string; threadId: string | null; messageId: string; role: string; createdAt: number }>
+    }>
+    ledgerReceipts: Array<{
+      id: string
+      channel: string
+      eventKind: string
+      status: string
+      summary: string
+      deliveryKey: string | null
+      idempotencyKey: string | null
+      runId: string | null
+      requestGroupId: string | null
+      sessionKey: string | null
+      threadKey: string | null
+      chatId: string | null
+      threadId: string | null
+      userId: string | null
+      messageId: string | null
+      createdAt: number
+    }>
+    approvalCallbacks: Array<{
+      id: string
+      channel: string
+      eventKind: string
+      status: string
+      summary: string
+      runId: string | null
+      requestGroupId: string | null
+      approvalId: string | null
+      callbackId: string | null
+      buttonPayload: string | null
+      userId: string | null
+      chatId: string | null
+      createdAt: number
+    }>
+    degradedReasons: string[]
+  }
+}
+
+export interface AdminDiagnosticExportJob {
+  id: string
+  status: "queued" | "running" | "succeeded" | "failed"
+  progress: number
+  createdAt: number
+  updatedAt: number
+  filters: { runId?: string; requestGroupId?: string; sessionKey?: string; channel?: string }
+  includeTimeline: boolean
+  includeReport: boolean
+  bundlePath: string | null
+  bundleFile: string | null
+  bundleBytes: number | null
+  error: string | null
+}
+
+export interface AdminPlatformInspectorsResponse {
+  ok: boolean
+  generatedAt: number
+  filters: Record<string, string | number | null>
+  yeonjang: {
+    summary: {
+      brokerRunning: boolean
+      enabled: boolean
+      connectedClients: number
+      nodes: number
+      onlineNodes: number
+      heartbeats: number
+      reconnectAttempts: number
+      disconnects: number
+    }
+    broker: {
+      enabled: boolean
+      running: boolean
+      host: string
+      port: number
+      url: string
+      clientCount: number
+      authEnabled: boolean
+      allowAnonymous: boolean
+      reason: string | null
+    }
+    nodes: Array<{
+      extensionId: string
+      clientId: string | null
+      displayName: string | null
+      state: string | null
+      message: string | null
+      version: string | null
+      protocolVersion: string | null
+      capabilityHash: string | null
+      methodCount: number
+      platform: string | null
+      transport: string[]
+      lastSeenAt: number | null
+      stale: boolean
+      heartbeatCount: number
+      reconnectAttempts: number
+      capabilities: string[]
+    }>
+    timelineLinks: Array<{ at: number; eventType: string; component: string; summary: string; extensionId: string | null; state: string | null; reconnectAttempts: number | null }>
+    exchangeLog: Array<{ id: string; timestamp: number; direction: string; topic: string; extensionId: string | null; kind: string; clientId: string | null; payloadPreview: unknown }>
+    degradedReasons: string[]
+  }
+  database: {
+    summary: {
+      currentVersion: number
+      latestVersion: number
+      pendingMigrations: number
+      unknownAppliedVersions: number
+      migrationLockActive: boolean
+      integrityOk: boolean
+      backupSnapshots: number
+      migrationDiagnostics: number
+    }
+    migrations: {
+      databasePath: string
+      exists: boolean
+      currentVersion: number
+      latestVersion: number
+      appliedVersions: number[]
+      pendingVersions: number[]
+      unknownAppliedVersions: number[]
+      upToDate: boolean
+    }
+    lock: {
+      active: unknown | null
+      latest: unknown | null
+    }
+    integrity: { ok: boolean; schemaVersion: number; integrityCheck: string; missingTables: string[]; missingIndexes: string[] } | null
+    backups: { snapshots: Array<{ id: string; createdAt: number; schemaVersion: number | null; latestSchemaVersion: number | null; fileCount: number; manifestFile: string }>; degradedReasons: string[] }
+    diagnostics: Array<{ id: string; kind: string; summary: string; runId: string | null; requestGroupId: string | null; createdAt: number; detail: unknown }>
+    degradedReasons: string[]
+  }
+  exports: {
+    jobs: AdminDiagnosticExportJob[]
+    defaults: { outputDirName: string; sanitized: boolean; backgroundJob: boolean }
+  }
+}
+
+export interface AdminDiagnosticExportStartResponse {
+  ok: boolean
+  job: AdminDiagnosticExportJob
+}
+
+export interface AdminDiagnosticExportListResponse {
+  ok: boolean
+  generatedAt: number
+  jobs: AdminDiagnosticExportJob[]
+}
+
+export interface AdminDiagnosticExportGetResponse {
+  ok: boolean
+  job: AdminDiagnosticExportJob
+}
+
+function buildAdminLiveQuery(params: AdminLiveQuery = {}): string {
+  const search = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return
+    search.set(key, String(value))
+  })
+  const query = search.toString()
+  return query ? `?${query}` : ""
+}
+
+export type UiComponentStatus = "ready" | "needs_setup" | "needs_attention" | "warning" | "idle"
+export type UiComponentKey = "setup" | "ai" | "channels" | "yeonjang" | "tasks"
+
+export interface BeginnerUiViewModel {
+  kind: "beginner"
+  summary: string
+  statusLabel: string
+  primaryAction: { id: string; label: string; href: string } | null
+  needsAttention: boolean
+  safeDetails: Array<{ component: string; statusLabel: string; summary: string }>
+}
+
+export interface AdvancedUiViewModel {
+  kind: "advanced"
+  components: Array<{
+    key: UiComponentKey
+    component: string
+    status: UiComponentStatus
+    statusLabel: string
+    lastCheckedAt: number
+    configSummary: Record<string, unknown>
+    warnings: string[]
+    actions: Array<{ id: string; label: string; href: string }>
+  }>
+}
+
+export interface AdminUiViewModel {
+  kind: "admin"
+  ids: Record<string, string | number | boolean>
+  timestamps: Record<string, number>
+  events: Array<{ component: string; status: UiComponentStatus; needsAttention: boolean }>
+  metrics: Record<string, number>
+  relationships: Array<{ from: string; to: string; relation: string }>
+  sanitizedRaw: unknown
+}
+
+export type UiModeViewModel = BeginnerUiViewModel | AdvancedUiViewModel | AdminUiViewModel
+
+export interface UiShellViewModels {
+  currentMode: UiMode
+  current: UiModeViewModel
+  beginner: BeginnerUiViewModel
+  advanced: AdvancedUiViewModel
+  admin?: AdminUiViewModel
+}
+
+function normalizePreferredUiMode(value: unknown): PreferredUiMode | null {
+  if (value !== "beginner" && value !== "advanced") return null
+  return value
+}
+
+function getBrowserPreferredUiModeFallback(): PreferredUiMode {
+  return normalizePreferredUiMode(localStorage.getItem(UI_MODE_FALLBACK_KEY)) ?? "beginner"
+}
+
+function setBrowserPreferredUiModeFallback(mode: PreferredUiMode): void {
+  localStorage.setItem(UI_MODE_FALLBACK_KEY, mode)
+}
+
+function buildBrowserUiModeFallback(mode = getBrowserPreferredUiModeFallback()): UiModeState {
+  return {
+    mode,
+    preferredUiMode: mode,
+    availableModes: ["beginner", "advanced"],
+    adminEnabled: false,
+    canSwitchInUi: true,
+    schemaVersion: 1,
+  }
+}
 
 export function getStoredToken(): string {
   return localStorage.getItem("nobie_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token") ?? ""
@@ -83,6 +756,105 @@ export const api = {
   checkForUpdates: () => request<UpdateSnapshot>("/api/update/check", { method: "POST" }),
   doctor: (mode: DoctorMode = "quick", write = false) =>
     request<DoctorResponse>(`/api/doctor?mode=${encodeURIComponent(mode)}${write ? "&write=1" : ""}`),
+
+  uiMode: async () => {
+    try {
+      const state = await request<UiModeState>("/api/ui/mode")
+      setBrowserPreferredUiModeFallback(state.preferredUiMode)
+      return state
+    } catch {
+      return buildBrowserUiModeFallback()
+    }
+  },
+
+  saveUiMode: async (mode: PreferredUiMode): Promise<UiModeSaveResponse> => {
+    setBrowserPreferredUiModeFallback(mode)
+    try {
+      const state = await request<UiModeSaveResponse>("/api/ui/mode", {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      })
+      setBrowserPreferredUiModeFallback(state.preferredUiMode)
+      return state
+    } catch {
+      return { ok: false, fallback: "browser", ...buildBrowserUiModeFallback(mode) }
+    }
+  },
+
+  uiShell: async () => {
+    try {
+      const shell = await request<UiShellResponse>("/api/ui/shell")
+      setBrowserPreferredUiModeFallback(shell.mode.preferredUiMode)
+      return shell
+    } catch {
+      const mode = buildBrowserUiModeFallback()
+      return {
+        generatedAt: Date.now(),
+        mode,
+        setupState: { completed: false },
+        runtimeHealth: {
+          ai: { configured: false, provider: null, modelConfigured: false },
+          channels: { webui: true, telegramConfigured: false, telegramEnabled: false, slackConfigured: false, slackEnabled: false },
+          yeonjang: { mqttEnabled: false, connectedExtensions: 0 },
+        },
+        activeRuns: { total: 0, pendingApprovals: 0 },
+        viewModel: {
+          currentMode: mode.mode,
+          current: {
+            kind: "beginner",
+            summary: "연결 상태를 확인할 수 없습니다.",
+            statusLabel: "확인 필요",
+            primaryAction: null,
+            needsAttention: true,
+            safeDetails: [],
+          },
+          beginner: {
+            kind: "beginner",
+            summary: "연결 상태를 확인할 수 없습니다.",
+            statusLabel: "확인 필요",
+            primaryAction: null,
+            needsAttention: true,
+            safeDetails: [],
+          },
+          advanced: {
+            kind: "advanced",
+            components: [],
+          },
+        },
+      } satisfies UiShellResponse
+    }
+  },
+
+  adminShell: () => request<AdminShellResponse>("/api/admin/shell"),
+
+  adminLive: (params: AdminLiveQuery = {}) => request<AdminLiveResponse>(`/api/admin/live${buildAdminLiveQuery(params)}`),
+
+  adminToolLab: (params: AdminLiveQuery & { query?: string } = {}) => request<AdminToolLabResponse>(`/api/admin/tool-lab${buildAdminLiveQuery(params)}`),
+
+  adminRuntimeInspectors: (params: AdminLiveQuery = {}) => request<AdminRuntimeInspectorsResponse>(`/api/admin/runtime-inspectors${buildAdminLiveQuery(params)}`),
+
+  adminPlatformInspectors: (params: AdminLiveQuery = {}) => request<AdminPlatformInspectorsResponse>(`/api/admin/platform-inspectors${buildAdminLiveQuery(params)}`),
+
+  adminDiagnosticExports: () => request<AdminDiagnosticExportListResponse>("/api/admin/diagnostic-exports"),
+
+  adminDiagnosticExport: (id: string) => request<AdminDiagnosticExportGetResponse>(`/api/admin/diagnostic-exports/${encodeURIComponent(id)}`),
+
+  startAdminDiagnosticExport: (body: { runId?: string; requestGroupId?: string; sessionKey?: string; channel?: string; includeTimeline?: boolean; includeReport?: boolean; limit?: number } = {}) =>
+    request<AdminDiagnosticExportStartResponse>("/api/admin/diagnostic-exports", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  adminFixtureReplay: (body: { fixtureIds?: string[] } = {}) => request<AdminFixtureReplayResponse>("/api/admin/web-retrieval-fixtures/replay", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
+
+  adminDangerousAction: (body: { action: "retry" | "purge" | "replay" | "export"; targetId?: string; confirmation?: string; reason?: string; params?: unknown }) =>
+    request<AdminDangerousActionResponse>("/api/admin/actions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   instructionsActive: (workDir?: string) =>
     request<ActiveInstructionsResponse>(
