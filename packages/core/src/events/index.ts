@@ -10,6 +10,19 @@ export interface NobieEvents {
   "channel.connected": { channel: "webui" | "telegram" | "slack" | "mqtt"; sessionId?: string | null; detail?: Record<string, unknown> }
   "yeonjang.heartbeat": { extensionId: string; state?: string | null; message?: string | null; lastSeenAt: number; methodCount?: number; capabilityHash?: string | null }
   "doctor.checked": { reportId: string; mode: "quick" | "full"; overallStatus: "ok" | "warning" | "blocked" | "unknown"; runtimeManifestId: string }
+  "control.event": {
+    id: string
+    at: number
+    eventType: string
+    correlationId: string
+    runId: string | null
+    requestGroupId: string | null
+    sessionKey: string | null
+    component: string
+    severity: "debug" | "info" | "warning" | "error"
+    summary: string
+    detail?: Record<string, unknown>
+  }
   "agent.start": { sessionId: string; runId: string }
   "agent.stream": { sessionId: string; runId: string; delta: string }
   "agent.artifact": {

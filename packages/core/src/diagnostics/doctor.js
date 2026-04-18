@@ -231,6 +231,27 @@ function checkWebui(manifest) {
         return makeCheck("channel.webui", "unknown", "WebUI가 비활성화되어 있습니다.");
     return makeCheck("channel.webui", "ok", "WebUI 채널이 활성화되어 있습니다.", { host: webui.host, port: webui.port, authEnabled: webui.authEnabled });
 }
+function checkAdminUi(manifest) {
+    const admin = manifest.adminUi;
+    const webui = manifest.channels.webui;
+    const exposed = webui.host === "0.0.0.0" || webui.host === "::";
+    const detail = {
+        ...admin,
+        host: webui.host,
+        port: webui.port,
+        authEnabled: webui.authEnabled,
+    };
+    if (!admin.enabled) {
+        return makeCheck("admin.ui", "ok", "Admin UI가 비활성화되어 있습니다.", detail);
+    }
+    if (exposed && !webui.authEnabled) {
+        return makeCheck("admin.ui", "blocked", "Admin UI가 외부 인터페이스에 인증 없이 노출될 수 있습니다.", detail, "Admin UI를 끄거나 WebUI auth를 켜고 host를 127.0.0.1로 제한하세요.");
+    }
+    if (exposed) {
+        return makeCheck("admin.ui", "warning", "Admin UI가 외부 인터페이스에서 접근 가능한 host로 실행 중입니다.", detail, "개발자 진단 화면은 로컬 host에서만 실행하는 것을 권장합니다.");
+    }
+    return makeCheck("admin.ui", "ok", "Admin UI가 명시 실행 조건에서 로컬 중심으로 활성화되었습니다.", detail);
+}
 function checkMqtt(manifest) {
     const mqtt = manifest.channels.mqtt;
     if (!mqtt.enabled)
@@ -473,6 +494,7 @@ export function runDoctor(options = {}) {
         checkTelegram(manifest),
         checkSlack(manifest),
         checkWebui(manifest),
+        checkAdminUi(manifest),
         checkMqtt(manifest),
         checkYeonjangProtocol(manifest),
         checkDbMigration(manifest),

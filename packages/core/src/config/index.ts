@@ -410,7 +410,7 @@ export {
   runRestoreRehearsal,
   verifyBackupSnapshotManifest,
 } from "./backup-rehearsal.js"
-export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
+export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, MqttConfig, WebuiConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
 export type {
   BackupInventoryTarget,
   BackupSnapshotFile,

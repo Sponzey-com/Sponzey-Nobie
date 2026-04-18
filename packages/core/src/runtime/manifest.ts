@@ -11,6 +11,8 @@ import { buildReleaseManifest } from "../release/package.js"
 import { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspaceRootPath } from "../version.js"
 import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { buildRolloutSafetySnapshot, type RolloutSafetySnapshot } from "./rollout-safety.js"
+import { resolveAdminUiActivation } from "../ui/mode.js"
+import { getWebUiWsClientCount } from "../api/ws/stream.js"
 
 export interface RuntimeManifestEnvironment {
   node: string
@@ -112,6 +114,18 @@ export interface RuntimeManifestReleasePackage {
   requiredMissingCount: number | null
 }
 
+export interface RuntimeManifestAdminUi {
+  enabled: boolean
+  configEnabled: boolean
+  runtimeFlagEnabled: boolean
+  envEnabled: boolean
+  cliEnabled: boolean
+  localDevScriptEnabled: boolean
+  productionMode: boolean
+  subscriptionCount: number
+  reason: string
+}
+
 export interface RuntimeManifest {
   kind: "nobie.runtime.manifest"
   version: 1
@@ -141,6 +155,7 @@ export interface RuntimeManifest {
   }
   memory: RuntimeManifestMemory
   releasePackage: RuntimeManifestReleasePackage
+  adminUi: RuntimeManifestAdminUi
   rollout: RolloutSafetySnapshot
   paths: {
     stateDir: string
@@ -373,6 +388,21 @@ function buildReleasePackageState(includeReleasePackage: boolean): RuntimeManife
   }
 }
 
+function buildAdminUiState(): RuntimeManifestAdminUi {
+  const activation = resolveAdminUiActivation()
+  return {
+    enabled: activation.enabled,
+    configEnabled: activation.configEnabled,
+    runtimeFlagEnabled: activation.runtimeFlagEnabled,
+    envEnabled: activation.envEnabled,
+    cliEnabled: activation.cliEnabled,
+    localDevScriptEnabled: activation.localDevScriptEnabled,
+    productionMode: activation.productionMode,
+    subscriptionCount: getWebUiWsClientCount(),
+    reason: activation.reason,
+  }
+}
+
 function buildEnvironment(includeEnvironment: boolean): RuntimeManifestEnvironment {
   return {
     node: process.version,
@@ -429,6 +459,7 @@ export function buildRuntimeManifest(options: RuntimeManifestOptions = {}): Runt
     yeonjang: buildYeonjang(),
     memory: readMemoryState(),
     releasePackage: buildReleasePackageState(includeReleasePackage),
+    adminUi: buildAdminUiState(),
     rollout: buildRolloutSafetySnapshot(PATHS.dbFile),
     paths: {
       stateDir: PATHS.stateDir,

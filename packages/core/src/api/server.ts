@@ -28,6 +28,8 @@ import { registerConfigOperationsRoute } from "./routes/config-operations.js"
 import { registerChannelSmokeRoute } from "./routes/channel-smoke.js"
 import { registerDoctorRoute } from "./routes/doctor.js"
 import { registerControlTimelineRoute } from "./routes/control-timeline.js"
+import { registerUiModeRoute } from "./routes/ui-mode.js"
+import { registerAdminRoute } from "./routes/admin.js"
 import { registerWsRoute } from "./ws/stream.js"
 import { eventBus } from "../events/index.js"
 import { stopActiveSlackChannel } from "../channels/slack/runtime.js"
@@ -91,6 +93,8 @@ export async function startServer(): Promise<void> {
   registerChannelSmokeRoute(server)
   registerDoctorRoute(server)
   registerControlTimelineRoute(server)
+  registerUiModeRoute(server)
+  registerAdminRoute(server)
   registerWsRoute(server)
 
   const { host, port } = cfg.webui

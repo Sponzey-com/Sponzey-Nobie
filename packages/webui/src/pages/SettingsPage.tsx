@@ -21,13 +21,14 @@ import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
 import { type AIBackendCard, type NewAIBackendInput } from "../contracts/ai"
 import type { ConfigurationOperationsSnapshot, MigrationDryRunResult } from "../contracts/config-operations"
 import type { SetupDraft } from "../contracts/setup"
+import { buildAdvancedSettingsTabs, isDraftSavingAdvancedSettingsTab, type AdvancedSettingsTabId } from "../lib/advanced-settings"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
 import { useUiI18n } from "../lib/ui-i18n"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
-type TabId = "backends" | "security" | "channels" | "mqtt" | "remote" | "advanced"
+type TabId = AdvancedSettingsTabId
 
 interface OperationsDiagnosticsSnapshot {
   memorySearchMode: string
@@ -87,7 +88,7 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
 }
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<TabId>("backends")
+  const [tab, setTab] = useState<TabId>("ai")
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
   const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
   const [editorVersion, setEditorVersion] = useState(0)
@@ -205,7 +206,7 @@ export function SettingsPage() {
   }, [])
 
   useEffect(() => {
-    if (tab !== "mqtt") return
+    if (tab !== "yeonjang") return
     void loadMqttRuntime()
     const timer = window.setInterval(() => {
       void loadMqttRuntime()
@@ -214,11 +215,13 @@ export function SettingsPage() {
   }, [tab, editorVersion, loadMqttRuntime])
 
   useEffect(() => {
-    if (tab !== "advanced") return
-    void loadOperationsDiagnostics()
-    void loadConfigOperations()
-    void loadMemoryQuality()
-    void loadMemoryWritebackReview()
+    if (tab !== "memory" && tab !== "schedules" && tab !== "release") return
+    if (tab === "memory" || tab === "schedules") void loadOperationsDiagnostics()
+    if (tab === "memory") {
+      void loadMemoryQuality()
+      void loadMemoryWritebackReview()
+    }
+    if (tab === "release") void loadConfigOperations()
   }, [tab, editorVersion, loadConfigOperations, loadMemoryQuality, loadMemoryWritebackReview, loadOperationsDiagnostics])
 
   const handleConfigAction = useCallback(async (action: "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport") => {
@@ -299,17 +302,7 @@ export function SettingsPage() {
     }
   }, [loadMemoryQuality, loadMemoryWritebackReview, memoryReviewEdits])
 
-  const tabs = useMemo(
-    () => [
-      { id: "backends" as const, label: pickUiText(uiLanguage, "AI 연결", "AI Connection"), capabilityKey: "ai.backends" },
-      { id: "security" as const, label: pickUiText(uiLanguage, "보안", "Security"), capabilityKey: "settings.control" },
-      { id: "channels" as const, label: pickUiText(uiLanguage, "채널", "Channels"), capabilityKey: "telegram.channel" },
-      { id: "mqtt" as const, label: pickUiText(uiLanguage, "MQTT", "MQTT"), capabilityKey: "mqtt.broker" },
-      { id: "remote" as const, label: pickUiText(uiLanguage, "원격 접근", "Remote Access"), capabilityKey: "settings.control" },
-      { id: "advanced" as const, label: pickUiText(uiLanguage, "고급", "Advanced"), capabilityKey: "mcp.client" },
-    ],
-    [uiLanguage],
-  )
+  const tabs = useMemo(() => buildAdvancedSettingsTabs(uiLanguage), [uiLanguage])
 
   const activeDraft = localDraft ?? draft
   const isDirty = useMemo(() => JSON.stringify(activeDraft) !== JSON.stringify(draft), [activeDraft, draft])
@@ -439,7 +432,7 @@ export function SettingsPage() {
   }
 
   function renderActions() {
-    if (tab === "advanced") return null
+    if (!isDraftSavingAdvancedSettingsTab(tab)) return null
     return (
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 pt-5">
         <div className="text-sm text-stone-500">{pickUiText(uiLanguage, "변경사항은 저장 버튼을 눌러야 반영됩니다.", "Changes are applied only after you press Save.")}</div>
@@ -469,9 +462,9 @@ export function SettingsPage() {
 
   function renderContent() {
     switch (tab) {
-      case "backends":
+      case "ai":
         return (
-          <div key={`backends-${editorVersion}`} className="space-y-4">
+          <div key={`ai-${editorVersion}`} className="space-y-4">
             <SingleAIConnectionPanel
               backends={activeDraft.aiBackends}
               routingProfiles={activeDraft.routingProfiles}
@@ -481,16 +474,6 @@ export function SettingsPage() {
               onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
               onRemoveBackend={removeBackend}
               onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-            />
-          </div>
-        )
-
-      case "security":
-        return (
-          <div key={`security-${editorVersion}`}>
-            <SecuritySettingsForm
-              value={activeDraft.security}
-              onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
             />
           </div>
         )
@@ -525,12 +508,12 @@ export function SettingsPage() {
           </div>
         )
 
-      case "mqtt":
+      case "yeonjang":
         return (
-          <div key={`mqtt-${editorVersion}`} className="space-y-4">
+          <div key={`yeonjang-${editorVersion}`} className="space-y-4">
             {activeCapability?.reason ? (
               <RuntimeNotice
-                title={text("MQTT 상태", "MQTT Status")}
+                title={text("연장/MQTT 상태", "Yeonjang/MQTT Status")}
                 message={activeCapability.reason}
                 tone={activeCapability.status === "error" ? "error" : "info"}
               />
@@ -550,22 +533,7 @@ export function SettingsPage() {
           </div>
         )
 
-      case "remote":
-        return (
-          <div key={`remote-${editorVersion}`} className="space-y-4">
-            <RemoteAccessForm
-              value={activeDraft.remoteAccess}
-              onChange={(patch) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, ...patch })}
-            />
-            <AuthTokenPanel
-              authEnabled={activeDraft.remoteAccess.authEnabled}
-              authToken={activeDraft.remoteAccess.authToken}
-              onGenerated={(token) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, authToken: token })}
-            />
-          </div>
-        )
-
-      case "advanced":
+      case "memory":
         return (
           <div className="space-y-4">
             <OperationsDiagnosticsPanel
@@ -580,6 +548,46 @@ export function SettingsPage() {
               error={memoryQualityError}
               onRefresh={() => void loadMemoryQuality()}
             />
+            <MemoryWritebackReviewPanel
+              candidates={memoryReviewItems}
+              edits={memoryReviewEdits}
+              loading={memoryReviewLoading}
+              error={memoryReviewError}
+              actionId={memoryReviewActionId}
+              onRefresh={() => void loadMemoryWritebackReview()}
+              onEdit={(candidateId, value) => setMemoryReviewEdits((current) => ({ ...current, [candidateId]: value }))}
+              onAction={(candidateId, action) => void handleMemoryReviewAction(candidateId, action)}
+            />
+          </div>
+        )
+
+      case "schedules":
+        return (
+          <div className="space-y-4">
+            <AdvancedScheduleStatusPanel
+              snapshot={operationsDiagnostics}
+              loading={operationsDiagnosticsLoading}
+              error={operationsDiagnosticsError}
+              onRefresh={() => void loadOperationsDiagnostics()}
+            />
+          </div>
+        )
+
+      case "tool_permissions":
+        return (
+          <div key={`tool-permissions-${editorVersion}`} className="space-y-4">
+            <SecuritySettingsForm
+              value={activeDraft.security}
+              onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
+            />
+            <McpServersPanel />
+            <ActiveInstructionsPanel />
+          </div>
+        )
+
+      case "release":
+        return (
+          <div className="space-y-4">
             <ConfigMigrationPanel
               snapshot={configOperationsSnapshot}
               dryRun={configMigrationDryRun}
@@ -593,19 +601,16 @@ export function SettingsPage() {
               onRefresh={() => void loadConfigOperations()}
               onAction={(action) => void handleConfigAction(action)}
             />
-            <MemoryWritebackReviewPanel
-              candidates={memoryReviewItems}
-              edits={memoryReviewEdits}
-              loading={memoryReviewLoading}
-              error={memoryReviewError}
-              actionId={memoryReviewActionId}
-              onRefresh={() => void loadMemoryWritebackReview()}
-              onEdit={(candidateId, value) => setMemoryReviewEdits((current) => ({ ...current, [candidateId]: value }))}
-              onAction={(candidateId, action) => void handleMemoryReviewAction(candidateId, action)}
-            />
             <UpdatePanel />
-            <McpServersPanel />
-            <ActiveInstructionsPanel />
+            <RemoteAccessForm
+              value={activeDraft.remoteAccess}
+              onChange={(patch) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, ...patch })}
+            />
+            <AuthTokenPanel
+              authEnabled={activeDraft.remoteAccess.authEnabled}
+              authToken={activeDraft.remoteAccess.authToken}
+              onGenerated={(token) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, authToken: token })}
+            />
           </div>
         )
     }
@@ -692,7 +697,7 @@ export function SettingsPage() {
               <div className="mt-1 text-xs text-stone-500">{activeCapability?.key}</div>
             </div>
             <div className="flex items-center gap-3">
-              {isDirty && tab !== "advanced" ? <span className="text-xs font-semibold text-amber-700">{pickUiText(uiLanguage, "저장되지 않은 변경사항", "Unsaved changes")}</span> : null}
+              {isDirty && isDraftSavingAdvancedSettingsTab(tab) ? <span className="text-xs font-semibold text-amber-700">{pickUiText(uiLanguage, "저장되지 않은 변경사항", "Unsaved changes")}</span> : null}
               {activeCapability ? <CapabilityBadge status={activeCapability.status} /> : null}
             </div>
           </div>
@@ -725,7 +730,7 @@ function resolveSettingsCapability(
     }
   }
 
-  if (tabId === "mqtt") {
+  if (tabId === "yeonjang") {
     const wantsEnabled = draft.mqtt.enabled
     const hasCredentials = Boolean(draft.mqtt.username.trim()) && Boolean(draft.mqtt.password.trim())
     if (wantsEnabled && !hasCredentials) {
@@ -1293,6 +1298,83 @@ function OperationsDiagnosticsPanel({
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function AdvancedScheduleStatusPanel({
+  snapshot,
+  loading,
+  error,
+  onRefresh,
+}: {
+  snapshot: OperationsDiagnosticsSnapshot | null
+  loading: boolean
+  error: string
+  onRefresh: () => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const nextRuns = snapshot?.nextRuns ?? []
+
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-stone-900">{text("스케줄 상태", "Schedule status")}</div>
+          <p className="mt-1 text-sm leading-6 text-stone-600">
+            {text("예약 실행 상태, 활성 예약 수, 다음 실행 예정 작업을 확인합니다.", "Inspect scheduler health, active job count, and upcoming scheduled runs.")}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? text("확인 중", "Checking") : text("새로고침", "Refresh")}
+          </button>
+          <Link to="/advanced/schedules" className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700">
+            {text("스케줄 화면 열기", "Open schedules")}
+          </Link>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("상태", "Status")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.schedulerRunning ? text("실행 중", "Running") : text("중지됨", "Stopped")}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("활성 예약", "Active jobs")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.activeJobs ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("다음 실행", "Upcoming")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{nextRuns.length}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+        <div className="grid grid-cols-[1fr_1fr] gap-2 border-b border-stone-200 bg-stone-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-500">
+          <span>{text("이름", "Name")}</span>
+          <span>{text("다음 실행", "Next run")}</span>
+        </div>
+        {nextRuns.length ? nextRuns.slice(0, 8).map((item) => (
+          <div key={`${item.scheduleId}-${item.nextRunAt}`} className="grid grid-cols-[1fr_1fr] gap-2 border-b border-stone-100 px-4 py-2 text-xs text-stone-600 last:border-b-0">
+            <span className="truncate font-semibold text-stone-900" title={displayText(item.name)}>{displayText(item.name)}</span>
+            <span>{new Date(item.nextRunAt).toLocaleString()}</span>
+          </div>
+        )) : (
+          <div className="px-4 py-6 text-sm text-stone-500">{text("예정된 실행이 없습니다.", "There are no upcoming scheduled runs.")}</div>
+        )}
+      </div>
     </div>
   )
 }
