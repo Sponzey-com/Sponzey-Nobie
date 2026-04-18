@@ -11,6 +11,8 @@ import { buildReleaseManifest } from "../release/package.js";
 import { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspaceRootPath } from "../version.js";
 import { getProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { buildRolloutSafetySnapshot } from "./rollout-safety.js";
+import { resolveAdminUiActivation } from "../ui/mode.js";
+import { getWebUiWsClientCount } from "../api/ws/stream.js";
 let lastRuntimeManifest = null;
 function commandOutput(command, args, cwd = getWorkspaceRootPath()) {
     try {
@@ -221,6 +223,20 @@ function buildReleasePackageState(includeReleasePackage) {
         return { manifestId: null, releaseVersion: null, requiredMissingCount: null };
     }
 }
+function buildAdminUiState() {
+    const activation = resolveAdminUiActivation();
+    return {
+        enabled: activation.enabled,
+        configEnabled: activation.configEnabled,
+        runtimeFlagEnabled: activation.runtimeFlagEnabled,
+        envEnabled: activation.envEnabled,
+        cliEnabled: activation.cliEnabled,
+        localDevScriptEnabled: activation.localDevScriptEnabled,
+        productionMode: activation.productionMode,
+        subscriptionCount: getWebUiWsClientCount(),
+        reason: activation.reason,
+    };
+}
 function buildEnvironment(includeEnvironment) {
     return {
         node: process.version,
@@ -275,6 +291,7 @@ export function buildRuntimeManifest(options = {}) {
         yeonjang: buildYeonjang(),
         memory: readMemoryState(),
         releasePackage: buildReleasePackageState(includeReleasePackage),
+        adminUi: buildAdminUiState(),
         rollout: buildRolloutSafetySnapshot(PATHS.dbFile),
         paths: {
             stateDir: PATHS.stateDir,

@@ -11,6 +11,10 @@ const log = createLogger("api:ws")
 
 const clients = new Set<WebSocket>()
 
+export function getWebUiWsClientCount(): number {
+  return clients.size
+}
+
 function broadcast(data: unknown): void {
   const msg = JSON.stringify(data)
   for (const ws of clients) {
@@ -26,6 +30,7 @@ function setupEventForwarding(): void {
   eventBus.on("agent.stream", (e) => broadcast({ type: "agent.stream", ...e }))
   eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }))
   eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }))
+  eventBus.on("control.event", (e) => broadcast({ type: "control.event", ...e }))
   eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }))
   eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }))
   eventBus.on("run.step.started", (e) => broadcast({ type: "run.step.started", ...e }))

@@ -219,18 +219,36 @@ export function recordControlEvent(input: ControlEventInput): string | null {
     const requestGroupId = input.requestGroupId ?? context?.requestGroupId ?? null
     const sessionKey = input.sessionKey ?? context?.sessionKey ?? null
     const detail = input.detail ? sanitizeDetail(input.detail, "developer") as Record<string, unknown> : undefined
-    return insertControlEvent({
+    const createdAt = input.createdAt ?? Date.now()
+    const severity = input.severity ?? "info"
+    const summary = sanitizeText(input.summary, "developer")
+    const correlationId = resolveCorrelationId({ ...input, requestGroupId, sessionKey })
+    const id = insertControlEvent({
       eventType: input.eventType,
-      correlationId: resolveCorrelationId({ ...input, requestGroupId, sessionKey }),
+      correlationId,
       runId: input.runId ?? null,
       requestGroupId,
       sessionKey,
       component: input.component,
-      severity: input.severity ?? "info",
-      summary: sanitizeText(input.summary, "developer"),
+      severity,
+      summary,
       ...(detail ? { detail } : {}),
-      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+      createdAt,
     })
+    eventBus.emit("control.event", {
+      id,
+      at: createdAt,
+      eventType: input.eventType,
+      correlationId,
+      runId: input.runId ?? null,
+      requestGroupId,
+      sessionKey,
+      component: input.component,
+      severity,
+      summary,
+      ...(detail ? { detail } : {}),
+    })
+    return id
   } catch (error) {
     try {
       insertDiagnosticEvent({

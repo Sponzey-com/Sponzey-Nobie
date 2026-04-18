@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { api } from "../api/client"
-import type { OperationsSummary } from "../contracts/operations"
+import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
 import type { RootRun } from "../contracts/runs"
 import type { TaskModel } from "../contracts/tasks"
 import { useConnectionStore } from "./connection"
@@ -19,9 +19,9 @@ interface RunsState {
   selectRun: (runId: string) => void
   createRun: (message: string, sessionId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
   cancelRun: (runId: string) => Promise<void>
-  deleteRunHistory: (runId: string) => Promise<void>
-  clearHistoricalRunHistory: () => Promise<void>
-  cleanupStaleRuns: () => Promise<void>
+  deleteRunHistory: (runId: string) => Promise<{ deletedRunCount: number }>
+  clearHistoricalRunHistory: () => Promise<{ deletedRunCount: number }>
+  cleanupStaleRuns: () => Promise<StaleRunCleanupResult>
   upsertRun: (run: RootRun) => void
   replaceRun: (run: RootRun) => void
 }
@@ -156,20 +156,23 @@ export const useRunsStore = create<RunsState>((set, get) => {
       get().replaceRun(response.run)
     },
     deleteRunHistory: async (runId) => {
-      await api.deleteRunHistory(runId)
+      const response = await api.deleteRunHistory(runId)
       set((state) => ({
         selectedRunId: state.selectedRunId === runId ? null : state.selectedRunId,
       }))
       await get().refresh()
+      return { deletedRunCount: response.deletedRunCount }
     },
     clearHistoricalRunHistory: async () => {
-      await api.clearHistoricalRunHistory()
+      const response = await api.clearHistoricalRunHistory()
       await get().refresh()
+      return { deletedRunCount: response.deletedRunCount }
     },
     cleanupStaleRuns: async () => {
       const response = await api.cleanupStaleRuns()
       set({ operationsSummary: response.summary })
       await get().refresh()
+      return response.cleanup
     },
     upsertRun: (run) =>
       set((state) => {

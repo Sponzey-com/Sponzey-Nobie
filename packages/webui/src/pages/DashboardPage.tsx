@@ -4,6 +4,13 @@ import { api } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
 import type { DoctorReport, DoctorStatus } from "../contracts/doctor"
+import {
+  buildAdvancedDashboardCards,
+  loadAdvancedDashboardSources,
+  type AdvancedDashboardCardStatus,
+  type AdvancedDashboardLoadErrors,
+  type AdvancedDashboardSources,
+} from "../lib/advanced-dashboard"
 import { getAIProviderDisplayLabel, getBackendDisplayLabel } from "../lib/ai-display"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useCapabilitiesStore } from "../stores/capabilities"
@@ -24,6 +31,9 @@ export function DashboardPage() {
   const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null)
   const [doctorError, setDoctorError] = useState<string | null>(null)
   const [doctorLoading, setDoctorLoading] = useState(false)
+  const [advancedSources, setAdvancedSources] = useState<AdvancedDashboardSources>({})
+  const [advancedLoadErrors, setAdvancedLoadErrors] = useState<AdvancedDashboardLoadErrors>({})
+  const [advancedCardsLoading, setAdvancedCardsLoading] = useState(false)
 
   const capabilityCounts = status?.capabilityCounts ?? counts
   const fastResponse = status?.fast_response_health
@@ -40,6 +50,17 @@ export function DashboardPage() {
   const visibleBackends = draft.aiBackends.filter(
     (backend) => backend.enabled || backend.endpoint?.trim() || backend.defaultModel.trim(),
   )
+  const advancedDashboardCards = useMemo(() => buildAdvancedDashboardCards({
+    draft,
+    checks,
+    status: advancedSources.status ?? status,
+    runs: advancedSources.runs,
+    operations: advancedSources.operations,
+    doctor: advancedSources.doctor ?? doctorReport,
+    errors: advancedLoadErrors,
+    loading: advancedCardsLoading,
+    language,
+  }), [advancedCardsLoading, advancedLoadErrors, advancedSources, checks, doctorReport, draft, language, status])
 
   const primaryTargetLabel = useMemo(() => {
     const target = status?.primaryAiTarget
@@ -49,17 +70,45 @@ export function DashboardPage() {
   }, [draft.aiBackends, status?.primaryAiTarget])
 
   useEffect(() => {
-    void runDoctorQuick()
+    void loadAdvancedDashboard()
   }, [])
+
+  async function loadAdvancedDashboard() {
+    setAdvancedCardsLoading(true)
+    setDoctorLoading(true)
+    setDoctorError(null)
+    const result = await loadAdvancedDashboardSources({
+      status: api.status,
+      runs: async () => (await api.runs()).runs,
+      operations: async () => (await api.runOperationsSummary()).summary,
+      doctor: async () => (await api.doctor("quick")).report,
+    }, language)
+    setAdvancedSources(result.sources)
+    setAdvancedLoadErrors(result.errors)
+    setDoctorReport(result.sources.doctor ?? null)
+    setDoctorError(result.errors.doctor ?? null)
+    setDoctorLoading(false)
+    setAdvancedCardsLoading(false)
+  }
 
   async function runDoctorQuick() {
     setDoctorLoading(true)
     setDoctorError(null)
     try {
-      const response = await api.doctor("quick")
-      setDoctorReport(response.report)
-    } catch (error) {
-      setDoctorError(error instanceof Error ? error.message : String(error))
+      const result = await loadAdvancedDashboardSources({
+        doctor: async () => (await api.doctor("quick")).report,
+      }, language)
+      if (result.sources.doctor) {
+        setDoctorReport(result.sources.doctor)
+        setAdvancedSources((current) => ({ ...current, doctor: result.sources.doctor }))
+        setAdvancedLoadErrors((current) => {
+          const { doctor: _doctor, ...rest } = current
+          return rest
+        })
+      } else if (result.errors.doctor) {
+        setDoctorError(result.errors.doctor)
+        setAdvancedLoadErrors((current) => ({ ...current, doctor: result.errors.doctor }))
+      }
     } finally {
       setDoctorLoading(false)
     }
@@ -92,7 +141,7 @@ export function DashboardPage() {
               {text("설정", "Settings")}
             </Link>
             <button
-              onClick={() => void refreshConnection()}
+              onClick={() => { void refreshConnection(); void loadAdvancedDashboard() }}
               className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-white"
             >
               {text("새로고침", "Refresh")}
@@ -102,6 +151,12 @@ export function DashboardPage() {
         {lastError ? (
           <div className="mt-5 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-200">{displayText(lastError)}</div>
         ) : null}
+      </section>
+
+      <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {advancedDashboardCards.map((card) => (
+          <AdvancedDashboardCard key={card.id} card={card} />
+        ))}
       </section>
 
       <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -229,6 +284,46 @@ function doctorTone(status: DoctorStatus): string {
     default:
       return "border-stone-200 bg-stone-100 text-stone-600"
   }
+}
+
+function advancedCardTone(status: AdvancedDashboardCardStatus): string {
+  switch (status) {
+    case "ready":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700"
+    case "loading":
+      return "border-blue-200 bg-blue-50 text-blue-700"
+    case "error":
+      return "border-red-200 bg-red-50 text-red-700"
+    case "idle":
+      return "border-stone-200 bg-stone-100 text-stone-700"
+  }
+}
+
+function AdvancedDashboardCard({ card }: { card: ReturnType<typeof buildAdvancedDashboardCards>[number] }) {
+  const { text, displayText } = useUiI18n()
+  return (
+    <Link to={card.href} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-stone-900">{card.title}</div>
+          <div className="mt-2 text-3xl font-semibold text-stone-900">{card.value}</div>
+        </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${advancedCardTone(card.status)}`}>
+          {card.status === "loading" ? text("로딩", "Loading") : card.status === "error" ? text("오류", "Error") : card.status === "idle" ? text("대기", "Idle") : text("정상", "Ready")}
+        </span>
+      </div>
+      <div className="mt-3 line-clamp-2 text-sm leading-6 text-stone-600">{displayText(card.summary)}</div>
+      {card.items.length ? (
+        <div className="mt-4 space-y-2">
+          {card.items.slice(0, 3).map((item) => (
+            <div key={item} className="truncate rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600" title={displayText(item)}>
+              {displayText(item)}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Link>
+  )
 }
 
 function DoctorPanel({ report, loading, error, onRefresh }: {
