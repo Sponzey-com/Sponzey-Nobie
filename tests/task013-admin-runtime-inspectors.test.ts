@@ -19,6 +19,7 @@ import {
   enqueueMemoryWritebackCandidate,
   insertChannelMessageRef,
   insertMemoryEmbeddingIfMissing,
+  insertRunSubSession,
   insertSchedule,
   insertScheduleDeliveryReceipt,
   insertScheduleRun,
@@ -26,6 +27,7 @@ import {
   recordMemoryAccessLog,
   storeMemoryDocument,
 } from "../packages/core/src/db/index.js"
+import type { SubSessionContract } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
 
@@ -280,6 +282,62 @@ describe("task013 admin memory scheduler channel inspectors", () => {
       idempotencyKey: "idem-task013",
       detail: { chatId: "chat-task013", threadId: "thread-task013", messageId: "answer-task013" },
     })
+    const subSession: SubSessionContract = {
+      identity: {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        entityType: "sub_session",
+        entityId: "sub-task013",
+        owner: { ownerType: "sub_agent", ownerId: "agent-task013" },
+        idempotencyKey: "idem:sub-task013",
+        parent: { parentRunId: runId, parentSessionId: sessionKey, parentRequestId: requestGroupId },
+      },
+      subSessionId: "sub-task013",
+      parentSessionId: sessionKey,
+      parentRunId: runId,
+      agentId: "agent-task013",
+      agentDisplayName: "Task013 Agent",
+      commandRequestId: "command-task013",
+      status: "running",
+      retryBudgetRemaining: 1,
+      promptBundleId: "bundle-task013",
+      promptBundleSnapshot: {
+        identity: {
+          schemaVersion: CONTRACT_SCHEMA_VERSION,
+          entityType: "sub_session",
+          entityId: "bundle-task013",
+          owner: { ownerType: "sub_agent", ownerId: "agent-task013" },
+          idempotencyKey: "idem:bundle-task013",
+          parent: { parentRunId: runId, parentSessionId: sessionKey, parentRequestId: requestGroupId },
+        },
+        bundleId: "bundle-task013",
+        agentId: "agent-task013",
+        agentType: "sub_agent",
+        role: "diagnostic fixture",
+        displayNameSnapshot: "Task013 Agent",
+        teamContext: [],
+        memoryPolicy: {} as any,
+        capabilityPolicy: {} as any,
+        taskScope: {} as any,
+        safetyRules: ["do not expose secrets"],
+        sourceProvenance: [{ sourceId: "test", version: "1" }],
+        createdAt: Date.now(),
+      },
+    }
+    insertRunSubSession(subSession)
+    recordMessageLedgerEvent({
+      runId,
+      eventKind: "sub_session_progress_summarized",
+      status: "delivered",
+      summary: "orchestration plan progress",
+      detail: {
+        orchestrationPlan: { planId: "plan-task013", mode: "parallel" },
+        subSessionId: "sub-task013",
+        agentId: "agent-task013",
+        latencyMs: 23,
+        resourceLockWaitMs: 7,
+        lockSummary: "file:/tmp/task013 exclusive",
+      },
+    })
 
     const app = Fastify({ logger: false })
     registerAdminRoute(app)
@@ -327,6 +385,10 @@ describe("task013 admin memory scheduler channel inspectors", () => {
       }))
       expect(body.channels.ledgerReceipts.some((item: any) => item.deliveryKey === "delivery-task013" && item.chatId === "chat-task013")).toBe(true)
       expect(body.channels.approvalCallbacks.some((item: any) => item.approvalId === "approval-task013" && item.buttonPayload === "approve_once")).toBe(true)
+      expect(body.orchestration.summary.plans).toBeGreaterThanOrEqual(1)
+      expect(body.orchestration.promptBundles.items.some((item: any) => item.promptBundleId === "bundle-task013" && item.safetyRuleCount === 1)).toBe(true)
+      expect(body.orchestration.latencyMetrics.some((item: any) => item.valueMs === 23)).toBe(true)
+      expect(body.orchestration.resourceLockWaits.some((item: any) => item.waitMs === 7 && item.lockSummary.includes("exclusive"))).toBe(true)
     } finally {
       await app.close()
     }

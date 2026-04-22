@@ -6,6 +6,7 @@ export const TRUST_TAGS = [
     "file_content",
     "tool_result",
     "mcp_result",
+    "capability_result",
     "yeonjang_result",
     "diagnostic",
 ];
@@ -16,6 +17,7 @@ const UNTRUSTED_TAGS = new Set([
     "file_content",
     "tool_result",
     "mcp_result",
+    "capability_result",
     "yeonjang_result",
 ]);
 const INJECTION_PATTERNS = [

@@ -1,10 +1,16 @@
 import type { AgentContextMode } from "../agent/index.js"
 import type { IntentContract } from "../contracts/index.js"
+import type { OrchestrationMode, OrchestrationPlan } from "../contracts/sub-agent-orchestration.js"
 import {
   createExplicitIdProvider,
   createStoreCandidateProvider,
   runCandidateProviders,
 } from "../candidates/index.js"
+import { buildOrchestrationPlan } from "../orchestration/planner.js"
+import {
+  resolveOrchestrationModeSnapshot,
+  type OrchestrationModeSnapshot,
+} from "../orchestration/mode.js"
 import {
   buildLatencyEventLabel,
   buildLatencyEventLabelForMeasurement,
@@ -50,6 +56,9 @@ export interface StartPlan {
   initialDelegationTurnCount: number
   shouldReuseContext: boolean
   effectiveContextMode: AgentContextMode
+  orchestrationMode: OrchestrationMode
+  orchestrationRegistrySnapshot: OrchestrationModeSnapshot
+  orchestrationPlanSnapshot: OrchestrationPlan
   workerSessionId?: string | undefined
   reusableWorkerSessionRun?: RootRun | undefined
   latencyEvents: string[]
@@ -76,6 +85,8 @@ interface StartPlanDependencies {
   }) => string | undefined
   normalizeTaskProfile: (taskProfile: TaskProfile | undefined) => TaskProfile
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
+  resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot
+  buildOrchestrationPlan?: typeof buildOrchestrationPlan
 }
 
 const defaultDependencies: StartPlanDependencies = {
@@ -91,6 +102,8 @@ const defaultDependencies: StartPlanDependencies = {
   buildWorkerSessionId: () => undefined,
   normalizeTaskProfile: (taskProfile) => taskProfile ?? "general_chat",
   findLatestWorkerSessionRun,
+  resolveOrchestrationMode: resolveOrchestrationModeSnapshot,
+  buildOrchestrationPlan,
 }
 
 function isStandaloneLocalExecutionAction(message: string, explicitContinuationReference: boolean): boolean {
@@ -126,6 +139,37 @@ export async function buildStartPlan(
     sessionId: params.sessionId,
     ...(params.source ? { source: params.source } : {}),
   })))
+  const orchestrationModeStartedAt = Date.now()
+  const orchestrationRegistrySnapshot = await (dependencies.resolveOrchestrationMode ?? resolveOrchestrationModeSnapshot)()
+  const orchestrationRegistryLatencyMs = Date.now() - orchestrationModeStartedAt
+  recordLatencyMetric({
+    name: "registry_lookup_latency_ms",
+    durationMs: orchestrationRegistryLatencyMs,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+  })
+  latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
+    name: "orchestration_mode_latency_ms",
+    durationMs: orchestrationRegistryLatencyMs,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+  }))} mode=${orchestrationRegistrySnapshot.mode}; reason=${orchestrationRegistrySnapshot.reasonCode}`)
+  const orchestrationPlanStartedAt = Date.now()
+  const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
+    parentRunId: params.runId,
+    parentRequestId: params.runId,
+    userRequest: params.message,
+    modeSnapshot: orchestrationRegistrySnapshot,
+  }).plan
+  latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
+    name: "orchestration_planning_latency_ms",
+    durationMs: Date.now() - orchestrationPlanStartedAt,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+  }))} plan=${orchestrationPlanSnapshot.planId}; fallback=${orchestrationPlanSnapshot.fallbackStrategy.reasonCode}`)
   const explicitReusableRequestGroupId =
     params.requestGroupId && (params.forceRequestGroupReuse || dependencies.isReusableRequestGroup(params.requestGroupId))
       ? params.requestGroupId
@@ -294,6 +338,9 @@ export async function buildStartPlan(
     initialDelegationTurnCount,
     shouldReuseContext,
     effectiveContextMode,
+    orchestrationMode: orchestrationRegistrySnapshot.mode,
+    orchestrationRegistrySnapshot,
+    orchestrationPlanSnapshot,
     ...(workerSessionId ? { workerSessionId } : {}),
     ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
     latencyEvents,

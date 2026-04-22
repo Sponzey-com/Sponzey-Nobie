@@ -2,6 +2,9 @@ import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { getRootRun } from "../../runs/store.js";
 import { attachApprovalChannelMessage, describeLateApproval, getLatestApprovalForRun } from "../../runs/approval-registry.js";
+import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
+import { recordLatencyMetric } from "../../observability/latency.js";
+import { appendApprovalAggregateItem, buildApprovalAggregateText, resolveApprovalAggregate, } from "../approval-aggregation.js";
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js";
 const log = createLogger("channel:telegram:approval");
 // Map from runId → pending approval data
@@ -29,7 +32,7 @@ export function clearActiveChatForSession(sessionId) {
 }
 export function registerApprovalHandler(bot) {
     detachTelegramApprovalRequestListener?.();
-    const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, toolName, params, kind = "approval", guidance, resolve }) => {
+    const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, parentRunId, subSessionId, agentId, teamId, toolName, params, kind = "approval", guidance, riskSummary, expiresAt, resolve }) => {
         const run = getRootRun(runId);
         if (run?.source !== "telegram") {
             return;
@@ -39,38 +42,99 @@ export function registerApprovalHandler(bot) {
             log.warn(`approval.request for runId=${runId} but no active chat`);
             return;
         }
+        const observedAt = Date.now();
         const paramsStr = JSON.stringify(params, null, 2).slice(0, 300);
-        const text = `${kind === "screen_confirmation" ? "🖥️ 화면 조작 준비 확인" : "🔐 도구 실행 승인 요청"}\n\n` +
-            `도구: ${toolName}\n` +
-            `파라미터:\n${paramsStr}\n\n` +
-            `${guidance ? `${guidance}\n\n` : ""}` +
-            `${kind === "screen_confirmation" ? "준비가 끝났으면 계속 진행할 수 있습니다." : "허용하시겠습니까?"}`;
-        let sentMsgId;
+        const existing = pending.get(runId);
+        const aggregated = appendApprovalAggregateItem(existing?.context, {
+            ...(approvalId ? { approvalId } : {}),
+            runId,
+            ...(parentRunId ? { parentRunId } : {}),
+            ...(subSessionId ? { subSessionId } : {}),
+            ...(agentId ? { agentId } : {}),
+            ...(teamId ? { teamId } : {}),
+            toolName,
+            kind,
+            ...(riskSummary ? { riskSummary } : {}),
+            ...(guidance ? { guidance } : {}),
+            paramsPreview: paramsStr,
+            resolve,
+        }, target.userId, observedAt);
+        const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram" });
+        let sentMsgId = existing?.messageId;
         try {
             const keyboard = buildApprovalKeyboard(runId);
             const sendOpts = target.threadId !== undefined
                 ? { reply_markup: keyboard, message_thread_id: target.threadId }
                 : { reply_markup: keyboard };
-            const msg = await bot.api.sendMessage(target.chatId, text, sendOpts);
-            sentMsgId = msg.message_id;
+            if (existing) {
+                await bot.api.editMessageText(existing.chatId, existing.messageId, text, { reply_markup: keyboard });
+            }
+            else {
+                const msg = await bot.api.sendMessage(target.chatId, text, sendOpts);
+                sentMsgId = msg.message_id;
+            }
         }
         catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             log.error(`Failed to send approval message: ${errMsg}`);
             return;
         }
-        if (approvalId) {
+        if (approvalId && sentMsgId !== undefined) {
             attachApprovalChannelMessage(approvalId, telegramApprovalChannelMessageId(target.chatId, target.threadId, sentMsgId));
         }
+        const timeout = existing?.timeout ?? (kind === "screen_confirmation"
+            ? null
+            : setTimeout(() => {
+                const entry = pending.get(runId);
+                if (!entry)
+                    return;
+                pending.delete(runId);
+                const resolvedItems = resolveApprovalAggregate(entry.context, "deny", "timeout");
+                for (const item of resolvedItems) {
+                    eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision: "deny", toolName: item.toolName, kind: item.kind, reason: "timeout" });
+                }
+            }, expiresAt ? Math.max(0, expiresAt - Date.now()) : 60_000));
         pending.set(runId, {
-            ...(approvalId ? { approvalId } : {}),
-            resolve,
+            context: aggregated.context,
             chatId: target.chatId,
-            messageId: sentMsgId,
+            messageId: sentMsgId ?? 0,
             requesterId: target.userId,
-            toolName,
-            kind,
-            timeout: null,
+            timeout,
+        });
+        if (existing && aggregated.appended && aggregated.aggregationLatencyMs !== null) {
+            recordLatencyMetric({
+                name: "approval_aggregation_latency_ms",
+                durationMs: aggregated.aggregationLatencyMs,
+                runId,
+                sessionId: run.sessionId,
+                detail: {
+                    channel: "telegram",
+                    approvalCount: aggregated.context.items.length,
+                    toolName,
+                    kind,
+                    approvalId: approvalId ?? null,
+                },
+            });
+        }
+        recordMessageLedgerEvent({
+            runId,
+            ...(parentRunId ? { parentRunId } : {}),
+            ...(subSessionId ? { subSessionId } : {}),
+            ...(agentId ? { agentId } : {}),
+            ...(teamId ? { teamId } : {}),
+            channel: "telegram",
+            eventKind: existing ? "approval_aggregated" : "approval_requested",
+            deliveryKind: "approval",
+            status: "pending",
+            summary: existing ? "Telegram 승인 요청을 기존 pending 항목에 집계했습니다." : "Telegram 승인 요청을 전송했습니다.",
+            detail: {
+                approvalId: approvalId ?? null,
+                approvalCount: aggregated.context.items.length,
+                aggregationLatencyMs: aggregated.aggregationLatencyMs,
+                toolName,
+                kind,
+                riskSummary: riskSummary ?? null,
+            },
         });
     });
     const detachResolved = eventBus.on("approval.resolved", ({ runId }) => {
@@ -100,7 +164,8 @@ export function registerApprovalHandler(bot) {
         }
         const entry = pending.get(runId);
         if (entry === undefined) {
-            await ctx.answerCallbackQuery(describeLateApproval(getLatestApprovalForRun(runId)));
+            const lateMessage = describeLateApproval(getLatestApprovalForRun(runId));
+            await ctx.answerCallbackQuery(lateMessage.startsWith("처리할 승인 요청을 찾을 수 없습니다.") ? "이미 처리된 요청입니다." : lateMessage);
             return;
         }
         if (from.id !== entry.requesterId) {
@@ -115,8 +180,10 @@ export function registerApprovalHandler(bot) {
             : approveOnceMatch !== null
                 ? "allow_once"
                 : "deny";
+        const primary = entry.context.items[0];
+        const primaryKind = primary?.kind ?? "approval";
         const username = from.first_name ?? from.username ?? String(from.id);
-        const resultLabel = entry.kind === "screen_confirmation"
+        const resultLabel = primaryKind === "screen_confirmation"
             ? decision === "allow_run"
                 ? `✅ ${username}이 준비 완료 후 전체 진행`
                 : decision === "allow_once"
@@ -135,7 +202,7 @@ export function registerApprovalHandler(bot) {
         catch {
             // best-effort
         }
-        await ctx.answerCallbackQuery(entry.kind === "screen_confirmation"
+        await ctx.answerCallbackQuery(primaryKind === "screen_confirmation"
             ? decision === "allow_run"
                 ? "✅ 준비 완료 후 전체 진행"
                 : decision === "allow_once"
@@ -146,8 +213,10 @@ export function registerApprovalHandler(bot) {
                 : decision === "allow_once"
                     ? "🔹 이번 단계 승인"
                     : "❌ 거부 후 취소");
-        eventBus.emit("approval.resolved", { ...(entry.approvalId ? { approvalId: entry.approvalId } : {}), runId, decision, toolName: entry.toolName, kind: entry.kind, reason: "user" });
-        entry.resolve(decision, "user");
+        const resolvedItems = resolveApprovalAggregate(entry.context, decision, "user");
+        for (const item of resolvedItems) {
+            eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision, toolName: item.toolName, kind: item.kind, reason: "user" });
+        }
     });
 }
 export function resetTelegramApprovalStateForTest() {

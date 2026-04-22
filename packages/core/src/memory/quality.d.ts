@@ -25,6 +25,14 @@ export interface FlashFeedbackQualityMetric {
     expired: number;
     highSeverityActive: number;
 }
+export interface LearningHistoryQualityMetric {
+    pendingReview: number;
+    autoApplied: number;
+    appliedByUser: number;
+    rejected: number;
+    historyVersions: number;
+    restoreEvents: number;
+}
 export interface MemoryRetrievalPolicySnapshot {
     fastPathBlocksLongTerm: boolean;
     fastPathBlocksVector: boolean;
@@ -52,6 +60,7 @@ export interface MemoryQualitySnapshot {
     };
     writeback: MemoryWritebackQualityMetric;
     flashFeedback: FlashFeedbackQualityMetric;
+    learningHistory: LearningHistoryQualityMetric;
     retrievalPolicy: MemoryRetrievalPolicySnapshot;
     lastFailure: string | null;
 }

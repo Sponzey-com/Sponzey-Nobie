@@ -14,6 +14,20 @@ import {
   validateScheduleContract,
   type ScheduleContract,
 } from "../contracts/index.js"
+import {
+  SUB_AGENT_CONTRACT_SCHEMA_VERSION,
+  type AgentConfig,
+  type AgentEntityType,
+  type AgentStatus,
+  type CapabilityDelegationRequest,
+  type DataExchangePackage,
+  type HistoryVersion,
+  type LearningEvent,
+  type OwnerScope,
+  type RestoreEvent,
+  type SubSessionContract,
+  type TeamConfig,
+} from "../contracts/sub-agent-orchestration.js"
 
 let _db: BetterSqlite3.Database | null = null
 
@@ -253,6 +267,177 @@ export interface DbWebRetrievalCacheEntryInput {
   verdict: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
+
+export type DbConfigSource = "manual" | "import" | "system"
+
+export interface DbAgentConfig {
+  agent_id: string
+  agent_type: AgentEntityType
+  status: AgentStatus
+  display_name: string
+  nickname: string | null
+  role: string
+  personality: string
+  specialty_tags_json: string
+  avoid_tasks_json: string
+  memory_policy_json: string
+  capability_policy_json: string
+  profile_version: number
+  config_json: string
+  schema_version: number
+  source: DbConfigSource
+  audit_id: string | null
+  idempotency_key: string | null
+  created_at: number
+  updated_at: number
+  archived_at: number | null
+}
+
+export interface DbTeamConfig {
+  team_id: string
+  status: Exclude<AgentStatus, "degraded">
+  display_name: string
+  nickname: string | null
+  purpose: string
+  role_hints_json: string
+  member_agent_ids_json: string
+  profile_version: number
+  config_json: string
+  schema_version: number
+  source: DbConfigSource
+  audit_id: string | null
+  idempotency_key: string | null
+  created_at: number
+  updated_at: number
+  archived_at: number | null
+}
+
+export interface DbAgentTeamMembership {
+  team_id: string
+  agent_id: string
+  status: "active" | "unresolved" | "removed"
+  role_hint: string | null
+  schema_version: number
+  audit_id: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface DbRunSubSession {
+  sub_session_id: string
+  parent_run_id: string
+  parent_session_id: string
+  parent_request_id: string | null
+  agent_id: string
+  agent_display_name: string
+  agent_nickname: string | null
+  command_request_id: string
+  status: SubSessionContract["status"]
+  retry_budget_remaining: number
+  prompt_bundle_id: string
+  contract_json: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+  updated_at: number
+  started_at: number | null
+  finished_at: number | null
+}
+
+export interface DbAgentDataExchange {
+  exchange_id: string
+  source_owner_type: DataExchangePackage["sourceOwner"]["ownerType"]
+  source_owner_id: string
+  recipient_owner_type: DataExchangePackage["recipientOwner"]["ownerType"]
+  recipient_owner_id: string
+  purpose: string
+  allowed_use: DataExchangePackage["allowedUse"]
+  retention_policy: DataExchangePackage["retentionPolicy"]
+  redaction_state: DataExchangePackage["redactionState"]
+  provenance_refs_json: string
+  payload_json: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+  updated_at: number
+  expires_at: number | null
+}
+
+export interface DbCapabilityDelegation {
+  delegation_id: string
+  requester_owner_type: CapabilityDelegationRequest["requester"]["ownerType"]
+  requester_owner_id: string
+  provider_owner_type: CapabilityDelegationRequest["provider"]["ownerType"]
+  provider_owner_id: string
+  capability: string
+  risk: CapabilityDelegationRequest["risk"]
+  status: CapabilityDelegationRequest["status"]
+  input_package_ids_json: string
+  result_package_id: string | null
+  approval_id: string | null
+  contract_json: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+  updated_at: number
+}
+
+export interface DbLearningEvent {
+  learning_event_id: string
+  agent_id: string
+  learning_target: LearningEvent["learningTarget"]
+  before_summary: string
+  after_summary: string
+  evidence_refs_json: string
+  confidence: number
+  approval_state: LearningEvent["approvalState"]
+  contract_json: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+  updated_at: number
+}
+
+export interface DbProfileHistoryVersion {
+  history_version_id: string
+  target_entity_type: HistoryVersion["targetEntityType"]
+  target_entity_id: string
+  version: number
+  before_json: string
+  after_json: string
+  reason_code: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+}
+
+export interface DbProfileRestoreEvent {
+  restore_event_id: string
+  target_entity_type: RestoreEvent["targetEntityType"]
+  target_entity_id: string
+  restored_history_version_id: string
+  dry_run: number
+  effect_summary_json: string
+  schema_version: number
+  audit_id: string | null
+  idempotency_key: string
+  created_at: number
+}
+
+export interface AgentConfigPersistenceOptions {
+  imported?: boolean
+  source?: DbConfigSource
+  auditId?: string | null
+  idempotencyKey?: string | null
+  now?: number
+}
+
+export interface TeamConfigPersistenceOptions extends AgentConfigPersistenceOptions {}
 
 export type DbControlEventSeverity = "debug" | "info" | "warning" | "error"
 
@@ -1212,6 +1397,8 @@ export interface MemorySearchFilters {
   runId?: string
   requestGroupId?: string
   scheduleId?: string
+  ownerScope?: OwnerScope
+  recipientScope?: OwnerScope
   includeSchedule?: boolean
   includeArtifact?: boolean
   includeDiagnostic?: boolean
@@ -1229,6 +1416,702 @@ function resolveMemoryOwnerId(scope: MemoryScope, ownerId: string | undefined): 
 
 function toJsonOrNull(value: Record<string, unknown> | undefined): string | null {
   return value ? JSON.stringify(value) : null
+}
+
+function toJson(value: unknown): string {
+  return toCanonicalJson(value)
+}
+
+function optionalAuditId(identityAuditId: string | undefined, override: string | null | undefined): string | null {
+  return override ?? identityAuditId ?? null
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const code = "code" in error ? String((error as { code?: unknown }).code) : ""
+  const message = "message" in error ? String((error as { message?: unknown }).message) : ""
+  return code === "SQLITE_CONSTRAINT_UNIQUE" || message.includes("UNIQUE constraint failed")
+}
+
+function persistenceSource(options: Pick<AgentConfigPersistenceOptions, "imported" | "source"> | undefined): DbConfigSource {
+  if (options?.imported) return "import"
+  return options?.source ?? "manual"
+}
+
+function persistedAgentConfig(input: AgentConfig, imported: boolean | undefined): AgentConfig {
+  if (!imported) return input
+  return { ...input, status: "disabled" } as AgentConfig
+}
+
+function persistedTeamConfig(input: TeamConfig, imported: boolean | undefined): TeamConfig {
+  if (!imported) return input
+  return { ...input, status: "disabled" }
+}
+
+export function upsertAgentConfig(input: AgentConfig, options: AgentConfigPersistenceOptions = {}): void {
+  assertMigrationWriteAllowed(getDb(), "agent.config.upsert")
+  const config = persistedAgentConfig(input, options.imported)
+  const now = options.now ?? Date.now()
+  const updatedAt = options.now ?? config.updatedAt ?? now
+  const source = persistenceSource(options)
+  getDb()
+    .prepare(
+      `INSERT INTO agent_configs
+       (agent_id, agent_type, status, display_name, nickname, role, personality, specialty_tags_json, avoid_tasks_json,
+        memory_policy_json, capability_policy_json, profile_version, config_json, schema_version, source, audit_id,
+        idempotency_key, created_at, updated_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET
+         agent_type = excluded.agent_type,
+         status = excluded.status,
+         display_name = excluded.display_name,
+         nickname = excluded.nickname,
+         role = excluded.role,
+         personality = excluded.personality,
+         specialty_tags_json = excluded.specialty_tags_json,
+         avoid_tasks_json = excluded.avoid_tasks_json,
+         memory_policy_json = excluded.memory_policy_json,
+         capability_policy_json = excluded.capability_policy_json,
+         profile_version = excluded.profile_version,
+         config_json = excluded.config_json,
+         schema_version = excluded.schema_version,
+         source = excluded.source,
+         audit_id = excluded.audit_id,
+         idempotency_key = COALESCE(excluded.idempotency_key, agent_configs.idempotency_key),
+         updated_at = excluded.updated_at,
+         archived_at = excluded.archived_at`,
+    )
+    .run(
+      config.agentId,
+      config.agentType,
+      config.status,
+      config.displayName,
+      config.nickname ?? null,
+      config.role,
+      config.personality,
+      toJson(config.specialtyTags),
+      toJson(config.avoidTasks),
+      toJson(config.memoryPolicy),
+      toJson(config.capabilityPolicy),
+      config.profileVersion,
+      toJson(config),
+      config.schemaVersion,
+      source,
+      options.auditId ?? null,
+      options.idempotencyKey ?? null,
+      config.createdAt,
+      updatedAt,
+      config.status === "archived" ? updatedAt : null,
+    )
+}
+
+export function getAgentConfig(agentId: string): DbAgentConfig | undefined {
+  return getDb().prepare<[string], DbAgentConfig>("SELECT * FROM agent_configs WHERE agent_id = ?").get(agentId)
+}
+
+export function listAgentConfigs(filters: {
+  enabledOnly?: boolean
+  includeArchived?: boolean
+  agentType?: AgentEntityType
+} = {}): DbAgentConfig[] {
+  const where: string[] = []
+  const params: unknown[] = []
+  if (filters.enabledOnly) where.push("status = 'enabled'")
+  else if (!filters.includeArchived) where.push("status <> 'archived'")
+  if (filters.agentType) {
+    where.push("agent_type = ?")
+    params.push(filters.agentType)
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  return getDb()
+    .prepare(`SELECT * FROM agent_configs ${clause} ORDER BY updated_at DESC, agent_id ASC`)
+    .all(...params) as DbAgentConfig[]
+}
+
+export function disableAgentConfig(agentId: string, now = Date.now()): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.config.disable")
+  const row = getAgentConfig(agentId)
+  if (!row) return false
+  let nextConfigJson = row.config_json
+  try {
+    const parsed = JSON.parse(row.config_json) as Record<string, unknown>
+    nextConfigJson = toJson({ ...parsed, status: "disabled", updatedAt: now })
+  } catch {
+    nextConfigJson = row.config_json
+  }
+  const result = getDb()
+    .prepare<[string, string, number, string]>(
+      `UPDATE agent_configs
+       SET status = ?, config_json = ?, updated_at = ?, archived_at = NULL
+       WHERE agent_id = ?`,
+    )
+    .run("disabled", nextConfigJson, now, agentId)
+  return result.changes > 0
+}
+
+export function upsertTeamConfig(input: TeamConfig, options: TeamConfigPersistenceOptions = {}): void {
+  assertMigrationWriteAllowed(getDb(), "team.config.upsert")
+  const config = persistedTeamConfig(input, options.imported)
+  const now = options.now ?? Date.now()
+  const updatedAt = options.now ?? config.updatedAt ?? now
+  const source = persistenceSource(options)
+  const db = getDb()
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO team_configs
+       (team_id, status, display_name, nickname, purpose, role_hints_json, member_agent_ids_json, profile_version,
+        config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id) DO UPDATE SET
+         status = excluded.status,
+         display_name = excluded.display_name,
+         nickname = excluded.nickname,
+         purpose = excluded.purpose,
+         role_hints_json = excluded.role_hints_json,
+         member_agent_ids_json = excluded.member_agent_ids_json,
+         profile_version = excluded.profile_version,
+         config_json = excluded.config_json,
+         schema_version = excluded.schema_version,
+         source = excluded.source,
+         audit_id = excluded.audit_id,
+         idempotency_key = COALESCE(excluded.idempotency_key, team_configs.idempotency_key),
+         updated_at = excluded.updated_at,
+         archived_at = excluded.archived_at`,
+    ).run(
+      config.teamId,
+      config.status,
+      config.displayName,
+      config.nickname ?? null,
+      config.purpose,
+      toJson(config.roleHints),
+      toJson(config.memberAgentIds),
+      config.profileVersion,
+      toJson(config),
+      config.schemaVersion,
+      source,
+      options.auditId ?? null,
+      options.idempotencyKey ?? null,
+      config.createdAt,
+      updatedAt,
+      config.status === "archived" ? updatedAt : null,
+    )
+
+    db.prepare<[number, string]>(
+      `UPDATE agent_team_memberships SET status = 'removed', updated_at = ? WHERE team_id = ?`,
+    ).run(updatedAt, config.teamId)
+
+    const agentExists = db.prepare<[string], { agent_id: string }>(
+      "SELECT agent_id FROM agent_configs WHERE agent_id = ? LIMIT 1",
+    )
+    const upsertMember = db.prepare(
+      `INSERT INTO agent_team_memberships
+       (team_id, agent_id, status, role_hint, schema_version, audit_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, agent_id) DO UPDATE SET
+         status = excluded.status,
+         role_hint = excluded.role_hint,
+         schema_version = excluded.schema_version,
+         audit_id = excluded.audit_id,
+         updated_at = excluded.updated_at`,
+    )
+    for (const [index, agentId] of config.memberAgentIds.entries()) {
+      const status = agentExists.get(agentId) ? "active" : "unresolved"
+      upsertMember.run(
+        config.teamId,
+        agentId,
+        status,
+        config.roleHints[index] ?? null,
+        config.schemaVersion,
+        options.auditId ?? null,
+        updatedAt,
+        updatedAt,
+      )
+    }
+  })
+  tx()
+}
+
+export function getTeamConfig(teamId: string): DbTeamConfig | undefined {
+  return getDb().prepare<[string], DbTeamConfig>("SELECT * FROM team_configs WHERE team_id = ?").get(teamId)
+}
+
+export function listTeamConfigs(filters: {
+  enabledOnly?: boolean
+  includeArchived?: boolean
+} = {}): DbTeamConfig[] {
+  const where: string[] = []
+  if (filters.enabledOnly) where.push("status = 'enabled'")
+  else if (!filters.includeArchived) where.push("status <> 'archived'")
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  return getDb()
+    .prepare(`SELECT * FROM team_configs ${clause} ORDER BY updated_at DESC, team_id ASC`)
+    .all() as DbTeamConfig[]
+}
+
+export function listAgentTeamMemberships(teamId?: string): DbAgentTeamMembership[] {
+  if (teamId) {
+    return getDb()
+      .prepare<[string], DbAgentTeamMembership>(
+        "SELECT * FROM agent_team_memberships WHERE team_id = ? ORDER BY agent_id ASC",
+      )
+      .all(teamId)
+  }
+  return getDb()
+    .prepare<[], DbAgentTeamMembership>("SELECT * FROM agent_team_memberships ORDER BY team_id ASC, agent_id ASC")
+    .all()
+}
+
+export function insertRunSubSession(input: SubSessionContract, options: { auditId?: string | null; now?: number } = {}): boolean {
+  assertMigrationWriteAllowed(getDb(), "run.subsession.insert")
+  const now = options.now ?? Date.now()
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO run_subsessions
+         (sub_session_id, parent_run_id, parent_session_id, parent_request_id, agent_id, agent_display_name, agent_nickname,
+          command_request_id, status, retry_budget_remaining, prompt_bundle_id, contract_json, schema_version, audit_id,
+          idempotency_key, created_at, updated_at, started_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.subSessionId,
+        input.parentRunId,
+        input.parentSessionId,
+        input.identity.parent?.parentRequestId ?? null,
+        input.agentId,
+        input.agentDisplayName,
+        input.agentNickname ?? null,
+        input.commandRequestId,
+        input.status,
+        input.retryBudgetRemaining,
+        input.promptBundleId,
+        toJson(input),
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        now,
+        now,
+        input.startedAt ?? null,
+        input.finishedAt ?? null,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function updateRunSubSession(input: SubSessionContract, options: { auditId?: string | null; now?: number } = {}): boolean {
+  assertMigrationWriteAllowed(getDb(), "run.subsession.update")
+  const now = options.now ?? Date.now()
+  const result = getDb()
+    .prepare(
+      `UPDATE run_subsessions
+       SET parent_run_id = ?,
+           parent_session_id = ?,
+           parent_request_id = ?,
+           agent_id = ?,
+           agent_display_name = ?,
+           agent_nickname = ?,
+           command_request_id = ?,
+           status = ?,
+           retry_budget_remaining = ?,
+           prompt_bundle_id = ?,
+           contract_json = ?,
+           schema_version = ?,
+           audit_id = ?,
+           idempotency_key = ?,
+           updated_at = ?,
+           started_at = ?,
+           finished_at = ?
+       WHERE sub_session_id = ?`,
+    )
+    .run(
+      input.parentRunId,
+      input.parentSessionId,
+      input.identity.parent?.parentRequestId ?? null,
+      input.agentId,
+      input.agentDisplayName,
+      input.agentNickname ?? null,
+      input.commandRequestId,
+      input.status,
+      input.retryBudgetRemaining,
+      input.promptBundleId,
+      toJson(input),
+      input.identity.schemaVersion,
+      optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+      input.identity.idempotencyKey,
+      now,
+      input.startedAt ?? null,
+      input.finishedAt ?? null,
+      input.subSessionId,
+    )
+  return result.changes > 0
+}
+
+export function getRunSubSession(subSessionId: string): DbRunSubSession | undefined {
+  return getDb().prepare<[string], DbRunSubSession>("SELECT * FROM run_subsessions WHERE sub_session_id = ?").get(subSessionId)
+}
+
+export function getRunSubSessionByIdempotencyKey(idempotencyKey: string): DbRunSubSession | undefined {
+  return getDb()
+    .prepare<[string], DbRunSubSession>("SELECT * FROM run_subsessions WHERE idempotency_key = ?")
+    .get(idempotencyKey)
+}
+
+export function listRunSubSessionsForParentRun(parentRunId: string): DbRunSubSession[] {
+  return getDb()
+    .prepare<[string], DbRunSubSession>(
+      "SELECT * FROM run_subsessions WHERE parent_run_id = ? ORDER BY created_at ASC, sub_session_id ASC",
+    )
+    .all(parentRunId)
+}
+
+export function insertAgentDataExchange(
+  input: DataExchangePackage,
+  options: { auditId?: string | null; expiresAt?: number | null; now?: number } = {},
+): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.data_exchange.insert")
+  const now = options.now ?? Date.now()
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO agent_data_exchanges
+         (exchange_id, source_owner_type, source_owner_id, recipient_owner_type, recipient_owner_id, purpose, allowed_use,
+          retention_policy, redaction_state, provenance_refs_json, payload_json, schema_version, audit_id, idempotency_key,
+          created_at, updated_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.exchangeId,
+        input.sourceOwner.ownerType,
+        input.sourceOwner.ownerId,
+        input.recipientOwner.ownerType,
+        input.recipientOwner.ownerId,
+        input.purpose,
+        input.allowedUse,
+        input.retentionPolicy,
+        input.redactionState,
+        toJson(input.provenanceRefs),
+        toJson(input.payload),
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        input.createdAt,
+        now,
+        options.expiresAt ?? input.expiresAt ?? null,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function getAgentDataExchange(exchangeId: string): DbAgentDataExchange | undefined {
+  return getDb()
+    .prepare<[string], DbAgentDataExchange>("SELECT * FROM agent_data_exchanges WHERE exchange_id = ?")
+    .get(exchangeId)
+}
+
+export function listAgentDataExchangesForRecipient(
+  recipientOwner: OwnerScope,
+  options: {
+    now?: number
+    includeExpired?: boolean
+    allowedUse?: DataExchangePackage["allowedUse"]
+    limit?: number
+  } = {},
+): DbAgentDataExchange[] {
+  const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 100)))
+  const clauses = [
+    "recipient_owner_type = ?",
+    "recipient_owner_id = ?",
+  ]
+  const values: Array<string | number> = [recipientOwner.ownerType, recipientOwner.ownerId]
+  if (!options.includeExpired) {
+    clauses.push("(expires_at IS NULL OR expires_at > ?)")
+    values.push(options.now ?? Date.now())
+  }
+  if (options.allowedUse) {
+    clauses.push("allowed_use = ?")
+    values.push(options.allowedUse)
+  }
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbAgentDataExchange>(
+      `SELECT * FROM agent_data_exchanges
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC, exchange_id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
+export function listAgentDataExchangesForSource(
+  sourceOwner: OwnerScope,
+  options: {
+    now?: number
+    includeExpired?: boolean
+    recipientOwner?: OwnerScope
+    limit?: number
+  } = {},
+): DbAgentDataExchange[] {
+  const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 100)))
+  const clauses = [
+    "source_owner_type = ?",
+    "source_owner_id = ?",
+  ]
+  const values: Array<string | number> = [sourceOwner.ownerType, sourceOwner.ownerId]
+  if (options.recipientOwner) {
+    clauses.push("recipient_owner_type = ?", "recipient_owner_id = ?")
+    values.push(options.recipientOwner.ownerType, options.recipientOwner.ownerId)
+  }
+  if (!options.includeExpired) {
+    clauses.push("(expires_at IS NULL OR expires_at > ?)")
+    values.push(options.now ?? Date.now())
+  }
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbAgentDataExchange>(
+      `SELECT * FROM agent_data_exchanges
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC, exchange_id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
+export function insertCapabilityDelegation(
+  input: CapabilityDelegationRequest,
+  options: { auditId?: string | null; now?: number } = {},
+): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.capability_delegation.insert")
+  const now = options.now ?? Date.now()
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO capability_delegations
+         (delegation_id, requester_owner_type, requester_owner_id, provider_owner_type, provider_owner_id, capability, risk,
+          status, input_package_ids_json, result_package_id, approval_id, contract_json, schema_version, audit_id,
+          idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.delegationId,
+        input.requester.ownerType,
+        input.requester.ownerId,
+        input.provider.ownerType,
+        input.provider.ownerId,
+        input.capability,
+        input.risk,
+        input.status,
+        toJson(input.inputPackageIds),
+        input.resultPackageId ?? null,
+        input.approvalId ?? null,
+        toJson(input),
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        now,
+        now,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function getCapabilityDelegation(delegationId: string): DbCapabilityDelegation | undefined {
+  return getDb()
+    .prepare<[string], DbCapabilityDelegation>("SELECT * FROM capability_delegations WHERE delegation_id = ?")
+    .get(delegationId)
+}
+
+export function listCapabilityDelegations(filters: {
+  requester?: OwnerScope
+  provider?: OwnerScope
+  status?: CapabilityDelegationRequest["status"]
+  limit?: number
+} = {}): DbCapabilityDelegation[] {
+  const clauses: string[] = []
+  const values: Array<string | number> = []
+  if (filters.requester) {
+    clauses.push("requester_owner_type = ?", "requester_owner_id = ?")
+    values.push(filters.requester.ownerType, filters.requester.ownerId)
+  }
+  if (filters.provider) {
+    clauses.push("provider_owner_type = ?", "provider_owner_id = ?")
+    values.push(filters.provider.ownerType, filters.provider.ownerId)
+  }
+  if (filters.status) {
+    clauses.push("status = ?")
+    values.push(filters.status)
+  }
+  const limit = Math.max(1, Math.min(500, Math.floor(filters.limit ?? 100)))
+  values.push(limit)
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""
+  return getDb()
+    .prepare<unknown[], DbCapabilityDelegation>(
+      `SELECT * FROM capability_delegations
+       ${where}
+       ORDER BY created_at DESC, delegation_id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
+export function insertLearningEvent(input: LearningEvent, options: { auditId?: string | null; now?: number } = {}): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.learning_event.insert")
+  const now = options.now ?? Date.now()
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO learning_events
+         (learning_event_id, agent_id, learning_target, before_summary, after_summary, evidence_refs_json, confidence,
+          approval_state, contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.learningEventId,
+        input.agentId,
+        input.learningTarget,
+        input.beforeSummary,
+        input.afterSummary,
+        toJson(input.evidenceRefs),
+        input.confidence,
+        input.approvalState,
+        toJson(input),
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        now,
+        now,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function listLearningEvents(agentId: string): DbLearningEvent[] {
+  return getDb()
+    .prepare<[string], DbLearningEvent>("SELECT * FROM learning_events WHERE agent_id = ? ORDER BY created_at DESC")
+    .all(agentId)
+}
+
+export function updateLearningEventApprovalState(
+  learningEventId: string,
+  approvalState: LearningEvent["approvalState"],
+  options: { auditId?: string | null; now?: number } = {},
+): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.learning_event.update_approval")
+  const now = options.now ?? Date.now()
+  const result = getDb()
+    .prepare<[LearningEvent["approvalState"], string | null, number, string]>(
+      `UPDATE learning_events
+       SET approval_state = ?, audit_id = coalesce(?, audit_id), updated_at = ?
+       WHERE learning_event_id = ?`,
+    )
+    .run(approvalState, options.auditId ?? null, now, learningEventId)
+  return result.changes > 0
+}
+
+export function insertProfileHistoryVersion(
+  input: HistoryVersion,
+  options: { auditId?: string | null } = {},
+): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.profile_history.insert")
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO profile_history_versions
+         (history_version_id, target_entity_type, target_entity_id, version, before_json, after_json, reason_code,
+          schema_version, audit_id, idempotency_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.historyVersionId,
+        input.targetEntityType,
+        input.targetEntityId,
+        input.version,
+        toJson(input.before),
+        toJson(input.after),
+        input.reasonCode,
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        input.createdAt,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function listProfileHistoryVersions(
+  targetEntityType: HistoryVersion["targetEntityType"],
+  targetEntityId: string,
+): DbProfileHistoryVersion[] {
+  return getDb()
+    .prepare<[HistoryVersion["targetEntityType"], string], DbProfileHistoryVersion>(
+      `SELECT * FROM profile_history_versions
+       WHERE target_entity_type = ? AND target_entity_id = ?
+       ORDER BY version ASC`,
+    )
+    .all(targetEntityType, targetEntityId)
+}
+
+export function insertProfileRestoreEvent(
+  input: RestoreEvent,
+  options: { auditId?: string | null } = {},
+): boolean {
+  assertMigrationWriteAllowed(getDb(), "agent.profile_restore.insert")
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO profile_restore_events
+         (restore_event_id, target_entity_type, target_entity_id, restored_history_version_id, dry_run, effect_summary_json,
+          schema_version, audit_id, idempotency_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.restoreEventId,
+        input.targetEntityType,
+        input.targetEntityId,
+        input.restoredHistoryVersionId,
+        input.dryRun ? 1 : 0,
+        toJson(input.effectSummary),
+        input.identity.schemaVersion,
+        optionalAuditId(input.identity.auditCorrelationId, options.auditId),
+        input.identity.idempotencyKey,
+        input.createdAt,
+      )
+    return true
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return false
+    throw error
+  }
+}
+
+export function listProfileRestoreEvents(
+  targetEntityType: RestoreEvent["targetEntityType"],
+  targetEntityId: string,
+): DbProfileRestoreEvent[] {
+  return getDb()
+    .prepare<[RestoreEvent["targetEntityType"], string], DbProfileRestoreEvent>(
+      `SELECT * FROM profile_restore_events
+       WHERE target_entity_type = ? AND target_entity_id = ?
+       ORDER BY created_at DESC`,
+    )
+    .all(targetEntityType, targetEntityId)
+}
+
+export function subAgentStorageSchemaVersion(): number {
+  return SUB_AGENT_CONTRACT_SCHEMA_VERSION
 }
 
 export function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemoryDocumentResult {

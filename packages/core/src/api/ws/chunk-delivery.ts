@@ -5,6 +5,7 @@ import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
 import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
+import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js"
 
 function isWebUiArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryResultDetails {
   if (!value || typeof value !== "object") return false
@@ -20,6 +21,10 @@ function isWebUiArtifactDeliveryDetails(value: unknown): value is ArtifactDelive
 export function createWebUiChunkDeliveryHandler(params: {
   sessionId: string
   runId: string
+  deliveryKind?: MessageLedgerDeliveryKind
+  parentRunId?: string
+  subSessionId?: string
+  agentId?: string
 }): RunChunkDeliveryHandler {
   let bufferedText = ""
   let toolOwnedResponseActive = false
@@ -99,6 +104,10 @@ export function createWebUiChunkDeliveryHandler(params: {
         textDeliveries: [{
           channel: "webui",
           text: deliveredText,
+          ...(params.deliveryKind ? { deliveryKind: params.deliveryKind } : {}),
+          ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+          ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+          ...(params.agentId ? { agentId: params.agentId } : {}),
         }],
       }
     }

@@ -4,8 +4,9 @@ import { type FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js";
 import { type WebRetrievalReleaseGateSummary } from "../runs/web-retrieval-smoke.js";
 import { type UiModeReleaseGateSummary } from "./ui-mode-gate.js";
+import { type ReleasePerformanceSummary } from "./performance-gate.js";
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux";
-export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook";
+export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook" | "admin_diagnostic_bundle";
 export type ReleaseArtifactStatus = "present" | "missing_required" | "missing_optional";
 export interface ReleaseArtifactDefinition {
     id: string;
@@ -51,6 +52,9 @@ export interface ReleaseManifest {
     planEvidence: PlanDriftReleaseNoteEvidence;
     webRetrievalEvidence: WebRetrievalReleaseGateSummary;
     uiModeEvidence: UiModeReleaseGateSummary;
+    performanceEvidence: ReleasePerformanceSummary;
+    orchestrationEvidence: ReleaseOrchestrationEvidenceSummary;
+    releaseNotes: ReleaseNoteSummary;
     pipeline: ReleasePipelinePlan;
     rollback: ReleaseRollbackRunbook;
     cleanInstallChecklist: ReleaseChecklistItem[];
@@ -68,6 +72,21 @@ export interface ReleaseFeatureFlagState {
     mode: FeatureFlagMode;
     compatibilityMode: boolean;
     source: "default" | "db";
+}
+export type ReleaseOrchestrationEvidenceStatus = "passed" | "warning" | "failed";
+export interface ReleaseOrchestrationEvidenceCheck {
+    id: "feature_flag_off_parity" | "no_agent_fallback" | "runtime_flag_default";
+    status: ReleaseOrchestrationEvidenceStatus;
+    summary: string;
+    detail: Record<string, unknown>;
+}
+export interface ReleaseOrchestrationEvidenceSummary {
+    kind: "nobie.release.orchestration";
+    generatedAt: string;
+    gateStatus: ReleaseOrchestrationEvidenceStatus;
+    checks: ReleaseOrchestrationEvidenceCheck[];
+    warnings: string[];
+    blockingFailures: string[];
 }
 export interface ReleaseRolloutEvidenceSummary {
     mismatchCount: number;
@@ -98,6 +117,12 @@ export interface ReleaseChecklistItem {
     id: string;
     required: boolean;
     description: string;
+}
+export interface ReleaseNoteSummary {
+    featureFlagDefaults: string[];
+    migrationCautions: string[];
+    rollbackProcedure: string[];
+    knownLimitations: string[];
 }
 export interface ReleaseUpdatePreflightCheck {
     id: string;
@@ -150,4 +175,8 @@ export declare function writeReleasePackage(options: ReleaseManifestOptions & {
     outputDir: string;
     copyPayload?: boolean;
 }): ReleasePackageWriteResult;
+export declare function buildReleaseOrchestrationEvidence(input: {
+    now: Date;
+    featureFlags: ReleaseFeatureFlagState[];
+}): ReleaseOrchestrationEvidenceSummary;
 //# sourceMappingURL=package.d.ts.map

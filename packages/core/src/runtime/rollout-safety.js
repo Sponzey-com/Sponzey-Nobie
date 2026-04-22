@@ -12,6 +12,7 @@ const DEFAULT_FEATURE_FLAGS = [
     defaultFlag("provider_resolver", "enforced", "Single provider resolver is the active runtime path."),
     defaultFlag("memory_retrieval", "shadow", "Memory retrieval candidates are compared before stricter ranking."),
     defaultFlag("delivery_outcome", "shadow", "Delivery outcome comparison stays diagnostic-only during rollout."),
+    defaultFlag("sub_agent_orchestration", "off", "Sub-agent orchestration is opt-in and must preserve single Nobie fallback by default."),
 ];
 function defaultFlag(featureKey, mode, reason) {
     return {

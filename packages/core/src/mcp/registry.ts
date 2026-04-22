@@ -1,5 +1,12 @@
 import { getConfig, reloadConfig, type NobieConfig } from "../config/index.js"
 import { createLogger } from "../logger/index.js"
+import type { CapabilityPolicy, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js"
+import {
+  isMcpServerAllowed,
+  isToolAllowedBySkillMcpAllowlist,
+  parseMcpRegisteredToolName,
+  toAgentCapabilityCallContext,
+} from "../security/capability-isolation.js"
 import { recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure } from "../security/extension-governance.js"
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
 import { toolDispatcher, type AgentTool } from "../tools/index.js"
@@ -33,6 +40,31 @@ export interface McpSummary {
   readyCount: number
   toolCount: number
   requiredFailures: number
+}
+
+export function filterMcpStatusesForAgentAllowlist(
+  statuses: McpServerStatus[],
+  input: SkillMcpAllowlist | CapabilityPolicy,
+): McpServerStatus[] {
+  const allowlist = "skillMcpAllowlist" in input ? input.skillMcpAllowlist : input
+  return statuses
+    .filter((status) => isMcpServerAllowed({ serverId: sanitizeSegment(status.name), allowlist }) || isMcpServerAllowed({ serverId: status.name, allowlist }))
+    .map((status) => {
+      const tools = status.tools.filter((tool) => {
+        const mcpTool = parseMcpRegisteredToolName(tool.registeredName)
+        return isToolAllowedBySkillMcpAllowlist({
+          toolName: tool.registeredName,
+          allowlist,
+          mcpTool,
+        })
+      })
+      return {
+        ...status,
+        registeredToolCount: tools.length,
+        toolCount: tools.length,
+        tools,
+      }
+    })
 }
 
 interface RegistryEntry {
@@ -88,6 +120,10 @@ class McpRegistry {
         tools: entry.status.tools.map((tool) => ({ ...tool })),
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  getAgentScopedStatuses(input: SkillMcpAllowlist | CapabilityPolicy): McpServerStatus[] {
+    return filterMcpStatusesForAgentAllowlist(this.getStatuses(), input)
   }
 
   getSummary(): McpSummary {
@@ -235,14 +271,27 @@ class McpRegistry {
         requiresApproval: false,
         execute: async (params, ctx): Promise<ToolResult> => {
           try {
-            const result = await client.callTool(tool.name, params, ctx.signal)
+            const agentContext = toAgentCapabilityCallContext(ctx)
+            if (!agentContext) {
+              return {
+                success: false,
+                output: "MCP tool error: agent-scoped MCP call context is required.",
+                error: "agent_mcp_context_required",
+                details: {
+                  kind: "mcp_context_required",
+                  serverName: name,
+                  toolName: tool.name,
+                },
+              }
+            }
+            const result = await client.callTool(tool.name, params, agentContext, ctx.signal)
             if (result.isError) {
               recordExtensionToolFailure({
                 toolName: registeredName,
                 error: result.output,
                 runId: ctx.runId,
                 requestGroupId: ctx.requestGroupId ?? null,
-                detail: { serverName: name, toolName: tool.name, isError: true },
+                detail: { serverName: name, toolName: tool.name, isError: true, agentId: ctx.agentId ?? null },
               })
             }
             return {

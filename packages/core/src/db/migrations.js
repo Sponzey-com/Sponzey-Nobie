@@ -1344,6 +1344,261 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 35,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_configs (
+          agent_id TEXT PRIMARY KEY,
+          agent_type TEXT NOT NULL CHECK(agent_type IN ('nobie', 'sub_agent')),
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived', 'degraded')),
+          display_name TEXT NOT NULL,
+          nickname TEXT,
+          role TEXT NOT NULL,
+          personality TEXT NOT NULL,
+          specialty_tags_json TEXT NOT NULL,
+          avoid_tasks_json TEXT NOT NULL,
+          memory_policy_json TEXT NOT NULL,
+          capability_policy_json TEXT NOT NULL,
+          profile_version INTEGER NOT NULL,
+          config_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          idempotency_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_configs_idempotency
+          ON agent_configs(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_status
+          ON agent_configs(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_type_status
+          ON agent_configs(agent_type, status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_audit
+          ON agent_configs(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS team_configs (
+          team_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          display_name TEXT NOT NULL,
+          nickname TEXT,
+          purpose TEXT NOT NULL,
+          role_hints_json TEXT NOT NULL,
+          member_agent_ids_json TEXT NOT NULL,
+          profile_version INTEGER NOT NULL,
+          config_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          idempotency_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_team_configs_idempotency
+          ON team_configs(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_team_configs_status
+          ON team_configs(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_team_configs_audit
+          ON team_configs(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS agent_team_memberships (
+          team_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('active', 'unresolved', 'removed')),
+          role_hint TEXT,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (team_id, agent_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_team_memberships_agent
+          ON agent_team_memberships(agent_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_team_memberships_team
+          ON agent_team_memberships(team_id, status);
+
+        CREATE TABLE IF NOT EXISTS run_subsessions (
+          sub_session_id TEXT PRIMARY KEY,
+          parent_run_id TEXT NOT NULL,
+          parent_session_id TEXT NOT NULL,
+          parent_request_id TEXT,
+          agent_id TEXT NOT NULL,
+          agent_display_name TEXT NOT NULL,
+          agent_nickname TEXT,
+          command_request_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('created', 'queued', 'running', 'waiting_for_input', 'awaiting_approval', 'completed', 'needs_revision', 'failed', 'cancelled')),
+          retry_budget_remaining INTEGER NOT NULL,
+          prompt_bundle_id TEXT NOT NULL,
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          started_at INTEGER,
+          finished_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_run_subsessions_parent_run
+          ON run_subsessions(parent_run_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_run_subsessions_agent_status
+          ON run_subsessions(agent_id, status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_run_subsessions_audit
+          ON run_subsessions(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS agent_data_exchanges (
+          exchange_id TEXT PRIMARY KEY,
+          source_owner_type TEXT NOT NULL,
+          source_owner_id TEXT NOT NULL,
+          recipient_owner_type TEXT NOT NULL,
+          recipient_owner_id TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          allowed_use TEXT NOT NULL CHECK(allowed_use IN ('temporary_context', 'memory_candidate', 'verification_only')),
+          retention_policy TEXT NOT NULL CHECK(retention_policy IN ('session_only', 'short_term', 'long_term_candidate', 'discard_after_review')),
+          redaction_state TEXT NOT NULL CHECK(redaction_state IN ('redacted', 'not_sensitive', 'blocked')),
+          provenance_refs_json TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          expires_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_data_exchanges_recipient
+          ON agent_data_exchanges(recipient_owner_type, recipient_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_data_exchanges_source
+          ON agent_data_exchanges(source_owner_type, source_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_data_exchanges_audit
+          ON agent_data_exchanges(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_agent_data_exchanges_expires
+          ON agent_data_exchanges(expires_at ASC)
+          WHERE expires_at IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS capability_delegations (
+          delegation_id TEXT PRIMARY KEY,
+          requester_owner_type TEXT NOT NULL,
+          requester_owner_id TEXT NOT NULL,
+          provider_owner_type TEXT NOT NULL,
+          provider_owner_id TEXT NOT NULL,
+          capability TEXT NOT NULL,
+          risk TEXT NOT NULL CHECK(risk IN ('safe', 'moderate', 'external', 'sensitive', 'dangerous')),
+          status TEXT NOT NULL CHECK(status IN ('requested', 'approved', 'denied', 'completed', 'failed')),
+          input_package_ids_json TEXT NOT NULL,
+          result_package_id TEXT,
+          approval_id TEXT,
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_requester
+          ON capability_delegations(requester_owner_type, requester_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_provider
+          ON capability_delegations(provider_owner_type, provider_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_status
+          ON capability_delegations(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_audit
+          ON capability_delegations(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS learning_events (
+          learning_event_id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          learning_target TEXT NOT NULL CHECK(learning_target IN ('memory', 'role', 'personality', 'team_profile')),
+          before_summary TEXT NOT NULL,
+          after_summary TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          approval_state TEXT NOT NULL CHECK(approval_state IN ('auto_applied', 'pending_review', 'rejected', 'applied_by_user')),
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_learning_events_agent
+          ON learning_events(agent_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_learning_events_approval
+          ON learning_events(approval_state, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_learning_events_audit
+          ON learning_events(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS profile_history_versions (
+          history_version_id TEXT PRIMARY KEY,
+          target_entity_type TEXT NOT NULL CHECK(target_entity_type IN ('agent', 'team', 'memory')),
+          target_entity_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          before_json TEXT NOT NULL,
+          after_json TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          UNIQUE(target_entity_type, target_entity_id, version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_profile_history_versions_target
+          ON profile_history_versions(target_entity_type, target_entity_id, version DESC);
+
+        CREATE TABLE IF NOT EXISTS profile_restore_events (
+          restore_event_id TEXT PRIMARY KEY,
+          target_entity_type TEXT NOT NULL CHECK(target_entity_type IN ('agent', 'team', 'memory')),
+          target_entity_id TEXT NOT NULL,
+          restored_history_version_id TEXT NOT NULL,
+          dry_run INTEGER NOT NULL DEFAULT 0,
+          effect_summary_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_profile_restore_events_target
+          ON profile_restore_events(target_entity_type, target_entity_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_profile_restore_events_audit
+          ON profile_restore_events(audit_id)
+          WHERE audit_id IS NOT NULL;
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
     return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get());

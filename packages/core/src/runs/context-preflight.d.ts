@@ -1,4 +1,5 @@
 import type { AIChunk, AIProvider, ChatParams, Message, ToolDefinition } from "../ai/types.js";
+import type { AgentPromptBundle, DataExchangePackage, OwnerScope } from "../contracts/sub-agent-orchestration.js";
 export type ContextPreflightStatus = "ok" | "needs_pruning" | "needs_compaction" | "blocked_context_overflow";
 export interface ContextPreflightBreakdown {
     systemTokens: number;
@@ -37,6 +38,18 @@ export interface ContextPreflightPreparedChat extends ContextPreflightResult {
     messages: Message[];
     initialStatus: ContextPreflightStatus;
 }
+export interface PromptBundleContextMemoryRef {
+    owner: OwnerScope;
+    visibility: "private" | "coordinator_visible" | "team_visible";
+    sourceRef: string;
+    content?: string;
+    dataExchangeId?: string;
+}
+export interface PromptBundleContextScopeValidation {
+    ok: boolean;
+    issueCodes: string[];
+    blockedSourceRefs: string[];
+}
 export declare class ContextPreflightBlockedError extends Error {
     readonly result: ContextPreflightResult;
     constructor(result: ContextPreflightResult);
@@ -66,4 +79,10 @@ export declare function chatWithContextPreflight(input: ChatParams & {
     provider: AIProvider;
     metadata?: ContextPreflightMetadata;
 }): AsyncGenerator<AIChunk>;
+export declare function validateAgentPromptBundleContextScope(input: {
+    bundle: Pick<AgentPromptBundle, "agentId" | "agentType" | "memoryPolicy">;
+    memoryRefs?: PromptBundleContextMemoryRef[];
+    dataExchangePackages?: DataExchangePackage[];
+    now?: () => number;
+}): PromptBundleContextScopeValidation;
 //# sourceMappingURL=context-preflight.d.ts.map

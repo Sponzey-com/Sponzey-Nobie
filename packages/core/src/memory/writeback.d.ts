@@ -1,4 +1,6 @@
 import { type MemoryScope, type MemoryWritebackStatus } from "../db/index.js";
+import type { JsonObject } from "../contracts/index.js";
+import type { AgentEntityType, LearningEvent, OwnerScope } from "../contracts/sub-agent-orchestration.js";
 export type RunWritebackKind = "instruction" | "success" | "failure" | "tool_result" | "flash_feedback";
 export interface MemoryWritebackCandidate {
     scope: MemoryScope;
@@ -43,6 +45,21 @@ export interface MemoryWritebackReviewResult {
     action: MemoryWritebackReviewAction;
     reason?: string;
 }
+export interface LearningWritebackCandidate {
+    agentId: string;
+    agentType: AgentEntityType;
+    actorOwner: OwnerScope;
+    targetOwner: OwnerScope;
+    learningTarget: LearningEvent["learningTarget"];
+    before: JsonObject;
+    after: JsonObject;
+    beforeSummary: string;
+    afterSummary: string;
+    evidenceRefs: string[];
+    confidence: number;
+    sourceSessionId?: string;
+    sourceSubSessionId?: string;
+}
 export interface BuildRunWritebackCandidatesParams {
     kind: RunWritebackKind;
     content: string;
@@ -76,6 +93,13 @@ export declare function listMemoryWritebackReviewItems(input?: {
     status?: MemoryWritebackStatus | "all";
     limit?: number;
 }): MemoryWritebackReviewItem[];
+export declare function buildLearningWritebackCandidate(input: {
+    item: MemoryWritebackReviewItem;
+    agentId: string;
+    agentType: AgentEntityType;
+    actorOwner: OwnerScope;
+    targetOwner: OwnerScope;
+}): LearningWritebackCandidate;
 export declare function reviewMemoryWritebackCandidate(params: {
     id: string;
     action: MemoryWritebackReviewAction;

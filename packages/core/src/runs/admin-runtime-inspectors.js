@@ -95,6 +95,36 @@ function findDetailValue(detail, keys, depth = 0) {
     }
     return null;
 }
+function findDetailNumber(detail, keys, depth = 0) {
+    if (!detail || depth > 6)
+        return null;
+    if (Array.isArray(detail)) {
+        for (const item of detail) {
+            const found = findDetailNumber(item, keys, depth + 1);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+    if (!isRecord(detail))
+        return null;
+    for (const key of keys) {
+        const direct = detail[key];
+        if (typeof direct === "number" && Number.isFinite(direct))
+            return direct;
+        if (typeof direct === "string" && direct.trim() !== "") {
+            const parsed = Number(direct);
+            if (Number.isFinite(parsed))
+                return parsed;
+        }
+    }
+    for (const nested of Object.values(detail)) {
+        const found = findDetailNumber(nested, keys, depth + 1);
+        if (found != null)
+            return found;
+    }
+    return null;
+}
 function ownerKind(scope, sourceType) {
     const normalizedScope = scope.toLowerCase();
     const normalizedSource = sourceType?.toLowerCase() ?? "";
@@ -515,6 +545,10 @@ function buildChannelInspector(input) {
             requestGroupId: event.request_group_id,
             sessionKey: event.session_key,
             threadKey: event.thread_key,
+            subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+            agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+            teamId: findDetailValue(detail, ["teamId", "team_id"]),
+            deliveryKind: findDetailValue(detail, ["deliveryKind", "delivery_kind"]),
             chatId: findDetailValue(detail, ["chatId", "chat_id", "channelId", "channel_id", "slackChannelId", "telegramChatId"]),
             threadId: findDetailValue(detail, ["threadId", "thread_id", "threadTs", "messageThreadId"]),
             userId: findDetailValue(detail, ["userId", "user_id", "slackUserId", "fromId"]),
@@ -536,6 +570,9 @@ function buildChannelInspector(input) {
             runId: event.run_id,
             requestGroupId: event.request_group_id,
             approvalId: findDetailValue(detail, ["approvalId", "approval_id", "requestId"]),
+            subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+            agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+            teamId: findDetailValue(detail, ["teamId", "team_id"]),
             callbackId: findDetailValue(detail, ["callbackId", "callback_id", "triggerId", "callbackQueryId"]),
             buttonPayload: findDetailValue(detail, ["buttonPayload", "payload", "actionId", "value"]),
             userId: findDetailValue(detail, ["userId", "user_id", "slackUserId", "fromId"]),
@@ -557,11 +594,185 @@ function buildChannelInspector(input) {
         degradedReasons: refs.degradedReasons,
     };
 }
+function listRunSubSessionInspectorRows(limit) {
+    return queryRows("run sub-sessions", () => getDb()
+        .prepare(`SELECT s.sub_session_id, s.parent_run_id, r.request_group_id, s.agent_id, s.status,
+              s.prompt_bundle_id, s.contract_json, s.updated_at
+       FROM run_subsessions s
+       LEFT JOIN root_runs r ON r.id = s.parent_run_id
+       ORDER BY s.updated_at DESC
+       LIMIT ?`)
+        .all(limit));
+}
+function isOrchestrationPlanEvent(event, detail) {
+    if ("eventType" in event) {
+        const haystack = `${event.component} ${event.eventType} ${event.summary}`.toLowerCase();
+        return haystack.includes("orchestration") || haystack.includes("sub_session") || Boolean(findDetailValue(detail, ["orchestrationPlan", "orchestration_plan", "planId", "plan_id"]));
+    }
+    const haystack = `${event.event_kind} ${event.summary}`.toLowerCase();
+    return haystack.includes("orchestration") || haystack.includes("sub_session") || Boolean(findDetailValue(detail, ["orchestrationPlan", "orchestration_plan", "planId", "plan_id"]));
+}
+function promptBundleStats(contract) {
+    const record = isRecord(contract) ? contract : {};
+    const bundle = isRecord(record["promptBundleSnapshot"]) ? record["promptBundleSnapshot"] : {};
+    return {
+        promptFragmentCount: Array.isArray(bundle["fragments"]) ? bundle["fragments"].length : 0,
+        safetyRuleCount: Array.isArray(bundle["safetyRules"]) ? bundle["safetyRules"].length : 0,
+        sourceProvenanceCount: Array.isArray(bundle["sourceProvenance"]) ? bundle["sourceProvenance"].length : 0,
+    };
+}
+function buildOrchestrationInspector(input) {
+    const limit = clampLimit(input.limit, 100);
+    const subSessions = listRunSubSessionInspectorRows(limit);
+    const promptBundles = subSessions.rows.map((row) => {
+        const contract = sanitizeDetail(parseJson(row.contract_json));
+        const stats = promptBundleStats(contract);
+        return {
+            subSessionId: row.sub_session_id,
+            parentRunId: row.parent_run_id,
+            requestGroupId: row.request_group_id,
+            agentId: row.agent_id,
+            promptBundleId: row.prompt_bundle_id,
+            status: row.status,
+            updatedAt: row.updated_at,
+            ...stats,
+        };
+    }).filter((row) => matchesFilter({
+        runId: row.parentRunId,
+        requestGroupId: row.requestGroupId,
+    }, input.filters));
+    const timelinePlans = input.timeline.events
+        .map((event) => ({ event, detail: sanitizeDetail(event.detail) }))
+        .filter(({ event, detail }) => isOrchestrationPlanEvent(event, detail))
+        .map(({ event, detail }) => ({
+        id: event.id,
+        runId: event.runId,
+        requestGroupId: event.requestGroupId,
+        source: "timeline",
+        summary: redactText(event.summary),
+        mode: findDetailValue(detail, ["orchestrationMode", "orchestration_mode", "mode"]),
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        teamId: findDetailValue(detail, ["teamId", "team_id"]),
+        createdAt: event.at,
+    }));
+    const ledgerPlans = input.ledgerEvents
+        .map((event) => ({ event, detail: sanitizeDetail(parseJson(event.detail_json)) }))
+        .filter(({ event, detail }) => isOrchestrationPlanEvent(event, detail))
+        .map(({ event, detail }) => ({
+        id: event.id,
+        runId: event.run_id,
+        requestGroupId: event.request_group_id,
+        source: "ledger",
+        summary: redactText(event.summary),
+        mode: findDetailValue(detail, ["orchestrationMode", "orchestration_mode", "mode"]),
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        teamId: findDetailValue(detail, ["teamId", "team_id"]),
+        createdAt: event.created_at,
+    }));
+    const plans = [...timelinePlans, ...ledgerPlans]
+        .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+    const latencyMetrics = [
+        ...input.timeline.events.map((event) => {
+            const detail = sanitizeDetail(event.detail);
+            const valueMs = findDetailNumber(detail, ["latencyMs", "durationMs", "elapsedMs", "windowMs"]);
+            if (valueMs == null)
+                return null;
+            return {
+                id: event.id,
+                runId: event.runId,
+                requestGroupId: event.requestGroupId,
+                source: "timeline",
+                metric: findDetailValue(detail, ["metric", "metricName", "latencyMetric"]) ?? "latencyMs",
+                valueMs,
+                summary: redactText(event.summary),
+                createdAt: event.at,
+            };
+        }),
+        ...input.ledgerEvents.map((event) => {
+            const detail = sanitizeDetail(parseJson(event.detail_json));
+            const valueMs = findDetailNumber(detail, ["latencyMs", "durationMs", "elapsedMs", "windowMs"]);
+            if (valueMs == null)
+                return null;
+            return {
+                id: event.id,
+                runId: event.run_id,
+                requestGroupId: event.request_group_id,
+                source: "ledger",
+                metric: findDetailValue(detail, ["metric", "metricName", "latencyMetric"]) ?? "latencyMs",
+                valueMs,
+                summary: redactText(event.summary),
+                createdAt: event.created_at,
+            };
+        }),
+    ].filter((row) => Boolean(row))
+        .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+    const resourceLockWaits = [
+        ...input.timeline.events.map((event) => {
+            const detail = sanitizeDetail(event.detail);
+            const waitMs = findDetailNumber(detail, ["resourceLockWaitMs", "lockWaitMs", "waitMs"]);
+            const lockSummary = findDetailValue(detail, ["resourceLock", "resourceLocks", "lockSummary", "conflicts"]);
+            if (waitMs == null && !lockSummary)
+                return null;
+            return {
+                id: event.id,
+                runId: event.runId,
+                requestGroupId: event.requestGroupId,
+                source: "timeline",
+                subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+                agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+                waitMs,
+                lockSummary: lockSummary ?? "resource lock wait",
+                createdAt: event.at,
+            };
+        }),
+        ...input.ledgerEvents.map((event) => {
+            const detail = sanitizeDetail(parseJson(event.detail_json));
+            const waitMs = findDetailNumber(detail, ["resourceLockWaitMs", "lockWaitMs", "waitMs"]);
+            const lockSummary = findDetailValue(detail, ["resourceLock", "resourceLocks", "lockSummary", "conflicts"]);
+            if (waitMs == null && !lockSummary)
+                return null;
+            return {
+                id: event.id,
+                runId: event.run_id,
+                requestGroupId: event.request_group_id,
+                source: "ledger",
+                subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+                agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+                waitMs,
+                lockSummary: lockSummary ?? "resource lock wait",
+                createdAt: event.created_at,
+            };
+        }),
+    ].filter((row) => Boolean(row))
+        .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+    return {
+        summary: {
+            plans: plans.length,
+            promptBundles: promptBundles.length,
+            latencyMetrics: latencyMetrics.length,
+            resourceLockWaits: resourceLockWaits.length,
+        },
+        plans,
+        promptBundles: { items: promptBundles, degradedReasons: subSessions.degradedReasons },
+        latencyMetrics,
+        resourceLockWaits,
+        degradedReasons: subSessions.degradedReasons,
+    };
+}
 export function buildAdminRuntimeInspectors(input) {
     return {
         memory: buildMemoryInspector(input),
         scheduler: buildSchedulerInspector(input),
         channels: buildChannelInspector(input),
+        orchestration: buildOrchestrationInspector(input),
     };
 }
 //# sourceMappingURL=admin-runtime-inspectors.js.map

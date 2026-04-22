@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createLogger } from "../logger/index.js"
+import type { AgentCapabilityCallContext } from "../security/capability-isolation.js"
 
 const log = createLogger("mcp:client")
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05"
@@ -35,6 +36,33 @@ export interface McpToolCallResult {
   output: string
   details: unknown
   isError: boolean
+}
+
+export type McpAgentCallContext = AgentCapabilityCallContext
+
+export interface McpToolCallPayload extends Record<string, unknown> {
+  name: string
+  arguments: Record<string, unknown>
+  _meta?: {
+    nobie: {
+      agent_id: string
+      session_id: string
+      permission_profile: {
+        profile_id: string
+        risk_ceiling: string
+        approval_required_from: string
+        allow_external_network: boolean
+        allow_filesystem_write: boolean
+        allow_shell_execution: boolean
+        allow_screen_control: boolean
+      }
+      secret_scope: string
+      audit_id: string
+      run_id?: string
+      request_group_id?: string
+      capability_delegation_id?: string
+    }
+  }
 }
 
 interface JsonRpcSuccess {
@@ -105,6 +133,50 @@ function extractToolOutput(payload: unknown): string {
   return JSON.stringify(payload, null, 2)
 }
 
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && "aborted" in value
+    && typeof (value as AbortSignal).addEventListener === "function",
+  )
+}
+
+export function buildMcpToolCallPayload(
+  name: string,
+  args: Record<string, unknown>,
+  context?: McpAgentCallContext,
+): McpToolCallPayload {
+  if (!context) {
+    return { name, arguments: args }
+  }
+
+  return {
+    name,
+    arguments: args,
+    _meta: {
+      nobie: {
+        agent_id: context.agentId,
+        session_id: context.sessionId,
+        permission_profile: {
+          profile_id: context.permissionProfile.profileId,
+          risk_ceiling: context.permissionProfile.riskCeiling,
+          approval_required_from: context.permissionProfile.approvalRequiredFrom,
+          allow_external_network: context.permissionProfile.allowExternalNetwork,
+          allow_filesystem_write: context.permissionProfile.allowFilesystemWrite,
+          allow_shell_execution: context.permissionProfile.allowShellExecution,
+          allow_screen_control: context.permissionProfile.allowScreenControl,
+        },
+        secret_scope: context.secretScopeId,
+        audit_id: context.auditId,
+        ...(context.runId ? { run_id: context.runId } : {}),
+        ...(context.requestGroupId ? { request_group_id: context.requestGroupId } : {}),
+        ...(context.capabilityDelegationId ? { capability_delegation_id: context.capabilityDelegationId } : {}),
+      },
+    },
+  }
+}
+
 export class McpStdioClient {
   private readonly name: string
   private readonly config: McpServerConfig
@@ -159,13 +231,20 @@ export class McpStdioClient {
       .filter((tool): tool is McpDiscoveredTool => tool !== null)
   }
 
-  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolCallResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    contextOrSignal?: McpAgentCallContext | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<McpToolCallResult> {
     await this.initialize()
+    const context = isAbortSignal(contextOrSignal) ? undefined : contextOrSignal
+    const resolvedSignal = isAbortSignal(contextOrSignal) ? contextOrSignal : signal
     const response = await this.request(
       "tools/call",
-      { name, arguments: args },
+      buildMcpToolCallPayload(name, args, context),
       this.toolTimeoutMs(),
-      signal,
+      resolvedSignal,
     )
     const payload = toObject(response)
     return {

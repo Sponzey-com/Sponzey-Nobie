@@ -45,4 +45,22 @@ export function consumeRecoveryBudget(params) {
 export function formatRecoveryBudgetProgress(state) {
     return `${state.used}/${state.limit > 0 ? state.limit : "무제한"}`;
 }
+export function getSubSessionRevisionBudgetLimit(budgetClass = "default") {
+    switch (budgetClass) {
+        case "format_only":
+            return 3;
+        case "risk_or_external":
+        case "expensive":
+            return 1;
+        case "default":
+        default:
+            return 2;
+    }
+}
+export function canRetrySubSessionRevision(params) {
+    if (params.repeatedFailure)
+        return false;
+    const limit = getSubSessionRevisionBudgetLimit(params.budgetClass ?? "default");
+    return Math.min(Math.max(0, params.retryBudgetRemaining), limit) > 0;
+}
 //# sourceMappingURL=recovery-budget.js.map

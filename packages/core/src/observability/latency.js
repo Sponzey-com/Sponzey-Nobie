@@ -3,10 +3,19 @@ const DEFAULT_RECENT_WINDOW_MS = 15 * 60 * 1000;
 export const LATENCY_BUDGET_MS = {
     ingress_ack_latency_ms: 800,
     normalizer_latency_ms: 300,
+    registry_lookup_latency_ms: 500,
+    orchestration_mode_latency_ms: 500,
+    orchestration_planning_latency_ms: 2_000,
     candidate_search_latency_ms: 250,
     contract_ai_comparison_latency_ms: 1_800,
+    sub_session_queue_wait_ms: 500,
+    first_progress_latency_ms: 3_000,
+    approval_aggregation_latency_ms: 1_000,
+    finalization_latency_ms: 1_500,
     execution_latency_ms: 5_000,
     delivery_latency_ms: 1_500,
+    webui_live_update_latency_ms: 1_000,
+    resource_lock_wait_ms: 500,
     schedule_tick_direct_execution_latency_ms: 150,
 };
 const latencyRecords = [];

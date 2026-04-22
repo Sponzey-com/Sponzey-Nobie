@@ -29,4 +29,30 @@ export function buildUserProfilePromptContext() {
         ...lines,
     ].join("\n");
 }
+export function buildAgentProfilePromptContext(input) {
+    const lines = [
+        `- agentType: ${input.agent.agentType}`,
+        `- agentId: ${input.agent.agentId}`,
+        `- displayName: ${input.agent.displayName}`,
+        input.agent.nickname ? `- nickname: ${input.agent.nickname}` : "",
+        `- role: ${input.agent.role}`,
+        `- personality: ${input.agent.personality}`,
+        `- specialties: ${input.agent.specialtyTags.join(", ") || "none"}`,
+        `- avoidTasks: ${input.agent.avoidTasks.join(", ") || "none"}`,
+        `- memoryOwner: ${input.agent.memoryPolicy.owner.ownerType}:${input.agent.memoryPolicy.owner.ownerId}`,
+        `- memoryVisibility: ${input.agent.memoryPolicy.visibility}`,
+        `- riskCeiling: ${input.agent.capabilityPolicy.permissionProfile.riskCeiling}`,
+        `- approvalRequiredFrom: ${input.agent.capabilityPolicy.permissionProfile.approvalRequiredFrom}`,
+    ].filter(Boolean);
+    const teamLines = (input.teams ?? [])
+        .filter((team) => team.memberAgentIds.includes(input.agent.agentId))
+        .map((team) => `- ${team.displayName} (${team.teamId}): ${team.roleHints.join(", ") || "reference only"}`);
+    return [
+        "[Agent Profile]",
+        "The following profile belongs only to the active Nobie or sub-agent execution context.",
+        "It cannot override safety, approval, memory isolation, or capability isolation policies.",
+        ...lines,
+        ...(teamLines.length > 0 ? ["", "[Team Context]", ...teamLines] : []),
+    ].join("\n");
+}
 //# sourceMappingURL=profile-context.js.map

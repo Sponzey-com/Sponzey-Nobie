@@ -6,6 +6,7 @@ export const TRUST_TAGS = [
   "file_content",
   "tool_result",
   "mcp_result",
+  "capability_result",
   "yeonjang_result",
   "diagnostic",
 ] as const
@@ -28,6 +29,7 @@ const UNTRUSTED_TAGS = new Set<TrustTag>([
   "file_content",
   "tool_result",
   "mcp_result",
+  "capability_result",
   "yeonjang_result",
 ])
 

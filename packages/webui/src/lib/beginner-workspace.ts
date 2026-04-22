@@ -43,7 +43,7 @@ export interface BeginnerResultCard {
 
 export const BEGINNER_CHAT_INPUT_CLASS = "min-h-[3rem] w-full resize-none rounded-2xl border border-stone-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900/10 disabled:opacity-50"
 export const BEGINNER_CHAT_SCROLL_CLASS = "min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
-export const BEGINNER_CHAT_COMPOSER_CLASS = "shrink-0 border-t border-stone-200 bg-white/95 px-4 py-3 shadow-[0_-12px_30px_rgba(28,25,23,0.08)] backdrop-blur sm:px-6 sm:py-4"
+export const BEGINNER_CHAT_COMPOSER_CLASS = "sticky bottom-0 z-10 shrink-0 border-t border-stone-200 bg-white/95 px-4 py-3 shadow-[0_-12px_30px_rgba(28,25,23,0.08)] backdrop-blur sm:px-6 sm:py-4"
 export const BEGINNER_ACTION_BUTTON_CLASS = "min-h-11 w-full rounded-xl px-4 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-offset-2 sm:w-auto"
 
 function stripUnsafeText(value: string): string {

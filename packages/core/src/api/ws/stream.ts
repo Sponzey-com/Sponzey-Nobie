@@ -3,6 +3,7 @@ import type { WebSocket } from "@fastify/websocket"
 import { eventBus } from "../../events/index.js"
 import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
+import { recordLatencyMetric } from "../../observability/latency.js"
 import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { listRunsForActiveRequestGroups } from "../../runs/store.js"
@@ -16,11 +17,21 @@ export function getWebUiWsClientCount(): number {
 }
 
 function broadcast(data: unknown): void {
-  const msg = JSON.stringify(data)
+  const msg = JSON.stringify(stampBroadcastPayload(data))
   for (const ws of clients) {
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(msg)
     }
+  }
+}
+
+function stampBroadcastPayload(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data
+  const record = data as Record<string, unknown>
+  if (typeof record["emittedAt"] === "number") return data
+  return {
+    ...record,
+    emittedAt: Date.now(),
   }
 }
 
@@ -81,6 +92,16 @@ export interface WebUiApprovalResponseMessage {
   toolName?: string
 }
 
+export interface WebUiLiveUpdateAckMessage {
+  type?: string
+  eventType?: string
+  emittedAt?: number
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  source?: string
+}
+
 export function resolveWebUiApprovalResponse(msg: WebUiApprovalResponseMessage): boolean {
   if (msg.type !== "approval.respond" || !msg.runId) return false
 
@@ -126,6 +147,28 @@ export function resolveWebUiApprovalResponse(msg: WebUiApprovalResponseMessage):
   return false
 }
 
+export function resolveWebUiLiveUpdateAck(
+  msg: WebUiLiveUpdateAckMessage,
+  now: () => number = () => Date.now(),
+): boolean {
+  if (msg.type !== "ui.live_update_ack" || typeof msg.emittedAt !== "number" || !Number.isFinite(msg.emittedAt)) {
+    return false
+  }
+
+  recordLatencyMetric({
+    name: "webui_live_update_latency_ms",
+    durationMs: Math.max(0, now() - msg.emittedAt),
+    ...(typeof msg.runId === "string" ? { runId: msg.runId } : {}),
+    ...(typeof msg.sessionId === "string" ? { sessionId: msg.sessionId } : {}),
+    ...(typeof msg.requestGroupId === "string" ? { requestGroupId: msg.requestGroupId } : {}),
+    source: typeof msg.source === "string" && msg.source.trim().length > 0 ? msg.source : "webui",
+    detail: {
+      eventType: typeof msg.eventType === "string" ? msg.eventType : "unknown",
+    },
+  })
+  return true
+}
+
 export function resetWebUiApprovalStateForTest(): void {
   pendingApprovals.clear()
 }
@@ -144,8 +187,20 @@ export function registerWsRoute(app: FastifyInstance): void {
 
     socket.on("message", (raw: Buffer | string) => {
       try {
-        const msg = JSON.parse(raw.toString()) as { type: string; approvalId?: string; runId?: string; decision?: string; toolName?: string }
+        const msg = JSON.parse(raw.toString()) as {
+          type?: string
+          approvalId?: string
+          runId?: string
+          decision?: string
+          toolName?: string
+          eventType?: string
+          emittedAt?: number
+          sessionId?: string
+          requestGroupId?: string
+          source?: string
+        }
         resolveWebUiApprovalResponse(msg)
+        resolveWebUiLiveUpdateAck(msg)
       } catch { /* ignore malformed messages */ }
     })
 

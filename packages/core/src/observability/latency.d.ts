@@ -1,4 +1,4 @@
-export type LatencyMetricName = "ingress_ack_latency_ms" | "normalizer_latency_ms" | "candidate_search_latency_ms" | "contract_ai_comparison_latency_ms" | "execution_latency_ms" | "delivery_latency_ms" | "schedule_tick_direct_execution_latency_ms";
+export type LatencyMetricName = "ingress_ack_latency_ms" | "normalizer_latency_ms" | "registry_lookup_latency_ms" | "orchestration_mode_latency_ms" | "orchestration_planning_latency_ms" | "candidate_search_latency_ms" | "contract_ai_comparison_latency_ms" | "sub_session_queue_wait_ms" | "first_progress_latency_ms" | "approval_aggregation_latency_ms" | "finalization_latency_ms" | "execution_latency_ms" | "delivery_latency_ms" | "webui_live_update_latency_ms" | "resource_lock_wait_ms" | "schedule_tick_direct_execution_latency_ms";
 export type LatencyMetricStatus = "ok" | "slow" | "timeout";
 export interface LatencyMetricRecord {
     id: string;

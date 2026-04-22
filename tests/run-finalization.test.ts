@@ -53,10 +53,12 @@ describe("run finalization helpers", () => {
   it("moves a run to awaiting_user and emits a standalone message", async () => {
     const deps = createDeps()
     const onChunk = vi.fn().mockResolvedValue(undefined)
+    const runId = `run-finalization-awaiting-user-${Date.now()}`
+    const sessionId = `session-finalization-awaiting-user-${Date.now()}`
 
     await moveRunToAwaitingUser({
-      runId: "run-1",
-      sessionId: "session-1",
+      runId,
+      sessionId,
       source: "telegram",
       onChunk,
       awaitingUser: {
@@ -68,18 +70,20 @@ describe("run finalization helpers", () => {
     })
 
     expect(onChunk).toHaveBeenCalled()
-    expect(deps.setRunStepStatus).toHaveBeenCalledWith("run-1", "awaiting_user", "running", "추가 입력 필요")
-    expect(deps.updateRunStatus).toHaveBeenCalledWith("run-1", "awaiting_user", "추가 입력 필요", true)
-    expect(deps.appendRunEvent).toHaveBeenCalledWith("run-1", "사용자 추가 입력 대기")
+    expect(deps.setRunStepStatus).toHaveBeenCalledWith(runId, "awaiting_user", "running", "추가 입력 필요")
+    expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "awaiting_user", "추가 입력 필요", true)
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "사용자 추가 입력 대기")
   })
 
   it("moves a run to cancelled after stop and records failure", async () => {
     const deps = createDeps()
     const onChunk = vi.fn().mockResolvedValue(undefined)
+    const runId = `run-finalization-cancelled-${Date.now()}`
+    const sessionId = `session-finalization-cancelled-${Date.now()}`
 
     await moveRunToCancelledAfterStop({
-      runId: "run-1",
-      sessionId: "session-1",
+      runId,
+      sessionId,
       source: "telegram",
       onChunk,
       cancellation: {
@@ -92,17 +96,19 @@ describe("run finalization helpers", () => {
     })
 
     expect(deps.rememberRunFailure).toHaveBeenCalled()
-    expect(deps.updateRunStatus).toHaveBeenCalledWith("run-1", "cancelled", "자동 진행 중단", false)
-    expect(deps.appendRunEvent).toHaveBeenCalledWith("run-1", "자동 진행 중단 후 요청 취소")
+    expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "cancelled", "자동 진행 중단", false)
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "자동 진행 중단 후 요청 취소")
   })
 
   it("completes a run and records success", async () => {
     const deps = createDeps()
     const onChunk = vi.fn().mockResolvedValue(undefined)
+    const runId = `run-finalization-complete-${Date.now()}`
+    const sessionId = `session-finalization-complete-${Date.now()}`
 
     await completeRunWithAssistantMessage({
-      runId: "run-1",
-      sessionId: "session-1",
+      runId,
+      sessionId,
       text: "완료했습니다.",
       source: "telegram",
       onChunk,
@@ -110,14 +116,14 @@ describe("run finalization helpers", () => {
     })
 
     expect(deps.rememberRunSuccess).toHaveBeenCalledWith({
-      runId: "run-1",
-      sessionId: "session-1",
+      runId,
+      sessionId,
       source: "telegram",
       text: "완료했습니다.",
       summary: "완료했습니다.",
     })
-    expect(deps.updateRunStatus).toHaveBeenCalledWith("run-1", "completed", "완료했습니다.", false)
-    expect(deps.appendRunEvent).toHaveBeenCalledWith("run-1", "실행 완료")
+    expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "completed", "완료했습니다.", false)
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "실행 완료")
   })
 
   it("marks a run completed without emitting assistant delivery", () => {

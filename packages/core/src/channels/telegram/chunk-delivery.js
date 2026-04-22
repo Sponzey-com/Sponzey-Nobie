@@ -142,6 +142,10 @@ export function createTelegramChunkDeliveryHandler(context) {
                         channel: "telegram",
                         text: deliveredText,
                         messageIds: sentMessageIds,
+                        ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+                        ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+                        ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
+                        ...(context.agentId ? { agentId: context.agentId } : {}),
                     }],
             };
         }

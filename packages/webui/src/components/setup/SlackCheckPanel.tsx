@@ -1,29 +1,43 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { api } from "../../api/client"
 import { useUiI18n } from "../../lib/ui-i18n"
 
 export function SlackCheckPanel({
   botToken,
   appToken,
+  result,
+  onResult,
 }: {
   botToken: string
   appToken: string
+  result?: { ok: boolean; message: string } | null
+  onResult?: (result: { ok: boolean; message: string } | null) => void
 }) {
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [internalResult, setInternalResult] = useState<{ ok: boolean; message: string } | null>(null)
   const { text, displayText } = useUiI18n()
+  const activeResult = result ?? internalResult
+
+  useEffect(() => {
+    if (result !== undefined) return
+    setInternalResult(null)
+  }, [appToken, botToken, result])
 
   async function runCheck() {
     setLoading(true)
-    setResult(null)
+    setInternalResult(null)
+    onResult?.(null)
     try {
       const response = await api.testSlack(botToken, appToken)
-      setResult(response)
+      setInternalResult(response)
+      onResult?.(response)
     } catch (error) {
-      setResult({
+      const failedResult = {
         ok: false,
         message: error instanceof Error ? error.message : String(error),
-      })
+      }
+      setInternalResult(failedResult)
+      onResult?.(failedResult)
     } finally {
       setLoading(false)
     }
@@ -49,9 +63,9 @@ export function SlackCheckPanel({
           {loading ? text("점검 중...", "Checking...") : text("연결 테스트", "Test Connection")}
         </button>
       </div>
-      {result ? (
-        <div className={`mt-4 rounded-xl px-4 py-3 text-sm ${result.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-          {displayText(result.message)}
+      {activeResult ? (
+        <div className={`mt-4 rounded-xl px-4 py-3 text-sm ${activeResult.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+          {displayText(activeResult.message)}
         </div>
       ) : null}
     </div>

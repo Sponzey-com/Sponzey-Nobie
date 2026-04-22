@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { eventBus } from "../packages/core/src/events/index.js"
+import { listLatencyMetrics, resetLatencyMetrics } from "../packages/core/src/observability/latency.js"
 
 const getRootRunMock = vi.fn()
 
@@ -15,6 +16,16 @@ const {
 } = await import("../packages/core/src/channels/slack/approval-handler.ts")
 
 describe("slack approval handler", () => {
+  beforeEach(() => {
+    resetLatencyMetrics()
+    vi.useRealTimers()
+  })
+
+  afterEach(() => {
+    resetLatencyMetrics()
+    vi.useRealTimers()
+  })
+
   it("replaces the previous approval listener instead of stacking duplicate listeners", async () => {
     const firstMessenger = { sendApprovalRequest: vi.fn(async () => undefined) }
     const secondMessenger = { sendApprovalRequest: vi.fn(async () => undefined) }
@@ -145,5 +156,72 @@ describe("slack approval handler", () => {
       text: expect.stringContaining("도구 실행 승인이 필요합니다."),
     })
     expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it("records approval aggregation latency when a later approval is merged into the same pending request", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-04-21T00:00:00.000Z"))
+
+    const sendApprovalRequest = vi.fn(async () => undefined)
+    const updateApprovalRequest = vi.fn(async () => undefined)
+    const firstResolve = vi.fn()
+    const secondResolve = vi.fn()
+
+    getRootRunMock.mockReturnValue({
+      source: "slack",
+      sessionId: "session-slack-aggregate",
+    })
+
+    registerSlackApprovalHandler({ sendApprovalRequest, updateApprovalRequest })
+    setActiveSlackConversationForSession(
+      "session-slack-aggregate",
+      "C_APPROVAL",
+      "U_APPROVER",
+      "thread-aggregate",
+    )
+
+    eventBus.emit("approval.request", {
+      runId: "run-slack-aggregate",
+      toolName: "screen_capture",
+      params: { extensionId: "yeonjang-main" },
+      kind: "approval",
+      resolve: firstResolve,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await vi.advanceTimersByTimeAsync(450)
+    eventBus.emit("approval.request", {
+      runId: "run-slack-aggregate",
+      toolName: "web_fetch",
+      params: { url: "https://example.test" },
+      kind: "approval",
+      resolve: secondResolve,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(sendApprovalRequest).toHaveBeenCalledTimes(1)
+    expect(updateApprovalRequest).toHaveBeenCalledTimes(1)
+    expect(updateApprovalRequest).toHaveBeenCalledWith({
+      channelId: "C_APPROVAL",
+      threadTs: "thread-aggregate",
+      runId: "run-slack-aggregate",
+      text: expect.stringContaining("승인 항목: 2개"),
+    })
+    expect(listLatencyMetrics()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "approval_aggregation_latency_ms",
+        durationMs: 450,
+        runId: "run-slack-aggregate",
+        sessionId: "session-slack-aggregate",
+        detail: expect.objectContaining({
+          channel: "slack",
+          approvalCount: 2,
+        }),
+      }),
+    ]))
+
+    clearActiveSlackConversationForSession("session-slack-aggregate")
   })
 })

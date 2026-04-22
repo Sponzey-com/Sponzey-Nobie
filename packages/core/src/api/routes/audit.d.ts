@@ -13,6 +13,10 @@ interface AuditQuery {
     runId?: string;
     requestGroupId?: string;
     sessionId?: string;
+    subSessionId?: string;
+    agentId?: string;
+    teamId?: string;
+    deliveryKind?: string;
     from?: string;
     to?: string;
     q?: string;

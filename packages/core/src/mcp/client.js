@@ -42,6 +42,41 @@ function extractToolOutput(payload) {
     }
     return JSON.stringify(payload, null, 2);
 }
+function isAbortSignal(value) {
+    return Boolean(value
+        && typeof value === "object"
+        && "aborted" in value
+        && typeof value.addEventListener === "function");
+}
+export function buildMcpToolCallPayload(name, args, context) {
+    if (!context) {
+        return { name, arguments: args };
+    }
+    return {
+        name,
+        arguments: args,
+        _meta: {
+            nobie: {
+                agent_id: context.agentId,
+                session_id: context.sessionId,
+                permission_profile: {
+                    profile_id: context.permissionProfile.profileId,
+                    risk_ceiling: context.permissionProfile.riskCeiling,
+                    approval_required_from: context.permissionProfile.approvalRequiredFrom,
+                    allow_external_network: context.permissionProfile.allowExternalNetwork,
+                    allow_filesystem_write: context.permissionProfile.allowFilesystemWrite,
+                    allow_shell_execution: context.permissionProfile.allowShellExecution,
+                    allow_screen_control: context.permissionProfile.allowScreenControl,
+                },
+                secret_scope: context.secretScopeId,
+                audit_id: context.auditId,
+                ...(context.runId ? { run_id: context.runId } : {}),
+                ...(context.requestGroupId ? { request_group_id: context.requestGroupId } : {}),
+                ...(context.capabilityDelegationId ? { capability_delegation_id: context.capabilityDelegationId } : {}),
+            },
+        },
+    };
+}
 export class McpStdioClient {
     name;
     config;
@@ -88,9 +123,11 @@ export class McpStdioClient {
         })
             .filter((tool) => tool !== null);
     }
-    async callTool(name, args, signal) {
+    async callTool(name, args, contextOrSignal, signal) {
         await this.initialize();
-        const response = await this.request("tools/call", { name, arguments: args }, this.toolTimeoutMs(), signal);
+        const context = isAbortSignal(contextOrSignal) ? undefined : contextOrSignal;
+        const resolvedSignal = isAbortSignal(contextOrSignal) ? contextOrSignal : signal;
+        const response = await this.request("tools/call", buildMcpToolCallPayload(name, args, context), this.toolTimeoutMs(), resolvedSignal);
         const payload = toObject(response);
         return {
             output: extractToolOutput(payload),

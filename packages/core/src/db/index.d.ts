@@ -1,6 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
 import { type ScheduleContract } from "../contracts/index.js";
+import { type AgentConfig, type AgentEntityType, type AgentStatus, type CapabilityDelegationRequest, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type RestoreEvent, type SubSessionContract, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
 export declare function getDb(): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
@@ -177,6 +178,166 @@ export interface DbWebRetrievalCacheEntryInput {
     evidence: Record<string, unknown>;
     verdict: Record<string, unknown>;
     metadata?: Record<string, unknown>;
+}
+export type DbConfigSource = "manual" | "import" | "system";
+export interface DbAgentConfig {
+    agent_id: string;
+    agent_type: AgentEntityType;
+    status: AgentStatus;
+    display_name: string;
+    nickname: string | null;
+    role: string;
+    personality: string;
+    specialty_tags_json: string;
+    avoid_tasks_json: string;
+    memory_policy_json: string;
+    capability_policy_json: string;
+    profile_version: number;
+    config_json: string;
+    schema_version: number;
+    source: DbConfigSource;
+    audit_id: string | null;
+    idempotency_key: string | null;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+}
+export interface DbTeamConfig {
+    team_id: string;
+    status: Exclude<AgentStatus, "degraded">;
+    display_name: string;
+    nickname: string | null;
+    purpose: string;
+    role_hints_json: string;
+    member_agent_ids_json: string;
+    profile_version: number;
+    config_json: string;
+    schema_version: number;
+    source: DbConfigSource;
+    audit_id: string | null;
+    idempotency_key: string | null;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+}
+export interface DbAgentTeamMembership {
+    team_id: string;
+    agent_id: string;
+    status: "active" | "unresolved" | "removed";
+    role_hint: string | null;
+    schema_version: number;
+    audit_id: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbRunSubSession {
+    sub_session_id: string;
+    parent_run_id: string;
+    parent_session_id: string;
+    parent_request_id: string | null;
+    agent_id: string;
+    agent_display_name: string;
+    agent_nickname: string | null;
+    command_request_id: string;
+    status: SubSessionContract["status"];
+    retry_budget_remaining: number;
+    prompt_bundle_id: string;
+    contract_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+    updated_at: number;
+    started_at: number | null;
+    finished_at: number | null;
+}
+export interface DbAgentDataExchange {
+    exchange_id: string;
+    source_owner_type: DataExchangePackage["sourceOwner"]["ownerType"];
+    source_owner_id: string;
+    recipient_owner_type: DataExchangePackage["recipientOwner"]["ownerType"];
+    recipient_owner_id: string;
+    purpose: string;
+    allowed_use: DataExchangePackage["allowedUse"];
+    retention_policy: DataExchangePackage["retentionPolicy"];
+    redaction_state: DataExchangePackage["redactionState"];
+    provenance_refs_json: string;
+    payload_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+    updated_at: number;
+    expires_at: number | null;
+}
+export interface DbCapabilityDelegation {
+    delegation_id: string;
+    requester_owner_type: CapabilityDelegationRequest["requester"]["ownerType"];
+    requester_owner_id: string;
+    provider_owner_type: CapabilityDelegationRequest["provider"]["ownerType"];
+    provider_owner_id: string;
+    capability: string;
+    risk: CapabilityDelegationRequest["risk"];
+    status: CapabilityDelegationRequest["status"];
+    input_package_ids_json: string;
+    result_package_id: string | null;
+    approval_id: string | null;
+    contract_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbLearningEvent {
+    learning_event_id: string;
+    agent_id: string;
+    learning_target: LearningEvent["learningTarget"];
+    before_summary: string;
+    after_summary: string;
+    evidence_refs_json: string;
+    confidence: number;
+    approval_state: LearningEvent["approvalState"];
+    contract_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbProfileHistoryVersion {
+    history_version_id: string;
+    target_entity_type: HistoryVersion["targetEntityType"];
+    target_entity_id: string;
+    version: number;
+    before_json: string;
+    after_json: string;
+    reason_code: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+}
+export interface DbProfileRestoreEvent {
+    restore_event_id: string;
+    target_entity_type: RestoreEvent["targetEntityType"];
+    target_entity_id: string;
+    restored_history_version_id: string;
+    dry_run: number;
+    effect_summary_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    idempotency_key: string;
+    created_at: number;
+}
+export interface AgentConfigPersistenceOptions {
+    imported?: boolean;
+    source?: DbConfigSource;
+    auditId?: string | null;
+    idempotencyKey?: string | null;
+    now?: number;
+}
+export interface TeamConfigPersistenceOptions extends AgentConfigPersistenceOptions {
 }
 export type DbControlEventSeverity = "debug" | "info" | "warning" | "error";
 export interface DbControlEvent {
@@ -490,11 +651,86 @@ export interface MemorySearchFilters {
     runId?: string;
     requestGroupId?: string;
     scheduleId?: string;
+    ownerScope?: OwnerScope;
+    recipientScope?: OwnerScope;
     includeSchedule?: boolean;
     includeArtifact?: boolean;
     includeDiagnostic?: boolean;
     includeFlashFeedback?: boolean;
 }
+export declare function upsertAgentConfig(input: AgentConfig, options?: AgentConfigPersistenceOptions): void;
+export declare function getAgentConfig(agentId: string): DbAgentConfig | undefined;
+export declare function listAgentConfigs(filters?: {
+    enabledOnly?: boolean;
+    includeArchived?: boolean;
+    agentType?: AgentEntityType;
+}): DbAgentConfig[];
+export declare function disableAgentConfig(agentId: string, now?: number): boolean;
+export declare function upsertTeamConfig(input: TeamConfig, options?: TeamConfigPersistenceOptions): void;
+export declare function getTeamConfig(teamId: string): DbTeamConfig | undefined;
+export declare function listTeamConfigs(filters?: {
+    enabledOnly?: boolean;
+    includeArchived?: boolean;
+}): DbTeamConfig[];
+export declare function listAgentTeamMemberships(teamId?: string): DbAgentTeamMembership[];
+export declare function insertRunSubSession(input: SubSessionContract, options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function updateRunSubSession(input: SubSessionContract, options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function getRunSubSession(subSessionId: string): DbRunSubSession | undefined;
+export declare function getRunSubSessionByIdempotencyKey(idempotencyKey: string): DbRunSubSession | undefined;
+export declare function listRunSubSessionsForParentRun(parentRunId: string): DbRunSubSession[];
+export declare function insertAgentDataExchange(input: DataExchangePackage, options?: {
+    auditId?: string | null;
+    expiresAt?: number | null;
+    now?: number;
+}): boolean;
+export declare function getAgentDataExchange(exchangeId: string): DbAgentDataExchange | undefined;
+export declare function listAgentDataExchangesForRecipient(recipientOwner: OwnerScope, options?: {
+    now?: number;
+    includeExpired?: boolean;
+    allowedUse?: DataExchangePackage["allowedUse"];
+    limit?: number;
+}): DbAgentDataExchange[];
+export declare function listAgentDataExchangesForSource(sourceOwner: OwnerScope, options?: {
+    now?: number;
+    includeExpired?: boolean;
+    recipientOwner?: OwnerScope;
+    limit?: number;
+}): DbAgentDataExchange[];
+export declare function insertCapabilityDelegation(input: CapabilityDelegationRequest, options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function getCapabilityDelegation(delegationId: string): DbCapabilityDelegation | undefined;
+export declare function listCapabilityDelegations(filters?: {
+    requester?: OwnerScope;
+    provider?: OwnerScope;
+    status?: CapabilityDelegationRequest["status"];
+    limit?: number;
+}): DbCapabilityDelegation[];
+export declare function insertLearningEvent(input: LearningEvent, options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function listLearningEvents(agentId: string): DbLearningEvent[];
+export declare function updateLearningEventApprovalState(learningEventId: string, approvalState: LearningEvent["approvalState"], options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function insertProfileHistoryVersion(input: HistoryVersion, options?: {
+    auditId?: string | null;
+}): boolean;
+export declare function listProfileHistoryVersions(targetEntityType: HistoryVersion["targetEntityType"], targetEntityId: string): DbProfileHistoryVersion[];
+export declare function insertProfileRestoreEvent(input: RestoreEvent, options?: {
+    auditId?: string | null;
+}): boolean;
+export declare function listProfileRestoreEvents(targetEntityType: RestoreEvent["targetEntityType"], targetEntityId: string): DbProfileRestoreEvent[];
+export declare function subAgentStorageSchemaVersion(): number;
 export declare function storeMemoryDocument(input: StoreMemoryDocumentInput): StoreMemoryDocumentResult;
 export declare function insertMemoryEmbeddingIfMissing(input: {
     chunkId: string;

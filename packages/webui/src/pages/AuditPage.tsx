@@ -56,6 +56,9 @@ export function AuditPage() {
   const [channel, setChannel] = useState("")
   const [toolName, setToolName] = useState("")
   const [runId, setRunId] = useState("")
+  const [agentId, setAgentId] = useState("")
+  const [teamId, setTeamId] = useState("")
+  const [sessionId, setSessionId] = useState("")
   const [query, setQuery] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -80,6 +83,12 @@ export function AuditPage() {
     setLoading(true)
     setError(null)
     try {
+      const scopedQuery = [
+        query.trim(),
+        agentId.trim(),
+        teamId.trim(),
+        sessionId.trim(),
+      ].filter(Boolean).join(" ")
       const response = await api.audit({
         limit: 100,
         ...(status ? { status } : {}),
@@ -88,7 +97,7 @@ export function AuditPage() {
         ...(channel.trim() ? { channel: channel.trim() } : {}),
         ...(toolName.trim() ? { toolName: toolName.trim() } : {}),
         ...(runId.trim() ? { runId: runId.trim() } : {}),
-        ...(query.trim() ? { q: query.trim() } : {}),
+        ...(scopedQuery ? { q: scopedQuery } : {}),
       })
       setEvents(response.items)
       setTotal(response.total)
@@ -204,9 +213,12 @@ export function AuditPage() {
       </div>
 
       <FeatureGate capabilityKey="audit.viewer" title={text("감사 로그", "Audit Logs")}>
-        <div className="mt-6 grid gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-4 lg:grid-cols-7">
+        <div className="mt-6 grid gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-4 lg:grid-cols-10">
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("검색어", "Search")} value={query} onChange={(event) => setQuery(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="run id" value={runId} onChange={(event) => setRunId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="agent id" value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="team id" value={teamId} onChange={(event) => setTeamId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="session id" value={sessionId} onChange={(event) => setSessionId(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("도구명", "Tool name")} value={toolName} onChange={(event) => setToolName(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("채널", "Channel")} value={channel} onChange={(event) => setChannel(event.target.value)} />
           <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={kind} onChange={(event) => setKind(event.target.value as AuditKindFilter)}>
@@ -239,7 +251,7 @@ export function AuditPage() {
             <option value="blocked">blocked</option>
             <option value="pending">pending</option>
           </select>
-          <button className="rounded-2xl bg-stone-900 px-4 py-3 text-sm font-semibold text-white lg:col-span-7" onClick={() => void load()}>
+          <button className="rounded-2xl bg-stone-900 px-4 py-3 text-sm font-semibold text-white lg:col-span-10" onClick={() => void load()}>
             {text("필터 적용", "Apply filters")}
           </button>
         </div>

@@ -6,6 +6,14 @@ import {
   findLatestApprovalByChannelMessage,
   getLatestApprovalForRun,
 } from "../../runs/approval-registry.js"
+import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
+import { recordLatencyMetric } from "../../observability/latency.js"
+import {
+  appendApprovalAggregateItem,
+  buildApprovalAggregateText,
+  resolveApprovalAggregate,
+  type ApprovalAggregateContext,
+} from "../approval-aggregation.js"
 
 interface ActiveSlackConversation {
   channelId: string
@@ -14,13 +22,10 @@ interface ActiveSlackConversation {
 }
 
 interface PendingApproval {
-  approvalId?: string
   requesterId: string
   channelId: string
   threadTs: string
-  toolName: string
-  kind: "approval" | "screen_confirmation"
-  resolve: (decision: "allow_once" | "allow_run" | "deny", reason?: "user" | "timeout" | "abort" | "system") => void
+  context: ApprovalAggregateContext
 }
 
 export interface SlackApprovalMessenger {
@@ -30,6 +35,12 @@ export interface SlackApprovalMessenger {
     runId: string
     text: string
   }): Promise<string | void>
+  updateApprovalRequest?(params: {
+    channelId: string
+    threadTs: string
+    runId: string
+    text: string
+  }): Promise<void>
 }
 
 const activeConversations = new Map<string, ActiveSlackConversation>()
@@ -62,7 +73,7 @@ export function clearActiveSlackConversationForSession(sessionId: string): void 
 
 export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger): void {
   detachSlackApprovalRequestListener?.()
-  const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, toolName, params, kind = "approval", guidance, resolve }) => {
+  const detachRequest = eventBus.on("approval.request", async ({ approvalId, runId, parentRunId, subSessionId, agentId, teamId, toolName, params, kind = "approval", guidance, riskSummary, resolve }) => {
     const run = getRootRun(runId)
     if (run?.source !== "slack") return
     const target = activeConversations.get(run.sessionId) ?? latestActiveConversation
@@ -70,36 +81,81 @@ export function registerSlackApprovalHandler(messenger: SlackApprovalMessenger):
       return
     }
 
+    const observedAt = Date.now()
     const paramsPreview = JSON.stringify(params, null, 2).slice(0, 300)
-    const text = [
-      kind === "screen_confirmation" ? "*화면 조작 준비 확인이 필요합니다.*" : "*도구 실행 승인이 필요합니다.*",
-      `도구: ${toolName}`,
-      `파라미터:\n${paramsPreview}`,
-      guidance ? `안내: ${guidance}` : "",
-      "아래 버튼을 누르거나, 버튼이 보이지 않으면 이 스레드에 `approve`, `approve once`, `deny` 중 하나로 답해주세요.",
-    ].filter(Boolean).join("\n\n")
-
-    pendingApprovals.set(runId, {
+    const existing = pendingApprovals.get(runId)
+    const aggregated = appendApprovalAggregateItem(existing?.context, {
       ...(approvalId ? { approvalId } : {}),
+      runId,
+      ...(parentRunId ? { parentRunId } : {}),
+      ...(subSessionId ? { subSessionId } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(teamId ? { teamId } : {}),
+      toolName,
+      kind,
+      ...(riskSummary ? { riskSummary } : {}),
+      ...(guidance ? { guidance } : {}),
+      paramsPreview,
+      resolve,
+    }, target.userId, observedAt)
+    const text = buildApprovalAggregateText({ context: aggregated.context, channel: "slack" })
+    pendingApprovals.set(runId, {
       requesterId: target.userId,
       channelId: target.channelId,
       threadTs: target.threadTs,
-      toolName,
-      kind,
-      resolve,
+      context: aggregated.context,
+    })
+    if (existing && aggregated.appended && aggregated.aggregationLatencyMs !== null) {
+      recordLatencyMetric({
+        name: "approval_aggregation_latency_ms",
+        durationMs: aggregated.aggregationLatencyMs,
+        runId,
+        sessionId: run.sessionId,
+        detail: {
+          channel: "slack",
+          approvalCount: aggregated.context.items.length,
+          toolName,
+          kind,
+          approvalId: approvalId ?? null,
+        },
+      })
+    }
+    recordMessageLedgerEvent({
+      runId,
+      ...(parentRunId ? { parentRunId } : {}),
+      ...(subSessionId ? { subSessionId } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(teamId ? { teamId } : {}),
+      channel: "slack",
+      eventKind: existing ? "approval_aggregated" : "approval_requested",
+      deliveryKind: "approval",
+      status: "pending",
+      summary: existing ? "Slack 승인 요청을 기존 pending 항목에 집계했습니다." : "Slack 승인 요청을 전송했습니다.",
+      detail: {
+        approvalId: approvalId ?? null,
+        approvalCount: aggregated.context.items.length,
+        aggregationLatencyMs: aggregated.aggregationLatencyMs,
+        toolName,
+        kind,
+        riskSummary: riskSummary ?? null,
+      },
     })
 
     const channelMessageId = slackApprovalChannelMessageId(target.channelId, target.threadTs)
     if (approvalId) attachApprovalChannelMessage(approvalId, channelMessageId)
 
-    const sentTs = await messenger.sendApprovalRequest({
-      channelId: target.channelId,
-      threadTs: target.threadTs,
-      runId,
-      text,
-    })
-    if (approvalId && typeof sentTs === "string" && sentTs.trim()) {
-      attachApprovalChannelMessage(approvalId, channelMessageId)
+    if (existing && messenger.updateApprovalRequest) {
+      await messenger.updateApprovalRequest({ channelId: target.channelId, threadTs: target.threadTs, runId, text })
+    } else if (!existing) {
+      const sentTs = await messenger.sendApprovalRequest({
+        channelId: target.channelId,
+        threadTs: target.threadTs,
+        runId,
+        text,
+      })
+      if (approvalId && typeof sentTs === "string" && sentTs.trim()) {
+        attachApprovalChannelMessage(approvalId, channelMessageId)
+      }
     }
   })
   const detachResolved = eventBus.on("approval.resolved", ({ runId }) => {
@@ -141,15 +197,17 @@ function resolveSlackApproval(params: {
   }
 
   pendingApprovals.delete(params.runId)
-  pending.resolve(params.decision, "user")
-  eventBus.emit("approval.resolved", {
-    ...(pending.approvalId ? { approvalId: pending.approvalId } : {}),
-    runId: params.runId,
-    decision: params.decision,
-    toolName: pending.toolName,
-    kind: pending.kind,
-    reason: "user",
-  })
+  const resolvedItems = resolveApprovalAggregate(pending.context, params.decision, "user")
+  for (const item of resolvedItems) {
+    eventBus.emit("approval.resolved", {
+      ...(item.approvalId ? { approvalId: item.approvalId } : {}),
+      runId: params.runId,
+      decision: params.decision,
+      toolName: item.toolName,
+      kind: item.kind,
+      reason: "user",
+    })
+  }
   return params.reply(
     params.decision === "allow_run"
       ? "이 요청 전체를 승인했습니다."

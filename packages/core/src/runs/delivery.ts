@@ -9,7 +9,10 @@ import { sanitizeUserFacingError } from "./error-sanitizer.js"
 import {
   buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey,
   buildTextDeliveryKey as buildLedgerTextDeliveryKey,
+  findMessageLedgerEventByIdempotencyKey,
+  messageLedgerEventSucceeded,
   recordMessageLedgerEvent,
+  type MessageLedgerDeliveryKind,
 } from "./message-ledger.js"
 import { enqueueBackpressureTask, recordRetryBudgetAttempt } from "./queue-backpressure.js"
 import { getRootRun } from "./store.js"
@@ -32,6 +35,10 @@ export interface SuccessfulTextDelivery {
   channel: DeliverySource
   text: string
   messageIds?: number[]
+  deliveryKind?: MessageLedgerDeliveryKind
+  parentRunId?: string
+  subSessionId?: string
+  agentId?: string
 }
 
 export interface ChunkDeliveryReceipt {
@@ -355,6 +362,11 @@ export async function emitAssistantTextDelivery(params: {
   onChunk: RunChunkDeliveryHandler
   persistMessage?: boolean
   emitDone?: boolean
+  deliveryKind?: Extract<MessageLedgerDeliveryKind, "progress" | "final">
+  parentRunId?: string
+  subSessionId?: string
+  agentId?: string
+  force?: boolean
   onError?: (message: string) => void
   dependencies?: Partial<AssistantTextDeliveryDependencies>
 }): Promise<AssistantTextDeliveryReceipt> {
@@ -368,6 +380,39 @@ export async function emitAssistantTextDelivery(params: {
       persisted: false,
       textDelivered: false,
       doneDelivered: false,
+    }
+  }
+  const deliveryKind = params.deliveryKind ?? "final"
+  const deliveryKey = buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized)
+  const idempotencyKey = `text-delivery:${params.runId}:${params.source}:${deliveryKey}`
+
+  if (!params.force && deliveryKind === "final") {
+    const previousDelivery = findMessageLedgerEventByIdempotencyKey(idempotencyKey)
+    if (messageLedgerEventSucceeded(previousDelivery)) {
+      recordMessageLedgerEvent({
+        runId: params.runId,
+        ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+        ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        sessionKey: params.sessionId,
+        channel: params.source,
+        eventKind: "text_delivery_suppressed",
+        deliveryKind,
+        deliveryKey,
+        idempotencyKey: `${idempotencyKey}:suppressed:${dependencies.now()}`,
+        status: "suppressed",
+        summary: "중복 최종 응답 전송을 억제했습니다.",
+        detail: {
+          duplicateLedgerEventId: previousDelivery?.id ?? null,
+          duplicateCreatedAt: previousDelivery?.created_at ?? null,
+          textLength: normalized.length,
+        },
+      })
+      return {
+        persisted: false,
+        textDelivered: true,
+        doneDelivered: params.emitDone !== false,
+      }
     }
   }
 
@@ -422,11 +467,15 @@ export async function emitAssistantTextDelivery(params: {
   const delivered = receipt.textDelivered
   recordMessageLedgerEvent({
     runId: params.runId,
+    ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+    ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     sessionKey: params.sessionId,
     channel: params.source,
     eventKind: delivered ? "text_delivered" : "text_delivery_failed",
-    deliveryKey: buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized),
-    idempotencyKey: `text-delivery:${params.runId}:${params.source}:${buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized)}`,
+    deliveryKind,
+    deliveryKey,
+    idempotencyKey,
     status: delivered ? "delivered" : "failed",
     summary: delivered ? "응답 텍스트 전달 완료" : "응답 텍스트 전달 실패",
     detail: {
@@ -621,8 +670,12 @@ export function applyChunkDeliveryReceipt(params: {
     })
     recordMessageLedgerEvent({
       runId: params.runId,
+      ...(delivery.parentRunId ? { parentRunId: delivery.parentRunId } : {}),
+      ...(delivery.subSessionId ? { subSessionId: delivery.subSessionId } : {}),
+      ...(delivery.agentId ? { agentId: delivery.agentId } : {}),
       channel: delivery.channel,
       eventKind: "text_delivered",
+      deliveryKind: delivery.deliveryKind ?? "final",
       deliveryKey: buildLedgerTextDeliveryKey(delivery.channel, JSON.stringify(delivery.messageIds ?? []), delivery.text),
       idempotencyKey: `chunk-text:${params.runId}:${delivery.channel}:${JSON.stringify(delivery.messageIds ?? [])}`,
       status: "delivered",
@@ -630,6 +683,7 @@ export function applyChunkDeliveryReceipt(params: {
       detail: {
         textLength: delivery.text.length,
         ...(delivery.messageIds ? { messageIds: delivery.messageIds } : {}),
+        ...(delivery.deliveryKind ? { deliveryKind: delivery.deliveryKind } : {}),
       },
     })
   }

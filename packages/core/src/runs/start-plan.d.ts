@@ -1,5 +1,8 @@
 import type { AgentContextMode } from "../agent/index.js";
 import type { IntentContract } from "../contracts/index.js";
+import type { OrchestrationMode, OrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
+import { buildOrchestrationPlan } from "../orchestration/planner.js";
+import { resolveOrchestrationModeSnapshot, type OrchestrationModeSnapshot } from "../orchestration/mode.js";
 import { analyzeRequestEntrySemantics, type RequestEntrySemantics } from "./entry-semantics.js";
 import { type RequestContinuationDecision } from "./entry-comparison.js";
 import { buildIncomingIntentContract, type ActiveRunContractProjection } from "./active-run-projection.js";
@@ -19,6 +22,9 @@ export interface StartPlan {
     initialDelegationTurnCount: number;
     shouldReuseContext: boolean;
     effectiveContextMode: AgentContextMode;
+    orchestrationMode: OrchestrationMode;
+    orchestrationRegistrySnapshot: OrchestrationModeSnapshot;
+    orchestrationPlanSnapshot: OrchestrationPlan;
     workerSessionId?: string | undefined;
     reusableWorkerSessionRun?: RootRun | undefined;
     latencyEvents: string[];
@@ -44,6 +50,8 @@ interface StartPlanDependencies {
     }) => string | undefined;
     normalizeTaskProfile: (taskProfile: TaskProfile | undefined) => TaskProfile;
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
+    resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot;
+    buildOrchestrationPlan?: typeof buildOrchestrationPlan;
 }
 declare const defaultDependencies: StartPlanDependencies;
 export declare function buildStartPlan(params: {

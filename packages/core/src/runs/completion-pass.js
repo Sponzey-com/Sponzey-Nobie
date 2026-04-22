@@ -1,7 +1,11 @@
+import { decideSubSessionCompletionIntegration, } from "../agent/sub-agent-result-review.js";
 import { deriveCompletionStageState } from "./completion-state.js";
 import { canConsumeRecoveryBudget, getRecoveryBudgetState, } from "./recovery-budget.js";
 import { decideCompletionApplication, } from "./completion-application.js";
 import { decideCompletionFlow, } from "./completion-flow.js";
+export function decideSubSessionCompletionPass(params) {
+    return decideSubSessionCompletionIntegration(params.subSessionReviews);
+}
 export function runCompletionPass(params) {
     const state = deriveCompletionStageState({
         review: params.review,

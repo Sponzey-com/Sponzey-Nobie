@@ -11,6 +11,7 @@ import { getCurrentDisplayVersion, getWorkspaceRootPath } from "../../version.js
 import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js";
 import { getFastResponseHealthSnapshot } from "../../observability/latency.js";
 import { loadPromptSourceRegistry } from "../../memory/nobie-md.js";
+import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js";
 const startTime = Date.now();
 const startedAt = new Date(startTime).toISOString();
 function getPromptSourceSnapshot() {
@@ -39,6 +40,7 @@ export function registerStatusRoute(app) {
         const setupState = readSetupState();
         const capabilities = createCapabilities();
         const orchestrator = capabilities.find((item) => item.key === "gateway.orchestrator");
+        const orchestration = resolveOrchestrationModeSnapshotSync();
         const uptime = Math.floor((Date.now() - startTime) / 1000);
         return {
             version: getCurrentAppVersion(),
@@ -61,8 +63,15 @@ export function registerStatusRoute(app) {
             capabilityCounts: createCapabilityCounts(),
             primaryAiTarget: getPrimaryAiTarget(),
             orchestratorStatus: orchestrator
-                ? { status: orchestrator.status, reason: orchestrator.reason ?? null }
+                ? {
+                    status: orchestrator.status,
+                    reason: orchestrator.reason ?? null,
+                    mode: orchestration.mode,
+                    reasonCode: orchestration.reasonCode,
+                    activeSubAgentCount: orchestration.activeSubAgentCount,
+                }
                 : { status: "planned", reason: "Gateway orchestrator capability가 없습니다." },
+            orchestration,
             startupRecovery: getLastStartupRecoverySummary(),
             fast_response_health: getFastResponseHealthSnapshot(),
             promptSources: getPromptSourceSnapshot(),

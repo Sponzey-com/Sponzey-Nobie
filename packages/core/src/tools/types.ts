@@ -1,3 +1,10 @@
+import type {
+  AgentEntityType,
+  CapabilityPolicy,
+  PermissionProfile,
+  SkillMcpAllowlist,
+} from "../contracts/sub-agent-orchestration.js"
+
 export type RiskLevel = "safe" | "moderate" | "dangerous"
 
 export interface ToolContext {
@@ -10,6 +17,15 @@ export interface ToolContext {
   allowWebAccess: boolean
   onProgress: (message: string) => void
   signal: AbortSignal
+  agentId?: string
+  agentType?: AgentEntityType
+  capabilityPolicy?: CapabilityPolicy
+  permissionProfile?: PermissionProfile
+  skillMcpAllowlist?: SkillMcpAllowlist
+  capabilityRateLimit?: CapabilityPolicy["rateLimit"]
+  secretScopeId?: string
+  auditId?: string
+  capabilityDelegationId?: string
 }
 
 export interface ArtifactDeliveryResultDetails {

@@ -5,6 +5,7 @@ import { PATHS } from "../config/index.js";
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
 import { assertMigrationWriteAllowed } from "./migration-safety.js";
 import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
+import { SUB_AGENT_CONTRACT_SCHEMA_VERSION, } from "../contracts/sub-agent-orchestration.js";
 let _db = null;
 export function getDb() {
     if (_db)
@@ -437,6 +438,436 @@ function resolveMemoryOwnerId(scope, ownerId) {
 }
 function toJsonOrNull(value) {
     return value ? JSON.stringify(value) : null;
+}
+function toJson(value) {
+    return toCanonicalJson(value);
+}
+function optionalAuditId(identityAuditId, override) {
+    return override ?? identityAuditId ?? null;
+}
+function isUniqueConstraintError(error) {
+    if (!error || typeof error !== "object")
+        return false;
+    const code = "code" in error ? String(error.code) : "";
+    const message = "message" in error ? String(error.message) : "";
+    return code === "SQLITE_CONSTRAINT_UNIQUE" || message.includes("UNIQUE constraint failed");
+}
+function persistenceSource(options) {
+    if (options?.imported)
+        return "import";
+    return options?.source ?? "manual";
+}
+function persistedAgentConfig(input, imported) {
+    if (!imported)
+        return input;
+    return { ...input, status: "disabled" };
+}
+function persistedTeamConfig(input, imported) {
+    if (!imported)
+        return input;
+    return { ...input, status: "disabled" };
+}
+export function upsertAgentConfig(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.config.upsert");
+    const config = persistedAgentConfig(input, options.imported);
+    const now = options.now ?? Date.now();
+    const updatedAt = options.now ?? config.updatedAt ?? now;
+    const source = persistenceSource(options);
+    getDb()
+        .prepare(`INSERT INTO agent_configs
+       (agent_id, agent_type, status, display_name, nickname, role, personality, specialty_tags_json, avoid_tasks_json,
+        memory_policy_json, capability_policy_json, profile_version, config_json, schema_version, source, audit_id,
+        idempotency_key, created_at, updated_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET
+         agent_type = excluded.agent_type,
+         status = excluded.status,
+         display_name = excluded.display_name,
+         nickname = excluded.nickname,
+         role = excluded.role,
+         personality = excluded.personality,
+         specialty_tags_json = excluded.specialty_tags_json,
+         avoid_tasks_json = excluded.avoid_tasks_json,
+         memory_policy_json = excluded.memory_policy_json,
+         capability_policy_json = excluded.capability_policy_json,
+         profile_version = excluded.profile_version,
+         config_json = excluded.config_json,
+         schema_version = excluded.schema_version,
+         source = excluded.source,
+         audit_id = excluded.audit_id,
+         idempotency_key = COALESCE(excluded.idempotency_key, agent_configs.idempotency_key),
+         updated_at = excluded.updated_at,
+         archived_at = excluded.archived_at`)
+        .run(config.agentId, config.agentType, config.status, config.displayName, config.nickname ?? null, config.role, config.personality, toJson(config.specialtyTags), toJson(config.avoidTasks), toJson(config.memoryPolicy), toJson(config.capabilityPolicy), config.profileVersion, toJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+}
+export function getAgentConfig(agentId) {
+    return getDb().prepare("SELECT * FROM agent_configs WHERE agent_id = ?").get(agentId);
+}
+export function listAgentConfigs(filters = {}) {
+    const where = [];
+    const params = [];
+    if (filters.enabledOnly)
+        where.push("status = 'enabled'");
+    else if (!filters.includeArchived)
+        where.push("status <> 'archived'");
+    if (filters.agentType) {
+        where.push("agent_type = ?");
+        params.push(filters.agentType);
+    }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT * FROM agent_configs ${clause} ORDER BY updated_at DESC, agent_id ASC`)
+        .all(...params);
+}
+export function disableAgentConfig(agentId, now = Date.now()) {
+    assertMigrationWriteAllowed(getDb(), "agent.config.disable");
+    const row = getAgentConfig(agentId);
+    if (!row)
+        return false;
+    let nextConfigJson = row.config_json;
+    try {
+        const parsed = JSON.parse(row.config_json);
+        nextConfigJson = toJson({ ...parsed, status: "disabled", updatedAt: now });
+    }
+    catch {
+        nextConfigJson = row.config_json;
+    }
+    const result = getDb()
+        .prepare(`UPDATE agent_configs
+       SET status = ?, config_json = ?, updated_at = ?, archived_at = NULL
+       WHERE agent_id = ?`)
+        .run("disabled", nextConfigJson, now, agentId);
+    return result.changes > 0;
+}
+export function upsertTeamConfig(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "team.config.upsert");
+    const config = persistedTeamConfig(input, options.imported);
+    const now = options.now ?? Date.now();
+    const updatedAt = options.now ?? config.updatedAt ?? now;
+    const source = persistenceSource(options);
+    const db = getDb();
+    const tx = db.transaction(() => {
+        db.prepare(`INSERT INTO team_configs
+       (team_id, status, display_name, nickname, purpose, role_hints_json, member_agent_ids_json, profile_version,
+        config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id) DO UPDATE SET
+         status = excluded.status,
+         display_name = excluded.display_name,
+         nickname = excluded.nickname,
+         purpose = excluded.purpose,
+         role_hints_json = excluded.role_hints_json,
+         member_agent_ids_json = excluded.member_agent_ids_json,
+         profile_version = excluded.profile_version,
+         config_json = excluded.config_json,
+         schema_version = excluded.schema_version,
+         source = excluded.source,
+         audit_id = excluded.audit_id,
+         idempotency_key = COALESCE(excluded.idempotency_key, team_configs.idempotency_key),
+         updated_at = excluded.updated_at,
+         archived_at = excluded.archived_at`).run(config.teamId, config.status, config.displayName, config.nickname ?? null, config.purpose, toJson(config.roleHints), toJson(config.memberAgentIds), config.profileVersion, toJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+        db.prepare(`UPDATE agent_team_memberships SET status = 'removed', updated_at = ? WHERE team_id = ?`).run(updatedAt, config.teamId);
+        const agentExists = db.prepare("SELECT agent_id FROM agent_configs WHERE agent_id = ? LIMIT 1");
+        const upsertMember = db.prepare(`INSERT INTO agent_team_memberships
+       (team_id, agent_id, status, role_hint, schema_version, audit_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, agent_id) DO UPDATE SET
+         status = excluded.status,
+         role_hint = excluded.role_hint,
+         schema_version = excluded.schema_version,
+         audit_id = excluded.audit_id,
+         updated_at = excluded.updated_at`);
+        for (const [index, agentId] of config.memberAgentIds.entries()) {
+            const status = agentExists.get(agentId) ? "active" : "unresolved";
+            upsertMember.run(config.teamId, agentId, status, config.roleHints[index] ?? null, config.schemaVersion, options.auditId ?? null, updatedAt, updatedAt);
+        }
+    });
+    tx();
+}
+export function getTeamConfig(teamId) {
+    return getDb().prepare("SELECT * FROM team_configs WHERE team_id = ?").get(teamId);
+}
+export function listTeamConfigs(filters = {}) {
+    const where = [];
+    if (filters.enabledOnly)
+        where.push("status = 'enabled'");
+    else if (!filters.includeArchived)
+        where.push("status <> 'archived'");
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT * FROM team_configs ${clause} ORDER BY updated_at DESC, team_id ASC`)
+        .all();
+}
+export function listAgentTeamMemberships(teamId) {
+    if (teamId) {
+        return getDb()
+            .prepare("SELECT * FROM agent_team_memberships WHERE team_id = ? ORDER BY agent_id ASC")
+            .all(teamId);
+    }
+    return getDb()
+        .prepare("SELECT * FROM agent_team_memberships ORDER BY team_id ASC, agent_id ASC")
+        .all();
+}
+export function insertRunSubSession(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "run.subsession.insert");
+    const now = options.now ?? Date.now();
+    try {
+        getDb()
+            .prepare(`INSERT INTO run_subsessions
+         (sub_session_id, parent_run_id, parent_session_id, parent_request_id, agent_id, agent_display_name, agent_nickname,
+          command_request_id, status, retry_budget_remaining, prompt_bundle_id, contract_json, schema_version, audit_id,
+          idempotency_key, created_at, updated_at, started_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.subSessionId, input.parentRunId, input.parentSessionId, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.retryBudgetRemaining, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now, input.startedAt ?? null, input.finishedAt ?? null);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function updateRunSubSession(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "run.subsession.update");
+    const now = options.now ?? Date.now();
+    const result = getDb()
+        .prepare(`UPDATE run_subsessions
+       SET parent_run_id = ?,
+           parent_session_id = ?,
+           parent_request_id = ?,
+           agent_id = ?,
+           agent_display_name = ?,
+           agent_nickname = ?,
+           command_request_id = ?,
+           status = ?,
+           retry_budget_remaining = ?,
+           prompt_bundle_id = ?,
+           contract_json = ?,
+           schema_version = ?,
+           audit_id = ?,
+           idempotency_key = ?,
+           updated_at = ?,
+           started_at = ?,
+           finished_at = ?
+       WHERE sub_session_id = ?`)
+        .run(input.parentRunId, input.parentSessionId, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.retryBudgetRemaining, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, input.startedAt ?? null, input.finishedAt ?? null, input.subSessionId);
+    return result.changes > 0;
+}
+export function getRunSubSession(subSessionId) {
+    return getDb().prepare("SELECT * FROM run_subsessions WHERE sub_session_id = ?").get(subSessionId);
+}
+export function getRunSubSessionByIdempotencyKey(idempotencyKey) {
+    return getDb()
+        .prepare("SELECT * FROM run_subsessions WHERE idempotency_key = ?")
+        .get(idempotencyKey);
+}
+export function listRunSubSessionsForParentRun(parentRunId) {
+    return getDb()
+        .prepare("SELECT * FROM run_subsessions WHERE parent_run_id = ? ORDER BY created_at ASC, sub_session_id ASC")
+        .all(parentRunId);
+}
+export function insertAgentDataExchange(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.data_exchange.insert");
+    const now = options.now ?? Date.now();
+    try {
+        getDb()
+            .prepare(`INSERT INTO agent_data_exchanges
+         (exchange_id, source_owner_type, source_owner_id, recipient_owner_type, recipient_owner_id, purpose, allowed_use,
+          retention_policy, redaction_state, provenance_refs_json, payload_json, schema_version, audit_id, idempotency_key,
+          created_at, updated_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.exchangeId, input.sourceOwner.ownerType, input.sourceOwner.ownerId, input.recipientOwner.ownerType, input.recipientOwner.ownerId, input.purpose, input.allowedUse, input.retentionPolicy, input.redactionState, toJson(input.provenanceRefs), toJson(input.payload), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, input.createdAt, now, options.expiresAt ?? input.expiresAt ?? null);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function getAgentDataExchange(exchangeId) {
+    return getDb()
+        .prepare("SELECT * FROM agent_data_exchanges WHERE exchange_id = ?")
+        .get(exchangeId);
+}
+export function listAgentDataExchangesForRecipient(recipientOwner, options = {}) {
+    const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 100)));
+    const clauses = [
+        "recipient_owner_type = ?",
+        "recipient_owner_id = ?",
+    ];
+    const values = [recipientOwner.ownerType, recipientOwner.ownerId];
+    if (!options.includeExpired) {
+        clauses.push("(expires_at IS NULL OR expires_at > ?)");
+        values.push(options.now ?? Date.now());
+    }
+    if (options.allowedUse) {
+        clauses.push("allowed_use = ?");
+        values.push(options.allowedUse);
+    }
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM agent_data_exchanges
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC, exchange_id ASC
+       LIMIT ?`)
+        .all(...values);
+}
+export function listAgentDataExchangesForSource(sourceOwner, options = {}) {
+    const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 100)));
+    const clauses = [
+        "source_owner_type = ?",
+        "source_owner_id = ?",
+    ];
+    const values = [sourceOwner.ownerType, sourceOwner.ownerId];
+    if (options.recipientOwner) {
+        clauses.push("recipient_owner_type = ?", "recipient_owner_id = ?");
+        values.push(options.recipientOwner.ownerType, options.recipientOwner.ownerId);
+    }
+    if (!options.includeExpired) {
+        clauses.push("(expires_at IS NULL OR expires_at > ?)");
+        values.push(options.now ?? Date.now());
+    }
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM agent_data_exchanges
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC, exchange_id ASC
+       LIMIT ?`)
+        .all(...values);
+}
+export function insertCapabilityDelegation(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.capability_delegation.insert");
+    const now = options.now ?? Date.now();
+    try {
+        getDb()
+            .prepare(`INSERT INTO capability_delegations
+         (delegation_id, requester_owner_type, requester_owner_id, provider_owner_type, provider_owner_id, capability, risk,
+          status, input_package_ids_json, result_package_id, approval_id, contract_json, schema_version, audit_id,
+          idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.delegationId, input.requester.ownerType, input.requester.ownerId, input.provider.ownerType, input.provider.ownerId, input.capability, input.risk, input.status, toJson(input.inputPackageIds), input.resultPackageId ?? null, input.approvalId ?? null, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function getCapabilityDelegation(delegationId) {
+    return getDb()
+        .prepare("SELECT * FROM capability_delegations WHERE delegation_id = ?")
+        .get(delegationId);
+}
+export function listCapabilityDelegations(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.requester) {
+        clauses.push("requester_owner_type = ?", "requester_owner_id = ?");
+        values.push(filters.requester.ownerType, filters.requester.ownerId);
+    }
+    if (filters.provider) {
+        clauses.push("provider_owner_type = ?", "provider_owner_id = ?");
+        values.push(filters.provider.ownerType, filters.provider.ownerId);
+    }
+    if (filters.status) {
+        clauses.push("status = ?");
+        values.push(filters.status);
+    }
+    const limit = Math.max(1, Math.min(500, Math.floor(filters.limit ?? 100)));
+    values.push(limit);
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return getDb()
+        .prepare(`SELECT * FROM capability_delegations
+       ${where}
+       ORDER BY created_at DESC, delegation_id ASC
+       LIMIT ?`)
+        .all(...values);
+}
+export function insertLearningEvent(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.learning_event.insert");
+    const now = options.now ?? Date.now();
+    try {
+        getDb()
+            .prepare(`INSERT INTO learning_events
+         (learning_event_id, agent_id, learning_target, before_summary, after_summary, evidence_refs_json, confidence,
+          approval_state, contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.learningEventId, input.agentId, input.learningTarget, input.beforeSummary, input.afterSummary, toJson(input.evidenceRefs), input.confidence, input.approvalState, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function listLearningEvents(agentId) {
+    return getDb()
+        .prepare("SELECT * FROM learning_events WHERE agent_id = ? ORDER BY created_at DESC")
+        .all(agentId);
+}
+export function updateLearningEventApprovalState(learningEventId, approvalState, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.learning_event.update_approval");
+    const now = options.now ?? Date.now();
+    const result = getDb()
+        .prepare(`UPDATE learning_events
+       SET approval_state = ?, audit_id = coalesce(?, audit_id), updated_at = ?
+       WHERE learning_event_id = ?`)
+        .run(approvalState, options.auditId ?? null, now, learningEventId);
+    return result.changes > 0;
+}
+export function insertProfileHistoryVersion(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.profile_history.insert");
+    try {
+        getDb()
+            .prepare(`INSERT INTO profile_history_versions
+         (history_version_id, target_entity_type, target_entity_id, version, before_json, after_json, reason_code,
+          schema_version, audit_id, idempotency_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.historyVersionId, input.targetEntityType, input.targetEntityId, input.version, toJson(input.before), toJson(input.after), input.reasonCode, input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, input.createdAt);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function listProfileHistoryVersions(targetEntityType, targetEntityId) {
+    return getDb()
+        .prepare(`SELECT * FROM profile_history_versions
+       WHERE target_entity_type = ? AND target_entity_id = ?
+       ORDER BY version ASC`)
+        .all(targetEntityType, targetEntityId);
+}
+export function insertProfileRestoreEvent(input, options = {}) {
+    assertMigrationWriteAllowed(getDb(), "agent.profile_restore.insert");
+    try {
+        getDb()
+            .prepare(`INSERT INTO profile_restore_events
+         (restore_event_id, target_entity_type, target_entity_id, restored_history_version_id, dry_run, effect_summary_json,
+          schema_version, audit_id, idempotency_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.restoreEventId, input.targetEntityType, input.targetEntityId, input.restoredHistoryVersionId, input.dryRun ? 1 : 0, toJson(input.effectSummary), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, input.createdAt);
+        return true;
+    }
+    catch (error) {
+        if (isUniqueConstraintError(error))
+            return false;
+        throw error;
+    }
+}
+export function listProfileRestoreEvents(targetEntityType, targetEntityId) {
+    return getDb()
+        .prepare(`SELECT * FROM profile_restore_events
+       WHERE target_entity_type = ? AND target_entity_id = ?
+       ORDER BY created_at DESC`)
+        .all(targetEntityType, targetEntityId);
+}
+export function subAgentStorageSchemaVersion() {
+    return SUB_AGENT_CONTRACT_SCHEMA_VERSION;
 }
 export function storeMemoryDocument(input) {
     const ownerId = resolveMemoryOwnerId(input.scope, input.ownerId);

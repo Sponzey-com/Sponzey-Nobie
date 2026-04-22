@@ -374,6 +374,30 @@ function toReviewItem(row) {
 export function listMemoryWritebackReviewItems(input = {}) {
     return listMemoryWritebackCandidates(input).map(toReviewItem);
 }
+export function buildLearningWritebackCandidate(input) {
+    const confidence = input.item.confidence === "high" ? 0.9
+        : input.item.confidence === "medium" ? 0.75
+            : input.item.confidence === "low" ? 0.55
+                : 0.65;
+    return {
+        agentId: input.agentId,
+        agentType: input.agentType,
+        actorOwner: input.actorOwner,
+        targetOwner: input.targetOwner,
+        learningTarget: "memory",
+        before: {},
+        after: {
+            content: input.item.proposedText,
+            sourceType: input.item.sourceType,
+            scope: input.item.scope,
+        },
+        beforeSummary: "",
+        afterSummary: input.item.proposedText,
+        evidenceRefs: [`memory_writeback:${input.item.id}`],
+        confidence,
+        ...(input.item.sessionId ? { sourceSessionId: input.item.sessionId } : {}),
+    };
+}
 function resolveSessionOwner(row, metadata) {
     if (["session", "short-term", "flash-feedback"].includes(row.scope))
         return row.owner_id;

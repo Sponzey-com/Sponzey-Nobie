@@ -25,6 +25,8 @@ interface StartLaunchDependencies {
     }) => string | undefined;
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile;
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
+    resolveOrchestrationMode?: Parameters<typeof buildStartPlan>[1]["resolveOrchestrationMode"];
+    buildOrchestrationPlan?: Parameters<typeof buildStartPlan>[1]["buildOrchestrationPlan"];
     ensureSessionExists: (sessionId: string, source: RootRun["source"], now: number) => void;
     createRootRun: typeof createRootRun;
     applyStartInitialization: typeof applyStartInitialization;

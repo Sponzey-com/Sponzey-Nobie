@@ -34,14 +34,24 @@ function sanitizeLedgerDetail(value, depth = 0) {
 }
 export function recordMessageLedgerEvent(input) {
     try {
-        const resolved = resolveRunLedgerContext(input.runId);
+        const resolved = resolveRunLedgerContext(input.runId ?? input.parentRunId);
         const requestGroupId = input.requestGroupId ?? resolved?.requestGroupId ?? input.runId ?? null;
         const sessionKey = input.sessionKey ?? resolved?.sessionKey ?? null;
         const channel = input.channel ?? resolved?.channel ?? "unknown";
         const threadKey = input.threadKey ?? requestGroupId ?? input.runId ?? sessionKey ?? null;
-        const detail = input.detail ? sanitizeLedgerDetail(input.detail) : undefined;
+        const detailSource = {
+            ...(input.detail ?? {}),
+            ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+            ...(input.subSessionId ? { subSessionId: input.subSessionId } : {}),
+            ...(input.agentId ? { agentId: input.agentId } : {}),
+            ...(input.teamId ? { teamId: input.teamId } : {}),
+            ...(input.deliveryKind ? { deliveryKind: input.deliveryKind } : {}),
+        };
+        const detail = Object.keys(detailSource).length > 0
+            ? sanitizeLedgerDetail(detailSource)
+            : undefined;
         const id = insertMessageLedgerEvent({
-            runId: input.runId ?? resolved?.runId ?? null,
+            runId: input.runId ?? input.parentRunId ?? resolved?.runId ?? null,
             requestGroupId,
             sessionKey,
             threadKey,
@@ -56,7 +66,7 @@ export function recordMessageLedgerEvent(input) {
         });
         if (id) {
             recordControlEventFromLedger({
-                runId: input.runId ?? resolved?.runId ?? null,
+                runId: input.runId ?? input.parentRunId ?? resolved?.runId ?? null,
                 requestGroupId,
                 sessionKey,
                 channel,
@@ -87,6 +97,12 @@ export function recordMessageLedgerEvent(input) {
         }
         return null;
     }
+}
+export function findMessageLedgerEventByIdempotencyKey(idempotencyKey) {
+    const key = idempotencyKey?.trim();
+    if (!key)
+        return undefined;
+    return getMessageLedgerEventByIdempotencyKey(key);
 }
 export function stableStringify(value) {
     if (value === undefined)
@@ -139,6 +155,9 @@ export function findDuplicateToolCall(input) {
 }
 function eventSucceeded(event) {
     return event.status === "sent" || event.status === "delivered" || event.status === "succeeded";
+}
+export function messageLedgerEventSucceeded(event) {
+    return Boolean(event && eventSucceeded(event));
 }
 function eventFailed(event) {
     return event.status === "failed" || event.status === "suppressed" || event.event_kind.endsWith("_failed") || event.event_kind === "recovery_stop_generated";

@@ -26,20 +26,45 @@ export type MessageLedgerEventKind =
   | "final_answer_suppressed"
   | "text_delivered"
   | "text_delivery_failed"
+  | "text_delivery_suppressed"
   | "artifact_delivered"
   | "artifact_delivery_failed"
+  | "approval_aggregated"
+  | "sub_session_created"
+  | "sub_session_progress_summarized"
+  | "sub_session_completed"
+  | "sub_session_failed"
+  | "sub_session_result_suppressed"
+  | "data_exchange_recorded"
+  | "capability_delegation_recorded"
+  | "feedback_retry_recorded"
+  | "learning_history_recorded"
+  | "history_restore_recorded"
+  | "agent_config_changed"
+  | "team_config_changed"
+  | "agent_config_exported"
+  | "team_config_exported"
+  | "agent_config_imported"
+  | "team_config_imported"
   | "recovery_stop_generated"
   | "delivery_finalized"
 
+export type MessageLedgerDeliveryKind = "progress" | "final" | "artifact" | "approval" | "diagnostic"
+
 export interface MessageLedgerEventInput {
   runId?: string | null
+  parentRunId?: string | null
   requestGroupId?: string | null
+  subSessionId?: string | null
+  agentId?: string | null
+  teamId?: string | null
   sessionKey?: string | null
   threadKey?: string | null
   channel?: string | null
   eventKind: MessageLedgerEventKind
   deliveryKey?: string | null
   idempotencyKey?: string | null
+  deliveryKind?: MessageLedgerDeliveryKind | null
   status: DbMessageLedgerStatus
   summary: string
   detail?: Record<string, unknown>
@@ -94,15 +119,25 @@ function sanitizeLedgerDetail(value: unknown, depth = 0): unknown {
 
 export function recordMessageLedgerEvent(input: MessageLedgerEventInput): string | null {
   try {
-    const resolved = resolveRunLedgerContext(input.runId)
+    const resolved = resolveRunLedgerContext(input.runId ?? input.parentRunId)
     const requestGroupId = input.requestGroupId ?? resolved?.requestGroupId ?? input.runId ?? null
     const sessionKey = input.sessionKey ?? resolved?.sessionKey ?? null
     const channel = input.channel ?? resolved?.channel ?? "unknown"
     const threadKey = input.threadKey ?? requestGroupId ?? input.runId ?? sessionKey ?? null
-    const detail = input.detail ? sanitizeLedgerDetail(input.detail) as Record<string, unknown> : undefined
+    const detailSource: Record<string, unknown> = {
+      ...(input.detail ?? {}),
+      ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+      ...(input.subSessionId ? { subSessionId: input.subSessionId } : {}),
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.teamId ? { teamId: input.teamId } : {}),
+      ...(input.deliveryKind ? { deliveryKind: input.deliveryKind } : {}),
+    }
+    const detail = Object.keys(detailSource).length > 0
+      ? sanitizeLedgerDetail(detailSource) as Record<string, unknown>
+      : undefined
 
     const id = insertMessageLedgerEvent({
-      runId: input.runId ?? resolved?.runId ?? null,
+      runId: input.runId ?? input.parentRunId ?? resolved?.runId ?? null,
       requestGroupId,
       sessionKey,
       threadKey,
@@ -117,7 +152,7 @@ export function recordMessageLedgerEvent(input: MessageLedgerEventInput): string
     })
     if (id) {
       recordControlEventFromLedger({
-        runId: input.runId ?? resolved?.runId ?? null,
+        runId: input.runId ?? input.parentRunId ?? resolved?.runId ?? null,
         requestGroupId,
         sessionKey,
         channel,
@@ -146,6 +181,12 @@ export function recordMessageLedgerEvent(input: MessageLedgerEventInput): string
     }
     return null
   }
+}
+
+export function findMessageLedgerEventByIdempotencyKey(idempotencyKey: string | null | undefined): DbMessageLedgerEvent | undefined {
+  const key = idempotencyKey?.trim()
+  if (!key) return undefined
+  return getMessageLedgerEventByIdempotencyKey(key)
 }
 
 export function stableStringify(value: unknown): string {
@@ -216,6 +257,10 @@ export function findDuplicateToolCall(input: {
 
 function eventSucceeded(event: DbMessageLedgerEvent): boolean {
   return event.status === "sent" || event.status === "delivered" || event.status === "succeeded"
+}
+
+export function messageLedgerEventSucceeded(event: DbMessageLedgerEvent | null | undefined): boolean {
+  return Boolean(event && eventSucceeded(event))
 }
 
 function eventFailed(event: DbMessageLedgerEvent): boolean {

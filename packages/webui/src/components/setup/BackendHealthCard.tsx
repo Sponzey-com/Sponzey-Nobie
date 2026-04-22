@@ -180,6 +180,8 @@ export function BackendHealthCard({
         ...backend.credentials,
         [key]: value,
       },
+      status: "disabled",
+      reason: undefined,
     })
   }
 

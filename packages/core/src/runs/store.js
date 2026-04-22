@@ -2,6 +2,7 @@ import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interr
 import { assertMigrationWriteAllowed } from "../db/migration-safety.js";
 import { eventBus } from "../events/index.js";
 import { getLastRuntimeManifest, refreshRuntimeManifest } from "../runtime/manifest.js";
+import { validateOrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
 import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js";
 import { finalizeDeliveryForRun, recordMessageLedgerEvent } from "./message-ledger.js";
 import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun } from "./startup-recovery.js";
@@ -108,10 +109,23 @@ function parsePromptSourceSnapshot(value) {
         return undefined;
     }
 }
+function parseOrchestrationModeFromSnapshot(snapshot) {
+    const orchestration = snapshot?.orchestration;
+    if (!orchestration || typeof orchestration !== "object" || Array.isArray(orchestration))
+        return undefined;
+    const mode = orchestration.mode;
+    return mode === "single_nobie" || mode === "orchestration" ? mode : undefined;
+}
+function parseOrchestrationPlanFromSnapshot(snapshot) {
+    const validation = validateOrchestrationPlan(snapshot?.orchestrationPlan);
+    return validation.ok ? validation.value : undefined;
+}
 function hydrateRun(row) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "run.create");
     const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot);
+    const orchestrationMode = parseOrchestrationModeFromSnapshot(promptSourceSnapshot);
+    const orchestrationPlanSnapshot = parseOrchestrationPlanFromSnapshot(promptSourceSnapshot);
     const steps = db
         .prepare(`SELECT run_id, step_key, title, step_index, status, summary, started_at, finished_at
        FROM run_steps WHERE run_id = ? ORDER BY step_index ASC`)
@@ -141,6 +155,8 @@ function hydrateRun(row) {
         ...(row.worker_runtime_kind ? { workerRuntimeKind: row.worker_runtime_kind } : {}),
         ...(row.worker_session_id ? { workerSessionId: row.worker_session_id } : {}),
         contextMode: row.context_mode ?? "full",
+        ...(orchestrationMode ? { orchestrationMode } : {}),
+        ...(orchestrationPlanSnapshot ? { orchestrationPlanSnapshot } : {}),
         delegationTurnCount: row.delegation_turn_count,
         maxDelegationTurns: row.max_delegation_turns,
         ...(row.runtime_manifest_id ? { runtimeManifestId: row.runtime_manifest_id } : {}),
@@ -486,6 +502,12 @@ export function createRootRun(params) {
         ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
         ...(params.runScope ? { runScope: params.runScope } : {}),
     });
+    const promptSourceSnapshot = {
+        ...(params.promptSourceSnapshot ?? {}),
+        ...(params.orchestrationMode && !params.promptSourceSnapshot?.orchestration
+            ? { orchestration: { mode: params.orchestrationMode } }
+            : {}),
+    };
     const tx = db.transaction(() => {
         db.prepare(`INSERT INTO root_runs
        (id, session_id, request_group_id, lineage_root_run_id, parent_run_id, run_scope, handoff_summary,
@@ -493,7 +515,7 @@ export function createRootRun(params) {
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
         total_steps, summary, can_cancel, prompt_source_snapshot, runtime_manifest_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, params.promptSourceSnapshot ? JSON.stringify(params.promptSourceSnapshot) : null, runtimeManifestId, now, now);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, Object.keys(promptSourceSnapshot).length > 0 ? JSON.stringify(promptSourceSnapshot) : null, runtimeManifestId, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);

@@ -4,6 +4,7 @@ import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
 import { CapabilityBadge } from "../components/CapabilityBadge"
+import { OrchestrationControlPanel } from "../components/orchestration/OrchestrationControlPanel"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
@@ -585,6 +586,9 @@ export function SettingsPage() {
           </div>
         )
 
+      case "agents":
+        return <OrchestrationControlPanel surface="settings" />
+
       case "release":
         return (
           <div className="space-y-4">
@@ -837,7 +841,7 @@ function MemoryQualityDashboardPanel({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("문서", "Documents")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.totals.documents ?? 0}</div>
@@ -857,6 +861,13 @@ function MemoryQualityDashboardPanel({
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">Writeback</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">pending {snapshot?.writeback.pending ?? 0}</div>
           <div className="mt-1 text-xs text-stone-500">failed {snapshot?.writeback.failed ?? 0} · completed {snapshot?.writeback.completed ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("학습/복원", "Learning/restore")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">pending {snapshot?.learningHistory.pendingReview ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">
+            auto {snapshot?.learningHistory.autoApplied ?? 0} · history {snapshot?.learningHistory.historyVersions ?? 0} · restore {snapshot?.learningHistory.restoreEvents ?? 0}
+          </div>
         </div>
       </div>
 

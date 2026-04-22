@@ -182,6 +182,10 @@ export interface AdminChannelReceiptView {
     requestGroupId: string | null;
     sessionKey: string | null;
     threadKey: string | null;
+    subSessionId: string | null;
+    agentId: string | null;
+    teamId: string | null;
+    deliveryKind: string | null;
     chatId: string | null;
     threadId: string | null;
     userId: string | null;
@@ -197,6 +201,9 @@ export interface AdminApprovalCallbackView {
     runId: string | null;
     requestGroupId: string | null;
     approvalId: string | null;
+    subSessionId: string | null;
+    agentId: string | null;
+    teamId: string | null;
     callbackId: string | null;
     buttonPayload: string | null;
     userId: string | null;
@@ -216,10 +223,72 @@ export interface AdminChannelInspector {
     approvalCallbacks: AdminApprovalCallbackView[];
     degradedReasons: string[];
 }
+export interface AdminOrchestrationPlanView {
+    id: string;
+    runId: string | null;
+    requestGroupId: string | null;
+    source: "timeline" | "ledger";
+    summary: string;
+    mode: string | null;
+    subSessionId: string | null;
+    agentId: string | null;
+    teamId: string | null;
+    createdAt: number;
+}
+export interface AdminPromptBundleSnapshotView {
+    subSessionId: string;
+    parentRunId: string;
+    requestGroupId: string | null;
+    agentId: string;
+    promptBundleId: string | null;
+    promptFragmentCount: number;
+    safetyRuleCount: number;
+    sourceProvenanceCount: number;
+    status: string;
+    updatedAt: number;
+}
+export interface AdminLatencyMetricView {
+    id: string;
+    runId: string | null;
+    requestGroupId: string | null;
+    source: "timeline" | "ledger";
+    metric: string;
+    valueMs: number;
+    summary: string;
+    createdAt: number;
+}
+export interface AdminResourceLockWaitView {
+    id: string;
+    runId: string | null;
+    requestGroupId: string | null;
+    source: "timeline" | "ledger";
+    subSessionId: string | null;
+    agentId: string | null;
+    waitMs: number | null;
+    lockSummary: string;
+    createdAt: number;
+}
+export interface AdminOrchestrationInspector {
+    summary: {
+        plans: number;
+        promptBundles: number;
+        latencyMetrics: number;
+        resourceLockWaits: number;
+    };
+    plans: AdminOrchestrationPlanView[];
+    promptBundles: {
+        items: AdminPromptBundleSnapshotView[];
+        degradedReasons: string[];
+    };
+    latencyMetrics: AdminLatencyMetricView[];
+    resourceLockWaits: AdminResourceLockWaitView[];
+    degradedReasons: string[];
+}
 export interface AdminRuntimeInspectors {
     memory: AdminMemoryInspector;
     scheduler: AdminSchedulerInspector;
     channels: AdminChannelInspector;
+    orchestration: AdminOrchestrationInspector;
 }
 interface InspectorInput {
     timeline: ControlTimeline;

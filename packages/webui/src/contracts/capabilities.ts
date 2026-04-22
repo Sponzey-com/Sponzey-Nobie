@@ -24,6 +24,7 @@ export interface FeatureCapability {
   enabled: boolean
   reason?: string
   dependsOn?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export interface CapabilityCounts {

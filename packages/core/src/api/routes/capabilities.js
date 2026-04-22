@@ -1,9 +1,11 @@
 import { authMiddleware } from "../middleware/auth.js";
 import { createCapabilities } from "../../control-plane/index.js";
+import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js";
 export function registerCapabilitiesRoute(app) {
     app.get("/api/capabilities", { preHandler: authMiddleware }, async () => {
         return {
             items: createCapabilities(),
+            orchestration: resolveOrchestrationModeSnapshotSync(),
             generatedAt: Date.now(),
         };
     });

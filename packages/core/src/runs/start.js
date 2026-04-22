@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js";
 import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js";
+import { insertDiagnosticEvent } from "../db/index.js";
 import { detectAvailableProvider, formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js";
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { createLogger } from "../logger/index.js";
@@ -93,6 +94,30 @@ export function startRootRun(params) {
         if (providerTrace)
             appendRunEvent(runId, formatProviderAuditTrace(providerTrace));
         const { startPlan } = startLaunch;
+        appendRunEvent(runId, `orchestration_mode: ${startPlan.orchestrationMode} (${startPlan.orchestrationRegistrySnapshot.reasonCode})`);
+        if (startPlan.orchestrationRegistrySnapshot.status === "degraded") {
+            try {
+                insertDiagnosticEvent({
+                    kind: "orchestration.registry.degraded",
+                    summary: startPlan.orchestrationRegistrySnapshot.reason,
+                    runId,
+                    sessionId,
+                    requestGroupId: startPlan.requestGroupId,
+                    recoveryKey: startPlan.orchestrationRegistrySnapshot.reasonCode,
+                    detail: {
+                        mode: startPlan.orchestrationRegistrySnapshot.mode,
+                        reasonCode: startPlan.orchestrationRegistrySnapshot.reasonCode,
+                        activeSubAgentCount: startPlan.orchestrationRegistrySnapshot.activeSubAgentCount,
+                    },
+                });
+            }
+            catch (error) {
+                log.warn("failed to record orchestration degraded diagnostic", {
+                    runId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
         for (const latencyEvent of startPlan.latencyEvents)
             appendRunEvent(runId, latencyEvent);
         const { entrySemantics, reconnectTarget, reconnectNeedsClarification, requestGroupId, isRootRequest, effectiveTaskProfile, effectiveContextMode, workerSessionId, } = startPlan;

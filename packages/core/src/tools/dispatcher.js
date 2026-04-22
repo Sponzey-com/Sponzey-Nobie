@@ -5,6 +5,7 @@ import { getConfig } from "../config/index.js";
 import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus } from "../runs/store.js";
 import { consumeApprovalRegistryDecision, createApprovalRegistryRequest, expireApprovalRegistryRequest, resolveApprovalRegistryDecision, } from "../runs/approval-registry.js";
 import { evaluateAndRecordToolPolicy, sanitizePolicyDenialForUser } from "../security/tool-policy.js";
+import { acquireAgentCapabilityRateLimit, evaluateAgentToolCapabilityPolicy, } from "../security/capability-isolation.js";
 import { isToolExtensionSelectable } from "../security/extension-governance.js";
 import { buildToolCallIdempotencyKey, findDuplicateToolCall, getAllowRepeatReason, isDedupeTargetTool, recordMessageLedgerEvent, } from "../runs/message-ledger.js";
 import { buildWebRetrievalPolicyDecision } from "../runs/web-retrieval-policy.js";
@@ -230,7 +231,7 @@ export class ToolDispatcher {
         });
         const startMs = Date.now();
         let result;
-        const approvalRequired = this.shouldRequireApproval(tool);
+        const approvalRequired = this.shouldRequireApproval(tool, ctx);
         let approvedBy;
         let approvalGrant;
         if (approvalRequired) {
@@ -290,6 +291,41 @@ export class ToolDispatcher {
             this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, approvedBy ?? "policy:deny");
             return result;
         }
+        const capabilityDecision = evaluateAgentToolCapabilityPolicy({
+            toolName: name,
+            riskLevel: tool.riskLevel,
+            ctx,
+        });
+        let rateLimitLease;
+        try {
+            rateLimitLease = acquireAgentCapabilityRateLimit({ decision: capabilityDecision });
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            result = {
+                success: false,
+                output: "에이전트 capability rate limit 때문에 도구 실행을 시작하지 않았습니다.",
+                error: "agent_capability_rate_limited",
+                details: {
+                    kind: "tool_policy_denied",
+                    reasonCode: "agent_capability_rate_limited",
+                    message,
+                },
+            };
+            recordMessageLedgerEvent({
+                runId: ctx.runId,
+                requestGroupId,
+                sessionKey: ctx.sessionId,
+                channel: ctx.source,
+                eventKind: "tool_failed",
+                idempotencyKey: `${executionLedgerKey}:rate-limit-denied`,
+                status: "failed",
+                summary: `${name} capability rate limited`,
+                detail: { toolName: name, reasonCode: "agent_capability_rate_limited", message },
+            });
+            this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, approvedBy ?? "policy:rate_limit");
+            return result;
+        }
         try {
             result = await tool.execute(params, ctx);
             if (webRetrievalPolicy) {
@@ -306,6 +342,9 @@ export class ToolDispatcher {
             const msg = err instanceof Error ? err.message : String(err);
             log.error(`Tool "${name}" threw an error: ${msg}`);
             result = { success: false, output: `Tool error: ${msg}`, error: msg };
+        }
+        finally {
+            rateLimitLease?.release();
         }
         const durationMs = Date.now() - startMs;
         eventBus.emit("tool.after", {
@@ -346,11 +385,16 @@ export class ToolDispatcher {
         }
         return "실행 내용을 확인한 뒤 승인하거나 취소해 주세요.";
     }
-    shouldRequireApproval(tool) {
+    shouldRequireApproval(tool, ctx) {
         const approvalMode = getConfig().security.approvalMode;
         if (approvalMode === "off")
             return false;
-        return tool.requiresApproval || APPROVAL_REQUIRED_TOOL_NAMES.has(tool.name);
+        const capabilityDecision = evaluateAgentToolCapabilityPolicy({
+            toolName: tool.name,
+            riskLevel: tool.riskLevel,
+            ctx,
+        });
+        return tool.requiresApproval || APPROVAL_REQUIRED_TOOL_NAMES.has(tool.name) || capabilityDecision.approvalRequired;
     }
     async requestApproval(toolName, params, ctx, riskLevel) {
         const ownerKey = this.getApprovalOwnerKey(ctx.runId);
@@ -401,6 +445,10 @@ export class ToolDispatcher {
             metadata: {
                 sessionId: ctx.sessionId,
                 workDir: ctx.workDir,
+                ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
+                ...(ctx.capabilityDelegationId ? { capabilityDelegationId: ctx.capabilityDelegationId } : {}),
+                ...(ctx.secretScopeId ? { secretScopeId: ctx.secretScopeId } : {}),
+                ...(ctx.auditId ? { auditId: ctx.auditId } : {}),
             },
         });
         log.info(`requesting ${kind} approvalId=${approval.id} runId=${ctx.runId} tool=${toolName}`);
@@ -413,7 +461,15 @@ export class ToolDispatcher {
             idempotencyKey: `approval:${approval.id}:requested`,
             status: "pending",
             summary,
-            detail: { approvalId: approval.id, toolName, kind, expiresAt },
+            detail: {
+                approvalId: approval.id,
+                toolName,
+                kind,
+                riskLevel,
+                expiresAt,
+                ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
+                ...(ctx.capabilityDelegationId ? { capabilityDelegationId: ctx.capabilityDelegationId } : {}),
+            },
         });
         this.pendingInteractionKinds.set(ctx.runId, { approvalId: approval.id, toolName, kind, stepKey });
         appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`);
@@ -456,10 +512,12 @@ export class ToolDispatcher {
             eventBus.emit("approval.request", {
                 approvalId: approval.id,
                 runId: ctx.runId,
+                ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
                 toolName,
                 params,
                 kind,
                 ...(guidance ? { guidance } : {}),
+                riskSummary: `${toolName}:${riskLevel}`,
                 expiresAt,
                 resolve: (decision, reason = "user") => {
                     if (!resolved) {

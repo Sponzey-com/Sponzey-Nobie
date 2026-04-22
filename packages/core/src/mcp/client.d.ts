@@ -1,3 +1,4 @@
+import type { AgentCapabilityCallContext } from "../security/capability-isolation.js";
 export type McpTransport = "stdio" | "http";
 export interface McpServerConfig {
     enabled?: boolean;
@@ -27,6 +28,32 @@ export interface McpToolCallResult {
     details: unknown;
     isError: boolean;
 }
+export type McpAgentCallContext = AgentCapabilityCallContext;
+export interface McpToolCallPayload extends Record<string, unknown> {
+    name: string;
+    arguments: Record<string, unknown>;
+    _meta?: {
+        nobie: {
+            agent_id: string;
+            session_id: string;
+            permission_profile: {
+                profile_id: string;
+                risk_ceiling: string;
+                approval_required_from: string;
+                allow_external_network: boolean;
+                allow_filesystem_write: boolean;
+                allow_shell_execution: boolean;
+                allow_screen_control: boolean;
+            };
+            secret_scope: string;
+            audit_id: string;
+            run_id?: string;
+            request_group_id?: string;
+            capability_delegation_id?: string;
+        };
+    };
+}
+export declare function buildMcpToolCallPayload(name: string, args: Record<string, unknown>, context?: McpAgentCallContext): McpToolCallPayload;
 export declare class McpStdioClient {
     private readonly name;
     private readonly config;
@@ -44,7 +71,7 @@ export declare class McpStdioClient {
     });
     initialize(): Promise<void>;
     listTools(): Promise<McpDiscoveredTool[]>;
-    callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolCallResult>;
+    callTool(name: string, args: Record<string, unknown>, contextOrSignal?: McpAgentCallContext | AbortSignal, signal?: AbortSignal): Promise<McpToolCallResult>;
     close(): Promise<void>;
     private ensureProcess;
     private consumeFrames;

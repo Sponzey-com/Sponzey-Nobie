@@ -10,6 +10,8 @@ import {
 import { createHash } from "node:crypto"
 import { storeMemoryDocument } from "./store.js"
 import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag, type TrustTag } from "../security/trust-boundary.js"
+import type { JsonObject } from "../contracts/index.js"
+import type { AgentEntityType, LearningEvent, OwnerScope } from "../contracts/sub-agent-orchestration.js"
 
 export type RunWritebackKind = "instruction" | "success" | "failure" | "tool_result" | "flash_feedback"
 
@@ -60,6 +62,22 @@ export interface MemoryWritebackReviewResult {
   documentId?: string
   action: MemoryWritebackReviewAction
   reason?: string
+}
+
+export interface LearningWritebackCandidate {
+  agentId: string
+  agentType: AgentEntityType
+  actorOwner: OwnerScope
+  targetOwner: OwnerScope
+  learningTarget: LearningEvent["learningTarget"]
+  before: JsonObject
+  after: JsonObject
+  beforeSummary: string
+  afterSummary: string
+  evidenceRefs: string[]
+  confidence: number
+  sourceSessionId?: string
+  sourceSubSessionId?: string
 }
 
 export interface BuildRunWritebackCandidatesParams {
@@ -479,6 +497,38 @@ export function listMemoryWritebackReviewItems(input: {
   limit?: number
 } = {}): MemoryWritebackReviewItem[] {
   return listMemoryWritebackCandidates(input).map(toReviewItem)
+}
+
+export function buildLearningWritebackCandidate(input: {
+  item: MemoryWritebackReviewItem
+  agentId: string
+  agentType: AgentEntityType
+  actorOwner: OwnerScope
+  targetOwner: OwnerScope
+}): LearningWritebackCandidate {
+  const confidence =
+    input.item.confidence === "high" ? 0.9
+      : input.item.confidence === "medium" ? 0.75
+        : input.item.confidence === "low" ? 0.55
+          : 0.65
+  return {
+    agentId: input.agentId,
+    agentType: input.agentType,
+    actorOwner: input.actorOwner,
+    targetOwner: input.targetOwner,
+    learningTarget: "memory",
+    before: {},
+    after: {
+      content: input.item.proposedText,
+      sourceType: input.item.sourceType,
+      scope: input.item.scope,
+    },
+    beforeSummary: "",
+    afterSummary: input.item.proposedText,
+    evidenceRefs: [`memory_writeback:${input.item.id}`],
+    confidence,
+    ...(input.item.sessionId ? { sourceSessionId: input.item.sessionId } : {}),
+  }
 }
 
 function resolveSessionOwner(row: DbMemoryWritebackCandidate, metadata: Record<string, unknown>): string | undefined {

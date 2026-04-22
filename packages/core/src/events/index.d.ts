@@ -32,6 +32,19 @@ export interface NobieEvents {
         overallStatus: "ok" | "warning" | "blocked" | "unknown";
         runtimeManifestId: string;
     };
+    "control.event": {
+        id: string;
+        at: number;
+        eventType: string;
+        correlationId: string;
+        runId: string | null;
+        requestGroupId: string | null;
+        sessionKey: string | null;
+        component: string;
+        severity: "debug" | "info" | "warning" | "error";
+        summary: string;
+        detail?: Record<string, unknown>;
+    };
     "agent.start": {
         sessionId: string;
         runId: string;
@@ -115,10 +128,15 @@ export interface NobieEvents {
     "approval.request": {
         approvalId?: string;
         runId: string;
+        parentRunId?: string;
+        subSessionId?: string;
+        agentId?: string;
+        teamId?: string;
         toolName: string;
         params: unknown;
         kind?: ApprovalKind;
         guidance?: string;
+        riskSummary?: string;
         expiresAt?: number | null;
         resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void;
     };

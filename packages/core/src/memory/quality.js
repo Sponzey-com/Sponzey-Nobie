@@ -124,6 +124,16 @@ function readFlashFeedbackMetric(now) {
         highSeverityActive: countRows("flash_feedback", "severity = 'high' AND expires_at > ?", [now]),
     };
 }
+function readLearningHistoryMetric() {
+    return {
+        pendingReview: countRows("learning_events", "approval_state = ?", ["pending_review"]),
+        autoApplied: countRows("learning_events", "approval_state = ?", ["auto_applied"]),
+        appliedByUser: countRows("learning_events", "approval_state = ?", ["applied_by_user"]),
+        rejected: countRows("learning_events", "approval_state = ?", ["rejected"]),
+        historyVersions: countRows("profile_history_versions"),
+        restoreEvents: countRows("profile_restore_events"),
+    };
+}
 function buildRetrievalPolicySnapshot() {
     return {
         fastPathBlocksLongTerm: true,
@@ -164,6 +174,7 @@ export function buildMemoryQualitySnapshot(input = {}) {
     });
     const writeback = readWritebackMetric();
     const flashFeedback = readFlashFeedbackMetric(now);
+    const learningHistory = readLearningHistoryMetric();
     const lastFailure = writeback.lastFailure ?? scopes.find((scope) => scope.lastFailure)?.lastFailure ?? null;
     const totals = scopes.reduce((acc, scope) => ({
         documents: acc.documents + scope.documents,
@@ -183,6 +194,7 @@ export function buildMemoryQualitySnapshot(input = {}) {
         totals,
         writeback,
         flashFeedback,
+        learningHistory,
         retrievalPolicy: buildRetrievalPolicySnapshot(),
         lastFailure,
     };

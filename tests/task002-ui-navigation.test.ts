@@ -6,6 +6,7 @@ describe("task002 UI navigation policy", () => {
     expect(getUiNavigation("beginner", false).map((item) => item.path)).toEqual([
       "/chat",
       "/setup",
+      "/agents",
       "/tasks",
       "/status",
     ])
@@ -21,6 +22,7 @@ describe("task002 UI navigation policy", () => {
       "/advanced/schedules",
       "/advanced/memory",
       "/advanced/tools",
+      "/advanced/agents",
       "/advanced/dashboard",
       "/advanced/release",
       "/advanced/settings",

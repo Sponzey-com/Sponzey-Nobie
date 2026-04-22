@@ -285,11 +285,12 @@ describe("runs delivery helpers", () => {
     const onChunk = vi.fn().mockResolvedValue(undefined)
 
     const receipt = await emitAssistantTextDelivery({
-      runId: "run-1",
-      sessionId: "session-1",
-      text: "안녕하세요",
+      runId: "run-delivery-assistant-text",
+      sessionId: "session-delivery-assistant-text",
+      text: "안녕하세요 task014",
       source: "telegram",
       onChunk,
+      force: true,
       dependencies: {
         now: () => 123,
         createId: () => "msg-1",
@@ -305,11 +306,11 @@ describe("runs delivery helpers", () => {
     expect(receipt.textDelivered).toBe(true)
     expect(receipt.doneDelivered).toBe(true)
     expect(insertMessage).toHaveBeenCalledTimes(1)
-    expect(emitStart).toHaveBeenCalledWith({ sessionId: "session-1", runId: "run-1" })
-    expect(emitStream).toHaveBeenCalledWith({ sessionId: "session-1", runId: "run-1", delta: "안녕하세요" })
-    expect(emitEnd).toHaveBeenCalledWith({ sessionId: "session-1", runId: "run-1", durationMs: 0 })
+    expect(emitStart).toHaveBeenCalledWith({ sessionId: "session-delivery-assistant-text", runId: "run-delivery-assistant-text" })
+    expect(emitStream).toHaveBeenCalledWith({ sessionId: "session-delivery-assistant-text", runId: "run-delivery-assistant-text", delta: "안녕하세요 task014" })
+    expect(emitEnd).toHaveBeenCalledWith({ sessionId: "session-delivery-assistant-text", runId: "run-delivery-assistant-text", durationMs: 0 })
     expect(onChunk).toHaveBeenCalledTimes(2)
-    expect(writeReplyLog).toHaveBeenCalledWith("telegram", "안녕하세요")
+    expect(writeReplyLog).toHaveBeenCalledWith("telegram", "안녕하세요 task014")
   })
 
   it("classifies assistant text delivery failures separately from execution success", () => {
