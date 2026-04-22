@@ -90,6 +90,10 @@ export function createWebUiChunkDeliveryHandler(params) {
                 textDeliveries: [{
                         channel: "webui",
                         text: deliveredText,
+                        ...(params.deliveryKind ? { deliveryKind: params.deliveryKind } : {}),
+                        ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+                        ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+                        ...(params.agentId ? { agentId: params.agentId } : {}),
                     }],
             };
         }

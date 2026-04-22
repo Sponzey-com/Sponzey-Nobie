@@ -1,4 +1,5 @@
 import { type NobieConfig } from "../config/index.js";
+import type { CapabilityPolicy, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 import { type McpTransport } from "./client.js";
 export interface McpToolStatus {
     name: string;
@@ -24,12 +25,14 @@ export interface McpSummary {
     toolCount: number;
     requiredFailures: number;
 }
+export declare function filterMcpStatusesForAgentAllowlist(statuses: McpServerStatus[], input: SkillMcpAllowlist | CapabilityPolicy): McpServerStatus[];
 export declare function toRegisteredToolName(serverName: string, toolName: string): string;
 declare class McpRegistry {
     private readonly entries;
     loadFromConfig(config?: NobieConfig): Promise<void>;
     reloadFromConfig(): Promise<McpServerStatus[]>;
     getStatuses(): McpServerStatus[];
+    getAgentScopedStatuses(input: SkillMcpAllowlist | CapabilityPolicy): McpServerStatus[];
     getSummary(): McpSummary;
     closeAll(): Promise<void>;
     private loadServer;

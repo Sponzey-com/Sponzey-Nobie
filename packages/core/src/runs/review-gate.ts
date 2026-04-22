@@ -1,4 +1,5 @@
 import type { TaskExecutionSemantics } from "../agent/intake.js"
+import type { SubAgentResultReview } from "../agent/sub-agent-result-review.js"
 import { deriveCompletionStageState, type CompletionStageState } from "./completion-state.js"
 import type { DeliveryOutcome } from "./delivery.js"
 import type { SuccessfulToolEvidence } from "./recovery.js"
@@ -7,6 +8,12 @@ export interface ReviewGateDecision {
   kind: "skip" | "run"
   state: CompletionStageState
   reason?: string
+}
+
+export interface SubSessionReviewGateDecision {
+  kind: "allow_parent_completion" | "wait_for_revision" | "manual_action_required"
+  blockedSubSessionIds: string[]
+  reasonCodes: string[]
 }
 
 export function decideReviewGate(params: {
@@ -72,5 +79,29 @@ export function decideReviewGate(params: {
   return {
     kind: "run",
     state,
+  }
+}
+
+export function decideSubSessionReviewGate(reviews: Array<{
+  subSessionId: string
+  review: Pick<SubAgentResultReview, "accepted" | "canRetry" | "normalizedFailureKey" | "manualActionReason">
+}>): SubSessionReviewGateDecision {
+  const blocked = reviews.filter((item) => !item.review.accepted)
+  if (blocked.length === 0) {
+    return {
+      kind: "allow_parent_completion",
+      blockedSubSessionIds: [],
+      reasonCodes: ["all_sub_session_results_accepted"],
+    }
+  }
+  const needsManualAction = blocked.some((item) => !item.review.canRetry)
+  return {
+    kind: needsManualAction ? "manual_action_required" : "wait_for_revision",
+    blockedSubSessionIds: blocked.map((item) => item.subSessionId),
+    reasonCodes: [...new Set(blocked.map((item) =>
+      item.review.manualActionReason
+      ?? item.review.normalizedFailureKey
+      ?? "sub_session_result_not_accepted",
+    ))].sort(),
   }
 }

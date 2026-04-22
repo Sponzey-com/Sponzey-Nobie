@@ -60,10 +60,15 @@ export interface NobieEvents {
   "approval.request": {
     approvalId?: string
     runId: string
+    parentRunId?: string
+    subSessionId?: string
+    agentId?: string
+    teamId?: string
     toolName: string
     params: unknown
     kind?: ApprovalKind
     guidance?: string
+    riskSummary?: string
     expiresAt?: number | null
     resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
   }

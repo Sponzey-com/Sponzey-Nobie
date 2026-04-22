@@ -44,6 +44,8 @@ interface StartLaunchDependencies {
   }) => string | undefined
   normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
+  resolveOrchestrationMode?: Parameters<typeof buildStartPlan>[1]["resolveOrchestrationMode"]
+  buildOrchestrationPlan?: Parameters<typeof buildStartPlan>[1]["buildOrchestrationPlan"]
   ensureSessionExists: (sessionId: string, source: RootRun["source"], now: number) => void
   createRootRun: typeof createRootRun
   applyStartInitialization: typeof applyStartInitialization
@@ -136,9 +138,16 @@ export async function prepareStartLaunch(
     buildWorkerSessionId: dependencies.buildWorkerSessionId,
     normalizeTaskProfile: dependencies.normalizeTaskProfile,
     findLatestWorkerSessionRun: dependencies.findLatestWorkerSessionRun,
+    ...(dependencies.resolveOrchestrationMode ? { resolveOrchestrationMode: dependencies.resolveOrchestrationMode } : {}),
+    ...(dependencies.buildOrchestrationPlan ? { buildOrchestrationPlan: dependencies.buildOrchestrationPlan } : {}),
   } as Parameters<typeof buildStartPlan>[1])
 
   dependencies.ensureSessionExists(params.sessionId, params.source, params.now)
+  const promptSourceSnapshot = {
+    ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
+    ...(startPlan.orchestrationRegistrySnapshot ? { orchestration: startPlan.orchestrationRegistrySnapshot } : {}),
+    ...(startPlan.orchestrationPlanSnapshot ? { orchestrationPlan: startPlan.orchestrationPlanSnapshot } : {}),
+  }
 
   const run = dependencies.createRootRun({
     id: params.runId,
@@ -155,12 +164,11 @@ export async function prepareStartLaunch(
     ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
     taskProfile: startPlan.effectiveTaskProfile,
     delegationTurnCount: startPlan.initialDelegationTurnCount,
+    orchestrationMode: startPlan.orchestrationMode ?? "single_nobie",
     ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
     ...(startPlan.workerSessionId ? { workerSessionId: startPlan.workerSessionId } : {}),
     contextMode: startPlan.effectiveContextMode,
-    ...(params.inboundMessage
-      ? { promptSourceSnapshot: { inboundMessage: params.inboundMessage } }
-      : {}),
+    ...(Object.keys(promptSourceSnapshot).length > 0 ? { promptSourceSnapshot } : {}),
   })
 
   const startInitialization = dependencies.applyStartInitialization({

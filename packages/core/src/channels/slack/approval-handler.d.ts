@@ -5,6 +5,12 @@ export interface SlackApprovalMessenger {
         runId: string;
         text: string;
     }): Promise<string | void>;
+    updateApprovalRequest?(params: {
+        channelId: string;
+        threadTs: string;
+        runId: string;
+        text: string;
+    }): Promise<void>;
 }
 export declare function setActiveSlackConversationForSession(sessionId: string, channelId: string, userId: string, threadTs: string): void;
 export declare function clearActiveSlackConversationForSession(sessionId: string): void;

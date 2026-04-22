@@ -78,6 +78,79 @@ export type {
   ShadowCompareResult,
 } from "./runtime/rollout-safety.js"
 export {
+  AGENT_PROMPT_BUNDLE_VERSION,
+  buildAgentPromptBundle,
+  buildAgentPromptBundleCacheKey,
+  redactPromptSecrets,
+  renderAgentPromptBundleText,
+} from "./orchestration/prompt-bundle.js"
+export {
+  ResourceLockManager,
+  SubSessionRunner,
+  buildSubSessionContract,
+  classifySubSessionRecovery,
+  createSubSessionRunner,
+  createTextResultReport,
+  planSubSessionExecutionWaves,
+  recoverInterruptedSubSessions,
+  runParallelSubSessionGroup,
+} from "./orchestration/sub-session-runner.js"
+export {
+  createOrchestrationPlanner,
+  buildDefaultStructuredTaskScope,
+  buildOrchestrationPlan,
+} from "./orchestration/planner.js"
+export {
+  buildOrchestrationRegistrySnapshot,
+  createAgentRegistryService,
+  createTeamRegistryService,
+} from "./orchestration/registry.js"
+export {
+  orchestrationCapabilityStatus,
+  resolveOrchestrationModeSnapshot,
+  resolveOrchestrationModeSnapshotSync,
+} from "./orchestration/mode.js"
+export type {
+  AgentPromptBundleBuildInput,
+  AgentPromptBundleBuildResult,
+  ImportedPromptFragmentInput,
+} from "./orchestration/prompt-bundle.js"
+export type {
+  ParallelSubSessionGroupRunResult,
+  RunSubSessionInput,
+  SubSessionExecutionControls,
+  SubSessionExecutionHandler,
+  SubSessionExecutionWave,
+  SubSessionRecoveryDecision,
+  SubSessionRecoveryResult,
+  SubSessionRunOutcome,
+  SubSessionRuntimeAgentSnapshot,
+  SubSessionRuntimeDependencies,
+  SubSessionWorkItem,
+} from "./orchestration/sub-session-runner.js"
+export type {
+  OrchestrationCandidateScore,
+  OrchestrationPlanBuildResult,
+  OrchestrationPlannerInput,
+  OrchestrationPlannerIntent,
+} from "./orchestration/planner.js"
+export type {
+  AgentFailureRateSnapshot,
+  AgentRegistryEntry,
+  AgentRuntimeLoadSnapshot,
+  AgentSkillMcpSummary,
+  OrchestrationRegistrySnapshot,
+  RegistryServiceDependencies,
+  TeamRegistryEntry,
+} from "./orchestration/registry.js"
+export type {
+  OrchestrationModeReasonCode,
+  OrchestrationModeSnapshot,
+  OrchestrationRegistryAgentSnapshot,
+  OrchestrationRuntimeStatus,
+  RegistryLoadResult,
+} from "./orchestration/mode.js"
+export {
   MIGRATION_ROLLBACK_RUNBOOK_REF,
   assertMigrationWriteAllowed,
   beginMigrationLock,
@@ -130,11 +203,22 @@ export type {
   ReleasePackageWriteResult,
   ReleasePipelinePlan,
   ReleasePipelineStep,
+  ReleaseNoteSummary,
   ReleaseRollbackRunbook,
   ReleaseTargetPlatform,
   ReleaseUpdatePreflightCheck,
   ReleaseUpdatePreflightReport,
 } from "./release/package.js"
+
+export { RELEASE_PERFORMANCE_TARGETS, buildReleasePerformanceSummary } from "./release/performance-gate.js"
+export type {
+  ReleasePerformanceCounterResult,
+  ReleasePerformanceGateStatus,
+  ReleasePerformanceMetricResult,
+  ReleasePerformanceSummary,
+  ReleasePerformanceTarget,
+  ReleasePerformanceTargetKind,
+} from "./release/performance-gate.js"
 
 // Logger
 export { createLogger, logger } from "./logger/index.js"
@@ -230,7 +314,10 @@ export {
   prepareChatContext,
   pruneMessagesForContext,
   runContextPreflight,
+  validateAgentPromptBundleContextScope,
 } from "./runs/context-preflight.js"
+export { buildDataExchangeJournalRecord } from "./runs/journaling.js"
+export type { DataExchangeJournalParams } from "./runs/journaling.js"
 export type {
   ContextPreflightBreakdown,
   ContextPreflightMetadata,
@@ -238,7 +325,47 @@ export type {
   ContextPreflightResult,
   ContextPreflightStatus,
   ContextPruningDecision,
+  PromptBundleContextMemoryRef,
+  PromptBundleContextScopeValidation,
 } from "./runs/context-preflight.js"
+export {
+  buildFeedbackRequest,
+  collectResultReviewIssues,
+  decideSubSessionCompletionIntegration,
+  getSubAgentResultRetryBudgetLimit,
+  normalizeResultReviewFailureKey,
+  reviewSubAgentResult,
+} from "./agent/sub-agent-result-review.js"
+export type {
+  SubAgentResultReview,
+  SubAgentResultReviewInput,
+  SubAgentResultReviewIssue,
+  SubAgentResultReviewIssueCode,
+  SubAgentRetryClass,
+  SubSessionCompletionIntegrationDecision,
+} from "./agent/sub-agent-result-review.js"
+export {
+  canRetrySubSessionRevision,
+  getSubSessionRevisionBudgetLimit,
+} from "./runs/recovery-budget.js"
+export type {
+  SubSessionRevisionBudgetClass,
+} from "./runs/recovery-budget.js"
+export {
+  decideSubSessionReviewGate,
+} from "./runs/review-gate.js"
+export type {
+  SubSessionReviewGateDecision,
+} from "./runs/review-gate.js"
+export {
+  buildSubSessionFeedbackCycleDirective,
+} from "./runs/review-cycle-pass.js"
+export type {
+  SubSessionFeedbackCycleDirective,
+} from "./runs/review-cycle-pass.js"
+export {
+  decideSubSessionCompletionPass,
+} from "./runs/completion-pass.js"
 export {
   activateExtensionWithTrustPolicy,
   buildExtensionRegistrySnapshot,
@@ -493,6 +620,13 @@ export {
 } from "./contracts/index.js"
 export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js"
 export {
+  SUB_AGENT_CONTRACT_SCHEMA_VERSION,
+  validateAgentConfig,
+  validateAgentPromptBundle,
+  validateOrchestrationPlan,
+  validateTeamConfig,
+} from "./contracts/sub-agent-orchestration.js"
+export {
   findScheduleCandidatesByContract,
   parseScheduleContractJson,
   scheduleContractDestinationEquals,
@@ -530,6 +664,57 @@ export type {
   ToolTargetContract,
   ToolTargetKind,
 } from "./contracts/index.js"
+export type {
+  AgentConfig,
+  AgentEntityType,
+  AgentPromptBundle,
+  AgentPromptBundleValidationSummary,
+  AgentPromptFragment,
+  AgentPromptFragmentKind,
+  AgentPromptFragmentStatus,
+  AgentStatus,
+  BaseAgentConfig,
+  CapabilityDelegationRequest,
+  CapabilityPolicy,
+  CapabilityRiskLevel,
+  CommandRequest,
+  DataExchangePackage,
+  DataExchangeRetentionPolicy,
+  DependencyEdgeContract,
+  ErrorReport,
+  ExpectedOutputContract,
+  FeedbackRequest,
+  HistoryVersion,
+  LearningApprovalState,
+  LearningEvent,
+  MemoryPolicy,
+  NobieConfig as NobieAgentConfig,
+  OrchestrationMode,
+  OrchestrationPlan,
+  OrchestrationTask,
+  OwnerScope,
+  ParallelSubSessionGroup,
+  ParentLinkage,
+  PermissionProfile,
+  ProgressEvent,
+  RelationshipEdgeType,
+  RelationshipEntityType,
+  RelationshipGraphEdge,
+  RelationshipGraphNode,
+  ResourceLockContract,
+  ResourceLockKind,
+  RestoreEvent,
+  ResultReport,
+  RuntimeIdentity,
+  SessionContract,
+  SkillMcpAllowlist,
+  StructuredTaskScope,
+  SubAgentConfig,
+  SubSessionContract,
+  SubSessionStatus,
+  TaskExecutionKind,
+  TeamConfig,
+} from "./contracts/sub-agent-orchestration.js"
 export type {
   FindScheduleCandidatesByContractInput,
   ScheduleCandidate,
@@ -610,10 +795,51 @@ export {
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js"
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./tools/index.js"
 
+// Capability isolation
+export {
+  acquireAgentCapabilityRateLimit,
+  buildCapabilityApprovalAggregationEvent,
+  buildCapabilityDelegationRequest,
+  buildCapabilityResultDataExchange,
+  createCapabilityPolicySnapshot,
+  evaluateAgentToolCapabilityPolicy,
+  isMcpServerAllowed,
+  isToolAllowedBySkillMcpAllowlist,
+  parseMcpRegisteredToolName,
+  persistCapabilityResultDataExchange,
+  recordCapabilityDelegationRequest,
+  resetAgentCapabilityRateLimitsForTest,
+  resolveToolCapabilityRisk,
+  toAgentCapabilityCallContext,
+} from "./security/capability-isolation.js"
+export type {
+  AgentCapabilityCallContext,
+  AgentCapabilityPolicyDecision,
+  AgentCapabilityRateLimitLease,
+  CapabilityApprovalAggregationEvent,
+  CapabilityPolicySnapshot,
+  McpRegisteredToolRef,
+} from "./security/capability-isolation.js"
+
 // Agent
 export { runAgent } from "./agent/index.js"
 export type { AgentChunk, RunAgentParams } from "./agent/index.js"
 export { buildTaskIntakeSystemPrompt } from "./agent/intake-prompt.js"
+export {
+  approveLearningEvent,
+  buildHistoryVersion,
+  dbHistoryVersionToContract,
+  dbLearningEventToContract,
+  dbRestoreEventToContract,
+  dryRunRestoreHistoryVersion,
+  evaluateLearningPolicy,
+  listAgentLearningEvents,
+  listHistoryVersions,
+  listRestoreEvents,
+  recordHistoryVersion,
+  recordLearningEvent,
+  restoreHistoryVersion,
+} from "./agent/learning.js"
 export type {
   TaskIntakeActionType,
   TaskIntakeIntentCategory,
@@ -622,6 +848,20 @@ export type {
   TaskIntakePromptOptions,
   TaskIntakeTaskProfile,
 } from "./agent/intake-prompt.js"
+export type {
+  ApproveLearningEventInput,
+  ApproveLearningEventResult,
+  HistoryVersionInput,
+  LearningEventServiceInput,
+  LearningEventServiceResult,
+  LearningPolicyDecision,
+  LearningPolicyInput,
+  LearningPolicyReasonCode,
+  LearningRiskLevel,
+  RestoreDryRunResult,
+  RestoreHistoryVersionInput,
+  RestoreHistoryVersionResult,
+} from "./agent/learning.js"
 
 // Instructions
 export { discoverInstructionChain } from "./instructions/discovery.js"
@@ -633,10 +873,37 @@ export type { MergedInstructionBundle } from "./instructions/merge.js"
 export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMemories, buildMemoryContext } from "./memory/store.js"
 export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery } from "./memory/evaluation.js"
 export { diagnoseVectorEmbeddingRows } from "./memory/search.js"
-export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js"
+export { buildLearningWritebackCandidate, listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js"
+export {
+  MemoryIsolationError,
+  assertMemoryAccessAllowed,
+  buildDataExchangeContextMemoryRefs,
+  buildMemorySummaryDataExchange,
+  createDataExchangePackage,
+  dbAgentDataExchangeToPackage,
+  getDataExchangePackage,
+  isDataExchangeUsableForMemoryAccess,
+  listActiveDataExchangePackagesForRecipient,
+  persistDataExchangePackage,
+  prepareAgentMemoryWritebackQueueInput,
+  searchOwnerScopedMemory,
+  storeOwnerScopedMemory,
+  validateDataExchangePackage,
+} from "./memory/isolation.js"
 export type { MemoryRetrievalEvaluationFixture, MemoryRetrievalEvaluationMode, MemoryRetrievalEvaluationReport } from "./memory/evaluation.js"
 export type { MemoryVectorDegradedReason, MemoryVectorDiagnostic } from "./memory/search.js"
-export type { MemoryWritebackReviewAction, MemoryWritebackReviewItem, MemoryWritebackReviewResult, MemoryWritebackSafetyResult } from "./memory/writeback.js"
+export type { LearningWritebackCandidate, MemoryWritebackReviewAction, MemoryWritebackReviewItem, MemoryWritebackReviewResult, MemoryWritebackSafetyResult } from "./memory/writeback.js"
+export type {
+  CreateDataExchangePackageInput,
+  DataExchangeValidationIssue,
+  DataExchangeValidationIssueCode,
+  DataExchangeValidationResult,
+  MemoryAccessMode,
+  MemoryVisibility,
+  OwnerScopedMemorySearchParams,
+  OwnerScopedMemorySearchResult,
+  StoreOwnerScopedMemoryParams,
+} from "./memory/isolation.js"
 export type { PromptSourceBackupResult, PromptSourceDiffResult, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceRollbackResult, PromptSourceWriteResult } from "./memory/nobie-md.js"
 export type { PromptImpactScenarioResult, PromptRegressionIssue, PromptRegressionLocale, PromptResponsibilityRuleResult, PromptSourceRegressionResult } from "./memory/prompt-regression.js"
 export {
@@ -668,9 +935,10 @@ export { pluginLoader, PluginLoader } from "./plugins/loader.js"
 export type { NobiePlugin, WizbyPlugin, HowiePlugin, PluginContext, PluginMeta } from "./plugins/types.js"
 
 // MCP
-export { mcpRegistry } from "./mcp/registry.js"
-export { McpStdioClient } from "./mcp/client.js"
+export { filterMcpStatusesForAgentAllowlist, mcpRegistry } from "./mcp/registry.js"
+export { McpStdioClient, buildMcpToolCallPayload } from "./mcp/client.js"
 export type { McpServerStatus, McpSummary, McpToolStatus } from "./mcp/registry.js"
+export type { McpAgentCallContext, McpToolCallPayload } from "./mcp/client.js"
 
 // MQTT
 export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/broker.js"

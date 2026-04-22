@@ -1,6 +1,6 @@
 import { pickUiText, type UiLanguage } from "../stores/uiLanguage"
 
-export type AdvancedSettingsTabId = "ai" | "channels" | "yeonjang" | "memory" | "schedules" | "tool_permissions" | "release"
+export type AdvancedSettingsTabId = "ai" | "channels" | "yeonjang" | "memory" | "schedules" | "tool_permissions" | "agents" | "release"
 
 export interface AdvancedSettingsTabDefinition {
   id: AdvancedSettingsTabId
@@ -17,6 +17,7 @@ export const ADVANCED_SETTINGS_TAB_ORDER: AdvancedSettingsTabId[] = [
   "memory",
   "schedules",
   "tool_permissions",
+  "agents",
   "release",
 ]
 
@@ -64,6 +65,13 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
       description: t("승인 정책, 외부 도구 연결, 활성 지침을 관리합니다.", "Manage approval policy, external tool connections, and active instructions."),
       capabilityKey: "settings.control",
       savesDraft: true,
+    },
+    {
+      id: "agents",
+      label: t("에이전트/팀", "Agents and teams"),
+      description: t("노비와 서브 에이전트, 팀, 관계도, 스킬/MCP allowlist를 관리합니다.", "Manage Nobie, sub-agents, teams, relationship graphs, and skill/MCP allowlists."),
+      capabilityKey: "settings.control",
+      savesDraft: false,
     },
     {
       id: "release",

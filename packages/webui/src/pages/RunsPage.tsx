@@ -29,6 +29,7 @@ import { buildTaskMonitorCards, describeTaskChecklistProgress, describeTaskDeliv
 import type { TaskMonitorCard, TaskMonitorViewMode } from "../lib/task-monitor"
 import type { DoctorReport, DoctorStatus } from "../contracts/doctor"
 import type { OperationsHealthItem, OperationsSummary } from "../contracts/operations"
+import type { RootRun } from "../contracts/runs"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useRunsStore } from "../stores/runs"
 
@@ -367,6 +368,64 @@ function TaskDiagnosticsPanel({
           {continuity?.failedRecoveryKey ? <div>{text("반복 중단 키", "Duplicate stop key")}: {displayText(continuity.failedRecoveryKey)}</div> : null}
           {diagnostics?.recoveryEvents.length ? <div>{text("복구 기록", "Recovery trace")}: {displayText(diagnostics.recoveryEvents.join(" · "))}</div> : null}
         </div>
+      ) : null}
+    </div>
+  )
+}
+
+function RunOrchestrationPanel({ run, text, displayText }: {
+  run: RootRun
+  text: (ko: string, en: string) => string
+  displayText: (value: string) => string
+}) {
+  const subSessions = run.subSessionsSnapshot ?? []
+  const subSessionIds = run.subSessionIds ?? []
+  const plan = run.orchestrationPlanSnapshot
+  const mode = run.orchestrationMode ?? "single_nobie"
+  const hasOrchestration = mode !== "single_nobie" || subSessions.length > 0 || subSessionIds.length > 0 || Boolean(plan)
+
+  if (!hasOrchestration) {
+    return (
+      <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs leading-5 text-stone-600">
+        <div className="font-semibold text-stone-800">{text("오케스트레이션", "Orchestration")}</div>
+        <div className="mt-1">{text("이 실행은 단일 노비 모드로 처리되었습니다.", "This run was handled in single Nobie mode.")}</div>
+      </div>
+    )
+  }
+
+  const statusCounts = subSessions.reduce<Record<string, number>>((acc, item) => {
+    acc[item.status] = (acc[item.status] ?? 0) + 1
+    return acc
+  }, {})
+
+  return (
+    <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4 text-xs leading-5 text-sky-950">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-semibold">{text("부모 실행과 서브 세션", "Parent run and sub-sessions")}</div>
+          <div className="mt-1 opacity-80">{text("노비가 서브 에이전트로 위임한 작업과 현재 상태를 요약합니다.", "Summarizes delegated sub-agent work and current state.")}</div>
+        </div>
+        <Link to={`/advanced/agents?runId=${encodeURIComponent(run.id)}`} className="rounded-full bg-white/80 px-3 py-1 font-semibold text-sky-800">
+          {text("관계도 보기", "Open graph")}
+        </Link>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">{text("모드", "Mode")} {mode}</span>
+        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">{text("서브 세션", "Sub-sessions")} {subSessions.length || subSessionIds.length}</span>
+        {Object.entries(statusCounts).map(([status, count]) => <span key={status} className="rounded-full bg-white/80 px-2 py-1 font-semibold">{status} {count}</span>)}
+        {plan ? <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">{text("병렬 그룹", "Parallel groups")} {plan.parallelGroups.length}</span> : null}
+      </div>
+      {subSessions.length ? (
+        <div className="mt-3 grid gap-2">
+          {subSessions.slice(0, 5).map((session) => (
+            <div key={session.subSessionId} className="rounded-xl bg-white/80 px-3 py-2">
+              <div className="font-semibold">{displayText(session.agentDisplayName)} · {session.status}</div>
+              <div className="mt-1 opacity-80">{session.subSessionId} · retry {session.retryBudgetRemaining}</div>
+            </div>
+          ))}
+        </div>
+      ) : subSessionIds.length ? (
+        <div className="mt-3 rounded-xl bg-white/80 px-3 py-2">{subSessionIds.join(", ")}</div>
       ) : null}
     </div>
   )
@@ -1072,6 +1131,11 @@ export function RunsPage() {
                         actionableCount: 0,
                         failedCount: 0,
                       }}
+                      text={text}
+                      displayText={displayText}
+                    />
+                    <RunOrchestrationPanel
+                      run={selectedRun}
                       text={text}
                       displayText={displayText}
                     />

@@ -1,6 +1,7 @@
 import type { AgentChunk } from "../agent/index.js";
 import { type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js";
 import { insertMessage } from "../db/index.js";
+import { type MessageLedgerDeliveryKind } from "./message-ledger.js";
 export interface SuccessfulFileDelivery {
     toolName: string;
     channel: "telegram" | "webui" | "slack";
@@ -18,6 +19,10 @@ export interface SuccessfulTextDelivery {
     channel: DeliverySource;
     text: string;
     messageIds?: number[];
+    deliveryKind?: MessageLedgerDeliveryKind;
+    parentRunId?: string;
+    subSessionId?: string;
+    agentId?: string;
 }
 export interface ChunkDeliveryReceipt {
     artifactDeliveries?: SuccessfulFileDelivery[];
@@ -104,6 +109,11 @@ export declare function emitAssistantTextDelivery(params: {
     onChunk: RunChunkDeliveryHandler;
     persistMessage?: boolean;
     emitDone?: boolean;
+    deliveryKind?: Extract<MessageLedgerDeliveryKind, "progress" | "final">;
+    parentRunId?: string;
+    subSessionId?: string;
+    agentId?: string;
+    force?: boolean;
     onError?: (message: string) => void;
     dependencies?: Partial<AssistantTextDeliveryDependencies>;
 }): Promise<AssistantTextDeliveryReceipt>;

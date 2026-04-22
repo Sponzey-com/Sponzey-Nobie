@@ -50,6 +50,7 @@ export declare function createRootRun(params: {
     promptSourceSnapshot?: Record<string, unknown>;
     maxDelegationTurns?: number;
     delegationTurnCount?: number;
+    orchestrationMode?: RootRun["orchestrationMode"];
 }): RootRun;
 export declare function appendRunEvent(runId: string, label: string): void;
 export declare function updateRunSummary(runId: string, summary: string): RootRun | undefined;

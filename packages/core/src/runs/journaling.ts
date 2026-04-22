@@ -4,6 +4,7 @@ import {
   insertMemoryJournalRecord,
   type MemoryJournalRecordInput,
 } from "../memory/journal.js"
+import type { DataExchangePackage } from "../contracts/sub-agent-orchestration.js"
 
 export type RunJournalSource = "webui" | "cli" | "telegram" | "slack"
 
@@ -32,6 +33,14 @@ export interface RunFailureJournalParams {
   summary: string
   detail?: string
   title?: string
+}
+
+export interface DataExchangeJournalParams {
+  exchange: DataExchangePackage
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  sourceSessionId?: string
 }
 
 interface RunJournalDependencies {
@@ -87,6 +96,44 @@ export function buildRunFailureJournalRecord(params: RunFailureJournalParams): M
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     source: params.source,
     tags: ["failure"],
+  }
+}
+
+export function buildDataExchangeJournalRecord(params: DataExchangeJournalParams): MemoryJournalRecordInput {
+  const exchange = params.exchange
+  const sourceSession = params.sourceSessionId ?? exchange.identity.parent?.parentSessionId ?? params.sessionId
+  const summary = [
+    `exchange=${exchange.exchangeId}`,
+    `source=${exchange.sourceOwner.ownerType}:${exchange.sourceOwner.ownerId}`,
+    `recipient=${exchange.recipientOwner.ownerType}:${exchange.recipientOwner.ownerId}`,
+    `purpose=${exchange.purpose}`,
+    `allowedUse=${exchange.allowedUse}`,
+    `retention=${exchange.retentionPolicy}`,
+    `redaction=${exchange.redactionState}`,
+    sourceSession ? `sourceSession=${sourceSession}` : "",
+  ].filter(Boolean).join(" ")
+  return {
+    kind: "response",
+    scope: params.runId ? "task" : params.sessionId ? "session" : "global",
+    title: "data_exchange",
+    content: JSON.stringify({
+      exchangeId: exchange.exchangeId,
+      sourceOwner: exchange.sourceOwner,
+      recipientOwner: exchange.recipientOwner,
+      purpose: exchange.purpose,
+      allowedUse: exchange.allowedUse,
+      retentionPolicy: exchange.retentionPolicy,
+      redactionState: exchange.redactionState,
+      provenanceRefs: exchange.provenanceRefs,
+      expiresAt: exchange.expiresAt ?? null,
+      sourceSessionId: sourceSession ?? null,
+    }),
+    summary: condenseMemoryText(summary, 280),
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(params.runId ? { runId: params.runId } : {}),
+    ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+    source: "data_exchange",
+    tags: ["data_exchange", exchange.allowedUse, exchange.retentionPolicy],
   }
 }
 

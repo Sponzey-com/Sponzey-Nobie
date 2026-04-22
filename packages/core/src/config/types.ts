@@ -1,4 +1,5 @@
 import { homedir } from "node:os"
+import type { NobieConfig as NobieAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js"
 
 export type AIConnectionProvider =
   | "openai"
@@ -109,6 +110,11 @@ export interface MemoryConfig {
 
 export interface OrchestrationConfig {
   maxDelegationTurns: number
+  mode?: "single_nobie" | "orchestration"
+  featureFlagEnabled?: boolean
+  nobie?: NobieAgentConfig
+  subAgents?: SubAgentConfig[]
+  teams?: TeamConfig[]
 }
 
 export interface McpServerConfig {
@@ -228,6 +234,10 @@ export const DEFAULT_CONFIG: NobieConfig = {
   },
   orchestration: {
     maxDelegationTurns: 5,
+    mode: "single_nobie",
+    featureFlagEnabled: false,
+    subAgents: [],
+    teams: [],
   },
   mcp: {
     servers: {},

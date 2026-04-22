@@ -1,4 +1,5 @@
 import { type MemoryJournalRecordInput } from "../memory/journal.js";
+import type { DataExchangePackage } from "../contracts/sub-agent-orchestration.js";
 export type RunJournalSource = "webui" | "cli" | "telegram" | "slack";
 export interface RunInstructionJournalParams {
     runId: string;
@@ -24,6 +25,13 @@ export interface RunFailureJournalParams {
     detail?: string;
     title?: string;
 }
+export interface DataExchangeJournalParams {
+    exchange: DataExchangePackage;
+    runId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    sourceSessionId?: string;
+}
 interface RunJournalDependencies {
     insertRecord: (input: MemoryJournalRecordInput) => string;
     onError: (message: string) => void;
@@ -31,6 +39,7 @@ interface RunJournalDependencies {
 export declare function buildRunInstructionJournalRecord(params: RunInstructionJournalParams): MemoryJournalRecordInput;
 export declare function buildRunSuccessJournalRecord(params: RunSuccessJournalParams): MemoryJournalRecordInput;
 export declare function buildRunFailureJournalRecord(params: RunFailureJournalParams): MemoryJournalRecordInput;
+export declare function buildDataExchangeJournalRecord(params: DataExchangeJournalParams): MemoryJournalRecordInput;
 export declare function safeInsertRunJournalRecord(input: MemoryJournalRecordInput, dependencies?: Partial<RunJournalDependencies>): void;
 export {};
 //# sourceMappingURL=journaling.d.ts.map

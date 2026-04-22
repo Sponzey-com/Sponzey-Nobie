@@ -4,6 +4,22 @@ import { createLogger } from "../logger/index.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
+export {
+  buildFeedbackRequest,
+  collectResultReviewIssues,
+  decideSubSessionCompletionIntegration,
+  getSubAgentResultRetryBudgetLimit,
+  normalizeResultReviewFailureKey,
+  reviewSubAgentResult,
+} from "./sub-agent-result-review.js"
+export type {
+  SubAgentResultReview,
+  SubAgentResultReviewInput,
+  SubAgentResultReviewIssue,
+  SubAgentResultReviewIssueCode,
+  SubAgentRetryClass,
+  SubSessionCompletionIntegrationDecision,
+} from "./sub-agent-result-review.js"
 
 const log = createLogger("agent:completion-review")
 

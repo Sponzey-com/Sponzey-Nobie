@@ -153,6 +153,61 @@ export async function* chatWithContextPreflight(input) {
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
     });
 }
+export function validateAgentPromptBundleContextScope(input) {
+    const issueCodes = new Set();
+    const blockedSourceRefs = new Set();
+    const now = input.now?.() ?? Date.now();
+    const bundleOwnerIds = new Set([
+        input.bundle.agentId,
+        input.bundle.memoryPolicy.owner.ownerId,
+        input.bundle.memoryPolicy.writeScope.ownerId,
+        ...input.bundle.memoryPolicy.readScopes.map((scope) => scope.ownerId),
+    ].filter(Boolean));
+    const exchangesById = new Map((input.dataExchangePackages ?? []).map((pkg) => [pkg.exchangeId, pkg]));
+    for (const ref of input.memoryRefs ?? []) {
+        const exchange = ref.dataExchangeId ? exchangesById.get(ref.dataExchangeId) : undefined;
+        const sameOwner = bundleOwnerIds.has(ref.owner.ownerId);
+        if (ref.visibility === "private" && !sameOwner && !exchange) {
+            issueCodes.add("private_memory_without_explicit_exchange");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange?.redactionState === "blocked") {
+            issueCodes.add("data_exchange_blocked");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange && exchange.expiresAt !== undefined && exchange.expiresAt !== null && exchange.expiresAt <= now) {
+            issueCodes.add("data_exchange_expired");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange && !exchange.purpose.trim()) {
+            issueCodes.add("data_exchange_missing_purpose");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange && exchange.provenanceRefs.length === 0) {
+            issueCodes.add("data_exchange_missing_provenance");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange && exchange.recipientOwner.ownerId !== input.bundle.agentId && exchange.recipientOwner.ownerId !== input.bundle.memoryPolicy.owner.ownerId) {
+            issueCodes.add("data_exchange_wrong_recipient");
+            blockedSourceRefs.add(ref.sourceRef);
+            continue;
+        }
+        if (exchange && exchange.allowedUse !== "temporary_context" && exchange.allowedUse !== "verification_only") {
+            issueCodes.add("data_exchange_not_context_allowed");
+            blockedSourceRefs.add(ref.sourceRef);
+        }
+    }
+    return {
+        ok: issueCodes.size === 0,
+        issueCodes: [...issueCodes].sort(),
+        blockedSourceRefs: [...blockedSourceRefs].sort(),
+    };
+}
 function classifyContextPreflight(input) {
     if (input.totalTokens > input.providerContextTokens)
         return "blocked_context_overflow";

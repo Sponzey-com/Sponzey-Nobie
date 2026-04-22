@@ -1,4 +1,4 @@
-export declare const TRUST_TAGS: readonly ["trusted", "user_input", "channel_input", "web_content", "file_content", "tool_result", "mcp_result", "yeonjang_result", "diagnostic"];
+export declare const TRUST_TAGS: readonly ["trusted", "user_input", "channel_input", "web_content", "file_content", "tool_result", "mcp_result", "capability_result", "yeonjang_result", "diagnostic"];
 export type TrustTag = typeof TRUST_TAGS[number];
 export interface TrustedContextBlock {
     id: string;

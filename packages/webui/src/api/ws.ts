@@ -34,6 +34,33 @@ export function sendWs(data: unknown) {
   }
 }
 
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+export function acknowledgeLiveUpdateMessage(
+  data: WsMessage,
+  sender: (payload: unknown) => void = sendWs,
+): void {
+  const emittedAt = readFiniteNumber(data["emittedAt"])
+  if (emittedAt === undefined) return
+  if (data.type === "ws.init" || data.type === "ui.live_update_ack") return
+
+  sender({
+    type: "ui.live_update_ack",
+    eventType: data.type,
+    emittedAt,
+    source: "webui",
+    ...(readOptionalString(data["runId"]) ? { runId: readOptionalString(data["runId"]) } : {}),
+    ...(readOptionalString(data["sessionId"]) ? { sessionId: readOptionalString(data["sessionId"]) } : {}),
+    ...(readOptionalString(data["requestGroupId"]) ? { requestGroupId: readOptionalString(data["requestGroupId"]) } : {}),
+  })
+}
+
 export function connectWs() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return
@@ -55,6 +82,7 @@ export function connectWs() {
     try {
       const data = JSON.parse(ev.data as string) as WsMessage
       handlers.forEach((fn) => fn(data))
+      acknowledgeLiveUpdateMessage(data)
     } catch { /* ignore */ }
   }
 

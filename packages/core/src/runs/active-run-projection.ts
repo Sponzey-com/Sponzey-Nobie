@@ -28,6 +28,19 @@ export interface ActiveRunContractProjection {
   status: RootRun["status"]
   source: RootRun["source"]
   displayName: string
+  orchestrationMode?: RootRun["orchestrationMode"]
+  agentDisplayName?: string
+  agentNickname?: string
+  subSessionIds?: string[]
+  subSessions?: Array<{
+    subSessionId: string
+    parentRunId: string
+    agentId: string
+    agentDisplayName: string
+    agentNickname?: string
+    status: string
+    retryBudgetRemaining: number
+  }>
   updatedAt: number
   legacy: boolean
   legacyReason?: string
@@ -204,6 +217,23 @@ export function buildActiveRunProjection(run: RootRun): ActiveRunContractProject
     status: run.status,
     source: run.source,
     displayName: run.title || run.targetLabel || run.id,
+    ...(run.orchestrationMode ? { orchestrationMode: run.orchestrationMode } : {}),
+    ...(run.agentDisplayName ? { agentDisplayName: run.agentDisplayName } : {}),
+    ...(run.agentNickname ? { agentNickname: run.agentNickname } : {}),
+    ...(run.subSessionIds?.length ? { subSessionIds: [...run.subSessionIds] } : {}),
+    ...(run.subSessionsSnapshot?.length
+      ? {
+        subSessions: run.subSessionsSnapshot.map((subSession) => ({
+          subSessionId: subSession.subSessionId,
+          parentRunId: subSession.parentRunId,
+          agentId: subSession.agentId,
+          agentDisplayName: subSession.agentDisplayName,
+          ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
+          status: subSession.status,
+          retryBudgetRemaining: subSession.retryBudgetRemaining,
+        })),
+      }
+      : {}),
     updatedAt: run.updatedAt,
     legacy,
     ...(legacy ? { legacyReason: "missing_persisted_contract" } : {}),
@@ -254,6 +284,15 @@ export function serializeActiveRunCandidateForComparison(candidate: ActiveRunCon
     approvalId: candidate.approvalId,
     status: candidate.status,
     source: candidate.source,
+    orchestrationMode: candidate.orchestrationMode,
+    subSessionIds: candidate.subSessionIds,
+    subSessions: candidate.subSessions?.map((subSession) => ({
+      subSessionId: subSession.subSessionId,
+      parentRunId: subSession.parentRunId,
+      agentId: subSession.agentId,
+      status: subSession.status,
+      retryBudgetRemaining: subSession.retryBudgetRemaining,
+    })),
     legacy: candidate.legacy,
     comparisonHash: candidate.comparisonHash,
     contract: candidate.comparisonProjection,

@@ -1,4 +1,9 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js"
+import {
+  decideSubSessionCompletionIntegration,
+  type SubAgentResultReview,
+  type SubSessionCompletionIntegrationDecision,
+} from "../agent/sub-agent-result-review.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
 import type { DeliveryOutcome } from "./delivery.js"
 import { deriveCompletionStageState, type CompletionStageState } from "./completion-state.js"
@@ -23,6 +28,12 @@ export interface CompletionPassResult {
   application: CompletionApplicationDecision
   usedTurns: number
   maxTurns: number
+}
+
+export function decideSubSessionCompletionPass(params: {
+  subSessionReviews: Array<{ subSessionId: string; review: Pick<SubAgentResultReview, "accepted" | "normalizedFailureKey"> }>
+}): SubSessionCompletionIntegrationDecision {
+  return decideSubSessionCompletionIntegration(params.subSessionReviews)
 }
 
 export function runCompletionPass(params: {

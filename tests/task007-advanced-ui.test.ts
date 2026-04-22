@@ -166,7 +166,7 @@ describe("task007 advanced dashboard and settings", () => {
     const tabs = buildAdvancedSettingsTabs("ko")
 
     expect(tabs.map((tab) => tab.id)).toEqual(ADVANCED_SETTINGS_TAB_ORDER)
-    expect(tabs.map((tab) => tab.label)).toEqual(["AI 연결", "채널", "연장", "메모리", "스케줄", "도구 권한", "백업/배포"])
+    expect(tabs.map((tab) => tab.label)).toEqual(["AI 연결", "채널", "연장", "메모리", "스케줄", "도구 권한", "에이전트/팀", "백업/배포"])
     expect(hasMultipleAiConnectionCreationTab(tabs)).toBe(false)
     expect(isDraftSavingAdvancedSettingsTab("ai")).toBe(true)
     expect(isDraftSavingAdvancedSettingsTab("memory")).toBe(false)

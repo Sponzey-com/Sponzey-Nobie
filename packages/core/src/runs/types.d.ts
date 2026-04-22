@@ -1,3 +1,4 @@
+import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
 export type RunStatus = "queued" | "running" | "awaiting_approval" | "awaiting_user" | "completed" | "failed" | "cancelled" | "interrupted";
 export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type RunContextMode = "full" | "isolated" | "request_group" | "handoff";
@@ -22,6 +23,12 @@ export interface RootRun {
     workerSessionId?: string;
     contextMode: RunContextMode;
     promptSourceSnapshot?: Record<string, unknown>;
+    orchestrationMode?: OrchestrationMode;
+    orchestrationPlanSnapshot?: OrchestrationPlan;
+    subSessionIds?: string[];
+    subSessionsSnapshot?: SubSessionContract[];
+    agentDisplayName?: string;
+    agentNickname?: string;
     runtimeManifestId?: string;
     delegationTurnCount: number;
     maxDelegationTurns: number;
@@ -58,6 +65,8 @@ export interface RunProgressSnapshot {
     targetLabel?: string;
     workerSessionId?: string;
     contextMode: RunContextMode;
+    orchestrationMode?: OrchestrationMode;
+    subSessionIds?: string[];
     summary: string;
     recentEvents: RunEvent[];
     canCancel: boolean;

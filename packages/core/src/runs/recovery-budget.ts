@@ -1,4 +1,5 @@
 export type RecoveryBudgetKind = "interpretation" | "execution" | "delivery" | "external"
+export type SubSessionRevisionBudgetClass = "default" | "format_only" | "risk_or_external" | "expensive"
 
 export interface RecoveryBudgetState {
   kind: RecoveryBudgetKind
@@ -71,4 +72,27 @@ export function consumeRecoveryBudget(params: {
 
 export function formatRecoveryBudgetProgress(state: RecoveryBudgetState): string {
   return `${state.used}/${state.limit > 0 ? state.limit : "무제한"}`
+}
+
+export function getSubSessionRevisionBudgetLimit(budgetClass: SubSessionRevisionBudgetClass = "default"): number {
+  switch (budgetClass) {
+    case "format_only":
+      return 3
+    case "risk_or_external":
+    case "expensive":
+      return 1
+    case "default":
+    default:
+      return 2
+  }
+}
+
+export function canRetrySubSessionRevision(params: {
+  retryBudgetRemaining: number
+  budgetClass?: SubSessionRevisionBudgetClass
+  repeatedFailure?: boolean
+}): boolean {
+  if (params.repeatedFailure) return false
+  const limit = getSubSessionRevisionBudgetLimit(params.budgetClass ?? "default")
+  return Math.min(Math.max(0, params.retryBudgetRemaining), limit) > 0
 }

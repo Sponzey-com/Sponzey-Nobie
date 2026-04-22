@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { getConfig } from "../config/index.js";
 import { getDb } from "../db/index.js";
 import { hashApprovalParams } from "../runs/approval-registry.js";
+import { evaluateAgentToolCapabilityPolicy } from "./capability-isolation.js";
 import { sourceToTrustTag } from "./trust-boundary.js";
 const LOCAL_MUTATION_TOOLS = new Set([
     "shell_exec",
@@ -45,6 +46,24 @@ export function evaluateToolPolicy(input) {
         paramsHash,
         createdAt,
     };
+    const capability = evaluateAgentToolCapabilityPolicy({
+        toolName: input.toolName,
+        riskLevel: input.riskLevel,
+        ctx: input.ctx,
+    });
+    if (!capability.allowed) {
+        return {
+            ...base,
+            permissionScope: capability.agentId ? `agent:${capability.agentId}` : "agent:missing",
+            decision: "deny",
+            reasonCode: capability.reasonCode,
+            ...(capability.userMessage ? { userMessage: capability.userMessage } : {}),
+            diagnostic: {
+                capabilityPolicy: capability.diagnostic,
+                capabilityRisk: capability.capabilityRisk,
+            },
+        };
+    }
     const permission = resolvePermissionScope(input.toolName, input.params);
     if (!permission.allowed) {
         return {
@@ -56,14 +75,20 @@ export function evaluateToolPolicy(input) {
             ...(permission.diagnostic ? { diagnostic: permission.diagnostic } : {}),
         };
     }
-    if ((input.riskLevel === "moderate" || input.riskLevel === "dangerous" || LOCAL_MUTATION_TOOLS.has(input.toolName)) && !input.approvalDecision) {
+    const legacyModerateApprovalRequired = capability.reasonCode === "legacy_no_agent_context" && input.riskLevel === "moderate";
+    if ((legacyModerateApprovalRequired || input.riskLevel === "dangerous" || LOCAL_MUTATION_TOOLS.has(input.toolName) || capability.approvalRequired) && !input.approvalDecision) {
         return {
             ...base,
             permissionScope: permission.scope,
             decision: "deny",
             reasonCode: "approval_required",
             userMessage: "이 작업은 실행 전 승인이 필요합니다.",
-            diagnostic: { riskLevel: input.riskLevel, toolName: input.toolName },
+            diagnostic: {
+                riskLevel: input.riskLevel,
+                toolName: input.toolName,
+                capabilityPolicy: capability.diagnostic,
+                capabilityRisk: capability.capabilityRisk,
+            },
         };
     }
     return {
@@ -75,6 +100,8 @@ export function evaluateToolPolicy(input) {
             riskLevel: input.riskLevel,
             sourceTrust,
             permissionScope: permission.scope,
+            capabilityPolicy: capability.diagnostic,
+            capabilityRisk: capability.capabilityRisk,
         },
     };
 }
@@ -94,6 +121,24 @@ export function sanitizePolicyDenialForUser(record) {
             return "허용되지 않은 명령이라 실행하지 않았습니다.";
         case "approval_required":
             return "이 작업은 실행 전 승인이 필요합니다.";
+        case "agent_context_required":
+            return "에이전트 실행 컨텍스트가 없어 도구를 실행하지 않았습니다.";
+        case "permission_profile_required":
+            return "에이전트 권한 프로필이 없어 도구를 실행하지 않았습니다.";
+        case "secret_scope_required":
+            return "MCP 도구 실행에는 에이전트 전용 secret scope가 필요합니다.";
+        case "audit_id_required":
+            return "MCP 도구 실행에는 audit id가 필요합니다.";
+        case "mcp_server_not_allowed":
+            return "이 에이전트에 허용되지 않은 MCP 서버입니다.";
+        case "tool_not_allowed":
+            return "이 에이전트에 허용되지 않은 도구입니다.";
+        case "risk_exceeds_profile":
+        case "shell_execution_not_allowed":
+        case "filesystem_write_not_allowed":
+        case "external_network_not_allowed":
+        case "screen_control_not_allowed":
+            return "에이전트 권한 프로필이 이 도구 실행을 허용하지 않습니다.";
         default:
             return "보안 정책에 따라 요청한 도구 실행을 진행하지 않았습니다.";
     }

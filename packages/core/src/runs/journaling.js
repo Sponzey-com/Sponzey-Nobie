@@ -46,6 +46,43 @@ export function buildRunFailureJournalRecord(params) {
         tags: ["failure"],
     };
 }
+export function buildDataExchangeJournalRecord(params) {
+    const exchange = params.exchange;
+    const sourceSession = params.sourceSessionId ?? exchange.identity.parent?.parentSessionId ?? params.sessionId;
+    const summary = [
+        `exchange=${exchange.exchangeId}`,
+        `source=${exchange.sourceOwner.ownerType}:${exchange.sourceOwner.ownerId}`,
+        `recipient=${exchange.recipientOwner.ownerType}:${exchange.recipientOwner.ownerId}`,
+        `purpose=${exchange.purpose}`,
+        `allowedUse=${exchange.allowedUse}`,
+        `retention=${exchange.retentionPolicy}`,
+        `redaction=${exchange.redactionState}`,
+        sourceSession ? `sourceSession=${sourceSession}` : "",
+    ].filter(Boolean).join(" ");
+    return {
+        kind: "response",
+        scope: params.runId ? "task" : params.sessionId ? "session" : "global",
+        title: "data_exchange",
+        content: JSON.stringify({
+            exchangeId: exchange.exchangeId,
+            sourceOwner: exchange.sourceOwner,
+            recipientOwner: exchange.recipientOwner,
+            purpose: exchange.purpose,
+            allowedUse: exchange.allowedUse,
+            retentionPolicy: exchange.retentionPolicy,
+            redactionState: exchange.redactionState,
+            provenanceRefs: exchange.provenanceRefs,
+            expiresAt: exchange.expiresAt ?? null,
+            sourceSessionId: sourceSession ?? null,
+        }),
+        summary: condenseMemoryText(summary, 280),
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        ...(params.runId ? { runId: params.runId } : {}),
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        source: "data_exchange",
+        tags: ["data_exchange", exchange.allowedUse, exchange.retentionPolicy],
+    };
+}
 export function safeInsertRunJournalRecord(input, dependencies) {
     const resolved = { ...defaultDependencies, ...dependencies };
     try {

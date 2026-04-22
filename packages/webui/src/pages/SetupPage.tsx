@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { api } from "../api/client"
 import { DisabledPanel } from "../components/DisabledPanel"
+import { OrchestrationPreviewCard } from "../components/orchestration/OrchestrationPreviewCard"
 import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
-import { McpSetupForm } from "../components/setup/McpSetupForm"
+import { BeginnerVisualizationDeck } from "../components/setup/BeginnerVisualizationDeck"
+import { McpServerEditorCard, McpSetupForm } from "../components/setup/McpSetupForm"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { PersonalSettingsForm } from "../components/setup/PersonalSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { ReviewSummaryPanel } from "../components/setup/ReviewSummaryPanel"
+import { RoutingPriorityEditor } from "../components/setup/RoutingPriorityEditor"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
-import { SkillSetupForm } from "../components/setup/SkillSetupForm"
+import { SkillItemEditorCard, SkillSetupForm } from "../components/setup/SkillSetupForm"
 import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
 import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
 import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
@@ -19,11 +22,17 @@ import { SetupExpandableSection } from "../components/setup/SetupExpandableSecti
 import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
 import { SetupStepShell } from "../components/setup/SetupStepShell"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
+import { SetupVisualizationCanvas, SetupVisualizationLegend } from "../components/setup/SetupVisualizationCanvas"
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { AI_PROVIDER_OPTIONS, getAIProviderDefaultEndpoint, type AIBackendCard, type AIProviderType, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
-import type { FeatureCapability } from "../contracts/capabilities"
-import type { SetupDraft, SetupState, SetupStepMeta } from "../contracts/setup"
+import type {
+  OrchestrationAgentRegistryEntry,
+  OrchestrationGraphResponse,
+  OrchestrationRegistrySnapshot,
+  OrchestrationTeamRegistryEntry,
+} from "../contracts/orchestration-api"
+import type { SetupDraft, SetupState } from "../contracts/setup"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import {
   buildBeginnerConnectionCards,
@@ -35,9 +44,9 @@ import {
   upsertBeginnerAiBackend,
   type BeginnerConnectionStatus,
   type BeginnerSetupStepId,
-  type BeginnerSetupStepStatus,
 } from "../lib/beginner-setup"
 import { uiCatalogText } from "../lib/message-catalog"
+import { buildOrchestrationSummary, buildOrchestrationTopologyScene } from "../lib/orchestration-ui"
 import {
   canSkipSetupStep,
   hasEditableSetupStep,
@@ -45,8 +54,20 @@ import {
   mergeSetupStepDraft,
   revertSetupStepDraft,
   validateSetupStep,
+  type BackendCardErrors,
 } from "../lib/setupFlow"
+import { buildDoneRuntimeSummary, buildReviewReadinessBoard } from "../lib/setup-readiness"
+import { createSetupSteps } from "../lib/setup-step-meta"
+import {
+  buildAdvancedVisualizationState,
+  mapAdvancedStepToBeginnerStep,
+  resolveAdvancedStepForBeginnerSelection,
+} from "../lib/setup-visualization-advanced"
+import { applyValidationOverlaysToScene, type VisualizationScene } from "../lib/setup-visualization"
+import { buildBeginnerVisualizationDeck } from "../lib/setup-visualization-beginner"
+import { buildSetupVisualizationRegistry } from "../lib/setup-visualization-scenes"
 import { useCapabilitiesStore } from "../stores/capabilities"
+import { useConnectionStore } from "../stores/connection"
 import { useSetupStore } from "../stores/setup"
 import { pickUiText, useUiLanguageStore, type UiLanguage } from "../stores/uiLanguage"
 import { useUiModeStore } from "../stores/uiMode"
@@ -78,14 +99,26 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
   return `${base}_${index}`
 }
 
+type SetupChannelId = "webui" | "telegram" | "slack"
+type ChannelCheckResult = { ok: boolean; message: string } | null
+
 export function SetupPage() {
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
   const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
+  const [selectedMcpServerId, setSelectedMcpServerId] = useState<string | null>(null)
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null)
+  const [selectedChannelId, setSelectedChannelId] = useState<SetupChannelId | null>(null)
+  const [selectedVisualizationNodeId, setSelectedVisualizationNodeId] = useState<string | null>(null)
+  const [aiVisualizationMode, setAiVisualizationMode] = useState<"connections" | "routing">("connections")
+  const [responsiveInspectorOpen, setResponsiveInspectorOpen] = useState(false)
+  const [mobileNavigatorOpen, setMobileNavigatorOpen] = useState(false)
+  const [telegramCheckResult, setTelegramCheckResult] = useState<ChannelCheckResult>(null)
+  const [slackCheckResult, setSlackCheckResult] = useState<ChannelCheckResult>(null)
   const [showValidation, setShowValidation] = useState(false)
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const uiMode = useUiModeStore((state) => state.mode)
   const uiShell = useUiModeStore((state) => state.shell)
-  const [beginnerStepId, setBeginnerStepId] = useState<BeginnerSetupStepId>("ai")
+  const [beginnerStepId, setBeginnerStepId] = useState<BeginnerSetupStepId>(() => mapAdvancedStepToBeginnerStep(useSetupStore.getState().state.currentStep))
   const [beginnerAiInput, setBeginnerAiInput] = useState<{
     providerType: AIProviderType
     authMode: "api_key" | "chatgpt_oauth"
@@ -106,8 +139,18 @@ export function SetupPage() {
   const [beginnerNotice, setBeginnerNotice] = useState("")
   const [testingMcpServerId, setTestingMcpServerId] = useState<string | null>(null)
   const [testingSkillId, setTestingSkillId] = useState<string | null>(null)
+  const [orchestrationRegistry, setOrchestrationRegistry] = useState<OrchestrationRegistrySnapshot | null>(null)
+  const [orchestrationAgents, setOrchestrationAgents] = useState<OrchestrationAgentRegistryEntry[]>([])
+  const [orchestrationTeams, setOrchestrationTeams] = useState<OrchestrationTeamRegistryEntry[]>([])
+  const [orchestrationGraph, setOrchestrationGraph] = useState<OrchestrationGraphResponse | null>(null)
+  const [orchestrationLoading, setOrchestrationLoading] = useState(false)
+  const [orchestrationError, setOrchestrationError] = useState("")
   const capabilities = useCapabilitiesStore((state) => state.items)
   const capabilityCounts = useCapabilitiesStore((state) => state.counts)
+  const runtimeStatus = useConnectionStore((state) => state.status)
+  const previousUiModeRef = useRef(uiMode)
+  const inspectorReturnFocusRef = useRef<HTMLElement | null>(null)
+  const navigatorReturnFocusRef = useRef<HTMLElement | null>(null)
   const {
     state,
     draft,
@@ -134,6 +177,41 @@ export function SetupPage() {
   }, [activeDraft])
 
   useEffect(() => {
+    setSelectedMcpServerId((current) => {
+      if (current && activeDraft.mcp.servers.some((server) => server.id === current)) return current
+      return activeDraft.mcp.servers.find((server) => server.enabled)?.id
+        ?? activeDraft.mcp.servers[0]?.id
+        ?? null
+    })
+  }, [activeDraft.mcp.servers])
+
+  useEffect(() => {
+    setSelectedSkillId((current) => {
+      if (current && activeDraft.skills.items.some((item) => item.id === current)) return current
+      return activeDraft.skills.items.find((item) => item.enabled)?.id
+        ?? activeDraft.skills.items[0]?.id
+        ?? null
+    })
+  }, [activeDraft.skills.items])
+
+  useEffect(() => {
+    setSelectedChannelId((current) => {
+      if (current) return current
+      if (activeDraft.channels.telegramEnabled || activeDraft.channels.botToken.trim()) return "telegram"
+      if (activeDraft.channels.slackEnabled || activeDraft.channels.slackBotToken.trim() || activeDraft.channels.slackAppToken.trim()) return "slack"
+      return "webui"
+    })
+  }, [activeDraft.channels])
+
+  useEffect(() => {
+    setTelegramCheckResult(null)
+  }, [activeDraft.channels.botToken])
+
+  useEffect(() => {
+    setSlackCheckResult(null)
+  }, [activeDraft.channels.slackBotToken, activeDraft.channels.slackAppToken])
+
+  useEffect(() => {
     const backend = getBeginnerActiveAiBackend(activeDraft)
     if (!backend) return
     setBeginnerAiInput({
@@ -146,7 +224,36 @@ export function SetupPage() {
     })
   }, [activeDraft])
 
+  useEffect(() => {
+    const previousMode = previousUiModeRef.current
+    if (previousMode === uiMode) return
+    previousUiModeRef.current = uiMode
+
+    if (uiMode === "beginner") {
+      setBeginnerStepId(mapAdvancedStepToBeginnerStep(state.currentStep))
+      return
+    }
+
+    const nextStep = resolveAdvancedStepForBeginnerSelection(beginnerStepId, state.currentStep)
+    if (nextStep !== state.currentStep) {
+      setStep(nextStep)
+    }
+  }, [beginnerStepId, setStep, state.currentStep, uiMode])
+
   const steps = useMemo(() => createSetupSteps(capabilities, activeDraft, state, uiLanguage), [capabilities, activeDraft, state, uiLanguage])
+  const visualizationRegistry = useMemo(
+    () => buildSetupVisualizationRegistry({
+      draft: activeDraft,
+      checks,
+      shell: uiShell,
+      status: runtimeStatus,
+      capabilities,
+      state,
+      language: uiLanguage,
+      includeAdvancedOptionalScenes: uiMode === "advanced",
+    }),
+    [activeDraft, checks, uiShell, runtimeStatus, capabilities, state, uiLanguage, uiMode],
+  )
   const beginnerSteps = useMemo(
     () => buildBeginnerSetupSteps({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage, aiTestOk: beginnerAiTestOk }),
     [activeDraft, checks, uiShell, uiLanguage, beginnerAiTestOk],
@@ -159,29 +266,324 @@ export function SetupPage() {
     () => buildBeginnerSetupSmokeResult({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage }),
     [activeDraft, checks, uiShell, uiLanguage],
   )
-  const currentStep = steps.find((step) => step.id === state.currentStep) ?? steps[0]!
-  const currentIndex = steps.findIndex((step) => step.id === state.currentStep)
+  const beginnerVisualizationDeck = useMemo(
+    () => buildBeginnerVisualizationDeck({
+      steps: beginnerSteps,
+      connections: beginnerConnections,
+      registry: visualizationRegistry,
+      selectedStepId: beginnerStepId,
+    }),
+    [beginnerConnections, beginnerStepId, beginnerSteps, visualizationRegistry],
+  )
+  const orchestrationSummary = useMemo(
+    () => buildOrchestrationSummary({ snapshot: orchestrationRegistry, language: uiLanguage }),
+    [orchestrationRegistry, uiLanguage],
+  )
+  const orchestrationPreviewScene = useMemo(
+    () => buildOrchestrationTopologyScene({
+      snapshot: orchestrationRegistry,
+      graph: orchestrationGraph,
+      agents: orchestrationAgents,
+      teams: orchestrationTeams,
+      language: uiLanguage,
+      mode: "beginner",
+    }),
+    [orchestrationAgents, orchestrationGraph, orchestrationRegistry, orchestrationTeams, uiLanguage],
+  )
+  const stepContextId: SetupState["currentStep"] = state.currentStep === "ai_routing" ? "ai_backends" : state.currentStep
+  const advancedVisualizationState = useMemo(
+    () => buildAdvancedVisualizationState({
+      registry: visualizationRegistry,
+      currentStep: state.currentStep,
+    }),
+    [state.currentStep, visualizationRegistry],
+  )
+  const aiRoutingScene = visualizationRegistry.scenesById["scene:ai_routing"] ?? null
+  const currentStep = steps.find((step) => step.id === stepContextId) ?? steps[0]!
+  const baseCurrentScene = useMemo(() => {
+    if (uiMode !== "advanced") {
+      const sceneId = visualizationRegistry.sceneIdByStepId[stepContextId]
+      return sceneId ? visualizationRegistry.scenesById[sceneId] ?? null : null
+    }
+
+    if (stepContextId === "ai_backends" && aiVisualizationMode === "routing" && aiRoutingScene) {
+      return aiRoutingScene
+    }
+
+    return advancedVisualizationState.scene
+  }, [advancedVisualizationState.scene, aiRoutingScene, aiVisualizationMode, stepContextId, uiMode, visualizationRegistry])
+  const transportDecoratedScene = useMemo(
+    () => decorateSetupScene(baseCurrentScene, {
+      stepContextId,
+      saving,
+      lastError,
+      language: uiLanguage,
+      telegramCheckResult,
+      slackCheckResult,
+    }),
+    [baseCurrentScene, lastError, saving, slackCheckResult, stepContextId, telegramCheckResult, uiLanguage],
+  )
+  const currentIndex = steps.findIndex((step) => step.id === stepContextId)
   const nextStepMeta = currentIndex >= 0 ? steps[Math.min(currentIndex + 1, steps.length - 1)] ?? null : null
   const prevStepMeta = currentIndex > 0 ? steps[currentIndex - 1] ?? null : null
   const enabledBackends = activeDraft.aiBackends.filter((backend) => backend.enabled)
   const configuredBackends = activeDraft.aiBackends.filter((backend) => backend.endpoint?.trim() || backend.defaultModel.trim())
-  const currentValidation = useMemo(() => validateSetupStep(state.currentStep, activeDraft), [state.currentStep, activeDraft])
+  const selectedBackend = activeDraft.aiBackends.find((backend) => backend.id === selectedAiBackendId) ?? enabledBackends[0] ?? activeDraft.aiBackends[0] ?? null
+  const selectedMcpServer = activeDraft.mcp.servers.find((server) => server.id === selectedMcpServerId) ?? activeDraft.mcp.servers[0] ?? null
+  const selectedSkill = activeDraft.skills.items.find((item) => item.id === selectedSkillId) ?? activeDraft.skills.items[0] ?? null
+  const selectedChannel = selectedChannelId ?? "webui"
+  const reviewBoard = useMemo(
+    () => buildReviewReadinessBoard({
+      draft: activeDraft,
+      steps,
+      checks,
+      shell: uiShell,
+      capabilityCounts,
+      language: uiLanguage,
+    }),
+    [activeDraft, capabilityCounts, checks, steps, uiLanguage, uiShell],
+  )
+  const doneSummary = useMemo(
+    () => buildDoneRuntimeSummary({
+      draft: activeDraft,
+      checks,
+      shell: uiShell,
+      status: runtimeStatus,
+      capabilityCounts,
+      state,
+      language: uiLanguage,
+    }),
+    [activeDraft, capabilityCounts, checks, runtimeStatus, state, uiLanguage, uiShell],
+  )
+  useEffect(() => {
+    if (uiMode !== "beginner") return
+
+    let cancelled = false
+    setOrchestrationLoading(true)
+    void Promise.all([
+      api.orchestrationRegistry(),
+      api.orchestrationAgents({ limit: 100 }),
+      api.orchestrationTeams({ limit: 100 }),
+      api.orchestrationRelationshipGraph(),
+    ]).then(([registryResponse, agentPage, teamPage, graphResponse]) => {
+      if (cancelled) return
+      setOrchestrationRegistry(registryResponse.snapshot)
+      setOrchestrationAgents(agentPage.items)
+      setOrchestrationTeams(teamPage.items)
+      setOrchestrationGraph(graphResponse)
+      setOrchestrationError("")
+    }).catch((error) => {
+      if (cancelled) return
+      setOrchestrationError(error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      if (cancelled) return
+      setOrchestrationLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [uiMode])
+  const currentValidation = useMemo(() => validateSetupStep(stepContextId, activeDraft), [stepContextId, activeDraft])
   const mcpEnabledCount = activeDraft.mcp.servers.filter((server) => server.enabled).length
   const mcpRequiredCount = activeDraft.mcp.servers.filter((server) => server.required).length
   const mcpReadyCount = activeDraft.mcp.servers.filter((server) => server.status === "ready").length
   const skillEnabledCount = activeDraft.skills.items.filter((item) => item.enabled).length
   const skillRequiredCount = activeDraft.skills.items.filter((item) => item.required).length
   const skillReadyCount = activeDraft.skills.items.filter((item) => item.status === "ready").length
-  const hasEditableCurrentStep = hasEditableSetupStep(state.currentStep)
-  const currentStepDirty = hasEditableCurrentStep && isSetupStepDirty(draft, activeDraft, state.currentStep)
-  const canSkipCurrentStep = canSkipSetupStep(state.currentStep) && !currentStep.required && !saving
-  const isReview = state.currentStep === "review"
-  const isDone = state.currentStep === "done"
+  const channelEnabledCount = Number(activeDraft.channels.telegramEnabled) + Number(activeDraft.channels.slackEnabled)
+  const channelPolicyScopedCount = Number(Boolean(activeDraft.channels.allowedUserIds.trim() || activeDraft.channels.allowedGroupIds.trim()))
+    + Number(Boolean(activeDraft.channels.slackAllowedUserIds.trim() || activeDraft.channels.slackAllowedChannelIds.trim()))
+  const channelRuntimeCount = Number(uiShell?.runtimeHealth.channels.telegramEnabled ?? false)
+    + Number(uiShell?.runtimeHealth.channels.slackEnabled ?? false)
+  const hasEditableCurrentStep = hasEditableSetupStep(stepContextId)
+  const currentStepDirty = hasEditableCurrentStep && isSetupStepDirty(draft, activeDraft, stepContextId)
+  const canSkipCurrentStep = canSkipSetupStep(stepContextId) && !currentStep.required && !saving
+  const isReview = stepContextId === "review"
+  const isDone = stepContextId === "done"
   const canSaveCurrentStep = hasEditableCurrentStep && currentStepDirty && currentValidation.valid && !saving
   const canGoNext = !isDone && !nextStepMeta?.locked && currentValidation.valid && !saving
   const canComplete = isReview && currentValidation.valid && !saving
   const completionErrorMessage = isReview && !saving ? formatSetupCompletionError(lastError) : ""
   const shouldShowValidation = showValidation || currentStepDirty
+  const currentScene = useMemo(
+    () => applyValidationOverlaysToScene(transportDecoratedScene, {
+      stepId: stepContextId,
+      validation: currentValidation,
+      showValidation: shouldShowValidation,
+      isDraftDirty: currentStepDirty,
+      nextStepBlocked: (!isReview && !isDone && !currentValidation.valid) || Boolean(nextStepMeta?.locked && !isReview && !isDone),
+      language: uiLanguage,
+    }),
+    [currentStepDirty, currentValidation, isDone, isReview, nextStepMeta?.locked, shouldShowValidation, stepContextId, transportDecoratedScene, uiLanguage],
+  )
+  const usesVisualizationShell = uiMode === "advanced"
+    && (stepContextId === "welcome"
+      || stepContextId === "personal"
+      || stepContextId === "ai_backends"
+      || stepContextId === "mcp"
+      || stepContextId === "skills"
+      || stepContextId === "security"
+      || stepContextId === "channels"
+      || stepContextId === "remote_access"
+      || stepContextId === "review"
+      || stepContextId === "done")
+    && currentScene !== null
+
+  function captureFocusedElement(target: "inspector" | "navigator") {
+    if (typeof document === "undefined" || !(document.activeElement instanceof HTMLElement)) return
+    if (target === "inspector") {
+      inspectorReturnFocusRef.current = document.activeElement
+      return
+    }
+    navigatorReturnFocusRef.current = document.activeElement
+  }
+
+  function restoreFocusedElement(target: "inspector" | "navigator") {
+    const candidate = target === "inspector" ? inspectorReturnFocusRef.current : navigatorReturnFocusRef.current
+    if (!candidate) return
+    window.setTimeout(() => candidate.focus(), 0)
+  }
+
+  function openResponsiveInspector() {
+    captureFocusedElement("inspector")
+    setResponsiveInspectorOpen(true)
+  }
+
+  function closeResponsiveInspector() {
+    setResponsiveInspectorOpen(false)
+    restoreFocusedElement("inspector")
+  }
+
+  function openMobileNavigator() {
+    captureFocusedElement("navigator")
+    setMobileNavigatorOpen(true)
+  }
+
+  function closeMobileNavigator() {
+    setMobileNavigatorOpen(false)
+    restoreFocusedElement("navigator")
+  }
+
+  useEffect(() => {
+    if (!aiRoutingScene) {
+      setAiVisualizationMode("connections")
+      return
+    }
+
+    if (state.currentStep === "ai_routing") {
+      setAiVisualizationMode("routing")
+      return
+    }
+
+    if (stepContextId !== "ai_backends") {
+      setAiVisualizationMode("connections")
+    }
+  }, [aiRoutingScene, state.currentStep, stepContextId])
+
+  useEffect(() => {
+    if (!usesVisualizationShell || !renderVisualizationInspector()) {
+      setResponsiveInspectorOpen(false)
+      return
+    }
+
+    if (selectedVisualizationNodeId) {
+      setResponsiveInspectorOpen(true)
+    }
+  }, [selectedVisualizationNodeId, stepContextId, usesVisualizationShell])
+
+  useEffect(() => {
+    setMobileNavigatorOpen(false)
+  }, [stepContextId, uiMode])
+
+  useEffect(() => {
+    if (!usesVisualizationShell || !currentScene) {
+      setSelectedVisualizationNodeId(null)
+      return
+    }
+
+    setSelectedVisualizationNodeId((current) => {
+      if (current && currentScene.nodes.some((node) => node.id === current)) {
+        return current
+      }
+
+      if (stepContextId === "welcome") {
+        return currentScene.nodes.find((node) => node.status === "required" || node.status === "draft")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "ai_backends") {
+        const scenePrefix = currentScene.id === "scene:ai_routing" ? "node:routing:" : "node:ai:"
+        if (selectedAiBackendId && currentScene.nodes.some((node) => node.id === `${scenePrefix}${selectedAiBackendId}`)) {
+          return `${scenePrefix}${selectedAiBackendId}`
+        }
+        return currentScene.nodes.find((node) => node.kind === "ai_backend" && node.badges.includes("active"))?.id
+          ?? currentScene.nodes.find((node) => node.kind === "ai_backend")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "mcp") {
+        if (selectedMcpServerId && currentScene.nodes.some((node) => node.id === `node:mcp:${selectedMcpServerId}`)) {
+          return `node:mcp:${selectedMcpServerId}`
+        }
+        return currentScene.nodes.find((node) => node.id.startsWith("node:mcp:") && node.id !== "node:mcp:hub" && node.id !== "node:mcp:placeholder")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "skills") {
+        if (selectedSkillId && currentScene.nodes.some((node) => node.id === `node:skills:${selectedSkillId}`)) {
+          return `node:skills:${selectedSkillId}`
+        }
+        return currentScene.nodes.find((node) => node.id.startsWith("node:skills:") && node.id !== "node:skills:hub" && node.id !== "node:skills:placeholder")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "security") {
+        return currentScene.nodes.find((node) => node.status === "error" || node.status === "warning")?.id
+          ?? currentScene.nodes.find((node) => node.id === "node:security:approval_gate")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "channels") {
+        const preferredNodeId = selectedChannelId ? `node:channels:${selectedChannelId}` : null
+        if (preferredNodeId && currentScene.nodes.some((node) => node.id === preferredNodeId)) {
+          return preferredNodeId
+        }
+        return currentScene.nodes.find((node) => node.id === "node:channels:telegram" && (node.status === "required" || node.status === "warning" || node.status === "ready"))?.id
+          ?? currentScene.nodes.find((node) => node.id === "node:channels:slack" && (node.status === "required" || node.status === "warning" || node.status === "ready"))?.id
+          ?? currentScene.nodes.find((node) => node.id === "node:channels:webui")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "remote_access") {
+        return currentScene.nodes.find((node) => node.status === "error" || node.status === "warning")?.id
+          ?? currentScene.nodes.find((node) => node.id === "node:remote:external_clients")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "review") {
+        return currentScene.nodes.find((node) => node.id !== "node:review:board" && (node.status === "error" || node.status === "warning"))?.id
+          ?? currentScene.nodes.find((node) => node.id === "node:review:board")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      if (stepContextId === "done") {
+        return currentScene.nodes.find((node) => node.id === "node:done:setup")?.id
+          ?? currentScene.nodes[0]?.id
+          ?? null
+      }
+
+      return currentScene.nodes[0]?.id ?? null
+    })
+  }, [currentScene, selectedAiBackendId, selectedChannelId, selectedMcpServerId, selectedSkillId, state.currentStep, stepContextId, usesVisualizationShell])
 
   function patchDraft<K extends keyof SetupDraft>(key: K, value: SetupDraft[K]) {
     setLocalDraft((current) => {
@@ -265,6 +667,29 @@ export function SetupPage() {
     setLocalDraft((current) => setSingleAiBackendEnabled(cloneDraft(current ?? draft), backendId, enabled))
   }
 
+  function moveRoutingTarget(profileId: RoutingProfile["id"], from: number, to: number) {
+    setLocalDraft((current) => {
+      const base = cloneDraft(current ?? draft)
+      return {
+        ...base,
+        routingProfiles: base.routingProfiles.map((profile) => {
+          if (profile.id !== profileId) return profile
+          if (from < 0 || from >= profile.targets.length || to < 0 || to >= profile.targets.length) {
+            return profile
+          }
+          const nextTargets = [...profile.targets]
+          const [moved] = nextTargets.splice(from, 1)
+          if (!moved) return profile
+          nextTargets.splice(to, 0, moved)
+          return {
+            ...profile,
+            targets: nextTargets,
+          }
+        }),
+      }
+    })
+  }
+
   function updateMcpServer(serverId: string, patch: Partial<SetupDraft["mcp"]["servers"][number]>) {
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
@@ -278,6 +703,7 @@ export function SetupPage() {
   }
 
   function addMcpServer() {
+    const serverId = createDraftId("mcp")
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
       return {
@@ -286,7 +712,7 @@ export function SetupPage() {
           servers: [
             ...base.mcp.servers,
             {
-              id: createDraftId("mcp"),
+              id: serverId,
               name: "",
               transport: "stdio",
               command: "",
@@ -302,6 +728,7 @@ export function SetupPage() {
         },
       }
     })
+    setSelectedMcpServerId(serverId)
   }
 
   function removeMcpServer(serverId: string) {
@@ -351,6 +778,7 @@ export function SetupPage() {
   }
 
   function addSkillItem() {
+    const skillId = createDraftId("skill")
     setLocalDraft((current) => {
       const base = cloneDraft(current ?? draft)
       return {
@@ -359,7 +787,7 @@ export function SetupPage() {
           items: [
             ...base.skills.items,
             {
-              id: createDraftId("skill"),
+              id: skillId,
               label: "",
               description: "",
               source: "local",
@@ -372,6 +800,7 @@ export function SetupPage() {
         },
       }
     })
+    setSelectedSkillId(skillId)
   }
 
   function removeSkillItem(skillId: string) {
@@ -407,11 +836,13 @@ export function SetupPage() {
     }
   }
 
-  async function handleReset() {
+  async function handleReset(): Promise<boolean> {
     const confirmed = window.confirm("로컬 config와 setup 상태를 기본값으로 복원합니다. 계속할까요?")
-    if (!confirmed) return
+    if (!confirmed) return false
     await resetSetup()
     setShowValidation(false)
+    setResponsiveInspectorOpen(false)
+    return true
   }
 
   async function persistCurrentStep(): Promise<boolean> {
@@ -421,12 +852,15 @@ export function SetupPage() {
 
     if (!currentValidation.valid) {
       setShowValidation(true)
+      if (usesVisualizationShell) {
+        openResponsiveInspector()
+      }
       return false
     }
 
-    const nextDraft = mergeSetupStepDraft(draft, activeDraft, state.currentStep)
+    const nextDraft = mergeSetupStepDraft(draft, activeDraft, stepContextId)
     const success = await saveDraftSnapshot(nextDraft, {
-      syncChannelRuntime: state.currentStep === "channels",
+      syncChannelRuntime: stepContextId === "channels",
     })
 
     if (success) {
@@ -439,8 +873,11 @@ export function SetupPage() {
 
   function handleCancelCurrentStep() {
     if (!hasEditableCurrentStep) return
-    setLocalDraft(revertSetupStepDraft(activeDraft, draft, state.currentStep))
+    setLocalDraft(revertSetupStepDraft(activeDraft, draft, stepContextId))
     setShowValidation(false)
+    if (!selectedVisualizationNodeId) {
+      setResponsiveInspectorOpen(false)
+    }
   }
 
   async function moveToStep(stepId: SetupState["currentStep"]) {
@@ -448,19 +885,26 @@ export function SetupPage() {
     const success = await persistCurrentStep()
     if (!success) return
     setShowValidation(false)
+    setMobileNavigatorOpen(false)
     setStep(stepId)
   }
 
   async function handleNext() {
     if (isReview) {
       setShowValidation(true)
-      if (!currentValidation.valid) return
+      if (!currentValidation.valid) {
+        openResponsiveInspector()
+        return
+      }
       await completeSetup()
       return
     }
 
     if (!nextStepMeta || nextStepMeta.locked) {
       setShowValidation(true)
+      if (usesVisualizationShell) {
+        openResponsiveInspector()
+      }
       return
     }
 
@@ -480,10 +924,258 @@ export function SetupPage() {
 
   function handleSkip() {
     if (!canSkipCurrentStep || !nextStepMeta) return
-    setLocalDraft(revertSetupStepDraft(activeDraft, draft, state.currentStep))
+    setLocalDraft(revertSetupStepDraft(activeDraft, draft, stepContextId))
     setShowValidation(false)
+    setMobileNavigatorOpen(false)
     setStep(nextStepMeta.id)
   }
+
+  async function handleWelcomeQuickStart() {
+    const resetDone = await handleReset()
+    if (!resetDone) return
+    await moveToStep("personal")
+  }
+
+  function handleVisualizationNodeSelection(nodeId: string) {
+    setSelectedVisualizationNodeId(nodeId)
+    if (usesVisualizationShell) {
+      setResponsiveInspectorOpen(true)
+    }
+
+    if (!currentScene) return
+
+    if (currentScene.id === "scene:ai_backends" || currentScene.id === "scene:ai_routing") {
+      const prefix = currentScene.id === "scene:ai_routing" ? "node:routing:" : "node:ai:"
+      if (!nodeId.startsWith(prefix)) return
+      const backendId = nodeId.slice(prefix.length)
+      const node = currentScene.nodes.find((candidate) => candidate.id === nodeId)
+      if (node?.kind === "ai_backend") {
+        setSelectedAiBackendId(backendId)
+      }
+      return
+    }
+
+    if (currentScene.id === "scene:mcp") {
+      if (!nodeId.startsWith("node:mcp:") || nodeId === "node:mcp:hub" || nodeId === "node:mcp:placeholder") return
+      setSelectedMcpServerId(nodeId.slice("node:mcp:".length))
+      return
+    }
+
+    if (currentScene.id === "scene:skills") {
+      if (!nodeId.startsWith("node:skills:") || nodeId === "node:skills:hub" || nodeId === "node:skills:placeholder") return
+      setSelectedSkillId(nodeId.slice("node:skills:".length))
+      return
+    }
+
+    if (currentScene.id === "scene:channels") {
+      if (!nodeId.startsWith("node:channels:")) return
+      const channelId = nodeId.slice("node:channels:".length)
+      if (channelId === "webui" || channelId === "telegram" || channelId === "slack") {
+        setSelectedChannelId(channelId)
+      }
+      return
+    }
+
+    if (currentScene.id === "scene:review") {
+      const node = currentScene.nodes.find((candidate) => candidate.id === nodeId)
+      const targetStepId = node?.semanticStepIds?.find((candidate) => candidate !== "review")
+      if (!targetStepId) return
+      void moveToStep(targetStepId)
+      return
+    }
+
+    if (stepContextId !== "welcome") return
+    const node = currentScene.nodes.find((candidate) => candidate.id === nodeId)
+    const targetStepId = node?.semanticStepIds?.[0]
+    if (!targetStepId || targetStepId === "welcome" || targetStepId === stepContextId) return
+    void moveToStep(targetStepId)
+  }
+
+  const visualizationLegend = usesVisualizationShell && currentScene
+    ? (
+        <div className="space-y-3">
+          {stepContextId === "ai_backends" ? (
+            <AiVisualizationModeToggle
+              language={uiLanguage}
+              mode={aiVisualizationMode}
+              routingAvailable={Boolean(aiRoutingScene)}
+              onChange={setAiVisualizationMode}
+            />
+          ) : null}
+          <SetupVisualizationLegend scene={currentScene} language={uiLanguage} />
+        </div>
+      )
+    : undefined
+
+  const visualizationCanvas = usesVisualizationShell && currentScene
+    ? (
+        <SetupVisualizationCanvas
+          scene={currentScene}
+          language={uiLanguage}
+          selectedNodeId={selectedVisualizationNodeId}
+          onSelectNode={handleVisualizationNodeSelection}
+          onDismissSelection={() => closeResponsiveInspector()}
+        />
+      )
+    : undefined
+
+  function renderVisualizationInspector() {
+    if (!usesVisualizationShell || !currentScene) return undefined
+
+    if (stepContextId === "welcome") {
+      return (
+        <WelcomeSetupInspector
+          language={uiLanguage}
+          steps={steps}
+          onStart={() => { void moveToStep("personal") }}
+          onQuickStart={() => { void handleWelcomeQuickStart() }}
+        />
+      )
+    }
+
+    if (stepContextId === "ai_backends") {
+      return (
+        <AiSetupInspector
+          language={uiLanguage}
+          mode={aiVisualizationMode}
+          routingAvailable={Boolean(aiRoutingScene)}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          selectedBackend={selectedBackend}
+          profile={activeDraft.routingProfiles[0] ?? null}
+          backends={activeDraft.aiBackends}
+          backendErrors={shouldShowValidation ? currentValidation.backendErrors : undefined}
+          onSelectMode={setAiVisualizationMode}
+          onMoveRoutingTarget={(from, to) => {
+            const profileId = activeDraft.routingProfiles[0]?.id
+            if (!profileId) return
+            moveRoutingTarget(profileId, from, to)
+          }}
+          onSelectBackend={setSelectedAiBackendId}
+          onUpdateBackend={updateBackend}
+          onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
+          onRemoveBackend={removeBackend}
+          onSetRoutingTargetEnabled={setRoutingTargetEnabled}
+        />
+      )
+    }
+
+    if (stepContextId === "mcp") {
+      return (
+        <McpSetupInspector
+          language={uiLanguage}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          selectedServer={selectedMcpServer}
+          totalServers={activeDraft.mcp.servers.length}
+          testingServerId={testingMcpServerId}
+          errors={shouldShowValidation ? currentValidation.mcpErrors : undefined}
+          onAddServer={addMcpServer}
+          onChangeServer={updateMcpServer}
+          onRemoveServer={removeMcpServer}
+          onTestServer={(serverId) => void handleTestMcpServer(serverId)}
+        />
+      )
+    }
+
+    if (stepContextId === "skills") {
+      return (
+        <SkillsSetupInspector
+          language={uiLanguage}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          selectedSkill={selectedSkill}
+          totalSkills={activeDraft.skills.items.length}
+          testingSkillId={testingSkillId}
+          errors={shouldShowValidation ? currentValidation.skillErrors : undefined}
+          onAddSkill={addSkillItem}
+          onChangeSkill={updateSkillItem}
+          onRemoveSkill={removeSkillItem}
+          onTestSkill={(skillId) => void handleTestSkillItem(skillId)}
+        />
+      )
+    }
+
+    if (stepContextId === "security") {
+      return (
+        <SecuritySetupInspector
+          language={uiLanguage}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          value={activeDraft.security}
+          errors={shouldShowValidation ? {
+            approvalTimeout: currentValidation.fieldErrors.approvalTimeout,
+            maxDelegationTurns: currentValidation.fieldErrors.maxDelegationTurns,
+          } : undefined}
+          onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
+        />
+      )
+    }
+
+    if (stepContextId === "channels") {
+      return (
+        <ChannelsSetupInspector
+          language={uiLanguage}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          selectedChannel={selectedChannel}
+          value={activeDraft.channels}
+          telegramResult={telegramCheckResult}
+          slackResult={slackCheckResult}
+          runtime={uiShell?.runtimeHealth.channels ?? null}
+          errors={shouldShowValidation ? {
+            telegramEnabled: currentValidation.fieldErrors.telegramEnabled,
+            botToken: currentValidation.fieldErrors.botToken,
+            slackBotToken: currentValidation.fieldErrors.slackBotToken,
+            slackAppToken: currentValidation.fieldErrors.slackAppToken,
+          } : undefined}
+          onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+          onTelegramCheckResult={setTelegramCheckResult}
+          onSlackCheckResult={setSlackCheckResult}
+        />
+      )
+    }
+
+    if (stepContextId === "remote_access") {
+      return (
+        <RemoteAccessSetupInspector
+          language={uiLanguage}
+          selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+          remoteAccess={activeDraft.remoteAccess}
+          mqtt={activeDraft.mqtt}
+          errors={shouldShowValidation ? {
+            authToken: currentValidation.fieldErrors.authToken,
+            host: currentValidation.fieldErrors.host,
+            port: currentValidation.fieldErrors.port,
+            mqttHost: currentValidation.fieldErrors.mqttHost,
+            mqttPort: currentValidation.fieldErrors.mqttPort,
+            mqttUsername: currentValidation.fieldErrors.mqttUsername,
+            mqttPassword: currentValidation.fieldErrors.mqttPassword,
+          } : undefined}
+          onChangeRemote={(patch) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, ...patch })}
+          onChangeMqtt={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
+        />
+      )
+    }
+
+    if (stepContextId === "review" || stepContextId === "done") {
+      return undefined
+    }
+
+    return (
+      <PersonalSetupInspector
+        language={uiLanguage}
+        value={activeDraft.personal}
+        selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
+        onChange={(patch) => patchDraft("personal", { ...activeDraft.personal, ...patch })}
+        errors={shouldShowValidation ? {
+          profileName: currentValidation.fieldErrors.profileName,
+          displayName: currentValidation.fieldErrors.displayName,
+          language: currentValidation.fieldErrors.language,
+          timezone: currentValidation.fieldErrors.timezone,
+          workspace: currentValidation.fieldErrors.workspace,
+        } : undefined}
+      />
+    )
+  }
+
+  const visualizationInspector = renderVisualizationInspector()
+  const visualizationMobileInspector = renderVisualizationInspector()
 
   function patchBeginnerAiInput(patch: Partial<typeof beginnerAiInput>) {
     setBeginnerAiInput((current) => {
@@ -564,14 +1256,6 @@ export function SetupPage() {
     await saveDraftSnapshot(activeDraft)
     await completeSetup()
     setBeginnerNotice(lastError ? sanitizeBeginnerSetupError(lastError, uiLanguage) : uiCatalogText(uiLanguage, "beginner.setup.saved"))
-  }
-
-  function beginnerStepTone(status: BeginnerSetupStepStatus): string {
-    switch (status) {
-      case "done": return "border-emerald-200 bg-emerald-50 text-emerald-800"
-      case "needs_attention": return "border-amber-200 bg-amber-50 text-amber-800"
-      case "skipped": return "border-stone-200 bg-stone-50 text-stone-700"
-    }
   }
 
   function beginnerConnectionTone(status: BeginnerConnectionStatus): string {
@@ -765,26 +1449,25 @@ export function SetupPage() {
       <div className="min-h-screen overflow-y-auto bg-stone-100 p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-5">
           <BetaWarningNotice language={uiLanguage} />
-          <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+          <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
             <aside className="space-y-4">
               <div className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">{uiCatalogText(uiLanguage, "beginner.setup.title")}</div>
                 <h1 className="mt-2 text-2xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.title")}</h1>
                 <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.description")}</p>
               </div>
-              <nav className="space-y-2" aria-label={uiCatalogText(uiLanguage, "beginner.setup.title")}>
-                {beginnerSteps.map((step) => (
-                  <button key={step.id} type="button" onClick={() => setBeginnerStepId(step.id)} className={`w-full rounded-2xl border p-4 text-left transition ${beginnerStepId === step.id ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-white hover:bg-stone-50"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-stone-900">{step.label}</div>
-                        <div className="mt-1 text-xs leading-5 text-stone-500">{step.description}</div>
-                      </div>
-                      <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${beginnerStepTone(step.status)}`}>{step.statusLabel}</span>
-                    </div>
-                  </button>
-                ))}
-              </nav>
+              <BeginnerVisualizationDeck deck={beginnerVisualizationDeck} language={uiLanguage} onSelect={setBeginnerStepId} />
+              <OrchestrationPreviewCard
+                title={pickUiText(uiLanguage, "서브 에이전트 구조 미리보기", "Sub-agent structure preview")}
+                description={pickUiText(uiLanguage, "처음 설정 단계에서는 draft를 건드리지 않고 topology만 먼저 읽습니다. 실제 편집은 전용 surface에서 이어집니다.", "During initial setup you read only the topology first without touching the draft. Actual editing continues on the dedicated surface.")}
+                summary={orchestrationSummary}
+                scene={orchestrationPreviewScene}
+                language={uiLanguage}
+                href="/agents"
+                actionLabel={pickUiText(uiLanguage, "전체 topology 열기", "Open full topology")}
+                loading={orchestrationLoading}
+                error={orchestrationError}
+              />
             </aside>
             <main className="space-y-4">
               {beginnerNotice ? <RuntimeNotice tone={beginnerAiTestOk === false ? "error" : "info"} title={uiCatalogText(uiLanguage, beginnerAiTestOk === false ? "beginner.setup.testNeedsAction" : "beginner.setup.saved")} message={beginnerNotice} /> : null}
@@ -797,15 +1480,11 @@ export function SetupPage() {
   }
 
   function renderBody() {
-    switch (state.currentStep) {
+    switch (stepContextId) {
       case "welcome":
         return (
           <div className="space-y-6">
             <BetaWarningNotice language={uiLanguage} />
-            <SectionIntro
-              title="처음 설정을 시작합니다"
-              description="왼쪽 단계 목록을 따라가며 필수 항목부터 채우면 Nobie를 바로 사용할 수 있습니다. 이 화면에서는 저장 위치와 현재 연결 상태를 먼저 확인합니다."
-            />
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <StatCard label="현재 단계" value={state.completed ? "설정 완료" : "환영"} />
               <StatCard label="설정된 AI" value={String(configuredBackends.length)} />
@@ -815,16 +1494,16 @@ export function SetupPage() {
                 value={activeDraft.channels.botToken.trim() || (activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim()) ? "입력됨" : "미입력"}
               />
             </div>
-            <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+              <SetupChecksPanel checks={checks} loading={checksLoading} onRefresh={() => void refreshChecks(true)} />
               <div className="rounded-3xl border border-stone-200 bg-white p-6">
                 <div className="text-sm font-semibold text-stone-900">시작 전에 확인할 점</div>
                 <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
                   <ChecklistItem text="AI 연결은 필수입니다. 연결 주소와 기본 모델을 정해야 실제 응답 테스트가 가능합니다." />
-                  <ChecklistItem text="대화 채널은 마지막에 연결합니다. 앞 단계에서 저장된 값을 바탕으로 연결 확인을 진행합니다." />
-                  <ChecklistItem text="오른쪽 상태 패널에서 현재 저장 상태와 연결 상태를 함께 확인할 수 있습니다." />
+                  <ChecklistItem text="채널과 원격 접근은 선택 단계입니다. 먼저 필수 단계부터 끝내도 됩니다." />
+                  <ChecklistItem text="지도에서 노드를 클릭하면 다음에 볼 단계를 바로 이동할 수 있습니다." />
                 </div>
               </div>
-              <SetupChecksPanel checks={checks} loading={checksLoading} onRefresh={() => void refreshChecks(true)} />
             </div>
             <SetupExpandableSection
               title="고급 상태 보기"
@@ -843,10 +1522,6 @@ export function SetupPage() {
       case "personal":
         return (
           <div className="space-y-6">
-            <SectionIntro
-              title="사용자 기본 정보를 적습니다"
-              description="Nobie가 누구를 도와야 하는지, 어떤 언어와 시간대를 기준으로 움직여야 하는지 먼저 정합니다."
-            />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
             ) : null}
@@ -856,22 +1531,57 @@ export function SetupPage() {
               <StatCard label="기본 언어" value={activeDraft.personal.language.trim() || "미선택"} />
               <StatCard label="시간대" value={activeDraft.personal.timezone.trim() || "미선택"} />
             </div>
-            <PersonalSettingsForm
-              value={activeDraft.personal}
-              onChange={(patch) => patchDraft("personal", { ...activeDraft.personal, ...patch })}
-              errors={shouldShowValidation ? {
-                profileName: currentValidation.fieldErrors.profileName,
-                displayName: currentValidation.fieldErrors.displayName,
-                language: currentValidation.fieldErrors.language,
-                timezone: currentValidation.fieldErrors.timezone,
-                workspace: currentValidation.fieldErrors.workspace,
-              } : undefined}
-            />
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="이름과 표시 이름은 Nobie가 사용자를 구분하고 화면에 노출할 때 사용됩니다." />
+                <ChecklistItem text="기본 언어와 시간대는 이후 AI 응답과 일정/알림 시간 계산 기준이 됩니다." />
+                <ChecklistItem text="작업 폴더는 전체 경로여야 하며, 이후 파일 작업의 시작 위치가 됩니다." />
+              </div>
+            </div>
           </div>
         )
 
       case "ai_backends":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="AI 연결을 준비합니다"
+              description="이 단계는 Nobie Core Router 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="활성 AI" value={enabledBackends[0]?.label ?? "없음"} compact />
+              <StatCard label="활성 모델" value={enabledBackends[0]?.defaultModel || "미설정"} compact />
+              <StatCard label="주소 입력됨" value={String(activeDraft.aiBackends.filter((backend) => backend.endpoint?.trim()).length)} />
+              <StatCard label="라우팅 대상" value={String(activeDraft.routingProfiles[0]?.targets.length ?? 0)} />
+            </div>
+            <RuntimeNotice
+              tone={enabledBackends.length === 1 ? "info" : "error"}
+              title="단일 AI 정책"
+              message={enabledBackends.length === 1
+                ? "현재 topology와 routing projection 모두 하나의 활성 backend를 기준으로 정렬됩니다."
+                : "활성 backend를 하나 선택해야 topology와 routing scene이 정상 상태로 정렬됩니다."}
+            />
+            {selectedBackend?.reason ? (
+              <RuntimeNotice
+                tone={selectedBackend.status === "error" ? "error" : "info"}
+                title={`${selectedBackend.label} 상태`}
+                message={selectedBackend.reason}
+              />
+            ) : null}
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="캔버스에서 backend 노드를 선택하면 Inspector가 같은 backend 편집 UI로 바로 연결됩니다." />
+                <ChecklistItem text="연결 확인 또는 모델 조회 결과는 노드 상태와 alert overlay에 같이 반영됩니다." />
+                <ChecklistItem text="Routing 장면은 확장 보기이며, 현재 routingProfiles 의미를 그대로 시각화합니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="AI 연결을 준비합니다"
@@ -901,7 +1611,42 @@ export function SetupPage() {
         )
 
       case "mcp":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="외부 기능 연결을 준비합니다"
+              description="MCP 서버를 capability map으로 보고, 선택한 서버의 command/url과 tool list는 Inspector에서 상세하게 편집합니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="등록된 MCP" value={String(activeDraft.mcp.servers.length)} />
+              <StatCard label="사용 중" value={String(mcpEnabledCount)} />
+              <StatCard label="필수 서버" value={String(mcpRequiredCount)} />
+              <StatCard label="연결 확인 완료" value={String(mcpReadyCount)} />
+            </div>
+            {currentStep.reason ? <RuntimeNotice tone={currentStep.status === "error" ? "error" : "info"} title="MCP 상태" message={currentStep.reason} /> : null}
+            {selectedMcpServer?.reason ? (
+              <RuntimeNotice tone={selectedMcpServer.status === "error" ? "error" : "info"} title={`${selectedMcpServer.name || "MCP 서버"} 상태`} message={selectedMcpServer.reason} />
+            ) : null}
+            <RuntimeNotice
+              tone={currentValidation.valid ? "info" : "error"}
+              title="필수 확장 안내"
+              message={currentValidation.valid
+                ? "필수 서버는 연결 확인이 끝나야 하고, tool count badge로 준비 정도를 바로 확인할 수 있습니다."
+                : currentValidation.summary[0] ?? "MCP 연결 상태를 다시 확인해 주세요."}
+            />
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="stdio와 http transport가 cluster로 분리되어 어떤 서버가 직접 실행형인지 바로 구분됩니다." />
+                <ChecklistItem text="tool count는 graph badge로 보고, 실제 tool 이름 목록은 Inspector에서만 상세 확인합니다." />
+                <ChecklistItem text="연결 실패 서버는 graph에서 사라지지 않고 경고/오류 상태로 계속 남습니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="외부 기능 연결을 준비합니다"
@@ -950,7 +1695,41 @@ export function SetupPage() {
         )
 
       case "skills":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="작업 능력을 확장합니다"
+              description="Skill을 source cluster로 나눠 보고, 선택한 항목의 local path와 상세 설명은 Inspector에서 편집합니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="등록된 Skill" value={String(activeDraft.skills.items.length)} />
+              <StatCard label="사용 중" value={String(skillEnabledCount)} />
+              <StatCard label="필수 Skill" value={String(skillRequiredCount)} />
+              <StatCard label="확인 완료" value={String(skillReadyCount)} />
+            </div>
+            {selectedSkill?.reason ? (
+              <RuntimeNotice tone={selectedSkill.status === "error" ? "error" : "info"} title={`${selectedSkill.label || "Skill"} 상태`} message={selectedSkill.reason} />
+            ) : null}
+            <RuntimeNotice
+              tone={currentValidation.valid ? "info" : "error"}
+              title="필수 확장 안내"
+              message={currentValidation.valid
+                ? "builtin/local cluster를 함께 보고, local path 검증 결과는 graph 상태와 Inspector 상세에서 같이 확인할 수 있습니다."
+                : currentValidation.summary[0] ?? "Skill 설정을 다시 확인해 주세요."}
+            />
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="builtin Skill과 local Skill이 cluster로 나뉘어 source가 즉시 구분됩니다." />
+                <ChecklistItem text="로컬 path 자체는 graph에 노출하지 않고, Inspector에서만 확인하고 검증합니다." />
+                <ChecklistItem text="필수 Skill이 꺼져 있거나 검증되지 않은 경우 cluster 안에서도 바로 눈에 띄게 표시됩니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="작업 능력을 확장합니다"
@@ -998,7 +1777,48 @@ export function SetupPage() {
         )
 
       case "security":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="안전 경계를 조정합니다"
+              description="승인 게이트, 타임아웃 fallback, 자동 후속 처리 제한이 어디서 위험 구역으로 이어지는지 경계 지도로 보여줍니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="승인 모드" value={activeDraft.security.approvalMode} compact />
+              <StatCard label="타임아웃" value={`${activeDraft.security.approvalTimeout}s`} compact />
+              <StatCard label="기본 동작" value={activeDraft.security.approvalTimeoutFallback} compact />
+              <StatCard label="후속 제한" value={activeDraft.security.maxDelegationTurns === 0 ? "unlimited" : String(activeDraft.security.maxDelegationTurns)} compact />
+            </div>
+            {(activeDraft.security.approvalMode === "off" || activeDraft.security.approvalTimeoutFallback === "allow" || activeDraft.security.maxDelegationTurns === 0) ? (
+              <RuntimeNotice
+                tone={activeDraft.security.approvalMode === "off" && activeDraft.security.approvalTimeoutFallback === "allow" ? "error" : "info"}
+                title="위험 조합 감지"
+                message={activeDraft.security.approvalMode === "off" && activeDraft.security.approvalTimeoutFallback === "allow"
+                  ? "승인이 꺼진 상태에서 timeout fallback도 allow로 열려 있습니다. 고위험 작업이 직접 실행될 수 있습니다."
+                  : activeDraft.security.maxDelegationTurns === 0
+                    ? "자동 후속 처리가 무제한이라 같은 작업이 길게 반복될 수 있습니다."
+                    : "현재 설정은 일부 작업을 빠르게 통과시키므로 boundary map의 경고 구역을 같이 확인해야 합니다."}
+              />
+            ) : (
+              <RuntimeNotice
+                tone="info"
+                title="안전 기본값"
+                message="승인 게이트, deny fallback, 제한된 후속 처리 횟수가 함께 유지되면 boundary map의 안전 구역이 기본 경로가 됩니다."
+              />
+            )}
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="승인 게이트가 꺼지면 중앙 boundary와 제한 구역이 동시에 경고로 바뀝니다." />
+                <ChecklistItem text="timeout fallback은 승인 정책과 별도이며, allow로 바뀌면 위험 구역 alert가 즉시 추가됩니다." />
+                <ChecklistItem text="자동 후속 처리 제한은 무제한 대신 bounded 상태를 유지하는 쪽이 기본 경계 설계와 맞습니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="안전 규칙을 정합니다"
@@ -1019,7 +1839,56 @@ export function SetupPage() {
         )
 
       case "channels":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="대화 채널 네트워크를 정리합니다"
+              description="WebUI를 기본 루트로 두고, Telegram/Slack의 policy 범위, preflight 결과, 실제 runtime 상태를 서로 다른 신호로 분리해 보여줍니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="사용 중 채널" value={String(channelEnabledCount)} />
+              <StatCard label="런타임 활성" value={String(channelRuntimeCount)} />
+              <StatCard label="정책 범위 지정" value={String(channelPolicyScopedCount)} />
+              <StatCard label="루트 채널" value="WebUI" compact />
+            </div>
+            {currentStep.reason ? (
+              <RuntimeNotice tone={currentStep.status === "error" ? "error" : "info"} title="채널 상태" message={currentStep.reason} />
+            ) : null}
+            {stepContextId === "channels" && lastError ? (
+              <RuntimeNotice tone="error" title="채널 런타임 재시작 실패" message={lastError} />
+            ) : null}
+            {selectedChannel === "telegram" && telegramCheckResult ? (
+              <RuntimeNotice
+                tone={telegramCheckResult.ok ? "info" : "error"}
+                title="Telegram preflight"
+                message={telegramCheckResult.message}
+              />
+            ) : null}
+            {selectedChannel === "slack" && slackCheckResult ? (
+              <RuntimeNotice
+                tone={slackCheckResult.ok ? "info" : "error"}
+                title="Slack preflight"
+                message={slackCheckResult.message}
+              />
+            ) : null}
+            <RuntimeNotice
+              tone="info"
+              title="policy / preflight / runtime 분리"
+              message="Allowed IDs badge는 정책 범위이고, Telegram/Slack preflight는 연결 검사이며, 저장 후 runtime restart 결과는 footer와 scene overlay에서 따로 확인합니다."
+            />
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="WebUI는 항상 기본 루트 채널로 남고, Telegram/Slack은 별도 runtime 상태를 가진 외부 채널로 붙습니다." />
+                <ChecklistItem text="allowed IDs가 비어 있으면 graph badge는 policy:open으로 남고, 연결 테스트 성공과는 별개로 읽어야 합니다." />
+                <ChecklistItem text="저장 후 runtime restart가 실패하면 footer 오류와 graph alert가 같이 뜨며, preflight 성공과 혼동되지 않도록 분리됩니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="대화 채널을 연결합니다"
@@ -1110,7 +1979,46 @@ export function SetupPage() {
         )
 
       case "remote_access":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="원격 접근 경계를 정리합니다"
+              description="Host/port, auth boundary, MQTT bridge, external client zone을 하나의 네트워크 맵으로 보고, 실제 값 편집은 Inspector에서 진행합니다."
+            />
+            {shouldShowValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="원격 Host" value={activeDraft.remoteAccess.host || "미입력"} compact />
+              <StatCard label="원격 Port" value={String(activeDraft.remoteAccess.port)} />
+              <StatCard label="WebUI 인증" value={activeDraft.remoteAccess.authEnabled ? "on" : "off"} compact />
+              <StatCard label="MQTT Bridge" value={activeDraft.mqtt.enabled ? "on" : "off"} compact />
+            </div>
+            {currentStep.reason ? (
+              currentStep.status === "planned" ? (
+                <PlannedState title="Remote Access" description={currentStep.reason} />
+              ) : (
+                <RuntimeNotice tone={currentStep.status === "error" ? "error" : "info"} title="원격 접근 상태" message={currentStep.reason} />
+              )
+            ) : null}
+            {!activeDraft.remoteAccess.authEnabled && activeDraft.remoteAccess.host.trim() && !["127.0.0.1", "localhost"].includes(activeDraft.remoteAccess.host.trim()) ? (
+              <RuntimeNotice tone="error" title="열린 원격 경계" message="로컬이 아닌 host에서 WebUI 인증이 꺼져 있습니다. boundary map에서 auth boundary 경고를 먼저 확인해야 합니다." />
+            ) : null}
+            <RuntimeNotice
+              tone={activeDraft.mqtt.enabled ? "info" : "info"}
+              title="MQTT runtime detail"
+              message={`setup에서는 bridge 경계와 자격 정보만 편집하고, 실제 extension 연결 상세는 ${pickUiText(uiLanguage, "설정/연장 화면", "settings/extensions")}에서 다시 확인합니다.`}
+            />
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <ChecklistItem text="Host/Port와 Auth boundary는 같은 원격 WebUI 경계를 공유하지만, 오류 원인은 분리해서 읽어야 합니다." />
+                <ChecklistItem text="MQTT bridge는 extension client와 연결되지만 Yeonjang 자체를 하위 노드로 표현하지는 않습니다." />
+                <ChecklistItem text="Auth token은 값 대신 보호됨/누락/초안 상태로만 읽고, 실제 값 편집은 Inspector에서만 처리합니다." />
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="원격 접근을 선택합니다"
@@ -1164,7 +2072,27 @@ export function SetupPage() {
         )
 
       case "review":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <SectionIntro
+              title="완료 전 readiness를 확인합니다"
+              description="입력값 나열 대신, 왜 지금 완료할 수 있는지 또는 무엇이 아직 막고 있는지를 readiness board로 확인합니다."
+            />
+            {showValidation && currentValidation.summary.length > 0 ? (
+              <ValidationNotice messages={currentValidation.summary} />
+            ) : null}
+            {completionErrorMessage ? (
+              <RuntimeNotice tone="error" title="설정 완료에 실패했습니다" message={completionErrorMessage} />
+            ) : null}
+            <ReviewSummaryPanel
+              board={reviewBoard}
+              onSelectStep={(stepId) => {
+                void moveToStep(stepId)
+              }}
+            />
+            <SetupChecksPanel checks={checks} loading={checksLoading} onRefresh={() => void refreshChecks(true)} />
+          </div>
+        ) : (
           <div className="space-y-6">
             <SectionIntro
               title="입력한 내용을 한 번 더 확인합니다"
@@ -1177,8 +2105,7 @@ export function SetupPage() {
               <RuntimeNotice tone="error" title="설정 완료에 실패했습니다" message={completionErrorMessage} />
             ) : null}
             <ReviewSummaryPanel
-              draft={activeDraft}
-              reviewMessages={currentValidation.summary}
+              board={reviewBoard}
               onSelectStep={(stepId) => {
                 void moveToStep(stepId)
               }}
@@ -1188,7 +2115,43 @@ export function SetupPage() {
         )
 
       case "done":
-        return (
+        return usesVisualizationShell && currentScene ? (
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-stone-200 bg-white p-8">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400">Completed</div>
+              <h2 className="mt-3 text-3xl font-semibold text-stone-900">{doneSummary.heroTitle}</h2>
+              <p className="mt-3 text-sm leading-7 text-stone-600">{doneSummary.heroMessage}</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {doneSummary.cards.map((card) => (
+                <RuntimeSummaryCard key={card.id} card={card} />
+              ))}
+            </div>
+            <div className="rounded-3xl border border-stone-200 bg-white p-6">
+              <div className="text-sm font-semibold text-stone-900">다음 행동</div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {state.completed ? doneSummary.actions.map((action) => (
+                  <Link
+                    key={action.id}
+                    to={action.href}
+                    className={action.tone === "primary"
+                      ? "rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white"
+                      : "rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-semibold text-stone-700"}
+                  >
+                    {action.label}
+                  </Link>
+                )) : (
+                  <button
+                    onClick={() => void completeSetup()}
+                    className="rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white"
+                  >
+                    {pickUiText(uiLanguage, "설정 완료", "Finish Setup")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="mx-auto max-w-4xl rounded-3xl border border-stone-200 bg-white p-8">
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400">Completed</div>
             <h2 className="mt-3 text-3xl font-semibold text-stone-900">설정이 끝났습니다</h2>
@@ -1240,13 +2203,25 @@ export function SetupPage() {
       title={pickUiText(uiLanguage, "처음 설정", "Initial Setup")}
       description={pickUiText(uiLanguage, "필수 단계부터 차례대로 입력하면 Nobie를 바로 사용할 수 있습니다.", "Complete the required steps in order to start using Nobie quickly.")}
       steps={steps}
-      currentStep={state.currentStep}
+      currentStep={stepContextId}
       onSelectStep={(stepId) => {
         const targetStep = steps.find((step) => step.id === stepId)
         if (!targetStep || targetStep.locked) return
         void moveToStep(stepId as typeof state.currentStep)
       }}
       language={uiLanguage}
+      legend={visualizationLegend}
+      canvas={visualizationCanvas}
+      inspector={visualizationInspector}
+      mobileInspector={visualizationMobileInspector}
+      inspectorTitle={currentStep.label}
+      inspectorDescription={currentStep.description}
+      inspectorOpen={responsiveInspectorOpen}
+      onInspectorOpen={openResponsiveInspector}
+      onInspectorClose={closeResponsiveInspector}
+      mobileNavigatorOpen={mobileNavigatorOpen}
+      onMobileNavigatorOpen={openMobileNavigator}
+      onMobileNavigatorClose={closeMobileNavigator}
       assistPanel={(
         <SetupAssistPanel
           currentStep={currentStep}
@@ -1446,276 +2421,801 @@ function RuntimeNotice({
   )
 }
 
-function createSetupSteps(
-  capabilities: FeatureCapability[],
-  draft: SetupDraft,
-  state: SetupState,
-  language: UiLanguage,
-): SetupStepMeta[] {
-  const t = (korean: string, english: string) => pickUiText(language, korean, english)
-  const telegramCapability = capabilities.find((item) => item.key === "telegram.channel")
-  const slackCapability = capabilities.find((item) => item.key === "slack.channel")
-  const hasPersonalInfo = validateSetupStep("personal", draft).valid
-  const hasConfiguredBackend = validateSetupStep("ai_backends", draft).valid
-  const hasConfiguredMcpServers = draft.mcp.servers.length > 0
-  const hasMcpReady = validateSetupStep("mcp", draft).valid
-  const hasConfiguredSkills = draft.skills.items.length > 0
-  const hasSkillsReady = validateSetupStep("skills", draft).valid
-  const hasSecurityDefaults = validateSetupStep("security", draft).valid
-  const hasTelegramChannel = validateSetupStep("channels", draft).valid
-  const hasRemoteAccess = validateSetupStep("remote_access", draft).valid
+function RuntimeSummaryCard({
+  card,
+}: {
+  card: ReturnType<typeof buildDoneRuntimeSummary>["cards"][number]
+}) {
+  const toneClass = card.tone === "ready"
+    ? "border-emerald-200 bg-emerald-50"
+    : card.tone === "warning"
+      ? "border-amber-200 bg-amber-50"
+      : "border-stone-200 bg-stone-50"
 
-  const steps: SetupStepMeta[] = [
-    {
-      id: "welcome",
-      label: t("환영", "Welcome"),
-      description: t("설정 흐름과 현재 상태를 먼저 확인합니다.", "Review the setup flow and current status first."),
-      status: "ready",
-      required: false,
-      highlights: [
-        t("설정 전체 흐름을 한 번에 확인합니다.", "Review the full setup flow at a glance."),
-        t("로컬 저장 위치와 연결 상태를 먼저 살펴봅니다.", "Check the local storage path and connection status first."),
-        t("필수 단계가 무엇인지 확인한 뒤 다음으로 이동합니다.", "Confirm which steps are required before moving on."),
-      ],
-      completed: state.currentStep !== "welcome" || state.completed,
-      locked: false,
-    },
-    {
-      id: "personal",
-      label: t("개인 정보", "Personal"),
-      description: t("사용자 이름과 기본 작업 환경을 먼저 정합니다.", "Set the user name and default working environment first."),
-      status: "ready",
-      required: true,
-      highlights: [
-        t("이름과 표시 이름을 입력합니다.", "Enter the profile name and display name."),
-        t("기본 언어와 시간대를 고릅니다.", "Choose the default language and timezone."),
-        t("기본 작업 폴더를 지정해 이후 파일 작업 기준값으로 사용합니다.", "Set the default workspace for later file tasks."),
-      ],
-      completed: hasPersonalInfo,
-      locked: false,
-    },
-    withCapability(
-      "ai_backends",
-      t("AI 연결", "AI Connection"),
-      t("응답과 계획, 검토에 사용할 AI 연결 하나를 정합니다.", "Choose the single AI connection used for responses, planning, and review."),
-      capabilities.find((item) => item.key === "ai.backends"),
-      true,
-      [
-        t("사용할 AI 공급자 하나를 고릅니다.", "Choose one AI provider."),
-        t("인증, 연결 주소, 기본 모델을 확인합니다.", "Confirm the credentials, endpoint, and default model."),
-        t("연결 확인으로 실제 동작 여부를 검증합니다.", "Verify that the connection really works."),
-      ],
-      hasConfiguredBackend,
-    ),
-    withCapability(
-      "mcp",
-      t("외부 기능 연결 (MCP)", "External Tools (MCP)"),
-      t("외부 도구와 기능을 Nobie에 연결합니다.", "Connect external tools and capabilities to Nobie."),
-      capabilities.find((item) => item.key === "mcp.client"),
-      false,
-      [
-        t("연결할 MCP 서버를 추가합니다.", "Add the MCP servers to connect."),
-        t("실행 명령과 연결 방식을 입력합니다.", "Enter the launch command and transport."),
-        t("연결 확인 후 도구 목록을 확인합니다.", "Verify the connection and review the tool list."),
-      ],
-      hasConfiguredMcpServers ? hasMcpReady : true,
-    ),
-    {
-      id: "skills",
-      label: t("작업 능력 확장 (Skill)", "Skills"),
-      description: t("작업 지침과 보조 능력을 등록합니다.", "Register helper instructions and extra abilities."),
-      status: hasConfiguredSkills ? (hasSkillsReady ? "ready" : "disabled") : "ready",
-      reason: hasConfiguredSkills && !hasSkillsReady ? t("등록한 Skill의 상태를 다시 확인해야 합니다.", "Check the registered skill status again.") : undefined,
-      required: false,
-      highlights: [
-        t("로컬 Skill 또는 기본 Skill을 등록합니다.", "Add local or built-in skills."),
-        t("필요한 Skill만 켜고 설명을 정리합니다.", "Enable only the needed skills and keep descriptions clear."),
-        t("로컬 Skill은 경로 확인을 통해 준비 상태를 확인합니다.", "Verify local skill paths before using them."),
-      ],
-      completed: hasConfiguredSkills ? hasSkillsReady : true,
-      locked: false,
-    },
-    withCapability(
-      "security",
-      t("보안", "Security"),
-      t("실행 전 확인 방식과 안전 규칙을 정합니다.", "Set approval and safety rules before execution."),
-      capabilities.find((item) => item.key === "settings.control"),
-      false,
-      [
-        t("파일 실행이나 도구 사용 전에 얼마나 자주 확인받을지 정합니다.", "Set how often Nobie should ask before using tools or files."),
-        t("자동 후속 처리 횟수 같은 기본 안전값을 확인합니다.", "Review safety defaults like the auto follow-up limit."),
-        t("처음에는 기본값을 유지해도 됩니다.", "Keeping the defaults is fine at first."),
-      ],
-      hasSecurityDefaults,
-    ),
-    withSetupChannelCapability(
-      "channels",
-      t("대화 채널 (Communication)", "Communication"),
-      t("메신저에서 Nobie와 대화할 채널을 연결합니다.", "Connect the messaging channels used to talk with Nobie."),
-      telegramCapability ?? slackCapability,
-      draft.channels,
-      true,
-      [
-        t("Telegram 같은 메신저 연결 정보를 입력합니다.", "Enter channel details such as Telegram."),
-        t("연결 확인으로 실제 동작 여부를 검사합니다.", "Verify that the channel really works."),
-        t("메신저에서 Nobie와 대화할 준비를 마칩니다.", "Finish preparing the chat channel."),
-      ],
-      hasTelegramChannel,
-      language,
-    ),
-    withCapability(
-      "remote_access",
-      t("원격 접근", "Remote Access"),
-      t("다른 기기에서 설정 화면에 들어오게 할지 선택합니다.", "Choose whether other devices can open the setup screen."),
-      capabilities.find((item) => item.key === "settings.control"),
-      false,
-      [
-        t("다른 기기에서 접속해야 할 때만 설정합니다.", "Configure this only if you need access from another device."),
-        t("인증 토큰과 MQTT 접속 정보를 확인합니다.", "Review the auth token and MQTT access details."),
-        t("지금 필요 없다면 나중에 설정해도 됩니다.", "You can skip it for now and configure it later."),
-      ],
-      hasRemoteAccess,
-    ),
-    {
-      id: "review",
-      label: t("검토", "Review"),
-      description: t("입력한 값을 한 번 더 확인합니다.", "Review the entered values once more."),
-      status: "ready",
-      required: false,
-      highlights: [
-        t("입력한 값이 맞는지 한 번 더 확인합니다.", "Confirm that the entered values look correct."),
-        t("빠진 필수 항목이 있으면 해당 단계로 돌아갑니다.", "Return to the matching step if a required field is missing."),
-        t("이상이 없으면 설정 완료를 진행합니다.", "Finish setup if everything looks good."),
-      ],
-      completed: state.completed,
-      locked: false,
-    },
-    {
-      id: "done",
-      label: t("완료", "Done"),
-      description: t("설정을 끝내고 Nobie를 사용합니다.", "Finish setup and start using Nobie."),
-      status: "ready",
-      required: false,
-      highlights: [
-        t("최종 저장 결과를 확인합니다.", "Review the final saved result."),
-        t("대시보드로 이동해 현재 상태를 봅니다.", "Open the dashboard to check the current status."),
-        t("이후 채팅과 자동화 기능을 시작할 수 있습니다.", "Start using chat and automation afterwards."),
-      ],
-      completed: state.completed,
-      locked: !state.completed,
-      lockReason: state.completed ? undefined : t("먼저 검토 단계를 마치고 설정 완료를 진행해야 합니다.", "Finish the review step before completing setup."),
-    },
-  ]
-
-  return applyStepLocks(steps, language)
+  return (
+    <div className={`rounded-3xl border p-5 ${toneClass}`}>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{card.title}</div>
+      <div className="mt-3 text-2xl font-semibold text-stone-900">{card.value}</div>
+      <div className="mt-3 text-sm leading-6 text-stone-700">{card.detail}</div>
+    </div>
+  )
 }
 
-function withCapability(
-  id: SetupStepMeta["id"],
-  label: string,
-  description: string,
-  capability: FeatureCapability | undefined,
-  required: boolean,
-  highlights: string[],
-  completed: boolean,
-): SetupStepMeta {
-  return {
-    id,
-    label,
-    description,
-    status: capability?.status ?? "planned",
-    reason: capability?.reason,
-    required,
-    highlights,
-    completed,
-    locked: false,
+function channelLabel(channel: SetupChannelId, language: UiLanguage): string {
+  switch (channel) {
+    case "telegram":
+      return pickUiText(language, "Telegram", "Telegram")
+    case "slack":
+      return pickUiText(language, "Slack", "Slack")
+    case "webui":
+    default:
+      return "WebUI"
   }
 }
 
-function withSetupChannelCapability(
-  id: SetupStepMeta["id"],
-  label: string,
-  description: string,
-  capability: FeatureCapability | undefined,
-  channels: {
-    telegramEnabled: boolean
-    botToken: string
-    slackEnabled: boolean
-    slackBotToken: string
-    slackAppToken: string
+function channelPolicySummary(
+  channel: SetupChannelId,
+  value: SetupDraft["channels"],
+  language: UiLanguage,
+): { title: string; description: string } {
+  if (channel === "webui") {
+    return {
+      title: pickUiText(language, "기본 내장 채널", "Built-in root channel"),
+      description: pickUiText(
+        language,
+        "WebUI는 항상 기본 입력 채널이며 별도 allowed IDs 정책이 없습니다.",
+        "WebUI is always the built-in input channel and has no separate allowed-ID policy.",
+      ),
+    }
+  }
+
+  if (channel === "telegram") {
+    const scoped = Boolean(value.allowedUserIds.trim() || value.allowedGroupIds.trim())
+    return {
+      title: scoped ? pickUiText(language, "policy:scoped", "policy:scoped") : pickUiText(language, "policy:open", "policy:open"),
+      description: scoped
+        ? pickUiText(language, "허용 사용자/그룹 ID가 입력되어 범위가 좁혀져 있습니다.", "Allowed user/group IDs are filled in, so the scope is narrowed.")
+        : pickUiText(language, "허용 사용자/그룹 ID가 비어 있어 범위가 넓습니다.", "Allowed user/group IDs are empty, so the scope is broad."),
+    }
+  }
+
+  const scoped = Boolean(value.slackAllowedUserIds.trim() || value.slackAllowedChannelIds.trim())
+  return {
+    title: scoped ? pickUiText(language, "policy:scoped", "policy:scoped") : pickUiText(language, "policy:open", "policy:open"),
+    description: scoped
+      ? pickUiText(language, "허용 사용자/채널 ID가 입력되어 범위가 좁혀져 있습니다.", "Allowed user/channel IDs are filled in, so the scope is narrowed.")
+      : pickUiText(language, "허용 사용자/채널 ID가 비어 있어 범위가 넓습니다.", "Allowed user/channel IDs are empty, so the scope is broad."),
+  }
+}
+
+function channelRuntimeSummary(
+  channel: SetupChannelId,
+  runtime: UiShellResponse["runtimeHealth"]["channels"] | null,
+  language: UiLanguage,
+): { title: string; description: string } {
+  if (!runtime) {
+    return {
+      title: pickUiText(language, "runtime:unknown", "runtime:unknown"),
+      description: pickUiText(language, "런타임 상태를 아직 불러오지 못했습니다.", "Runtime state is not loaded yet."),
+    }
+  }
+
+  if (channel === "webui") {
+    return {
+      title: runtime.webui ? pickUiText(language, "runtime:ready", "runtime:ready") : pickUiText(language, "runtime:warning", "runtime:warning"),
+      description: runtime.webui
+        ? pickUiText(language, "WebUI 루트 채널은 활성 상태입니다.", "The WebUI root channel is active.")
+        : pickUiText(language, "WebUI 루트 채널 상태를 다시 확인해야 합니다.", "The WebUI root channel needs to be checked."),
+    }
+  }
+
+  if (channel === "telegram") {
+    return {
+      title: runtime.telegramEnabled
+        ? pickUiText(language, "runtime:ready", "runtime:ready")
+        : runtime.telegramConfigured
+          ? pickUiText(language, "runtime:stopped", "runtime:stopped")
+          : pickUiText(language, "runtime:idle", "runtime:idle"),
+      description: runtime.telegramEnabled
+        ? pickUiText(language, "Telegram 런타임이 실제로 동작 중입니다.", "The Telegram runtime is actually running.")
+        : runtime.telegramConfigured
+          ? pickUiText(language, "설정은 저장되어 있지만 런타임은 아직 시작되지 않았습니다.", "The configuration is saved, but the runtime has not started yet.")
+          : pickUiText(language, "Telegram 런타임 설정이 아직 비어 있습니다.", "Telegram runtime settings are still empty."),
+    }
+  }
+
+  return {
+    title: runtime.slackEnabled
+      ? pickUiText(language, "runtime:ready", "runtime:ready")
+      : runtime.slackConfigured
+        ? pickUiText(language, "runtime:stopped", "runtime:stopped")
+        : pickUiText(language, "runtime:idle", "runtime:idle"),
+    description: runtime.slackEnabled
+      ? pickUiText(language, "Slack Socket Mode 런타임이 실제로 동작 중입니다.", "The Slack Socket Mode runtime is actually running.")
+      : runtime.slackConfigured
+        ? pickUiText(language, "설정은 저장되어 있지만 Socket Mode 런타임은 아직 시작되지 않았습니다.", "The configuration is saved, but the Socket Mode runtime has not started yet.")
+        : pickUiText(language, "Slack 런타임 설정이 아직 비어 있습니다.", "Slack runtime settings are still empty."),
+  }
+}
+
+export function decorateSetupScene(
+  scene: VisualizationScene | null,
+  {
+    stepContextId,
+    saving,
+    lastError,
+    language,
+    telegramCheckResult,
+    slackCheckResult,
+  }: {
+    stepContextId: SetupState["currentStep"]
+    saving: boolean
+    lastError: string
+    language: UiLanguage
+    telegramCheckResult: ChannelCheckResult
+    slackCheckResult: ChannelCheckResult
   },
-  required: boolean,
-  highlights: string[],
-  completed: boolean,
-  language: UiLanguage,
-): SetupStepMeta {
+): VisualizationScene | null {
+  if (!scene || stepContextId !== "channels") return scene
+
   const t = (korean: string, english: string) => pickUiText(language, korean, english)
+  const extraAlerts = [...(scene.alerts ?? [])]
+  const nodes = scene.nodes.map((node) => {
+    let nextNode = node
 
-  if (!capability) {
-    return {
-      id,
-      label,
-      description,
-      status: "ready",
-      required,
-      highlights,
-      completed,
-      locked: false,
+    if (node.id === "node:channels:telegram" && telegramCheckResult) {
+      nextNode = {
+        ...nextNode,
+        status: telegramCheckResult.ok ? nextNode.status : softenNodeStatusToWarning(nextNode.status),
+        badges: appendVisualizationBadge(nextNode.badges, telegramCheckResult.ok ? "preflight:ok" : "preflight:error"),
+      }
     }
+
+    if (node.id === "node:channels:slack" && slackCheckResult) {
+      nextNode = {
+        ...nextNode,
+        status: slackCheckResult.ok ? nextNode.status : softenNodeStatusToWarning(nextNode.status),
+        badges: appendVisualizationBadge(nextNode.badges, slackCheckResult.ok ? "preflight:ok" : "preflight:error"),
+      }
+    }
+
+    if (lastError && (node.id === "node:channels:telegram" || node.id === "node:channels:slack") && node.badges.includes("enabled")) {
+      nextNode = {
+        ...nextNode,
+        status: softenNodeStatusToWarning(nextNode.status),
+        badges: appendVisualizationBadge(nextNode.badges, "runtime:retry"),
+      }
+    }
+
+    return nextNode
+  })
+
+  if (saving) {
+    extraAlerts.push({
+      id: "alert:channels:runtime-sync-pending",
+      tone: "info",
+      message: t(
+        "채널 설정을 저장하는 동안 외부 런타임 재시작 경계를 같이 반영합니다.",
+        "While saving channel settings, the external runtime restart boundary is being applied.",
+      ),
+      semanticStepIds: ["channels"],
+      relatedNodeIds: ["node:channels:webui"],
+    })
   }
 
-  if (capability.status === "error") {
-    return {
-      id,
-      label,
-      description,
-      status: "error",
-      reason: capability.reason,
-      required,
-      highlights,
-      completed,
-      locked: false,
-    }
+  if (telegramCheckResult) {
+    extraAlerts.push({
+      id: "alert:channels:telegram-preflight",
+      tone: telegramCheckResult.ok ? "info" : "error",
+      message: `${t("Telegram preflight", "Telegram preflight")}: ${telegramCheckResult.message}`,
+      semanticStepIds: ["channels"],
+      relatedNodeIds: ["node:channels:telegram"],
+    })
   }
 
-  const hasTelegramConfig = Boolean(channels.botToken.trim())
-  const hasSlackConfig = Boolean(channels.slackBotToken.trim() && channels.slackAppToken.trim())
-  const hasSavedChannel = (hasTelegramConfig && channels.telegramEnabled) || (hasSlackConfig && channels.slackEnabled)
-  const reason = hasSavedChannel && capability.reason?.includes("런타임이 시작되지 않았습니다.")
-    ? t("채널 정보는 저장되었습니다. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다.", "Channel details are saved. Check the channel details for runtime status.")
-    : undefined
+  if (slackCheckResult) {
+    extraAlerts.push({
+      id: "alert:channels:slack-preflight",
+      tone: slackCheckResult.ok ? "info" : "error",
+      message: `${t("Slack preflight", "Slack preflight")}: ${slackCheckResult.message}`,
+      semanticStepIds: ["channels"],
+      relatedNodeIds: ["node:channels:slack"],
+    })
+  }
+
+  if (lastError) {
+    extraAlerts.push({
+      id: "alert:channels:runtime-sync-error",
+      tone: "error",
+      message: `${t("채널 런타임 재시작 실패", "Channel runtime restart failed")}: ${lastError}`,
+      semanticStepIds: ["channels"],
+      relatedNodeIds: ["node:channels:webui", "node:channels:telegram", "node:channels:slack"],
+    })
+  }
 
   return {
-    id,
-    label,
-    description,
-    status: "ready",
-    reason,
-    required,
-    highlights,
-    completed,
-    locked: false,
+    ...scene,
+    nodes,
+    alerts: extraAlerts,
   }
 }
 
-function applyStepLocks(steps: SetupStepMeta[], language: UiLanguage): SetupStepMeta[] {
-  let firstRequiredGap: SetupStepMeta | null = null
+function appendVisualizationBadge(badges: string[], badge: string): string[] {
+  return badges.includes(badge) ? badges : [...badges, badge]
+}
 
-  return steps.map((step) => {
-    if (!firstRequiredGap && step.required && !step.completed) {
-      firstRequiredGap = step
-    }
+function softenNodeStatusToWarning(status: VisualizationScene["nodes"][number]["status"]): VisualizationScene["nodes"][number]["status"] {
+  if (status === "error" || status === "required") return status
+  return "warning"
+}
 
-    if (!firstRequiredGap || step.id === firstRequiredGap.id || step.id === "welcome") {
-      return step
-    }
+function WelcomeSetupInspector({
+  language,
+  steps,
+  onStart,
+  onQuickStart,
+}: {
+  language: UiLanguage
+  steps: Array<{ id: string; label: string; required: boolean; completed: boolean; locked: boolean }>
+  onStart: () => void
+  onQuickStart: () => void
+}) {
+  const remainingRequired = steps.filter((step) => step.required && !step.completed).length
+  const nextRecommended = steps.find((step) => step.required && !step.completed && !step.locked)
+  const estimatedMinutes = Math.max(2, remainingRequired * 2)
 
-    return {
-      ...step,
-      locked: true,
-      lockReason: pickUiText(language, `먼저 '${firstRequiredGap.label}' 단계를 완료해야 합니다.`, `Complete the '${firstRequiredGap.label}' step first.`),
-    }
-  })
+  return (
+    <div className="space-y-4 p-5">
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          {pickUiText(language, "권장 시작점", "Recommended start")}
+        </div>
+        <div className="mt-2 text-sm font-semibold text-stone-900">
+          {nextRecommended?.label ?? pickUiText(language, "모든 필수 단계를 마쳤습니다.", "All required steps are ready.")}
+        </div>
+        <div className="mt-2 text-sm leading-6 text-stone-600">
+          {pickUiText(language, `예상 소요 시간 약 ${estimatedMinutes}분`, `Estimated time about ${estimatedMinutes} min`)}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          {pickUiText(language, "빠른 액션", "Quick actions")}
+        </div>
+        <div className="mt-4 grid gap-3">
+          <button
+            type="button"
+            onClick={onStart}
+            className="rounded-2xl bg-stone-900 px-4 py-3 text-sm font-semibold text-white"
+          >
+            {pickUiText(language, "설정 시작", "Start setup")}
+          </button>
+          <button
+            type="button"
+            onClick={onQuickStart}
+            className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-700"
+          >
+            {pickUiText(language, "기본값으로 빠른 시작", "Quick start with defaults")}
+          </button>
+          <Link
+            to="/settings"
+            className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-700"
+          >
+            {pickUiText(language, "고급 설정 보기", "Open advanced settings")}
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PersonalSetupInspector({
+  language,
+  value,
+  selectedNodeLabel,
+  onChange,
+  errors,
+}: {
+  language: UiLanguage
+  value: SetupDraft["personal"]
+  selectedNodeLabel?: string
+  onChange: (patch: Partial<SetupDraft["personal"]>) => void
+  errors?: Partial<Record<keyof SetupDraft["personal"], string>>
+}) {
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          {pickUiText(language, "편집 Inspector", "Editing inspector")}
+        </div>
+        <div className="mt-2 text-sm font-semibold text-stone-900">
+          {selectedNodeLabel ?? pickUiText(language, "프로필 컨텍스트", "Profile context")}
+        </div>
+        <div className="mt-2 text-sm leading-6 text-stone-600">
+          {pickUiText(language, "입력값을 바꾸면 지도 노드 상태가 즉시 같이 바뀝니다.", "Changing a value updates the map node state immediately.")}
+        </div>
+      </div>
+      <PersonalSettingsForm value={value} onChange={onChange} errors={errors} />
+    </div>
+  )
+}
+
+function InspectorIntroCard({
+  language,
+  title,
+  description,
+}: {
+  language: UiLanguage
+  title: string
+  description: string
+}) {
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+        {pickUiText(language, "편집 Inspector", "Editing inspector")}
+      </div>
+      <div className="mt-2 text-sm font-semibold text-stone-900">{title}</div>
+      <div className="mt-2 text-sm leading-6 text-stone-600">{description}</div>
+    </div>
+  )
+}
+
+function McpSetupInspector({
+  language,
+  selectedNodeLabel,
+  selectedServer,
+  totalServers,
+  testingServerId,
+  errors,
+  onAddServer,
+  onChangeServer,
+  onRemoveServer,
+  onTestServer,
+}: {
+  language: UiLanguage
+  selectedNodeLabel?: string
+  selectedServer: SetupDraft["mcp"]["servers"][number] | null
+  totalServers: number
+  testingServerId?: string | null
+  errors?: Record<string, import("../lib/setupFlow").McpServerErrors>
+  onAddServer: () => void
+  onChangeServer: (serverId: string, patch: Partial<SetupDraft["mcp"]["servers"][number]>) => void
+  onRemoveServer: (serverId: string) => void
+  onTestServer: (serverId: string) => void
+}) {
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <InspectorIntroCard
+        language={language}
+        title={selectedNodeLabel ?? selectedServer?.name ?? pickUiText(language, "MCP 서버", "MCP server")}
+        description={pickUiText(
+          language,
+          totalServers > 0
+            ? "선택한 MCP 서버의 command, transport, tool list를 여기서 바로 편집하고 검사합니다."
+            : "아직 MCP 서버가 없습니다. 먼저 하나를 추가하면 capability map과 Inspector가 함께 채워집니다.",
+          totalServers > 0
+            ? "Edit and test the selected MCP server's command, transport, and tool list here."
+            : "There are no MCP servers yet. Add one first and the capability map and inspector will populate together.",
+        )}
+      />
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onAddServer}
+          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700"
+        >
+          {pickUiText(language, "새 MCP 추가", "Add MCP Server")}
+        </button>
+      </div>
+
+      {selectedServer ? (
+        <McpServerEditorCard
+          server={selectedServer}
+          isTesting={testingServerId === selectedServer.id}
+          errors={errors?.[selectedServer.id]}
+          onChange={(patch) => onChangeServer(selectedServer.id, patch)}
+          onRemove={() => onRemoveServer(selectedServer.id)}
+          onTest={() => onTestServer(selectedServer.id)}
+        />
+      ) : (
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white/75 p-4 text-sm leading-6 text-stone-500">
+          {pickUiText(language, "왼쪽 capability map에서 MCP 서버를 선택하거나 새 서버를 추가해 주세요.", "Select an MCP server from the capability map or add a new server.")}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SkillsSetupInspector({
+  language,
+  selectedNodeLabel,
+  selectedSkill,
+  totalSkills,
+  testingSkillId,
+  errors,
+  onAddSkill,
+  onChangeSkill,
+  onRemoveSkill,
+  onTestSkill,
+}: {
+  language: UiLanguage
+  selectedNodeLabel?: string
+  selectedSkill: SetupDraft["skills"]["items"][number] | null
+  totalSkills: number
+  testingSkillId?: string | null
+  errors?: Record<string, import("../lib/setupFlow").SkillItemErrors>
+  onAddSkill: () => void
+  onChangeSkill: (skillId: string, patch: Partial<SetupDraft["skills"]["items"][number]>) => void
+  onRemoveSkill: (skillId: string) => void
+  onTestSkill: (skillId: string) => void
+}) {
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <InspectorIntroCard
+        language={language}
+        title={selectedNodeLabel ?? selectedSkill?.label ?? pickUiText(language, "Skill", "Skill")}
+        description={pickUiText(
+          language,
+          totalSkills > 0
+            ? "선택한 Skill의 source, 설명, local path를 여기서 편집하고 바로 검증합니다."
+            : "아직 Skill이 없습니다. 먼저 하나를 추가하면 source cluster와 Inspector가 함께 채워집니다.",
+          totalSkills > 0
+            ? "Edit the selected skill's source, description, and local path here and validate it immediately."
+            : "There are no skills yet. Add one first and both the source clusters and inspector will populate together.",
+        )}
+      />
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onAddSkill}
+          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700"
+        >
+          {pickUiText(language, "새 Skill 추가", "Add Skill")}
+        </button>
+      </div>
+
+      {selectedSkill ? (
+        <SkillItemEditorCard
+          item={selectedSkill}
+          isTesting={testingSkillId === selectedSkill.id}
+          errors={errors?.[selectedSkill.id]}
+          onChange={(patch) => onChangeSkill(selectedSkill.id, patch)}
+          onRemove={() => onRemoveSkill(selectedSkill.id)}
+          onTest={() => onTestSkill(selectedSkill.id)}
+        />
+      ) : (
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white/75 p-4 text-sm leading-6 text-stone-500">
+          {pickUiText(language, "왼쪽 capability map에서 Skill을 선택하거나 새 Skill을 추가해 주세요.", "Select a skill from the capability map or add a new skill.")}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SecuritySetupInspector({
+  language,
+  selectedNodeLabel,
+  value,
+  errors,
+  onChange,
+}: {
+  language: UiLanguage
+  selectedNodeLabel?: string
+  value: SetupDraft["security"]
+  errors?: Partial<Record<"approvalTimeout" | "maxDelegationTurns", string>>
+  onChange: (patch: Partial<SetupDraft["security"]>) => void
+}) {
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <InspectorIntroCard
+        language={language}
+        title={selectedNodeLabel ?? pickUiText(language, "보안 경계", "Security boundary")}
+        description={pickUiText(
+          language,
+          "선택한 boundary node와 같은 승인 정책을 여기서 직접 편집합니다. 값이 바뀌면 경고 구역과 안전 구역이 즉시 다시 계산됩니다.",
+          "Edit the same approval policy represented by the selected boundary node. Changing a value immediately recalculates the safe and warning zones.",
+        )}
+      />
+      <SecuritySettingsForm value={value} onChange={onChange} errors={errors} />
+    </div>
+  )
+}
+
+function ChannelsSetupInspector({
+  language,
+  selectedNodeLabel,
+  selectedChannel,
+  value,
+  telegramResult,
+  slackResult,
+  runtime,
+  errors,
+  onChange,
+  onTelegramCheckResult,
+  onSlackCheckResult,
+}: {
+  language: UiLanguage
+  selectedNodeLabel?: string
+  selectedChannel: SetupChannelId
+  value: SetupDraft["channels"]
+  telegramResult: ChannelCheckResult
+  slackResult: ChannelCheckResult
+  runtime: UiShellResponse["runtimeHealth"]["channels"] | null
+  errors?: Partial<Record<"telegramEnabled" | "botToken" | "slackBotToken" | "slackAppToken", string>>
+  onChange: (patch: Partial<SetupDraft["channels"]>) => void
+  onTelegramCheckResult: (result: ChannelCheckResult) => void
+  onSlackCheckResult: (result: ChannelCheckResult) => void
+}) {
+  const selectedTitle = selectedNodeLabel ?? channelLabel(selectedChannel, language)
+  const runtimeSummary = channelRuntimeSummary(selectedChannel, runtime, language)
+  const policySummary = channelPolicySummary(selectedChannel, value, language)
+
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <InspectorIntroCard
+        language={language}
+        title={selectedTitle}
+        description={selectedChannel === "webui"
+          ? pickUiText(
+            language,
+            "WebUI는 기본 루트 채널입니다. 외부 메신저는 여기서 갈라져 나가며, 저장 후 runtime restart 경계를 공유합니다.",
+            "WebUI is the built-in root channel. External messengers branch from here and share the runtime restart boundary after save.",
+          )
+          : pickUiText(
+            language,
+            "선택한 채널의 정책 범위와 preflight를 여기서 확인합니다. allowed IDs와 연결 테스트는 서로 다른 의미로 유지됩니다.",
+            "Review the selected channel's policy scope and preflight here. Allowed IDs and connection tests stay as separate signals.",
+          )}
+      />
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+        <div className="rounded-2xl border border-stone-200 bg-white p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            {pickUiText(language, "정책 범위", "Policy scope")}
+          </div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{policySummary.title}</div>
+          <div className="mt-2 text-sm leading-6 text-stone-600">{policySummary.description}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+            {pickUiText(language, "런타임 상태", "Runtime state")}
+          </div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{runtimeSummary.title}</div>
+          <div className="mt-2 text-sm leading-6 text-stone-600">{runtimeSummary.description}</div>
+        </div>
+      </div>
+
+      {selectedChannel === "webui" ? (
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white/80 p-4 text-sm leading-6 text-stone-600">
+          {pickUiText(
+            language,
+            "WebUI는 입력 토큰이 필요 없는 기본 채널입니다. Telegram/Slack의 policy 편집과 preflight는 각 채널 노드를 선택했을 때만 표시됩니다.",
+            "WebUI is the built-in channel and does not require input tokens. Telegram and Slack policy editing and preflight appear only when those channel nodes are selected.",
+          )}
+        </div>
+      ) : selectedChannel === "telegram" ? (
+        <>
+          <TelegramSettingsForm
+            value={value}
+            onChange={onChange}
+            errors={errors ? {
+              telegramEnabled: errors.telegramEnabled,
+              botToken: errors.botToken,
+            } : undefined}
+          />
+          <TelegramCheckPanel botToken={value.botToken} result={telegramResult} onResult={onTelegramCheckResult} />
+        </>
+      ) : (
+        <>
+          <SlackSettingsForm
+            value={value}
+            onChange={onChange}
+            errors={errors ? {
+              slackBotToken: errors.slackBotToken,
+              slackAppToken: errors.slackAppToken,
+            } : undefined}
+          />
+          <SlackCheckPanel
+            botToken={value.slackBotToken}
+            appToken={value.slackAppToken}
+            result={slackResult}
+            onResult={onSlackCheckResult}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+function RemoteAccessSetupInspector({
+  language,
+  selectedNodeLabel,
+  remoteAccess,
+  mqtt,
+  errors,
+  onChangeRemote,
+  onChangeMqtt,
+}: {
+  language: UiLanguage
+  selectedNodeLabel?: string
+  remoteAccess: SetupDraft["remoteAccess"]
+  mqtt: SetupDraft["mqtt"]
+  errors?: Partial<Record<"authToken" | "host" | "port" | "mqttHost" | "mqttPort" | "mqttUsername" | "mqttPassword", string>>
+  onChangeRemote: (patch: Partial<SetupDraft["remoteAccess"]>) => void
+  onChangeMqtt: (patch: Partial<SetupDraft["mqtt"]>) => void
+}) {
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <InspectorIntroCard
+        language={language}
+        title={selectedNodeLabel ?? pickUiText(language, "원격 접근 경계", "Remote access boundary")}
+        description={pickUiText(
+          language,
+          "Host/port, auth boundary, MQTT bridge 편집을 여기서 진행합니다. 토큰 값은 메인 graph가 아니라 inspector 안에서만 다룹니다.",
+          "Edit the host/port, auth boundary, and MQTT bridge here. Token values stay inside the inspector instead of the main graph.",
+        )}
+      />
+      <RemoteAccessForm
+        value={remoteAccess}
+        onChange={onChangeRemote}
+        errors={errors ? {
+          authToken: errors.authToken,
+          host: errors.host,
+          port: errors.port,
+        } : undefined}
+      />
+      <MqttSettingsForm
+        value={mqtt}
+        onChange={onChangeMqtt}
+        errors={errors ? {
+          host: errors.mqttHost,
+          port: errors.mqttPort,
+          username: errors.mqttUsername,
+          password: errors.mqttPassword,
+        } : undefined}
+      />
+      <AuthTokenPanel
+        authEnabled={remoteAccess.authEnabled}
+        authToken={remoteAccess.authToken}
+        onGenerated={(token) => onChangeRemote({ authToken: token })}
+      />
+      <div className="rounded-2xl border border-dashed border-stone-300 bg-white/80 p-4 text-sm leading-6 text-stone-600">
+        {pickUiText(
+          language,
+          "MQTT runtime deep detail과 extension 상태는 setup에서 직접 다루지 않고 settings/extensions 화면으로 분리합니다.",
+          "MQTT runtime deep detail and extension status stay out of setup and move to the settings/extensions view.",
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AiVisualizationModeToggle({
+  language,
+  mode,
+  routingAvailable,
+  onChange,
+}: {
+  language: UiLanguage
+  mode: "connections" | "routing"
+  routingAvailable: boolean
+  onChange: (mode: "connections" | "routing") => void
+}) {
+  return (
+    <div className="rounded-[1.75rem] border border-stone-200 bg-white/90 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+            {pickUiText(language, "AI 장면", "AI scene")}
+          </div>
+          <div className="mt-2 text-sm leading-6 text-stone-600">
+            {pickUiText(language, "연결 topology와 routing projection을 같은 단계에서 전환해 볼 수 있습니다.", "Switch between the connection topology and the routing projection within the same step.")}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onChange("connections")}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${mode === "connections" ? "border-stone-900 bg-stone-900 text-white" : "border-stone-200 bg-white text-stone-700"}`}
+          >
+            {pickUiText(language, "연결", "Connections")}
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange("routing")}
+            disabled={!routingAvailable}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${mode === "routing" ? "border-stone-900 bg-stone-900 text-white" : "border-stone-200 bg-white text-stone-700"}`}
+          >
+            {pickUiText(language, "라우팅", "Routing")}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AiSetupInspector({
+  language,
+  mode,
+  routingAvailable,
+  selectedNodeLabel,
+  selectedBackend,
+  profile,
+  backends,
+  backendErrors,
+  onSelectMode,
+  onMoveRoutingTarget,
+  onSelectBackend,
+  onUpdateBackend,
+  onToggleBackend,
+  onRemoveBackend,
+  onSetRoutingTargetEnabled,
+}: {
+  language: UiLanguage
+  mode: "connections" | "routing"
+  routingAvailable: boolean
+  selectedNodeLabel?: string
+  selectedBackend: AIBackendCard | null
+  profile: RoutingProfile | null
+  backends: AIBackendCard[]
+  backendErrors?: Record<string, BackendCardErrors>
+  onSelectMode: (mode: "connections" | "routing") => void
+  onMoveRoutingTarget: (from: number, to: number) => void
+  onSelectBackend: (backendId: string) => void
+  onUpdateBackend: (backendId: string, patch: Partial<AIBackendCard>) => void
+  onToggleBackend: (backendId: string, enabled: boolean) => void
+  onRemoveBackend: (backendId: string) => void
+  onSetRoutingTargetEnabled: (profileId: RoutingProfile["id"], backendId: string, enabled: boolean) => void
+}) {
+  const enabledBackend = backends.find((backend) => backend.enabled) ?? null
+
+  return (
+    <div className="space-y-4 bg-[#f7f3eb] p-5">
+      <AiVisualizationModeToggle language={language} mode={mode} routingAvailable={routingAvailable} onChange={onSelectMode} />
+
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+          {pickUiText(language, "편집 Inspector", "Editing inspector")}
+        </div>
+        <div className="mt-2 text-sm font-semibold text-stone-900">
+          {selectedNodeLabel ?? selectedBackend?.label ?? pickUiText(language, "AI 연결", "AI connection")}
+        </div>
+        <div className="mt-2 text-sm leading-6 text-stone-600">
+          {pickUiText(
+            language,
+            enabledBackend
+              ? `${enabledBackend.label} 이(가) 현재 live backend입니다. 다른 backend를 켜면 routing target도 같이 바뀝니다.`
+              : "아직 live backend가 없습니다. Inspector에서 하나를 활성화하면 topology와 routing scene이 같이 갱신됩니다.",
+            enabledBackend
+              ? `${enabledBackend.label} is currently live. Enabling another backend also updates the routing target.`
+              : "There is no live backend yet. Enable one backend here and both the topology and routing scene will update together.",
+          )}
+        </div>
+      </div>
+
+      {mode === "routing" && profile ? (
+        <RoutingPriorityEditor
+          profile={profile}
+          backends={backends}
+          onMove={onMoveRoutingTarget}
+        />
+      ) : null}
+
+      <SingleAIConnectionPanel
+        backends={backends}
+        routingProfiles={profile ? [profile] : []}
+        activeBackendId={selectedBackend?.id ?? null}
+        onSelectBackend={onSelectBackend}
+        onUpdateBackend={onUpdateBackend}
+        onToggleBackend={onToggleBackend}
+        onRemoveBackend={onRemoveBackend}
+        onSetRoutingTargetEnabled={onSetRoutingTargetEnabled}
+        backendErrors={backendErrors}
+      />
+    </div>
+  )
 }
 
 function formatSetupCompletionError(value: string): string {

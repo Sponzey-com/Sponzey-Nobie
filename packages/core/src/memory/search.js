@@ -219,6 +219,17 @@ export function sanitizeFtsQuery(query) {
 }
 function buildChunkScopeWhere(filters, alias = "c") {
     const prefix = alias ? `${alias}.` : "";
+    if (filters?.ownerScope) {
+        const ownerIds = uniqueValues([
+            filters.ownerScope.ownerId,
+            filters.ownerScope.ownerType === "nobie" ? "global" : undefined,
+        ]);
+        const placeholders = ownerIds.map(() => "?").join(", ");
+        return {
+            clause: `(${prefix}owner_id IN (${placeholders}))`,
+            values: ownerIds,
+        };
+    }
     const clauses = [`${prefix}scope = 'global'`, `${prefix}scope = 'long-term'`];
     const values = [];
     if (filters?.sessionId) {

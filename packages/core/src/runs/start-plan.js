@@ -1,4 +1,6 @@
 import { createExplicitIdProvider, createStoreCandidateProvider, runCandidateProviders, } from "../candidates/index.js";
+import { buildOrchestrationPlan } from "../orchestration/planner.js";
+import { resolveOrchestrationModeSnapshot, } from "../orchestration/mode.js";
 import { buildLatencyEventLabel, buildLatencyEventLabelForMeasurement, recordLatencyMetric, } from "../observability/latency.js";
 import { analyzeRequestEntrySemantics, } from "./entry-semantics.js";
 import { compareRequestContinuationWithAI, } from "./entry-comparison.js";
@@ -18,6 +20,8 @@ const defaultDependencies = {
     buildWorkerSessionId: () => undefined,
     normalizeTaskProfile: (taskProfile) => taskProfile ?? "general_chat",
     findLatestWorkerSessionRun,
+    resolveOrchestrationMode: resolveOrchestrationModeSnapshot,
+    buildOrchestrationPlan,
 };
 function isStandaloneLocalExecutionAction(message, explicitContinuationReference) {
     return !explicitContinuationReference && detectExplicitToolIntent(message) != null;
@@ -33,6 +37,29 @@ export async function buildStartPlan(params, dependencies) {
         sessionId: params.sessionId,
         ...(params.source ? { source: params.source } : {}),
     })));
+    const orchestrationModeStartedAt = Date.now();
+    const orchestrationRegistrySnapshot = await (dependencies.resolveOrchestrationMode ?? resolveOrchestrationModeSnapshot)();
+    latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
+        name: "orchestration_mode_latency_ms",
+        durationMs: Date.now() - orchestrationModeStartedAt,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        ...(params.source ? { source: params.source } : {}),
+    }))} mode=${orchestrationRegistrySnapshot.mode}; reason=${orchestrationRegistrySnapshot.reasonCode}`);
+    const orchestrationPlanStartedAt = Date.now();
+    const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
+        parentRunId: params.runId,
+        parentRequestId: params.runId,
+        userRequest: params.message,
+        modeSnapshot: orchestrationRegistrySnapshot,
+    }).plan;
+    latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
+        name: "orchestration_planning_latency_ms",
+        durationMs: Date.now() - orchestrationPlanStartedAt,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        ...(params.source ? { source: params.source } : {}),
+    }))} plan=${orchestrationPlanSnapshot.planId}; fallback=${orchestrationPlanSnapshot.fallbackStrategy.reasonCode}`);
     const explicitReusableRequestGroupId = params.requestGroupId && (params.forceRequestGroupReuse || dependencies.isReusableRequestGroup(params.requestGroupId))
         ? params.requestGroupId
         : undefined;
@@ -195,6 +222,9 @@ export async function buildStartPlan(params, dependencies) {
         initialDelegationTurnCount,
         shouldReuseContext,
         effectiveContextMode,
+        orchestrationMode: orchestrationRegistrySnapshot.mode,
+        orchestrationRegistrySnapshot,
+        orchestrationPlanSnapshot,
         ...(workerSessionId ? { workerSessionId } : {}),
         ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
         latencyEvents,

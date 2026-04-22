@@ -1,5 +1,6 @@
 import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
+import { recordLatencyMetric } from "../../observability/latency.js";
 import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { listRunsForActiveRequestGroups } from "../../runs/store.js";
@@ -9,12 +10,23 @@ export function getWebUiWsClientCount() {
     return clients.size;
 }
 function broadcast(data) {
-    const msg = JSON.stringify(data);
+    const msg = JSON.stringify(stampBroadcastPayload(data));
     for (const ws of clients) {
         if (ws.readyState === 1 /* OPEN */) {
             ws.send(msg);
         }
     }
+}
+function stampBroadcastPayload(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data))
+        return data;
+    const record = data;
+    if (typeof record["emittedAt"] === "number")
+        return data;
+    return {
+        ...record,
+        emittedAt: Date.now(),
+    };
 }
 // Forward event bus events to all WebSocket clients
 function setupEventForwarding() {
@@ -100,6 +112,23 @@ export function resolveWebUiApprovalResponse(msg) {
     log.warn(`approval.respond ignored: no pending resolver for runId=${msg.runId}`);
     return false;
 }
+export function resolveWebUiLiveUpdateAck(msg, now = () => Date.now()) {
+    if (msg.type !== "ui.live_update_ack" || typeof msg.emittedAt !== "number" || !Number.isFinite(msg.emittedAt)) {
+        return false;
+    }
+    recordLatencyMetric({
+        name: "webui_live_update_latency_ms",
+        durationMs: Math.max(0, now() - msg.emittedAt),
+        ...(typeof msg.runId === "string" ? { runId: msg.runId } : {}),
+        ...(typeof msg.sessionId === "string" ? { sessionId: msg.sessionId } : {}),
+        ...(typeof msg.requestGroupId === "string" ? { requestGroupId: msg.requestGroupId } : {}),
+        source: typeof msg.source === "string" && msg.source.trim().length > 0 ? msg.source : "webui",
+        detail: {
+            eventType: typeof msg.eventType === "string" ? msg.eventType : "unknown",
+        },
+    });
+    return true;
+}
 export function resetWebUiApprovalStateForTest() {
     pendingApprovals.clear();
 }
@@ -117,6 +146,7 @@ export function registerWsRoute(app) {
             try {
                 const msg = JSON.parse(raw.toString());
                 resolveWebUiApprovalResponse(msg);
+                resolveWebUiLiveUpdateAck(msg);
             }
             catch { /* ignore malformed messages */ }
         });

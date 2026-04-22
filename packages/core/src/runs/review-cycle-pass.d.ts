@@ -9,6 +9,7 @@ import type { FinalizationDependencies, FinalizationSource } from "./finalizatio
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
 import { decideReviewGate } from "./review-gate.js";
+import type { FeedbackRequest } from "../contracts/sub-agent-orchestration.js";
 interface ReviewCyclePassDependencies {
     rememberRunApprovalScope: (runId: string) => void;
     grantRunApprovalScope: (runId: string) => void;
@@ -34,6 +35,16 @@ interface ReviewCyclePassModuleDependencies {
     runReviewOutcomePass: typeof runReviewOutcomePass;
     getRootRun: typeof getRootRun;
 }
+export interface SubSessionFeedbackCycleDirective {
+    kind: "retry_sub_session" | "manual_action_required";
+    subSessionId: string;
+    retryBudgetRemaining: number;
+    normalizedFailureKey: string;
+    followupPrompt: string;
+    missingItems: string[];
+    requiredChanges: string[];
+}
+export declare function buildSubSessionFeedbackCycleDirective(feedback: FeedbackRequest): SubSessionFeedbackCycleDirective;
 export declare function runReviewCyclePass(params: {
     runId: string;
     sessionId: string;

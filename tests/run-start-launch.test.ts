@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { prepareStartLaunch } from "../packages/core/src/runs/start-launch.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 
@@ -167,6 +168,11 @@ describe("prepare start launch", () => {
       controller: new AbortController(),
       now: 789,
       maxDelegationTurns: 5,
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-real",
+        source: "cli",
+        targetId: "provider:openai",
+      }),
       hasRequestGroupExecutionQueue: () => false,
     }, {
       buildStartPlan,

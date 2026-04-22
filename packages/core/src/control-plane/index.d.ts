@@ -10,6 +10,7 @@ export interface FeatureCapability {
     enabled: boolean;
     reason?: string;
     dependsOn?: string[];
+    metadata?: JsonObject;
 }
 export interface CapabilityCounts {
     ready: number;
@@ -111,6 +112,7 @@ export interface SetupChecks {
     authEnabled: boolean;
     schedulerEnabled: boolean;
 }
+type JsonObject = Record<string, unknown>;
 export declare function readSetupState(): SetupState;
 export declare function writeSetupState(state: SetupState): SetupState;
 export declare function buildSetupDraft(): SetupDraft;
@@ -134,4 +136,5 @@ export declare function discoverModelsFromEndpoint(endpoint: string, providerTyp
     sourceUrl: string;
     capabilityMatrix: ProviderCapabilityMatrix;
 }>;
+export {};
 //# sourceMappingURL=index.d.ts.map

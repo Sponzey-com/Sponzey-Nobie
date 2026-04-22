@@ -176,6 +176,10 @@ export interface AdminChannelReceiptView {
   requestGroupId: string | null
   sessionKey: string | null
   threadKey: string | null
+  subSessionId: string | null
+  agentId: string | null
+  teamId: string | null
+  deliveryKind: string | null
   chatId: string | null
   threadId: string | null
   userId: string | null
@@ -192,6 +196,9 @@ export interface AdminApprovalCallbackView {
   runId: string | null
   requestGroupId: string | null
   approvalId: string | null
+  subSessionId: string | null
+  agentId: string | null
+  teamId: string | null
   callbackId: string | null
   buttonPayload: string | null
   userId: string | null
@@ -213,10 +220,74 @@ export interface AdminChannelInspector {
   degradedReasons: string[]
 }
 
+export interface AdminOrchestrationPlanView {
+  id: string
+  runId: string | null
+  requestGroupId: string | null
+  source: "timeline" | "ledger"
+  summary: string
+  mode: string | null
+  subSessionId: string | null
+  agentId: string | null
+  teamId: string | null
+  createdAt: number
+}
+
+export interface AdminPromptBundleSnapshotView {
+  subSessionId: string
+  parentRunId: string
+  requestGroupId: string | null
+  agentId: string
+  promptBundleId: string | null
+  promptFragmentCount: number
+  safetyRuleCount: number
+  sourceProvenanceCount: number
+  status: string
+  updatedAt: number
+}
+
+export interface AdminLatencyMetricView {
+  id: string
+  runId: string | null
+  requestGroupId: string | null
+  source: "timeline" | "ledger"
+  metric: string
+  valueMs: number
+  summary: string
+  createdAt: number
+}
+
+export interface AdminResourceLockWaitView {
+  id: string
+  runId: string | null
+  requestGroupId: string | null
+  source: "timeline" | "ledger"
+  subSessionId: string | null
+  agentId: string | null
+  waitMs: number | null
+  lockSummary: string
+  createdAt: number
+}
+
+export interface AdminOrchestrationInspector {
+  summary: {
+    plans: number
+    promptBundles: number
+    latencyMetrics: number
+    resourceLockWaits: number
+  }
+  plans: AdminOrchestrationPlanView[]
+  promptBundles: { items: AdminPromptBundleSnapshotView[]; degradedReasons: string[] }
+  latencyMetrics: AdminLatencyMetricView[]
+  resourceLockWaits: AdminResourceLockWaitView[]
+  degradedReasons: string[]
+}
+
 export interface AdminRuntimeInspectors {
   memory: AdminMemoryInspector
   scheduler: AdminSchedulerInspector
   channels: AdminChannelInspector
+  orchestration: AdminOrchestrationInspector
 }
 
 interface InspectorInput {
@@ -313,6 +384,17 @@ interface ScheduleRow {
   entry_next_run_at: number | null
 }
 
+interface RunSubSessionInspectorRow {
+  sub_session_id: string
+  parent_run_id: string
+  request_group_id: string | null
+  agent_id: string
+  status: string
+  prompt_bundle_id: string | null
+  contract_json: string
+  updated_at: number
+}
+
 type ScheduleRunRow = DbScheduleRun
 type ScheduleReceiptRow = DbScheduleDeliveryReceipt
 
@@ -400,6 +482,31 @@ function findDetailValue(detail: unknown, keys: string[], depth = 0): string | n
   for (const nested of Object.values(detail)) {
     const found = findDetailValue(nested, keys, depth + 1)
     if (found) return found
+  }
+  return null
+}
+
+function findDetailNumber(detail: unknown, keys: string[], depth = 0): number | null {
+  if (!detail || depth > 6) return null
+  if (Array.isArray(detail)) {
+    for (const item of detail) {
+      const found = findDetailNumber(item, keys, depth + 1)
+      if (found != null) return found
+    }
+    return null
+  }
+  if (!isRecord(detail)) return null
+  for (const key of keys) {
+    const direct = detail[key]
+    if (typeof direct === "number" && Number.isFinite(direct)) return direct
+    if (typeof direct === "string" && direct.trim() !== "") {
+      const parsed = Number(direct)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  for (const nested of Object.values(detail)) {
+    const found = findDetailNumber(nested, keys, depth + 1)
+    if (found != null) return found
   }
   return null
 }
@@ -847,6 +954,10 @@ function buildChannelInspector(input: InspectorInput): AdminChannelInspector {
         requestGroupId: event.request_group_id,
         sessionKey: event.session_key,
         threadKey: event.thread_key,
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        teamId: findDetailValue(detail, ["teamId", "team_id"]),
+        deliveryKind: findDetailValue(detail, ["deliveryKind", "delivery_kind"]),
         chatId: findDetailValue(detail, ["chatId", "chat_id", "channelId", "channel_id", "slackChannelId", "telegramChatId"]),
         threadId: findDetailValue(detail, ["threadId", "thread_id", "threadTs", "messageThreadId"]),
         userId: findDetailValue(detail, ["userId", "user_id", "slackUserId", "fromId"]),
@@ -869,6 +980,9 @@ function buildChannelInspector(input: InspectorInput): AdminChannelInspector {
         runId: event.run_id,
         requestGroupId: event.request_group_id,
         approvalId: findDetailValue(detail, ["approvalId", "approval_id", "requestId"]),
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        teamId: findDetailValue(detail, ["teamId", "team_id"]),
         callbackId: findDetailValue(detail, ["callbackId", "callback_id", "triggerId", "callbackQueryId"]),
         buttonPayload: findDetailValue(detail, ["buttonPayload", "payload", "actionId", "value"]),
         userId: findDetailValue(detail, ["userId", "user_id", "slackUserId", "fromId"]),
@@ -892,10 +1006,190 @@ function buildChannelInspector(input: InspectorInput): AdminChannelInspector {
   }
 }
 
+function listRunSubSessionInspectorRows(limit: number): QueryResult<RunSubSessionInspectorRow> {
+  return queryRows("run sub-sessions", () => getDb()
+    .prepare<[number], RunSubSessionInspectorRow>(
+      `SELECT s.sub_session_id, s.parent_run_id, r.request_group_id, s.agent_id, s.status,
+              s.prompt_bundle_id, s.contract_json, s.updated_at
+       FROM run_subsessions s
+       LEFT JOIN root_runs r ON r.id = s.parent_run_id
+       ORDER BY s.updated_at DESC
+       LIMIT ?`,
+    )
+    .all(limit))
+}
+
+function isOrchestrationPlanEvent(event: ControlTimelineEvent | DbMessageLedgerEvent, detail: unknown): boolean {
+  if ("eventType" in event) {
+    const haystack = `${event.component} ${event.eventType} ${event.summary}`.toLowerCase()
+    return haystack.includes("orchestration") || haystack.includes("sub_session") || Boolean(findDetailValue(detail, ["orchestrationPlan", "orchestration_plan", "planId", "plan_id"]))
+  }
+  const haystack = `${event.event_kind} ${event.summary}`.toLowerCase()
+  return haystack.includes("orchestration") || haystack.includes("sub_session") || Boolean(findDetailValue(detail, ["orchestrationPlan", "orchestration_plan", "planId", "plan_id"]))
+}
+
+function promptBundleStats(contract: unknown): { promptFragmentCount: number; safetyRuleCount: number; sourceProvenanceCount: number } {
+  const record = isRecord(contract) ? contract : {}
+  const bundle = isRecord(record["promptBundleSnapshot"]) ? record["promptBundleSnapshot"] as Record<string, unknown> : {}
+  return {
+    promptFragmentCount: Array.isArray(bundle["fragments"]) ? bundle["fragments"].length : 0,
+    safetyRuleCount: Array.isArray(bundle["safetyRules"]) ? bundle["safetyRules"].length : 0,
+    sourceProvenanceCount: Array.isArray(bundle["sourceProvenance"]) ? bundle["sourceProvenance"].length : 0,
+  }
+}
+
+function buildOrchestrationInspector(input: InspectorInput): AdminOrchestrationInspector {
+  const limit = clampLimit(input.limit, 100)
+  const subSessions = listRunSubSessionInspectorRows(limit)
+  const promptBundles = subSessions.rows.map((row) => {
+    const contract = sanitizeDetail(parseJson(row.contract_json))
+    const stats = promptBundleStats(contract)
+    return {
+      subSessionId: row.sub_session_id,
+      parentRunId: row.parent_run_id,
+      requestGroupId: row.request_group_id,
+      agentId: row.agent_id,
+      promptBundleId: row.prompt_bundle_id,
+      status: row.status,
+      updatedAt: row.updated_at,
+      ...stats,
+    }
+  }).filter((row) => matchesFilter({
+    runId: row.parentRunId,
+    requestGroupId: row.requestGroupId,
+  }, input.filters))
+
+  const timelinePlans = input.timeline.events
+    .map((event) => ({ event, detail: sanitizeDetail(event.detail) }))
+    .filter(({ event, detail }) => isOrchestrationPlanEvent(event, detail))
+    .map(({ event, detail }) => ({
+      id: event.id,
+      runId: event.runId,
+      requestGroupId: event.requestGroupId,
+      source: "timeline" as const,
+      summary: redactText(event.summary),
+      mode: findDetailValue(detail, ["orchestrationMode", "orchestration_mode", "mode"]),
+      subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+      agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+      teamId: findDetailValue(detail, ["teamId", "team_id"]),
+      createdAt: event.at,
+    }))
+  const ledgerPlans = input.ledgerEvents
+    .map((event) => ({ event, detail: sanitizeDetail(parseJson(event.detail_json)) }))
+    .filter(({ event, detail }) => isOrchestrationPlanEvent(event, detail))
+    .map(({ event, detail }) => ({
+      id: event.id,
+      runId: event.run_id,
+      requestGroupId: event.request_group_id,
+      source: "ledger" as const,
+      summary: redactText(event.summary),
+      mode: findDetailValue(detail, ["orchestrationMode", "orchestration_mode", "mode"]),
+      subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+      agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+      teamId: findDetailValue(detail, ["teamId", "team_id"]),
+      createdAt: event.created_at,
+    }))
+  const plans = [...timelinePlans, ...ledgerPlans]
+    .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit)
+
+  const latencyMetrics = [
+    ...input.timeline.events.map((event) => {
+      const detail = sanitizeDetail(event.detail)
+      const valueMs = findDetailNumber(detail, ["latencyMs", "durationMs", "elapsedMs", "windowMs"])
+      if (valueMs == null) return null
+      return {
+        id: event.id,
+        runId: event.runId,
+        requestGroupId: event.requestGroupId,
+        source: "timeline" as const,
+        metric: findDetailValue(detail, ["metric", "metricName", "latencyMetric"]) ?? "latencyMs",
+        valueMs,
+        summary: redactText(event.summary),
+        createdAt: event.at,
+      }
+    }),
+    ...input.ledgerEvents.map((event) => {
+      const detail = sanitizeDetail(parseJson(event.detail_json))
+      const valueMs = findDetailNumber(detail, ["latencyMs", "durationMs", "elapsedMs", "windowMs"])
+      if (valueMs == null) return null
+      return {
+        id: event.id,
+        runId: event.run_id,
+        requestGroupId: event.request_group_id,
+        source: "ledger" as const,
+        metric: findDetailValue(detail, ["metric", "metricName", "latencyMetric"]) ?? "latencyMs",
+        valueMs,
+        summary: redactText(event.summary),
+        createdAt: event.created_at,
+      }
+    }),
+  ].filter((row): row is AdminLatencyMetricView => Boolean(row))
+    .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit)
+
+  const resourceLockWaits = [
+    ...input.timeline.events.map((event) => {
+      const detail = sanitizeDetail(event.detail)
+      const waitMs = findDetailNumber(detail, ["resourceLockWaitMs", "lockWaitMs", "waitMs"])
+      const lockSummary = findDetailValue(detail, ["resourceLock", "resourceLocks", "lockSummary", "conflicts"])
+      if (waitMs == null && !lockSummary) return null
+      return {
+        id: event.id,
+        runId: event.runId,
+        requestGroupId: event.requestGroupId,
+        source: "timeline" as const,
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        waitMs,
+        lockSummary: lockSummary ?? "resource lock wait",
+        createdAt: event.at,
+      }
+    }),
+    ...input.ledgerEvents.map((event) => {
+      const detail = sanitizeDetail(parseJson(event.detail_json))
+      const waitMs = findDetailNumber(detail, ["resourceLockWaitMs", "lockWaitMs", "waitMs"])
+      const lockSummary = findDetailValue(detail, ["resourceLock", "resourceLocks", "lockSummary", "conflicts"])
+      if (waitMs == null && !lockSummary) return null
+      return {
+        id: event.id,
+        runId: event.run_id,
+        requestGroupId: event.request_group_id,
+        source: "ledger" as const,
+        subSessionId: findDetailValue(detail, ["subSessionId", "sub_session_id"]),
+        agentId: findDetailValue(detail, ["agentId", "agent_id"]),
+        waitMs,
+        lockSummary: lockSummary ?? "resource lock wait",
+        createdAt: event.created_at,
+      }
+    }),
+  ].filter((row): row is AdminResourceLockWaitView => Boolean(row))
+    .filter((row) => matchesFilter({ runId: row.runId, requestGroupId: row.requestGroupId }, input.filters))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit)
+
+  return {
+    summary: {
+      plans: plans.length,
+      promptBundles: promptBundles.length,
+      latencyMetrics: latencyMetrics.length,
+      resourceLockWaits: resourceLockWaits.length,
+    },
+    plans,
+    promptBundles: { items: promptBundles, degradedReasons: subSessions.degradedReasons },
+    latencyMetrics,
+    resourceLockWaits,
+    degradedReasons: subSessions.degradedReasons,
+  }
+}
+
 export function buildAdminRuntimeInspectors(input: InspectorInput): AdminRuntimeInspectors {
   return {
     memory: buildMemoryInspector(input),
     scheduler: buildSchedulerInspector(input),
     channels: buildChannelInspector(input),
+    orchestration: buildOrchestrationInspector(input),
   }
 }

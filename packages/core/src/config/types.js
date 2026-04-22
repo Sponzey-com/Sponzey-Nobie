@@ -62,6 +62,10 @@ export const DEFAULT_CONFIG = {
     },
     orchestration: {
         maxDelegationTurns: 5,
+        mode: "single_nobie",
+        featureFlagEnabled: false,
+        subAgents: [],
+        teams: [],
     },
     mcp: {
         servers: {},

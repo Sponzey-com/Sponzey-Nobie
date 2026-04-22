@@ -382,6 +382,22 @@ function buildWhere(query) {
         conditions.push("session_id = ?");
         bindings.push(query.sessionId);
     }
+    if (query.subSessionId) {
+        conditions.push("detail_json LIKE ?");
+        bindings.push(`%"subSessionId":"${query.subSessionId.replaceAll('"', '\\"')}"%`);
+    }
+    if (query.agentId) {
+        conditions.push("detail_json LIKE ?");
+        bindings.push(`%"agentId":"${query.agentId.replaceAll('"', '\\"')}"%`);
+    }
+    if (query.teamId) {
+        conditions.push("detail_json LIKE ?");
+        bindings.push(`%"teamId":"${query.teamId.replaceAll('"', '\\"')}"%`);
+    }
+    if (query.deliveryKind) {
+        conditions.push("detail_json LIKE ?");
+        bindings.push(`%"deliveryKind":"${query.deliveryKind.replaceAll('"', '\\"')}"%`);
+    }
     const from = parseTime(query.from);
     if (from != null) {
         conditions.push("at >= ?");

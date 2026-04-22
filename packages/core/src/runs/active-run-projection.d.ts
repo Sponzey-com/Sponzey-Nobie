@@ -10,6 +10,19 @@ export interface ActiveRunContractProjection {
     status: RootRun["status"];
     source: RootRun["source"];
     displayName: string;
+    orchestrationMode?: RootRun["orchestrationMode"];
+    agentDisplayName?: string;
+    agentNickname?: string;
+    subSessionIds?: string[];
+    subSessions?: Array<{
+        subSessionId: string;
+        parentRunId: string;
+        agentId: string;
+        agentDisplayName: string;
+        agentNickname?: string;
+        status: string;
+        retryBudgetRemaining: number;
+    }>;
     updatedAt: number;
     legacy: boolean;
     legacyReason?: string;

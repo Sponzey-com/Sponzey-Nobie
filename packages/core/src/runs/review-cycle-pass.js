@@ -8,6 +8,25 @@ const defaultModuleDependencies = {
     runReviewOutcomePass,
     getRootRun,
 };
+export function buildSubSessionFeedbackCycleDirective(feedback) {
+    const canRetry = feedback.retryBudgetRemaining >= 0;
+    return {
+        kind: canRetry ? "retry_sub_session" : "manual_action_required",
+        subSessionId: feedback.subSessionId,
+        retryBudgetRemaining: feedback.retryBudgetRemaining,
+        normalizedFailureKey: feedback.reasonCode,
+        missingItems: [...feedback.missingItems],
+        requiredChanges: [...feedback.requiredChanges],
+        followupPrompt: [
+            `Revise sub-session ${feedback.subSessionId}.`,
+            `Reason key: ${feedback.reasonCode}`,
+            feedback.missingItems.length ? `Missing items:\n- ${feedback.missingItems.join("\n- ")}` : "",
+            feedback.requiredChanges.length ? `Required changes:\n- ${feedback.requiredChanges.join("\n- ")}` : "",
+            feedback.additionalContextRefs.length ? `Additional context refs:\n- ${feedback.additionalContextRefs.join("\n- ")}` : "",
+            "Return a new ResultReport. Do not deliver directly to the user.",
+        ].filter(Boolean).join("\n\n"),
+    };
+}
 export async function runReviewCyclePass(params, dependencies, moduleDependencies = defaultModuleDependencies) {
     const reviewGate = moduleDependencies.decideReviewGate({
         executionSemantics: params.executionSemantics,

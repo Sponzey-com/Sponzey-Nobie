@@ -49,8 +49,15 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         buildWorkerSessionId: dependencies.buildWorkerSessionId,
         normalizeTaskProfile: dependencies.normalizeTaskProfile,
         findLatestWorkerSessionRun: dependencies.findLatestWorkerSessionRun,
+        ...(dependencies.resolveOrchestrationMode ? { resolveOrchestrationMode: dependencies.resolveOrchestrationMode } : {}),
+        ...(dependencies.buildOrchestrationPlan ? { buildOrchestrationPlan: dependencies.buildOrchestrationPlan } : {}),
     });
     dependencies.ensureSessionExists(params.sessionId, params.source, params.now);
+    const promptSourceSnapshot = {
+        ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
+        ...(startPlan.orchestrationRegistrySnapshot ? { orchestration: startPlan.orchestrationRegistrySnapshot } : {}),
+        ...(startPlan.orchestrationPlanSnapshot ? { orchestrationPlan: startPlan.orchestrationPlanSnapshot } : {}),
+    };
     const run = dependencies.createRootRun({
         id: params.runId,
         sessionId: params.sessionId,
@@ -66,12 +73,11 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
         taskProfile: startPlan.effectiveTaskProfile,
         delegationTurnCount: startPlan.initialDelegationTurnCount,
+        orchestrationMode: startPlan.orchestrationMode ?? "single_nobie",
         ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
         ...(startPlan.workerSessionId ? { workerSessionId: startPlan.workerSessionId } : {}),
         contextMode: startPlan.effectiveContextMode,
-        ...(params.inboundMessage
-            ? { promptSourceSnapshot: { inboundMessage: params.inboundMessage } }
-            : {}),
+        ...(Object.keys(promptSourceSnapshot).length > 0 ? { promptSourceSnapshot } : {}),
     });
     const startInitialization = dependencies.applyStartInitialization({
         runId: params.runId,

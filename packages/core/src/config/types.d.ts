@@ -1,3 +1,4 @@
+import type { NobieConfig as NobieAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js";
 export type AIConnectionProvider = "openai" | "anthropic" | "gemini" | "ollama" | "llama" | "custom" | "";
 export interface AIConnectionConfig {
     provider: AIConnectionProvider;
@@ -43,6 +44,10 @@ export interface WebuiConfig {
     enabled: boolean;
     port: number;
     host: string;
+    preferredUiMode?: "beginner" | "advanced";
+    admin: {
+        enabled: boolean;
+    };
     auth: {
         enabled: boolean;
         token?: string;
@@ -85,6 +90,11 @@ export interface MemoryConfig {
 }
 export interface OrchestrationConfig {
     maxDelegationTurns: number;
+    mode?: "single_nobie" | "orchestration";
+    featureFlagEnabled?: boolean;
+    nobie?: NobieAgentConfig;
+    subAgents?: SubAgentConfig[];
+    teams?: TeamConfig[];
 }
 export interface McpServerConfig {
     enabled?: boolean;

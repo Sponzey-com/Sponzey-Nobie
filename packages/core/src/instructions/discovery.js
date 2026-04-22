@@ -5,7 +5,7 @@ import { PATHS } from "../config/index.js";
 const MAX_INSTRUCTION_FILE_SIZE = 12_000;
 const FALLBACK_FILENAMES = ["CLAUDE.md"];
 const PER_DIR_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", ...FALLBACK_FILENAMES];
-export function discoverInstructionChain(workDir = process.cwd()) {
+export function discoverInstructionChain(workDir = process.cwd(), options = {}) {
     const normalizedWorkDir = resolve(workDir);
     const gitRoot = findGitRoot(normalizedWorkDir);
     const sources = [];
@@ -20,6 +20,7 @@ export function discoverInstructionChain(workDir = process.cwd()) {
         if (source)
             sources.push(source);
     });
+    sources.push(...normalizeAgentSources(options.agentSources ?? [], sources.length + 1));
     return {
         workDir: normalizedWorkDir,
         ...(gitRoot ? { gitRoot } : {}),
@@ -45,6 +46,7 @@ function pickInstructionFile(dirPath, scope, level) {
                 size: Buffer.byteLength(content),
                 mtimeMs: stat.mtimeMs,
                 content,
+                sourceKind: "instruction_file",
             };
         }
         catch (error) {
@@ -56,10 +58,31 @@ function pickInstructionFile(dirPath, scope, level) {
                 loaded: false,
                 size: 0,
                 error: error instanceof Error ? error.message : String(error),
+                sourceKind: "instruction_file",
             };
         }
     }
     return undefined;
+}
+function normalizeAgentSources(agentSources, startLevel) {
+    return agentSources
+        .map((source, index) => {
+        const content = source.content.slice(0, MAX_INSTRUCTION_FILE_SIZE);
+        return {
+            path: `agent://${source.agentType}/${source.agentId}/${source.sourceId}`,
+            scope: "project",
+            level: startLevel + index,
+            exists: true,
+            loaded: Boolean(content.trim()),
+            size: Buffer.byteLength(content),
+            content,
+            sourceKind: "agent_prompt",
+            agentId: source.agentId,
+            agentType: source.agentType,
+            sourceId: source.sourceId,
+        };
+    })
+        .filter((source) => source.loaded);
 }
 function findGitRoot(startDir) {
     let current = startDir;

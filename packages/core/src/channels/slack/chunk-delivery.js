@@ -137,6 +137,10 @@ export function createSlackChunkDeliveryHandler(context) {
                 textDeliveries: [{
                         channel: "slack",
                         text: deliveredText,
+                        ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+                        ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+                        ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
+                        ...(context.agentId ? { agentId: context.agentId } : {}),
                     }],
             };
         }

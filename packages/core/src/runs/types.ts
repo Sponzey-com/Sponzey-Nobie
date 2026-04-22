@@ -1,3 +1,5 @@
+import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "../contracts/sub-agent-orchestration.js"
+
 export type RunStatus =
   | "queued"
   | "running"
@@ -43,6 +45,12 @@ export interface RootRun {
   workerSessionId?: string
   contextMode: RunContextMode
   promptSourceSnapshot?: Record<string, unknown>
+  orchestrationMode?: OrchestrationMode
+  orchestrationPlanSnapshot?: OrchestrationPlan
+  subSessionIds?: string[]
+  subSessionsSnapshot?: SubSessionContract[]
+  agentDisplayName?: string
+  agentNickname?: string
   runtimeManifestId?: string
   delegationTurnCount: number
   maxDelegationTurns: number
@@ -82,6 +90,8 @@ export interface RunProgressSnapshot {
   targetLabel?: string
   workerSessionId?: string
   contextMode: RunContextMode
+  orchestrationMode?: OrchestrationMode
+  subSessionIds?: string[]
   summary: string
   recentEvents: RunEvent[]
   canCancel: boolean

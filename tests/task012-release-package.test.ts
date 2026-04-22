@@ -93,8 +93,12 @@ describe("task012 release package", () => {
       expect.objectContaining({ id: "db:migrations", status: "present", checksum: expect.any(String) }),
       expect.objectContaining({ id: "yeonjang:protocol", status: "present", checksum: expect.any(String) }),
       expect.objectContaining({ id: "runbook:release", status: "present", checksum: expect.any(String) }),
+      expect.objectContaining({ id: "admin:diagnostic-bundle", status: "missing_optional" }),
     ]))
     expect(manifest.artifacts.some((artifact) => artifact.kind === "prompt_seed" && artifact.status === "present")).toBe(true)
+    expect(manifest.featureFlags.some((flag) => flag.featureKey === "sub_agent_orchestration")).toBe(true)
+    expect(manifest.performanceEvidence.kind).toBe("nobie.release.performance")
+    expect(manifest.releaseNotes.featureFlagDefaults.join("\n")).toContain("sub_agent_orchestration")
     expect(manifest.pipeline.order).toContain("backup-rehearsal")
     expect(manifest.pipeline.order).toContain("channel-smoke-dry-run")
     expect(manifest.updatePreflight.checks.map((check) => check.id)).toEqual(expect.arrayContaining([
@@ -142,8 +146,12 @@ describe("task012 release package", () => {
       "clean-build",
       "typecheck",
       "unit-tests",
+      "orchestration-release-gate",
+      "performance-release-gate",
       "web-retrieval-fixture-regression",
+      "ui-mode-release-gate",
       "backup-rehearsal",
+      "admin-diagnostic-export",
       "channel-smoke-dry-run",
       "yeonjang-macos",
       "yeonjang-windows",

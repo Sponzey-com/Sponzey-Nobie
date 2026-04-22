@@ -196,18 +196,19 @@ describe("buildTaskModels", () => {
       }),
     ])[0]
 
-    expect(deliveredTask?.delivery).toEqual({
+    expect(deliveredTask?.delivery).toEqual(expect.objectContaining({
       taskId: "task-3",
       status: "delivered",
       sourceAttemptId: "run-delivered",
       channel: "telegram",
       summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png",
-      artifact: {
+      artifact: expect.objectContaining({
         filePath: "/tmp/screenshot.png",
         fileName: "screenshot.png",
         mimeType: "image/png",
-      },
-    })
+        previewable: true,
+      }),
+    }))
     expect(failedTask?.delivery).toEqual({
       taskId: "task-4",
       status: "failed",
@@ -319,12 +320,15 @@ describe("buildTaskModels", () => {
       }),
     ])[0]
 
-    expect(task?.delivery.artifact).toEqual({
+    expect(task?.delivery.artifact).toEqual(expect.objectContaining({
       filePath: artifactPath,
       fileName: "screenshot.png",
       url: "/api/artifacts/screens/screenshot.png",
+      previewUrl: "/api/artifacts/screens/screenshot.png",
+      downloadUrl: "/api/artifacts/screens/screenshot.png?download=1",
       mimeType: "image/png",
-    })
+      previewable: true,
+    }))
   })
 
   it("marks request confirmation separately while intake bridge is still running", () => {

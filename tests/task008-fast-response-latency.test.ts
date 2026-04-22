@@ -169,7 +169,7 @@ describe("task008 fast response latency", () => {
     ]))
   })
 
-  it("returns start-plan latency events for normalizer, candidate search, and contract comparison", async () => {
+  it("returns start-plan latency events for normalizer, registry lookup, and candidate search", async () => {
     const dependencies: Parameters<typeof buildStartPlan>[1] = {
       analyzeRequestEntrySemantics: vi.fn(() => ({
         reuse_conversation_context: false,
@@ -219,8 +219,11 @@ describe("task008 fast response latency", () => {
 
     expect(plan.latencyEvents).toEqual(expect.arrayContaining([
       expect.stringMatching(/^normalizer_latency_ms=\d+ms/),
+      expect.stringMatching(/^orchestration_mode_latency_ms=\d+ms mode=single_nobie; reason=mode_single_nobie$/),
       expect.stringMatching(/^candidate_search_latency_ms=\d+ms provider=active-run-store/),
-      expect.stringMatching(/^contract_ai_comparison_latency_ms=\d+ms/),
+    ]))
+    expect(listLatencyMetrics()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "registry_lookup_latency_ms", runId: "run-plan", sessionId: "session-plan" }),
     ]))
   })
 

@@ -113,6 +113,27 @@ export interface AdminDiagnosticExportJob {
     bundleBytes: number | null;
     error: string | null;
 }
+export interface AdminPlatformOrchestrationInspector {
+    summary: {
+        orchestrationLedgerEvents: number;
+        subSessionEvents: number;
+        latencyMetrics: number;
+        resourceLockWaits: number;
+    };
+    latestEvents: Array<{
+        id: string;
+        eventKind: string;
+        status: string;
+        summary: string;
+        runId: string | null;
+        requestGroupId: string | null;
+        subSessionId: string | null;
+        agentId: string | null;
+        latencyMs: number | null;
+        resourceLockWaitMs: number | null;
+        createdAt: number;
+    }>;
+}
 export interface AdminDiagnosticExportStartInput extends AdminDiagnosticExportFilters {
     includeTimeline?: boolean;
     includeReport?: boolean;
@@ -121,6 +142,7 @@ export interface AdminDiagnosticExportStartInput extends AdminDiagnosticExportFi
 export interface AdminPlatformInspectors {
     yeonjang: AdminYeonjangInspector;
     database: AdminDatabaseInspector;
+    orchestration: AdminPlatformOrchestrationInspector;
     exports: {
         jobs: AdminDiagnosticExportJob[];
         defaults: {

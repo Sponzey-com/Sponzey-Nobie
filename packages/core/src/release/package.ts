@@ -3,9 +3,11 @@ import { execFileSync } from "node:child_process"
 import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { buildBackupTargetInventory, buildMigrationPreflightReport, type MigrationPreflightReport } from "../config/backup-rehearsal.js"
+import { DEFAULT_CONFIG, type OrchestrationConfig } from "../config/types.js"
 import { getWorkspaceRootPath, getCurrentAppVersion, getCurrentDisplayVersion } from "../version.js"
 import { loadPromptSourceRegistry, type PromptSourceMetadata } from "../memory/nobie-md.js"
 import { buildRolloutSafetySnapshot, type FeatureFlagMode } from "../runtime/rollout-safety.js"
+import { resolveOrchestrationModeSnapshotSync, type OrchestrationModeSnapshot } from "../orchestration/mode.js"
 import { runPlanDriftCheck, type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js"
 import {
   buildFixtureRegressionFromWorkspace,
@@ -16,6 +18,10 @@ import {
   buildUiModeReleaseGateSummary,
   type UiModeReleaseGateSummary,
 } from "./ui-mode-gate.js"
+import {
+  buildReleasePerformanceSummary,
+  type ReleasePerformanceSummary,
+} from "./performance-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -30,6 +36,7 @@ export type ReleaseArtifactKind =
   | "db_migration"
   | "prompt_seed"
   | "release_runbook"
+  | "admin_diagnostic_bundle"
 
 export type ReleaseArtifactStatus = "present" | "missing_required" | "missing_optional"
 
@@ -75,6 +82,9 @@ export interface ReleaseManifest {
   planEvidence: PlanDriftReleaseNoteEvidence
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
+  performanceEvidence: ReleasePerformanceSummary
+  orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
+  releaseNotes: ReleaseNoteSummary
   pipeline: ReleasePipelinePlan
   rollback: ReleaseRollbackRunbook
   cleanInstallChecklist: ReleaseChecklistItem[]
@@ -94,6 +104,24 @@ export interface ReleaseFeatureFlagState {
   mode: FeatureFlagMode
   compatibilityMode: boolean
   source: "default" | "db"
+}
+
+export type ReleaseOrchestrationEvidenceStatus = "passed" | "warning" | "failed"
+
+export interface ReleaseOrchestrationEvidenceCheck {
+  id: "feature_flag_off_parity" | "no_agent_fallback" | "runtime_flag_default"
+  status: ReleaseOrchestrationEvidenceStatus
+  summary: string
+  detail: Record<string, unknown>
+}
+
+export interface ReleaseOrchestrationEvidenceSummary {
+  kind: "nobie.release.orchestration"
+  generatedAt: string
+  gateStatus: ReleaseOrchestrationEvidenceStatus
+  checks: ReleaseOrchestrationEvidenceCheck[]
+  warnings: string[]
+  blockingFailures: string[]
 }
 
 export interface ReleaseRolloutEvidenceSummary {
@@ -123,6 +151,13 @@ export interface ReleaseChecklistItem {
   id: string
   required: boolean
   description: string
+}
+
+export interface ReleaseNoteSummary {
+  featureFlagDefaults: string[]
+  migrationCautions: string[]
+  rollbackProcedure: string[]
+  knownLimitations: string[]
 }
 
 export interface ReleaseUpdatePreflightCheck {
@@ -178,6 +213,29 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     liveSmoke: null,
   })
   const uiModeEvidence = buildUiModeReleaseGateSummary()
+  const performanceEvidence = buildReleasePerformanceSummary(
+    options.now ? { now: options.now } : {},
+  )
+  const featureFlags = rollout.featureFlags.map((flag) => ({
+    featureKey: flag.featureKey,
+    mode: flag.mode,
+    compatibilityMode: flag.compatibilityMode,
+    source: flag.source,
+  }))
+  const orchestrationEvidence = buildReleaseOrchestrationEvidence({
+    now: options.now ?? new Date(),
+    featureFlags,
+  })
+  const rollback = buildReleaseRollbackRunbook()
+  const releaseNotes = buildReleaseNoteSummary({
+    featureFlags,
+    migrationPreflight,
+    performanceEvidence,
+    orchestrationEvidence,
+    rollback,
+    webRetrievalEvidence,
+    uiModeEvidence,
+  })
 
   return {
     kind: "nobie.release.package",
@@ -208,12 +266,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
       latestSchemaVersion: migrationPreflight.latestSchemaVersion,
       pendingVersions: migrationPreflight.pendingVersions,
     },
-    featureFlags: rollout.featureFlags.map((flag) => ({
-      featureKey: flag.featureKey,
-      mode: flag.mode,
-      compatibilityMode: flag.compatibilityMode,
-      source: flag.source,
-    })),
+    featureFlags,
     rolloutEvidence: {
       mismatchCount: rollout.shadowCompare.mismatchCount,
       warningCount: rollout.evidence.warningCount,
@@ -223,8 +276,11 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     planEvidence: planDrift.releaseNoteEvidence,
     webRetrievalEvidence,
     uiModeEvidence,
+    performanceEvidence,
+    orchestrationEvidence,
+    releaseNotes,
     pipeline: buildReleasePipelinePlan({ targetPlatforms }),
-    rollback: buildReleaseRollbackRunbook(),
+    rollback,
     cleanInstallChecklist: buildCleanMachineInstallChecklist(),
   }
 }
@@ -245,6 +301,7 @@ export function buildReleaseArtifactDefinitions(input: {
     requiredArtifact("yeonjang:protocol", "yeonjang_protocol", rootDir, "Yeonjang/src/protocol.rs", "yeonjang/protocol.rs", "Yeonjang protocol contract source."),
     requiredArtifact("yeonjang:permissions", "yeonjang_protocol", rootDir, "Yeonjang/manifests/permissions.json", "yeonjang/permissions.json", "Yeonjang permission manifest."),
     requiredArtifact("runbook:release", "release_runbook", rootDir, "docs/release-runbook.md", "docs/release-runbook.md", "Install, update, rollback, and recovery runbook."),
+    optionalArtifact("admin:diagnostic-bundle", "admin_diagnostic_bundle", rootDir, "release/admin-diagnostics.json", "diagnostics/admin-diagnostics.json", "Sanitized admin diagnostics bundle captured during release dry-run."),
   ]
 
   for (const source of promptSources) {
@@ -285,9 +342,12 @@ export function buildReleasePipelinePlan(input: { targetPlatforms?: ReleaseTarge
     step("clean-build", "Clean build", ["pnpm", "-r", "build"], true, false, "Build Gateway, CLI, Core, and WebUI from a clean checkout."),
     step("typecheck", "Typecheck", ["pnpm", "-r", "typecheck"], true, false, "Run TypeScript type checks before packaging."),
     step("unit-tests", "Unit and integration tests", ["pnpm", "test"], true, false, "Run automated regression tests."),
+    step("orchestration-release-gate", "Orchestration release gate", ["pnpm", "exec", "vitest", "run", "tests/task001-sub-agent-contracts.test.ts", "tests/task003-orchestration-mode.test.ts", "tests/task004-orchestration-planner.test.ts", "tests/task006-sub-session-runtime.test.ts", "tests/task013-channel-delivery-observability.test.ts"], true, false, "Verify feature flag off parity, no-agent fallback, orchestration contracts, planner, runtime, and channel delivery orchestration guards."),
+    step("performance-release-gate", "Performance and release summary gate", ["pnpm", "exec", "vitest", "run", "tests/task014-release-readiness.test.ts"], true, false, "Verify latency targets, release performance evidence, orchestration feature flag defaults, rollback notes, and release summary warnings."),
     step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
     step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
     step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
+    step("admin-diagnostic-export", "Admin diagnostic export rehearsal", ["pnpm", "exec", "vitest", "run", "tests/task014-admin-platform-export.test.ts"], true, false, "Verify sanitized admin diagnostics export and bundle generation contract."),
     step("channel-smoke-dry-run", "Channel smoke dry-run", ["pnpm", "run", "smoke:channels"], true, true, "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured."),
   ]
   if (targetPlatforms.has("macos")) steps.push(step("yeonjang-macos", "Yeonjang macOS package", ["bash", "scripts/build-yeonjang-macos.sh"], false, true, "Build macOS tray app bundle when running on macOS."))
@@ -322,13 +382,16 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
       "Verify the release manifest checksum and the selected backup snapshot checksum.",
       "Copy the current runtime state into a rollback-of-rollback snapshot.",
       "Restore the previous release binary payload and WebUI static files.",
+      "Disable the orchestration feature flag or set it to rollback compatibility mode before restoring state when delegation-related regressions are suspected.",
       "Restore the DB and prompt files into a rehearsal directory first.",
       "Run SQLite integrity_check, migration status, and prompt source registry checks.",
+      "Re-run migration rehearsal and admin diagnostic export against the rehearsal directory before swapping operational files.",
       "Replace operational DB, prompt registry, config, and Yeonjang package only after rehearsal passes.",
       "Restart Gateway and Yeonjang, then run channel smoke and Yeonjang screen/capability smoke.",
     ],
     verification: [
       "Gateway /api/status displayVersion matches the rollback release.",
+      "Feature flags show orchestration disabled or rollback-compatible until the incident is closed.",
       "Prompt source checksum matches the restored prompt registry.",
       "Existing schedules and memory search load without migration warnings.",
       "Yeonjang node.ping protocolVersion is compatible with Gateway expectations.",
@@ -339,6 +402,7 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
       "SQLite integrity_check fails in rehearsal.",
       "Prompt source registry cannot load from rehearsal directory.",
       "Yeonjang protocol version is newer than the rollback Gateway can parse.",
+      "Feature flag rollback still leaves no-agent fallback broken in compatibility smoke.",
     ],
   }
 }
@@ -351,14 +415,55 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
     { id: "prompt-seed", required: true, description: "Prompt seed files are present and prompt source registry loads without sys_prop dependency." },
     { id: "db-migration", required: true, description: "Initial DB migration applies cleanly from an empty database." },
     { id: "feature-flags", required: true, description: "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout." },
+    { id: "orchestration-release-gate", required: true, description: "Sub-agent orchestration feature flag default, off-state parity, and no-agent fallback evidence are reviewed before publish." },
+    { id: "performance-release-gate", required: true, description: "Latency targets, queue wait, first progress, finalization, delivery dedupe, and concurrency block evidence are reviewed in the release summary." },
     { id: "plan-drift", required: true, description: "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings." },
     { id: "web-retrieval-fixtures", required: true, description: "Offline web retrieval fixture regression passes and release manifest includes retrieval policy evidence." },
     { id: "ui-mode-release-gate", required: true, description: "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass." },
+    { id: "admin-diagnostics", required: true, description: "A sanitized admin diagnostics bundle is exportable and attached or explicitly marked missing in the release artifact list." },
     { id: "webui", required: true, description: "WebUI static files are served and /api/status returns displayVersion." },
     { id: "yeonjang-macos", required: false, description: "macOS Yeonjang app enters tray and publishes MQTT capability status." },
     { id: "yeonjang-windows", required: false, description: "Windows Yeonjang starts without console and screen capture smoke passes." },
     { id: "channel-smoke", required: true, description: "At least WebUI dry-run smoke passes; live Telegram/Slack smoke is required before public publish." },
   ]
+}
+
+function buildReleaseNoteSummary(input: {
+  featureFlags: ReleaseFeatureFlagState[]
+  migrationPreflight: Pick<MigrationPreflightReport, "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions">
+  performanceEvidence: ReleasePerformanceSummary
+  orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
+  rollback: ReleaseRollbackRunbook
+  webRetrievalEvidence: WebRetrievalReleaseGateSummary
+  uiModeEvidence: UiModeReleaseGateSummary
+}): ReleaseNoteSummary {
+  const orchestrationFlag = input.featureFlags.find((flag) => flag.featureKey === "sub_agent_orchestration")
+  return {
+    featureFlagDefaults: input.featureFlags
+      .map((flag) => `${flag.featureKey}: mode=${flag.mode}, compatibility=${flag.compatibilityMode ? "on" : "off"}`)
+      .sort(),
+    migrationCautions: [
+      `schema current=${input.migrationPreflight.currentSchemaVersion}, latest=${input.migrationPreflight.latestSchemaVersion}, pending=${input.migrationPreflight.pendingVersions.join(",") || "none"}`,
+      `migration risk=${input.migrationPreflight.risk}`,
+      "Always take a verified DB and prompt backup snapshot immediately before a live rollout.",
+      "Do not enable orchestration by default unless feature flag off parity and no-agent fallback smoke both pass.",
+    ],
+    rollbackProcedure: [
+      ...input.rollback.steps,
+      "Verify feature flag state first, then prefer rollback compatibility mode or full disable before restoring payloads.",
+    ],
+    knownLimitations: [
+      input.performanceEvidence.missingRequiredMetrics.length > 0
+        ? `Missing release-window metrics: ${input.performanceEvidence.missingRequiredMetrics.join(", ")}`
+        : "Release-window latency metrics were collected for all required task014 targets.",
+      `Orchestration release gate: ${input.orchestrationEvidence.gateStatus}`,
+      `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
+      `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
+      orchestrationFlag
+        ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
+        : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",
+    ],
+  }
 }
 
 export function buildReleaseUpdatePreflightReport(input: {
@@ -565,6 +670,144 @@ function readGitValue(rootDir: string, args: string[]): string | null {
     return value || null
   } catch {
     return null
+  }
+}
+
+export function buildReleaseOrchestrationEvidence(input: {
+  now: Date
+  featureFlags: ReleaseFeatureFlagState[]
+}): ReleaseOrchestrationEvidenceSummary {
+  const checks: ReleaseOrchestrationEvidenceCheck[] = []
+
+  let offRegistryLookups = 0
+  const offParitySnapshot = resolveOrchestrationModeSnapshotSync({
+    getConfig: () => ({
+      orchestration: {
+        ...DEFAULT_CONFIG.orchestration,
+        mode: "orchestration",
+        featureFlagEnabled: false,
+      } satisfies OrchestrationConfig,
+    }),
+    loadRegistry: () => {
+      offRegistryLookups += 1
+      return {
+        activeSubAgents: [{ agentId: "agent:unexpected", displayName: "Unexpected", source: "config" as const }],
+        totalSubAgentCount: 1,
+        disabledSubAgentCount: 0,
+      }
+    },
+    now: () => input.now.getTime(),
+  })
+  checks.push(buildOrchestrationCheck({
+    id: "feature_flag_off_parity",
+    pass: offParitySnapshot.mode === "single_nobie"
+      && offParitySnapshot.reasonCode === "feature_flag_off"
+      && offRegistryLookups === 0,
+    summary: offParitySnapshot.mode === "single_nobie" && offParitySnapshot.reasonCode === "feature_flag_off"
+      ? "Feature flag off state keeps the resolver on the single Nobie path without touching the registry."
+      : "Feature flag off state no longer guarantees a clean single Nobie fallback.",
+    detail: {
+      registryLookups: offRegistryLookups,
+      snapshot: serializeOrchestrationSnapshot(offParitySnapshot),
+    },
+  }))
+
+  const noAgentFallbackSnapshot = resolveOrchestrationModeSnapshotSync({
+    getConfig: () => ({
+      orchestration: {
+        ...DEFAULT_CONFIG.orchestration,
+        mode: "orchestration",
+        featureFlagEnabled: true,
+      } satisfies OrchestrationConfig,
+    }),
+    loadRegistry: () => ({
+      activeSubAgents: [],
+      totalSubAgentCount: 0,
+      disabledSubAgentCount: 0,
+    }),
+    now: () => input.now.getTime(),
+  })
+  checks.push(buildOrchestrationCheck({
+    id: "no_agent_fallback",
+    pass: noAgentFallbackSnapshot.mode === "single_nobie"
+      && noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents",
+    summary: noAgentFallbackSnapshot.mode === "single_nobie" && noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents"
+      ? "No-agent orchestration requests still fall back to single Nobie automatically."
+      : "No-agent fallback no longer resolves cleanly to the single Nobie path.",
+    detail: {
+      snapshot: serializeOrchestrationSnapshot(noAgentFallbackSnapshot),
+    },
+  }))
+
+  const runtimeFlag = input.featureFlags.find((flag) => flag.featureKey === "sub_agent_orchestration")
+  checks.push({
+    id: "runtime_flag_default",
+    status: runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
+      ? "passed"
+      : runtimeFlag
+        ? "warning"
+        : "warning",
+    summary: runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
+      ? "Runtime orchestration flag default remains off with compatibility mode enabled."
+      : runtimeFlag
+        ? `Runtime orchestration flag is ${runtimeFlag.mode}; verify this is intentional before public rollout.`
+        : "Runtime orchestration flag snapshot is missing.",
+    detail: runtimeFlag
+      ? {
+        featureKey: runtimeFlag.featureKey,
+        mode: runtimeFlag.mode,
+        compatibilityMode: runtimeFlag.compatibilityMode,
+        source: runtimeFlag.source,
+      }
+      : { featureKey: "sub_agent_orchestration", missing: true },
+  })
+
+  const warnings = checks
+    .filter((check) => check.status === "warning")
+    .map((check) => `${check.id}: ${check.summary}`)
+  const blockingFailures = checks
+    .filter((check) => check.status === "failed")
+    .map((check) => `${check.id}: ${check.summary}`)
+
+  return {
+    kind: "nobie.release.orchestration",
+    generatedAt: input.now.toISOString(),
+    gateStatus: blockingFailures.length > 0
+      ? "failed"
+      : warnings.length > 0
+        ? "warning"
+        : "passed",
+    checks,
+    warnings,
+    blockingFailures,
+  }
+}
+
+function buildOrchestrationCheck(input: {
+  id: ReleaseOrchestrationEvidenceCheck["id"]
+  pass: boolean
+  summary: string
+  detail: Record<string, unknown>
+}): ReleaseOrchestrationEvidenceCheck {
+  return {
+    id: input.id,
+    status: input.pass ? "passed" : "failed",
+    summary: input.summary,
+    detail: input.detail,
+  }
+}
+
+function serializeOrchestrationSnapshot(snapshot: OrchestrationModeSnapshot): Record<string, unknown> {
+  return {
+    mode: snapshot.mode,
+    status: snapshot.status,
+    featureFlagEnabled: snapshot.featureFlagEnabled,
+    requestedMode: snapshot.requestedMode,
+    activeSubAgentCount: snapshot.activeSubAgentCount,
+    totalSubAgentCount: snapshot.totalSubAgentCount,
+    disabledSubAgentCount: snapshot.disabledSubAgentCount,
+    reasonCode: snapshot.reasonCode,
+    reason: snapshot.reason,
   }
 }
 

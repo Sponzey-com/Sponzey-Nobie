@@ -146,3 +146,4 @@ vite.config.ts.timestamp-*
 .claude/
 .DS_Store
 .env
+.docs

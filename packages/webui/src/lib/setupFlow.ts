@@ -53,6 +53,7 @@ export function mergeSetupStepDraft(savedDraft: SetupDraft, localDraft: SetupDra
       break
     case "ai_backends":
       nextDraft.aiBackends = cloneValue(localSlice.aiBackends ?? savedDraft.aiBackends)
+      nextDraft.routingProfiles = cloneValue(localSlice.routingProfiles ?? savedDraft.routingProfiles)
       break
     case "ai_routing":
       nextDraft.routingProfiles = cloneValue(localSlice.routingProfiles ?? savedDraft.routingProfiles)
@@ -90,6 +91,7 @@ export function revertSetupStepDraft(localDraft: SetupDraft, savedDraft: SetupDr
       break
     case "ai_backends":
       nextDraft.aiBackends = cloneValue(savedSlice.aiBackends ?? savedDraft.aiBackends)
+      nextDraft.routingProfiles = cloneValue(savedSlice.routingProfiles ?? savedDraft.routingProfiles)
       break
     case "ai_routing":
       nextDraft.routingProfiles = cloneValue(savedSlice.routingProfiles ?? savedDraft.routingProfiles)
@@ -454,7 +456,7 @@ function getSetupStepSlice(draft: SetupDraft, stepId: SetupStepId) {
     case "personal":
       return { personal: draft.personal }
     case "ai_backends":
-      return { aiBackends: draft.aiBackends }
+      return { aiBackends: draft.aiBackends, routingProfiles: draft.routingProfiles }
     case "ai_routing":
       return { routingProfiles: draft.routingProfiles }
     case "mcp":

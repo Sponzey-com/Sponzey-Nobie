@@ -12,6 +12,7 @@ import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/r
 import { resetEmbeddingProvider } from "../memory/embedding.js";
 import { mcpRegistry } from "../mcp/registry.js";
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js";
+import { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshotSync, } from "../orchestration/mode.js";
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js";
 import { OPENAI_CODEX_KNOWN_MODELS, OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexAuthFilePath, resolveOpenAICodexBaseUrl, } from "../auth/openai-codex-oauth.js";
 const KNOWN_BACKENDS = [
@@ -711,6 +712,8 @@ export function createCapabilities() {
     const mcpSummary = mcpRegistry.getSummary();
     const mcpStatuses = mcpRegistry.getStatuses();
     const mqtt = getMqttBrokerSnapshot();
+    const orchestration = resolveOrchestrationModeSnapshotSync();
+    const orchestrationCapability = orchestrationCapabilityStatus(orchestration);
     const mcpCapability = {
         key: "mcp.client",
         label: "MCP Client",
@@ -819,10 +822,19 @@ export function createCapabilities() {
             key: "gateway.orchestrator",
             label: "Gateway Orchestrator",
             area: "gateway",
-            status: "planned",
-            implemented: false,
-            enabled: false,
-            reason: "실제 오케스트레이터와 위임 제어 루프는 Phase 0003 이후 연결합니다.",
+            status: orchestrationCapability.status,
+            implemented: true,
+            enabled: orchestrationCapability.enabled,
+            reason: orchestration.reason,
+            metadata: {
+                mode: orchestration.mode,
+                requestedMode: orchestration.requestedMode,
+                featureFlagEnabled: orchestration.featureFlagEnabled,
+                reasonCode: orchestration.reasonCode,
+                activeSubAgentCount: orchestration.activeSubAgentCount,
+                totalSubAgentCount: orchestration.totalSubAgentCount,
+                disabledSubAgentCount: orchestration.disabledSubAgentCount,
+            },
         },
         { key: "runs.monitor", label: "Run Monitor", area: "runs", status: "ready", implemented: true, enabled: true },
         { key: "runs.cancel", label: "Run Cancel", area: "runs", status: "ready", implemented: true, enabled: true },

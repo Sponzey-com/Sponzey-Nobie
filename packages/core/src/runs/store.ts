@@ -2,6 +2,7 @@ import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interr
 import { assertMigrationWriteAllowed } from "../db/migration-safety.js"
 import { eventBus } from "../events/index.js"
 import { getLastRuntimeManifest, refreshRuntimeManifest } from "../runtime/manifest.js"
+import { validateOrchestrationPlan } from "../contracts/sub-agent-orchestration.js"
 import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js"
 import { finalizeDeliveryForRun, recordMessageLedgerEvent } from "./message-ledger.js"
 import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun, type StartupRecoveryRunSummary } from "./startup-recovery.js"
@@ -184,10 +185,24 @@ function parsePromptSourceSnapshot(value: string | null): Record<string, unknown
   }
 }
 
+function parseOrchestrationModeFromSnapshot(snapshot: Record<string, unknown> | undefined): RootRun["orchestrationMode"] | undefined {
+  const orchestration = snapshot?.orchestration
+  if (!orchestration || typeof orchestration !== "object" || Array.isArray(orchestration)) return undefined
+  const mode = (orchestration as Record<string, unknown>).mode
+  return mode === "single_nobie" || mode === "orchestration" ? mode : undefined
+}
+
+function parseOrchestrationPlanFromSnapshot(snapshot: Record<string, unknown> | undefined): RootRun["orchestrationPlanSnapshot"] | undefined {
+  const validation = validateOrchestrationPlan(snapshot?.orchestrationPlan)
+  return validation.ok ? validation.value : undefined
+}
+
 function hydrateRun(row: RootRunRow): RootRun {
   const db = getDb()
   assertMigrationWriteAllowed(db, "run.create")
   const promptSourceSnapshot = parsePromptSourceSnapshot(row.prompt_source_snapshot)
+  const orchestrationMode = parseOrchestrationModeFromSnapshot(promptSourceSnapshot)
+  const orchestrationPlanSnapshot = parseOrchestrationPlanFromSnapshot(promptSourceSnapshot)
   const steps = db
     .prepare<[string], RunStepRow>(
       `SELECT run_id, step_key, title, step_index, status, summary, started_at, finished_at
@@ -222,6 +237,8 @@ function hydrateRun(row: RootRunRow): RootRun {
     ...(row.worker_runtime_kind ? { workerRuntimeKind: row.worker_runtime_kind } : {}),
     ...(row.worker_session_id ? { workerSessionId: row.worker_session_id } : {}),
     contextMode: row.context_mode ?? "full",
+    ...(orchestrationMode ? { orchestrationMode } : {}),
+    ...(orchestrationPlanSnapshot ? { orchestrationPlanSnapshot } : {}),
     delegationTurnCount: row.delegation_turn_count,
     maxDelegationTurns: row.max_delegation_turns,
     ...(row.runtime_manifest_id ? { runtimeManifestId: row.runtime_manifest_id } : {}),
@@ -639,6 +656,7 @@ export function createRootRun(params: {
   promptSourceSnapshot?: Record<string, unknown>
   maxDelegationTurns?: number
   delegationTurnCount?: number
+  orchestrationMode?: RootRun["orchestrationMode"]
 }): RootRun {
   const now = Date.now()
   const totalSteps = DEFAULT_RUN_STEPS.length
@@ -663,6 +681,12 @@ export function createRootRun(params: {
     ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
     ...(params.runScope ? { runScope: params.runScope } : {}),
   })
+  const promptSourceSnapshot = {
+    ...(params.promptSourceSnapshot ?? {}),
+    ...(params.orchestrationMode && !params.promptSourceSnapshot?.orchestration
+      ? { orchestration: { mode: params.orchestrationMode } }
+      : {}),
+  }
 
   const tx = db.transaction(() => {
     db.prepare(
@@ -698,7 +722,7 @@ export function createRootRun(params: {
       totalSteps,
       summary,
       1,
-      params.promptSourceSnapshot ? JSON.stringify(params.promptSourceSnapshot) : null,
+      Object.keys(promptSourceSnapshot).length > 0 ? JSON.stringify(promptSourceSnapshot) : null,
       runtimeManifestId,
       now,
       now,

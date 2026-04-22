@@ -17,6 +17,10 @@ export interface InstructionSource {
   mtimeMs?: number
   content?: string
   error?: string
+  sourceKind?: "instruction_file" | "agent_prompt"
+  agentId?: string
+  agentType?: "nobie" | "sub_agent"
+  sourceId?: string
 }
 
 export interface InstructionChain {
@@ -25,7 +29,19 @@ export interface InstructionChain {
   sources: InstructionSource[]
 }
 
-export function discoverInstructionChain(workDir = process.cwd()): InstructionChain {
+export interface AgentInstructionSourceInput {
+  agentId: string
+  agentType: "nobie" | "sub_agent"
+  sourceId: string
+  content: string
+  version?: string
+}
+
+export interface InstructionDiscoveryOptions {
+  agentSources?: AgentInstructionSourceInput[]
+}
+
+export function discoverInstructionChain(workDir = process.cwd(), options: InstructionDiscoveryOptions = {}): InstructionChain {
   const normalizedWorkDir = resolve(workDir)
   const gitRoot = findGitRoot(normalizedWorkDir)
   const sources: InstructionSource[] = []
@@ -41,6 +57,8 @@ export function discoverInstructionChain(workDir = process.cwd()): InstructionCh
     const source = pickInstructionFile(dirPath, "project", index + 1)
     if (source) sources.push(source)
   })
+
+  sources.push(...normalizeAgentSources(options.agentSources ?? [], sources.length + 1))
 
   return {
     workDir: normalizedWorkDir,
@@ -67,6 +85,7 @@ function pickInstructionFile(dirPath: string, scope: "global" | "project", level
         size: Buffer.byteLength(content),
         mtimeMs: stat.mtimeMs,
         content,
+        sourceKind: "instruction_file",
       }
     } catch (error) {
       return {
@@ -77,11 +96,33 @@ function pickInstructionFile(dirPath: string, scope: "global" | "project", level
         loaded: false,
         size: 0,
         error: error instanceof Error ? error.message : String(error),
+        sourceKind: "instruction_file",
       }
     }
   }
 
   return undefined
+}
+
+function normalizeAgentSources(agentSources: AgentInstructionSourceInput[], startLevel: number): InstructionSource[] {
+  return agentSources
+    .map((source, index): InstructionSource => {
+      const content = source.content.slice(0, MAX_INSTRUCTION_FILE_SIZE)
+      return {
+        path: `agent://${source.agentType}/${source.agentId}/${source.sourceId}`,
+        scope: "project",
+        level: startLevel + index,
+        exists: true,
+        loaded: Boolean(content.trim()),
+        size: Buffer.byteLength(content),
+        content,
+        sourceKind: "agent_prompt",
+        agentId: source.agentId,
+        agentType: source.agentType,
+        sourceId: source.sourceId,
+      }
+    })
+    .filter((source) => source.loaded)
 }
 
 function findGitRoot(startDir: string): string | undefined {

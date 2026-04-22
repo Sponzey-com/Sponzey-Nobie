@@ -1,4 +1,6 @@
 import { type AIProvider } from "../ai/index.js";
+export { buildFeedbackRequest, collectResultReviewIssues, decideSubSessionCompletionIntegration, getSubAgentResultRetryBudgetLimit, normalizeResultReviewFailureKey, reviewSubAgentResult, } from "./sub-agent-result-review.js";
+export type { SubAgentResultReview, SubAgentResultReviewInput, SubAgentResultReviewIssue, SubAgentResultReviewIssueCode, SubAgentRetryClass, SubSessionCompletionIntegrationDecision, } from "./sub-agent-result-review.js";
 export type CompletionReviewStatus = "complete" | "followup" | "ask_user";
 export interface CompletionReviewResult {
     status: CompletionReviewStatus;

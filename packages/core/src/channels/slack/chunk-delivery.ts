@@ -3,6 +3,7 @@ import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
 import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
+import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js"
 
 export interface SlackChunkResponder {
   sendToolStatus(toolName: string): Promise<string>
@@ -18,6 +19,10 @@ export interface SlackChunkDeliveryContext {
   channelId: string
   threadTs: string
   getRunId: () => string | undefined
+  deliveryKind?: MessageLedgerDeliveryKind
+  parentRunId?: string
+  subSessionId?: string
+  agentId?: string
   recordOutgoingMessageRef: (params: {
     sessionId: string
     runId: string
@@ -175,6 +180,10 @@ export function createSlackChunkDeliveryHandler(
         textDeliveries: [{
           channel: "slack",
           text: deliveredText,
+          ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+          ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+          ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
+          ...(context.agentId ? { agentId: context.agentId } : {}),
         }],
       }
     }

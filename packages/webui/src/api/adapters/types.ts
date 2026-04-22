@@ -20,6 +20,27 @@ export interface StatusResponse {
   orchestratorStatus: {
     status: "ready" | "disabled" | "planned" | "error"
     reason: string | null
+    mode?: "single_nobie" | "orchestration"
+    reasonCode?: string
+    activeSubAgentCount?: number
+  }
+  orchestration?: {
+    mode: "single_nobie" | "orchestration"
+    status: "ready" | "disabled" | "degraded"
+    featureFlagEnabled: boolean
+    requestedMode: "single_nobie" | "orchestration"
+    activeSubAgentCount: number
+    totalSubAgentCount: number
+    disabledSubAgentCount: number
+    activeSubAgents: Array<{
+      agentId: string
+      displayName: string
+      nickname?: string
+      source: "db" | "config"
+    }>
+    reasonCode: string
+    reason: string
+    generatedAt: number
   }
   startupRecovery: {
     createdAt: number
@@ -188,7 +209,7 @@ export interface ResetSetupResponse {
 export interface ControlPlaneAdapter {
   readonly name: "local"
   getStatus: () => Promise<StatusResponse>
-  getCapabilities: () => Promise<{ items: FeatureCapability[]; generatedAt: number }>
+  getCapabilities: () => Promise<{ items: FeatureCapability[]; generatedAt: number; orchestration?: StatusResponse["orchestration"] }>
   getCapability: (key: string) => Promise<FeatureCapability>
   getSetupStatus: () => Promise<SetupState>
   getSetupChecks: () => Promise<SetupChecksResponse>

@@ -1,4 +1,5 @@
 export type RecoveryBudgetKind = "interpretation" | "execution" | "delivery" | "external";
+export type SubSessionRevisionBudgetClass = "default" | "format_only" | "risk_or_external" | "expensive";
 export interface RecoveryBudgetState {
     kind: RecoveryBudgetKind;
     used: number;
@@ -24,4 +25,10 @@ export declare function consumeRecoveryBudget(params: {
     maxDelegationTurns: number;
 }): RecoveryBudgetState;
 export declare function formatRecoveryBudgetProgress(state: RecoveryBudgetState): string;
+export declare function getSubSessionRevisionBudgetLimit(budgetClass?: SubSessionRevisionBudgetClass): number;
+export declare function canRetrySubSessionRevision(params: {
+    retryBudgetRemaining: number;
+    budgetClass?: SubSessionRevisionBudgetClass;
+    repeatedFailure?: boolean;
+}): boolean;
 //# sourceMappingURL=recovery-budget.d.ts.map

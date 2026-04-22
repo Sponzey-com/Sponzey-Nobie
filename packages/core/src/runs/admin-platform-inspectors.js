@@ -387,6 +387,90 @@ function updateJob(id, patch) {
 function filterLedgerByChannel(events, channel) {
     return channel ? events.filter((event) => event.channel === channel) : events;
 }
+function readNestedString(value, keys, depth = 0) {
+    if (!value || depth > 6)
+        return null;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const found = readNestedString(item, keys, depth + 1);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    const record = detailRecord(value);
+    if (!record)
+        return null;
+    const direct = readString(record, ...keys);
+    if (direct)
+        return direct;
+    for (const nested of Object.values(record)) {
+        const found = readNestedString(nested, keys, depth + 1);
+        if (found)
+            return found;
+    }
+    return null;
+}
+function readNestedNumber(value, keys, depth = 0) {
+    if (!value || depth > 6)
+        return null;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const found = readNestedNumber(item, keys, depth + 1);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+    const record = detailRecord(value);
+    if (!record)
+        return null;
+    const direct = readNumber(record, ...keys);
+    if (direct != null)
+        return direct;
+    for (const nested of Object.values(record)) {
+        const found = readNestedNumber(nested, keys, depth + 1);
+        if (found != null)
+            return found;
+    }
+    return null;
+}
+function isOrchestrationLedgerEvent(event, detail) {
+    const haystack = `${event.event_kind} ${event.summary}`.toLowerCase();
+    return haystack.includes("sub_session")
+        || haystack.includes("orchestration")
+        || Boolean(readNestedString(detail, ["orchestrationPlan", "orchestration_plan", "planId", "plan_id"]));
+}
+function buildPlatformOrchestrationInspector(input) {
+    const limit = Math.max(1, Math.min(input.limit ?? 120, 500));
+    const events = input.ledgerEvents
+        .map((event) => ({ event, detail: sanitizeExportValue(parseJson(event.detail_json)) }))
+        .filter(({ event, detail }) => isOrchestrationLedgerEvent(event, detail));
+    const latestEvents = events
+        .slice(0, limit)
+        .map(({ event, detail }) => ({
+        id: event.id,
+        eventKind: event.event_kind,
+        status: event.status,
+        summary: sanitizeText(event.summary),
+        runId: event.run_id,
+        requestGroupId: event.request_group_id,
+        subSessionId: readNestedString(detail, ["subSessionId", "sub_session_id"]),
+        agentId: readNestedString(detail, ["agentId", "agent_id"]),
+        latencyMs: readNestedNumber(detail, ["latencyMs", "durationMs", "elapsedMs", "windowMs"]),
+        resourceLockWaitMs: readNestedNumber(detail, ["resourceLockWaitMs", "lockWaitMs", "waitMs"]),
+        createdAt: event.created_at,
+    }));
+    return {
+        summary: {
+            orchestrationLedgerEvents: events.length,
+            subSessionEvents: events.filter(({ event }) => event.event_kind.includes("sub_session")).length,
+            latencyMetrics: latestEvents.filter((event) => event.latencyMs != null).length,
+            resourceLockWaits: latestEvents.filter((event) => event.resourceLockWaitMs != null).length,
+        },
+        latestEvents,
+    };
+}
 function listDiagnosticsForExport(filters, limit) {
     if (!tableExists("diagnostic_events"))
         return [];
@@ -546,6 +630,7 @@ export function buildAdminPlatformInspectors(input) {
     return {
         yeonjang: buildYeonjangInspector(input.timeline),
         database: buildDatabaseInspector(limit),
+        orchestration: buildPlatformOrchestrationInspector(input),
         exports: {
             jobs: listAdminDiagnosticExportJobs().slice(0, limit),
             defaults: {

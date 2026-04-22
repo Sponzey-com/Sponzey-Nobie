@@ -1,3 +1,5 @@
+import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "./sub-agent-orchestration"
+
 export type RunStatus =
   | "queued"
   | "running"
@@ -61,6 +63,12 @@ export interface RootRun {
   contextMode: RunContextMode
   delegationTurnCount: number
   maxDelegationTurns: number
+  orchestrationMode?: OrchestrationMode
+  orchestrationPlanSnapshot?: OrchestrationPlan
+  subSessionIds?: string[]
+  subSessionsSnapshot?: SubSessionContract[]
+  agentDisplayName?: string
+  agentNickname?: string
   currentStepKey: string
   currentStepIndex: number
   totalSteps: number
@@ -82,6 +90,8 @@ export interface RunProgressSnapshot {
   targetLabel?: string
   workerSessionId?: string
   contextMode: RunContextMode
+  orchestrationMode?: OrchestrationMode
+  subSessionIds?: string[]
   summary: string
   recentEvents: RunEvent[]
   canCancel: boolean

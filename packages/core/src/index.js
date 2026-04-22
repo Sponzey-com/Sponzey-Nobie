@@ -6,12 +6,18 @@ export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJson
 // Runtime manifest and diagnostics
 export { buildRuntimeManifest, getLastRuntimeManifest, refreshRuntimeManifest } from "./runtime/manifest.js";
 export { buildRolloutSafetySnapshot, ensureRolloutSafetyTables, getFeatureFlag, listFeatureFlags, recordRolloutEvidence, recordShadowCompare, setFeatureFlagMode, shouldReadCompatibilityPath, shouldShadowWrite, shouldUseNewPath, } from "./runtime/rollout-safety.js";
+export { AGENT_PROMPT_BUNDLE_VERSION, buildAgentPromptBundle, buildAgentPromptBundleCacheKey, redactPromptSecrets, renderAgentPromptBundleText, } from "./orchestration/prompt-bundle.js";
+export { ResourceLockManager, SubSessionRunner, buildSubSessionContract, classifySubSessionRecovery, createSubSessionRunner, createTextResultReport, planSubSessionExecutionWaves, recoverInterruptedSubSessions, runParallelSubSessionGroup, } from "./orchestration/sub-session-runner.js";
+export { createOrchestrationPlanner, buildDefaultStructuredTaskScope, buildOrchestrationPlan, } from "./orchestration/planner.js";
+export { buildOrchestrationRegistrySnapshot, createAgentRegistryService, createTeamRegistryService, } from "./orchestration/registry.js";
+export { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshot, resolveOrchestrationModeSnapshotSync, } from "./orchestration/mode.js";
 export { MIGRATION_ROLLBACK_RUNBOOK_REF, assertMigrationWriteAllowed, beginMigrationLock, checkMigrationWriteGuard, ensureMigrationSafetyTables, failMigrationLock, getActiveMigrationLock, getLatestMigrationLock, releaseMigrationLock, updateMigrationLockPhase, verifyMigrationState, } from "./db/migration-safety.js";
 export { lastDoctorReportExists, runDoctor, writeDoctorReportArtifact } from "./diagnostics/doctor.js";
 export { buildReleaseNoteEvidenceSummary, parseTaskMetadata, runPlanDriftCheck } from "./diagnostics/plan-drift.js";
 export { attachCapabilityProfileToTrace, buildProviderProfileId, clearProviderCapabilityCache, getProviderCapabilityMatrix, resolveEmbeddingProviderResolutionSnapshot, } from "./ai/capabilities.js";
 // Release package
 export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, writeReleasePackage, } from "./release/package.js";
+export { RELEASE_PERFORMANCE_TARGETS, buildReleasePerformanceSummary } from "./release/performance-gate.js";
 // Logger
 export { createLogger, logger } from "./logger/index.js";
 // Events
@@ -23,7 +29,13 @@ export { buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey, buil
 export { WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION, buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, createDryRunWebRetrievalLiveSmokeExecutor, fixtureFileNameForId, getDefaultWebRetrievalLiveSmokeScenarios, isLiveWebSmokeEnabled, loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, runWebRetrievalLiveSmokeScenarios, validateWebRetrievalLiveSmokeTrace, writeWebRetrievalSmokeArtifact, } from "./runs/web-retrieval-smoke.js";
 export { WEB_RETRIEVAL_POLICY_VERSION } from "./runs/web-retrieval-policy.js";
 export { DEFAULT_QUEUE_BUDGETS, QUEUE_NAMES, QueueBackpressureError, buildBackpressureUserMessage, buildQueueBackpressureSnapshot, enqueueBackpressureTask, recordQueueBackpressureEvent, recordRetryBudgetAttempt, resetQueueBackpressureState, resetRetryBudget, } from "./runs/queue-backpressure.js";
-export { ContextPreflightBlockedError, chatWithContextPreflight, estimateContextTokens, estimateMessagesTokens, prepareChatContext, pruneMessagesForContext, runContextPreflight, } from "./runs/context-preflight.js";
+export { ContextPreflightBlockedError, chatWithContextPreflight, estimateContextTokens, estimateMessagesTokens, prepareChatContext, pruneMessagesForContext, runContextPreflight, validateAgentPromptBundleContextScope, } from "./runs/context-preflight.js";
+export { buildDataExchangeJournalRecord } from "./runs/journaling.js";
+export { buildFeedbackRequest, collectResultReviewIssues, decideSubSessionCompletionIntegration, getSubAgentResultRetryBudgetLimit, normalizeResultReviewFailureKey, reviewSubAgentResult, } from "./agent/sub-agent-result-review.js";
+export { canRetrySubSessionRevision, getSubSessionRevisionBudgetLimit, } from "./runs/recovery-budget.js";
+export { decideSubSessionReviewGate, } from "./runs/review-gate.js";
+export { buildSubSessionFeedbackCycleDirective, } from "./runs/review-cycle-pass.js";
+export { decideSubSessionCompletionPass, } from "./runs/completion-pass.js";
 export { activateExtensionWithTrustPolicy, buildExtensionRegistrySnapshot, createExtensionRollbackPoint, extensionIdsForToolName, getExtensionFailureState, isToolExtensionSelectable, listExtensionFailureStates, recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure, resetExtensionFailureState, rollbackExtensionToPoint, runExtensionHookSafely, } from "./security/extension-governance.js";
 export { DEFAULT_EVIDENCE_CONFLICT_POLICY, conflictResolutionToVerdict, conflictSufficiencyIsBlocking, resolveEvidenceConflict, } from "./runs/web-conflict-resolver.js";
 export { DEFAULT_RETRIEVAL_CACHE_TTL_POLICY, InMemoryRetrievalCache, buildRetrievalCacheEntry, buildRetrievalCacheKey, buildRetrievalTargetHash, createInMemoryRetrievalCache, evaluateRetrievalCacheEntry, getPersistentRetrievalCacheEntry, listPersistentRetrievalCacheEntriesForTarget, putPersistentRetrievalCacheEntry, resolveRetrievalCacheTtlMs, } from "./runs/web-retrieval-cache.js";
@@ -36,6 +48,7 @@ export { buildFinanceKnownSources, buildFinanceSourceEvidence, buildWeatherKnown
 // Contracts
 export { CANONICAL_JSON_POLICY, CONTRACT_SCHEMA_VERSION, buildDeliveryDedupeKey, buildDeliveryKey, buildDeliveryProjection, buildPayloadHash, buildScheduleIdentityKey, buildScheduleIdentityProjection, buildSchedulePayloadProjection, buildToolTargetProjection, formatContractValidationFailureForUser, stableContractHash, toCanonicalJson, validateDeliveryContract, validateIntentContract, validateScheduleContract, validateToolTargetContract, } from "./contracts/index.js";
 export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js";
+export { SUB_AGENT_CONTRACT_SCHEMA_VERSION, validateAgentConfig, validateAgentPromptBundle, validateOrchestrationPlan, validateTeamConfig, } from "./contracts/sub-agent-orchestration.js";
 export { findScheduleCandidatesByContract, parseScheduleContractJson, scheduleContractDestinationEquals, scheduleContractTimeEquals, } from "./schedules/candidates.js";
 export { buildScheduleContractComparisonSystemPrompt, compareScheduleContractsWithAI, parseScheduleContractComparisonResult, } from "./schedules/comparison.js";
 // Candidate Providers
@@ -46,9 +59,12 @@ export { LATENCY_BUDGET_MS, buildLatencyEventLabel, buildLatencyEventLabelForMea
 export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, getChannelSmokeRun, insertChannelSmokeRun, insertChannelSmokeStep, listChannelSmokeRuns, listChannelSmokeSteps, updateChannelSmokeRun, } from "./db/index.js";
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
+// Capability isolation
+export { acquireAgentCapabilityRateLimit, buildCapabilityApprovalAggregationEvent, buildCapabilityDelegationRequest, buildCapabilityResultDataExchange, createCapabilityPolicySnapshot, evaluateAgentToolCapabilityPolicy, isMcpServerAllowed, isToolAllowedBySkillMcpAllowlist, parseMcpRegisteredToolName, persistCapabilityResultDataExchange, recordCapabilityDelegationRequest, resetAgentCapabilityRateLimitsForTest, resolveToolCapabilityRisk, toAgentCapabilityCallContext, } from "./security/capability-isolation.js";
 // Agent
 export { runAgent } from "./agent/index.js";
 export { buildTaskIntakeSystemPrompt } from "./agent/intake-prompt.js";
+export { approveLearningEvent, buildHistoryVersion, dbHistoryVersionToContract, dbLearningEventToContract, dbRestoreEventToContract, dryRunRestoreHistoryVersion, evaluateLearningPolicy, listAgentLearningEvents, listHistoryVersions, listRestoreEvents, recordHistoryVersion, recordLearningEvent, restoreHistoryVersion, } from "./agent/learning.js";
 // Instructions
 export { discoverInstructionChain } from "./instructions/discovery.js";
 export { loadMergedInstructions } from "./instructions/merge.js";
@@ -56,7 +72,8 @@ export { loadMergedInstructions } from "./instructions/merge.js";
 export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMemories, buildMemoryContext } from "./memory/store.js";
 export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery } from "./memory/evaluation.js";
 export { diagnoseVectorEmbeddingRows } from "./memory/search.js";
-export { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js";
+export { buildLearningWritebackCandidate, listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety } from "./memory/writeback.js";
+export { MemoryIsolationError, assertMemoryAccessAllowed, buildDataExchangeContextMemoryRefs, buildMemorySummaryDataExchange, createDataExchangePackage, dbAgentDataExchangeToPackage, getDataExchangePackage, isDataExchangeUsableForMemoryAccess, listActiveDataExchangePackagesForRecipient, persistDataExchangePackage, prepareAgentMemoryWritebackQueueInput, searchOwnerScopedMemory, storeOwnerScopedMemory, validateDataExchangePackage, } from "./memory/isolation.js";
 export { loadNobieMd, initNobieMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, dryRunPromptSourceAssembly, buildPromptSourceContentDiff, writePromptSourceWithBackup, rollbackPromptSourceBackup, checkPromptSourceLocaleParity, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/nobie-md.js";
 export { runPromptSourceRegression } from "./memory/prompt-regression.js";
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js";
@@ -64,8 +81,8 @@ export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, V
 // Plugins
 export { pluginLoader, PluginLoader } from "./plugins/loader.js";
 // MCP
-export { mcpRegistry } from "./mcp/registry.js";
-export { McpStdioClient } from "./mcp/client.js";
+export { filterMcpStatusesForAgentAllowlist, mcpRegistry } from "./mcp/registry.js";
+export { McpStdioClient, buildMcpToolCallPayload } from "./mcp/client.js";
 // MQTT
 export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/broker.js";
 // Channels
