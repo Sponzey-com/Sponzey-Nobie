@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 const execFileAsync = promisify(execFile);
 // ─── App discovery ────────────────────────────────────────────────────────────
 async function listAppsMac(filter) {
@@ -106,6 +107,7 @@ export const appLaunchTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         const isPath = app.startsWith("/") || app.startsWith("./");
         // Require approval for direct executable paths
         if (isPath) {
@@ -115,12 +117,12 @@ export const appLaunchTool = {
             };
         }
         try {
-            if (await canYeonjangHandleMethod("application.launch", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("application.launch", yeonjangOptions)) {
                 const remote = await invokeYeonjangMethod("application.launch", {
                     application: app,
                     args,
                     detached: background,
-                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.launched,
                     output: remote.message || `"${app}" 실행`,

@@ -4,6 +4,7 @@
  */
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
+import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js";
 const TYPE_DELAY_MS = 500;
 function yeonjangRequiredFailure(method) {
     return {
@@ -86,10 +87,11 @@ export const keyboardTypeTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
         try {
-            if (await canYeonjangHandleMethod("keyboard.type", extensionId ? { extensionId } : {})) {
-                const remote = await invokeYeonjangMethod("keyboard.type", { text: params.text }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+            if (await canYeonjangHandleMethod("keyboard.type", yeonjangOptions)) {
+                const remote = await invokeYeonjangMethod("keyboard.type", { text: params.text }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.typed,
                     output: remote.message || `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
@@ -132,15 +134,16 @@ export const keyboardShortcutTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
         const shortcut = splitShortcutKeys(params.keys);
         try {
-            if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
                 const remote = await invokeYeonjangMethod("keyboard.action", {
                     action: "shortcut",
                     key: shortcut.key,
                     modifiers: shortcut.modifiers,
-                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.accepted,
                     output: remote.message || `단축키 실행: ${params.keys.join("+")}`,
@@ -195,15 +198,16 @@ export const keyboardActionTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
         try {
-            if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
                 const remote = await invokeYeonjangMethod("keyboard.action", {
                     action: params.action,
                     ...(typeof params.text === "string" ? { text: params.text } : {}),
                     ...(typeof params.key === "string" ? { key: params.key } : {}),
                     ...(params.modifiers?.length ? { modifiers: params.modifiers } : {}),
-                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.accepted,
                     output: remote.message || `키보드 액션 실행: ${params.action}`,

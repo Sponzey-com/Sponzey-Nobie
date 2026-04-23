@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { api } from "../api/client"
 import { DisabledPanel } from "../components/DisabledPanel"
-import { OrchestrationPreviewCard } from "../components/orchestration/OrchestrationPreviewCard"
 import { PlannedState } from "../components/PlannedState"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { BeginnerVisualizationDeck } from "../components/setup/BeginnerVisualizationDeck"
@@ -26,12 +25,6 @@ import { SetupVisualizationCanvas, SetupVisualizationLegend } from "../component
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { AI_PROVIDER_OPTIONS, getAIProviderDefaultEndpoint, type AIBackendCard, type AIProviderType, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
-import type {
-  OrchestrationAgentRegistryEntry,
-  OrchestrationGraphResponse,
-  OrchestrationRegistrySnapshot,
-  OrchestrationTeamRegistryEntry,
-} from "../contracts/orchestration-api"
 import type { SetupDraft, SetupState } from "../contracts/setup"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import {
@@ -46,7 +39,6 @@ import {
   type BeginnerSetupStepId,
 } from "../lib/beginner-setup"
 import { uiCatalogText } from "../lib/message-catalog"
-import { buildOrchestrationSummary, buildOrchestrationTopologyScene } from "../lib/orchestration-ui"
 import {
   canSkipSetupStep,
   hasEditableSetupStep,
@@ -139,12 +131,6 @@ export function SetupPage() {
   const [beginnerNotice, setBeginnerNotice] = useState("")
   const [testingMcpServerId, setTestingMcpServerId] = useState<string | null>(null)
   const [testingSkillId, setTestingSkillId] = useState<string | null>(null)
-  const [orchestrationRegistry, setOrchestrationRegistry] = useState<OrchestrationRegistrySnapshot | null>(null)
-  const [orchestrationAgents, setOrchestrationAgents] = useState<OrchestrationAgentRegistryEntry[]>([])
-  const [orchestrationTeams, setOrchestrationTeams] = useState<OrchestrationTeamRegistryEntry[]>([])
-  const [orchestrationGraph, setOrchestrationGraph] = useState<OrchestrationGraphResponse | null>(null)
-  const [orchestrationLoading, setOrchestrationLoading] = useState(false)
-  const [orchestrationError, setOrchestrationError] = useState("")
   const capabilities = useCapabilitiesStore((state) => state.items)
   const capabilityCounts = useCapabilitiesStore((state) => state.counts)
   const runtimeStatus = useConnectionStore((state) => state.status)
@@ -275,21 +261,6 @@ export function SetupPage() {
     }),
     [beginnerConnections, beginnerStepId, beginnerSteps, visualizationRegistry],
   )
-  const orchestrationSummary = useMemo(
-    () => buildOrchestrationSummary({ snapshot: orchestrationRegistry, language: uiLanguage }),
-    [orchestrationRegistry, uiLanguage],
-  )
-  const orchestrationPreviewScene = useMemo(
-    () => buildOrchestrationTopologyScene({
-      snapshot: orchestrationRegistry,
-      graph: orchestrationGraph,
-      agents: orchestrationAgents,
-      teams: orchestrationTeams,
-      language: uiLanguage,
-      mode: "beginner",
-    }),
-    [orchestrationAgents, orchestrationGraph, orchestrationRegistry, orchestrationTeams, uiLanguage],
-  )
   const stepContextId: SetupState["currentStep"] = state.currentStep === "ai_routing" ? "ai_backends" : state.currentStep
   const advancedVisualizationState = useMemo(
     () => buildAdvancedVisualizationState({
@@ -355,35 +326,6 @@ export function SetupPage() {
     }),
     [activeDraft, capabilityCounts, checks, runtimeStatus, state, uiLanguage, uiShell],
   )
-  useEffect(() => {
-    if (uiMode !== "beginner") return
-
-    let cancelled = false
-    setOrchestrationLoading(true)
-    void Promise.all([
-      api.orchestrationRegistry(),
-      api.orchestrationAgents({ limit: 100 }),
-      api.orchestrationTeams({ limit: 100 }),
-      api.orchestrationRelationshipGraph(),
-    ]).then(([registryResponse, agentPage, teamPage, graphResponse]) => {
-      if (cancelled) return
-      setOrchestrationRegistry(registryResponse.snapshot)
-      setOrchestrationAgents(agentPage.items)
-      setOrchestrationTeams(teamPage.items)
-      setOrchestrationGraph(graphResponse)
-      setOrchestrationError("")
-    }).catch((error) => {
-      if (cancelled) return
-      setOrchestrationError(error instanceof Error ? error.message : String(error))
-    }).finally(() => {
-      if (cancelled) return
-      setOrchestrationLoading(false)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [uiMode])
   const currentValidation = useMemo(() => validateSetupStep(stepContextId, activeDraft), [stepContextId, activeDraft])
   const mcpEnabledCount = activeDraft.mcp.servers.filter((server) => server.enabled).length
   const mcpRequiredCount = activeDraft.mcp.servers.filter((server) => server.required).length
@@ -1457,17 +1399,6 @@ export function SetupPage() {
                 <p className="mt-2 text-sm leading-6 text-stone-600">{uiCatalogText(uiLanguage, "beginner.setup.description")}</p>
               </div>
               <BeginnerVisualizationDeck deck={beginnerVisualizationDeck} language={uiLanguage} onSelect={setBeginnerStepId} />
-              <OrchestrationPreviewCard
-                title={pickUiText(uiLanguage, "서브 에이전트 구조 미리보기", "Sub-agent structure preview")}
-                description={pickUiText(uiLanguage, "처음 설정 단계에서는 draft를 건드리지 않고 topology만 먼저 읽습니다. 실제 편집은 전용 surface에서 이어집니다.", "During initial setup you read only the topology first without touching the draft. Actual editing continues on the dedicated surface.")}
-                summary={orchestrationSummary}
-                scene={orchestrationPreviewScene}
-                language={uiLanguage}
-                href="/agents"
-                actionLabel={pickUiText(uiLanguage, "전체 topology 열기", "Open full topology")}
-                loading={orchestrationLoading}
-                error={orchestrationError}
-              />
             </aside>
             <main className="space-y-4">
               {beginnerNotice ? <RuntimeNotice tone={beginnerAiTestOk === false ? "error" : "info"} title={uiCatalogText(uiLanguage, beginnerAiTestOk === false ? "beginner.setup.testNeedsAction" : "beginner.setup.saved")} message={beginnerNotice} /> : null}
@@ -2698,7 +2629,7 @@ function WelcomeSetupInspector({
             {pickUiText(language, "기본값으로 빠른 시작", "Quick start with defaults")}
           </button>
           <Link
-            to="/settings"
+            to="/advanced/ai"
             className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-700"
           >
             {pickUiText(language, "고급 설정 보기", "Open advanced settings")}

@@ -3,6 +3,7 @@ import {
   getDeprecatedUiRoutes,
   getUiRouteInventory,
   resolveLegacyAdvancedRoute,
+  resolveModeSwitchRoute,
   resolveRollbackRoute,
   resolveRouteMigration,
   type UiRouteInventoryItem,
@@ -13,6 +14,7 @@ export {
   getDeprecatedUiRoutes,
   getUiRouteInventory,
   resolveLegacyAdvancedRoute,
+  resolveModeSwitchRoute,
   resolveRollbackRoute,
   resolveRouteMigration,
   type UiRouteInventoryItem,
@@ -32,7 +34,6 @@ export interface UiNavItem {
 const BEGINNER_NAV: UiNavItem[] = [
   { path: "/chat", labelKo: "홈/채팅", labelEn: "Home / Chat", capabilityKey: "chat.workspace", descriptionKo: "요청과 결과 확인", descriptionEn: "Requests and results" },
   { path: "/setup", labelKo: "처음 설정", labelEn: "First setup", capabilityKey: "setup.wizard", descriptionKo: "필수 연결 구성", descriptionEn: "Required connections" },
-  { path: "/agents", labelKo: "에이전트", labelEn: "Agents", capabilityKey: "settings.control", descriptionKo: "노비/서브 에이전트 구성", descriptionEn: "Nobie and sub-agent setup" },
   { path: "/tasks", labelKo: "작업 확인", labelEn: "Tasks", capabilityKey: "runs.monitor", descriptionKo: "진행 중 작업 요약", descriptionEn: "Active task summary" },
   { path: "/status", labelKo: "연결 상태", labelEn: "Status", capabilityKey: "dashboard.overview", descriptionKo: "연결 상태 요약", descriptionEn: "Connection summary" },
 ]
@@ -46,10 +47,8 @@ const ADVANCED_NAV: UiNavItem[] = [
   { path: "/advanced/schedules", labelKo: "스케줄", labelEn: "Schedules", capabilityKey: "scheduler.core" },
   { path: "/advanced/memory", labelKo: "메모리", labelEn: "Memory", capabilityKey: "memory.semantic_search" },
   { path: "/advanced/tools", labelKo: "도구 권한", labelEn: "Tool Permissions", capabilityKey: "settings.control" },
-  { path: "/advanced/agents", labelKo: "에이전트/팀", labelEn: "Agents / Teams", capabilityKey: "settings.control" },
   { path: "/advanced/dashboard", labelKo: "진단", labelEn: "Diagnostics", capabilityKey: "dashboard.overview" },
   { path: "/advanced/release", labelKo: "배포/버전", labelEn: "Release / Version", capabilityKey: "dashboard.overview" },
-  { path: "/advanced/settings", labelKo: "전체 설정", labelEn: "All Settings", capabilityKey: "settings.control" },
   { path: "/advanced/audit", labelKo: "감사 기록", labelEn: "Audit", capabilityKey: "audit.viewer" },
   { path: "/advanced/plugins", labelKo: "플러그인", labelEn: "Plugins", capabilityKey: "plugins.runtime" },
 ]

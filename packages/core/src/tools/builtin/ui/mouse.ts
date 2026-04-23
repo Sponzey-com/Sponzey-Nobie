@@ -6,6 +6,7 @@
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
+import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js"
 
 const MOVE_DELAY_MS = 500
 
@@ -94,14 +95,15 @@ export const mouseMoveTool: AgentTool<MouseMoveParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.move", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("mouse.move", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangMouseMoveResult>(
           "mouse.move",
           { x: params.x, y: params.y },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.moved,
@@ -148,10 +150,11 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.click", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("mouse.click", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangMouseClickResult>(
           "mouse.click",
           {
@@ -160,7 +163,7 @@ export const mouseClickTool: AgentTool<MouseClickParams> = {
             ...(params.button ? { button: params.button } : {}),
             ...(params.double ? { double: params.double } : {}),
           },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.clicked,
@@ -213,10 +216,11 @@ export const mouseActionTool: AgentTool<MouseActionParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, MOVE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("mouse.action", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("mouse.action", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangMouseActionResult>(
           "mouse.action",
           {
@@ -227,7 +231,7 @@ export const mouseActionTool: AgentTool<MouseActionParams> = {
             ...(typeof params.deltaX === "number" ? { delta_x: params.deltaX } : {}),
             ...(typeof params.deltaY === "number" ? { delta_y: params.deltaY } : {}),
           },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.accepted,

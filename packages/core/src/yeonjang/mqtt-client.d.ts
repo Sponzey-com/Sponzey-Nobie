@@ -3,6 +3,16 @@ export interface YeonjangRequestEnvelope {
     id: string;
     method: string;
     params: Record<string, unknown>;
+    metadata?: YeonjangRequestMetadata;
+}
+export interface YeonjangRequestMetadata {
+    runId?: string;
+    requestGroupId?: string;
+    sessionId?: string;
+    source?: "webui" | "cli" | "telegram" | "slack";
+    agentId?: string;
+    auditId?: string;
+    capabilityDelegationId?: string;
 }
 export interface YeonjangErrorBody {
     code: string;
@@ -18,6 +28,7 @@ export interface YeonjangClientOptions {
     extensionId?: string;
     timeoutMs?: number;
     forceRefresh?: boolean;
+    metadata?: YeonjangRequestMetadata;
 }
 export interface YeonjangMethodCapability {
     name: string;
@@ -76,6 +87,8 @@ export declare function buildYeonjangTopics(extensionId?: string): {
 export declare function invokeYeonjangMethod<T = unknown>(method: string, params?: Record<string, unknown>, options?: YeonjangClientOptions): Promise<T>;
 export declare function getYeonjangCapabilities(options?: YeonjangClientOptions): Promise<YeonjangCapabilitiesPayload>;
 export declare function clearYeonjangCapabilityCache(): void;
+export declare function shouldSerializeYeonjangMethod(method: string): boolean;
+export declare function enqueueYeonjangExtensionExecution<T>(extensionId: string, task: () => Promise<T>): Promise<T>;
 export declare function canYeonjangHandleMethod(method: string, options?: YeonjangClientOptions): Promise<boolean>;
 export declare function resolveYeonjangMethodCapability(capabilities: YeonjangCapabilitiesPayload, method: string): YeonjangCapabilityMatrixEntry | YeonjangMethodCapability | null;
 export declare function doesYeonjangCapabilitySupportMethod(capabilities: YeonjangCapabilitiesPayload, method: string): boolean;

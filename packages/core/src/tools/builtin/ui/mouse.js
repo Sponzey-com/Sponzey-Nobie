@@ -4,6 +4,7 @@
  */
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
+import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js";
 const MOVE_DELAY_MS = 500;
 function yeonjangRequiredFailure(method) {
     return {
@@ -38,10 +39,11 @@ export const mouseMoveTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
-            if (await canYeonjangHandleMethod("mouse.move", extensionId ? { extensionId } : {})) {
-                const remote = await invokeYeonjangMethod("mouse.move", { x: params.x, y: params.y }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+            if (await canYeonjangHandleMethod("mouse.move", yeonjangOptions)) {
+                const remote = await invokeYeonjangMethod("mouse.move", { x: params.x, y: params.y }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.moved,
                     output: remote.message || `마우스를 (${params.x}, ${params.y})로 이동했습니다.`,
@@ -87,15 +89,16 @@ export const mouseClickTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
-            if (await canYeonjangHandleMethod("mouse.click", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("mouse.click", yeonjangOptions)) {
                 const remote = await invokeYeonjangMethod("mouse.click", {
                     x: params.x,
                     y: params.y,
                     ...(params.button ? { button: params.button } : {}),
                     ...(params.double ? { double: params.double } : {}),
-                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.clicked,
                     output: remote.message || `(${params.x}, ${params.y}) 클릭 완료`,
@@ -147,9 +150,10 @@ export const mouseActionTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
-            if (await canYeonjangHandleMethod("mouse.action", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("mouse.action", yeonjangOptions)) {
                 const remote = await invokeYeonjangMethod("mouse.action", {
                     action: params.action,
                     ...(typeof params.x === "number" ? { x: params.x } : {}),
@@ -157,7 +161,7 @@ export const mouseActionTool = {
                     ...(params.button ? { button: params.button } : {}),
                     ...(typeof params.deltaX === "number" ? { delta_x: params.deltaX } : {}),
                     ...(typeof params.deltaY === "number" ? { delta_y: params.deltaY } : {}),
-                }, { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) });
+                }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.accepted,
                     output: remote.message || `마우스 액션 실행: ${params.action}`,

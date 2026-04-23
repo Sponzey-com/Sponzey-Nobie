@@ -6,20 +6,6 @@ import type { ConfigExportResult, ConfigurationOperationsSnapshot, DatabaseBacku
 import type { DoctorMode, DoctorResponse } from "../contracts/doctor"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
-import type {
-  OrchestrationAgentRegistryEntry,
-  OrchestrationCapabilityDelegationListResponse,
-  OrchestrationConfigExportResponse,
-  OrchestrationDataExchangeListResponse,
-  OrchestrationGraphResponse,
-  OrchestrationImportRequest,
-  OrchestrationImportResult,
-  OrchestrationPage,
-  OrchestrationRegistryResponse,
-  OrchestrationSubSessionListResponse,
-  OrchestrationTeamRegistryEntry,
-  OrchestrationWriteOptions,
-} from "../contracts/orchestration-api"
 import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
 import type { TaskModel } from "../contracts/tasks"
@@ -726,8 +712,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = bodyText.trim()
     if (detail) {
       try {
-        const parsed = JSON.parse(detail) as { error?: string; message?: string }
-        detail = parsed.message?.trim() || parsed.error?.trim() || detail
+        const parsed = JSON.parse(detail) as {
+          error?: string
+          message?: string
+          safeMessage?: string
+          issues?: Array<{ message?: string }>
+        }
+        const issueMessages = Array.isArray(parsed.issues)
+          ? parsed.issues
+              .map((issue) => issue.message?.trim())
+              .filter((message): message is string => Boolean(message))
+          : []
+        const summary = parsed.safeMessage?.trim() || parsed.message?.trim() || parsed.error?.trim() || ""
+        detail = [summary, ...issueMessages.slice(0, 3)].filter(Boolean).join(" / ") || detail
       } catch {
         // keep raw text
       }
@@ -866,78 +863,6 @@ export const api = {
 
   adminDangerousAction: (body: { action: "retry" | "purge" | "replay" | "export"; targetId?: string; confirmation?: string; reason?: string; params?: unknown }) =>
     request<AdminDangerousActionResponse>("/api/admin/actions", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  orchestrationRegistry: () =>
-    request<OrchestrationRegistryResponse>("/api/orchestration/registry"),
-
-  orchestrationAgents: (params: { page?: number; limit?: number; status?: string; q?: string } = {}) =>
-    request<OrchestrationPage<OrchestrationAgentRegistryEntry>>(`/api/orchestration/agents${buildAdminLiveQuery(params)}`),
-
-  orchestrationAgent: (agentId: string) =>
-    request<{ config: OrchestrationAgentRegistryEntry["config"] }>(`/api/orchestration/agents/${encodeURIComponent(agentId)}`),
-
-  upsertOrchestrationAgent: (agentId: string, config: OrchestrationAgentRegistryEntry["config"], options: OrchestrationWriteOptions = {}) =>
-    request<{ ok: boolean; validationOnly: boolean; stored: boolean; approvalRequired: boolean; effectSummary: string[]; config: OrchestrationAgentRegistryEntry["config"] }>(
-      `/api/orchestration/agents/${encodeURIComponent(agentId)}`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ config, ...options }),
-      },
-    ),
-
-  setOrchestrationAgentStatus: (agentId: string, status: OrchestrationAgentRegistryEntry["status"], options: Omit<OrchestrationWriteOptions, "validationOnly"> = {}) =>
-    request<{ ok: boolean; config: OrchestrationAgentRegistryEntry["config"] }>(
-      `/api/orchestration/agents/${encodeURIComponent(agentId)}/status`,
-      {
-        method: "POST",
-        body: JSON.stringify({ status, ...options }),
-      },
-    ),
-
-  orchestrationTeams: (params: { page?: number; limit?: number; status?: string; q?: string } = {}) =>
-    request<OrchestrationPage<OrchestrationTeamRegistryEntry>>(`/api/orchestration/teams${buildAdminLiveQuery(params)}`),
-
-  orchestrationTeam: (teamId: string) =>
-    request<{ config: OrchestrationTeamRegistryEntry["config"] }>(`/api/orchestration/teams/${encodeURIComponent(teamId)}`),
-
-  upsertOrchestrationTeam: (teamId: string, config: OrchestrationTeamRegistryEntry["config"], options: OrchestrationWriteOptions = {}) =>
-    request<{ ok: boolean; validationOnly: boolean; stored: boolean; approvalRequired: boolean; effectSummary: string[]; config: OrchestrationTeamRegistryEntry["config"] }>(
-      `/api/orchestration/teams/${encodeURIComponent(teamId)}`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ config, ...options }),
-      },
-    ),
-
-  setOrchestrationTeamStatus: (teamId: string, status: OrchestrationTeamRegistryEntry["status"], options: Omit<OrchestrationWriteOptions, "validationOnly"> = {}) =>
-    request<{ ok: boolean; config: OrchestrationTeamRegistryEntry["config"] }>(
-      `/api/orchestration/teams/${encodeURIComponent(teamId)}/status`,
-      {
-        method: "POST",
-        body: JSON.stringify({ status, ...options }),
-      },
-    ),
-
-  orchestrationRelationshipGraph: () =>
-    request<OrchestrationGraphResponse>("/api/orchestration/relationship-graph"),
-
-  orchestrationSubSessions: (parentRunId: string) =>
-    request<OrchestrationSubSessionListResponse>(`/api/orchestration/sub-sessions?parentRunId=${encodeURIComponent(parentRunId)}`),
-
-  orchestrationDataExchanges: (params: { ownerType: string; ownerId: string; direction?: "recipient" | "source"; allowedUse?: string; includeExpired?: boolean; limit?: number }) =>
-    request<OrchestrationDataExchangeListResponse>(`/api/orchestration/data-exchanges${buildAdminLiveQuery(params)}`),
-
-  orchestrationCapabilityDelegations: (params: { ownerType?: string; ownerId?: string; ownerRole?: "requester" | "provider"; status?: string; limit?: number } = {}) =>
-    request<OrchestrationCapabilityDelegationListResponse>(`/api/orchestration/capability-delegations${buildAdminLiveQuery(params)}`),
-
-  exportOrchestrationConfig: (targetType: "agent" | "team", targetId: string) =>
-    request<OrchestrationConfigExportResponse>(`/api/orchestration/config/export/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}`),
-
-  importOrchestrationConfig: (body: OrchestrationImportRequest) =>
-    request<OrchestrationImportResult>("/api/orchestration/config/import", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -1238,30 +1163,6 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  agentLearningEvents: (agentId: string) =>
-    request<{ events: LearningEvent[] }>(`/api/agents/${encodeURIComponent(agentId)}/learning`),
-
-  approveLearningEvent: (agentId: string, learningEventId: string, body: { owner?: OwnerScope; auditCorrelationId?: string } = {}) =>
-    request<ApproveLearningEventResult>(`/api/agents/${encodeURIComponent(agentId)}/learning/${encodeURIComponent(learningEventId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  historyVersions: (targetType: HistoryVersion["targetEntityType"], targetId: string) =>
-    request<{ history: HistoryVersion[]; restoreEvents: RestoreEvent[] }>(`/api/history/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}`),
-
-  restoreHistoryDryRun: (targetType: RestoreEvent["targetEntityType"], targetId: string, restoredHistoryVersionId: string) =>
-    request<RestoreDryRunResult>(`/api/history/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/restore-dry-run`, {
-      method: "POST",
-      body: JSON.stringify({ restoredHistoryVersionId }),
-    }),
-
-  restoreHistoryVersion: (targetType: RestoreEvent["targetEntityType"], targetId: string, body: { restoredHistoryVersionId: string; owner?: OwnerScope; dryRun?: boolean; apply?: boolean; auditCorrelationId?: string }) =>
-    request<RestoreHistoryVersionResult>(`/api/history/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/restore`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
   plugins: () => request<Plugin[]>("/api/plugins"),
 
   installPlugin: (body: { name: string; version: string; description?: string; entryPath: string }) =>
@@ -1298,77 +1199,6 @@ export interface AuditEvent {
   retryCount: number | null
   stopReason: string | null
   detail: unknown
-}
-
-export interface OwnerScope {
-  ownerType: "nobie" | "sub_agent" | "team" | "system"
-  ownerId: string
-}
-
-export type LearningApprovalState = "auto_applied" | "pending_review" | "rejected" | "applied_by_user"
-
-export interface LearningEvent {
-  learningEventId: string
-  agentId: string
-  agentType?: "nobie" | "sub_agent"
-  sourceSessionId?: string
-  sourceSubSessionId?: string
-  learningTarget: "memory" | "role" | "personality" | "team_profile"
-  before?: Record<string, unknown>
-  after?: Record<string, unknown>
-  beforeSummary: string
-  afterSummary: string
-  evidenceRefs: string[]
-  confidence: number
-  approvalState: LearningApprovalState
-  policyReasonCode?: string
-}
-
-export interface HistoryVersion {
-  historyVersionId: string
-  targetEntityType: "agent" | "team" | "memory"
-  targetEntityId: string
-  version: number
-  before: Record<string, unknown>
-  after: Record<string, unknown>
-  reasonCode: string
-  createdAt: number
-}
-
-export interface RestoreEvent {
-  restoreEventId: string
-  targetEntityType: "agent" | "team" | "memory"
-  targetEntityId: string
-  restoredHistoryVersionId: string
-  dryRun: boolean
-  effectSummary: string[]
-  createdAt: number
-}
-
-export interface RestoreDryRunResult {
-  ok: boolean
-  targetEntityType: RestoreEvent["targetEntityType"]
-  targetEntityId: string
-  restoredHistoryVersionId: string
-  restorePayload: Record<string, unknown>
-  currentPayload?: Record<string, unknown>
-  effectSummary: string[]
-  conflictCodes: string[]
-}
-
-export interface RestoreHistoryVersionResult extends RestoreDryRunResult {
-  event: RestoreEvent
-  inserted: boolean
-  applied: boolean
-}
-
-export interface ApproveLearningEventResult {
-  ok: boolean
-  reasonCode: string
-  event?: LearningEvent
-  history?: HistoryVersion
-  historyInserted: boolean
-  memoryDocumentId?: string
 }
 
 export interface AuditEventsResponse {

@@ -15,8 +15,8 @@ export function RemoteAccessForm({
   const { text } = useUiI18n()
 
   return (
-    <fieldset disabled={disabled} className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 disabled:opacity-60">
-      <div className="space-y-5">
+    <fieldset disabled={disabled} className="space-y-4 rounded-xl border border-stone-200 bg-white p-4 disabled:opacity-60">
+      <div className="space-y-4">
         <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
           <input
             type="checkbox"

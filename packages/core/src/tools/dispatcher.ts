@@ -278,6 +278,7 @@ export class ToolDispatcher {
     eventBus.emit("tool.before", {
       sessionId: ctx.sessionId,
       runId: ctx.runId,
+      requestGroupId,
       toolName: name,
       params,
     })
@@ -407,6 +408,7 @@ export class ToolDispatcher {
     eventBus.emit("tool.after", {
       sessionId: ctx.sessionId,
       runId: ctx.runId,
+      requestGroupId,
       toolName: name,
       success: result.success,
       durationMs,

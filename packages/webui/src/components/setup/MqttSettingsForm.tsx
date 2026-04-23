@@ -16,7 +16,7 @@ export function MqttSettingsForm({
   const canEnable = value.username.trim().length > 0 && value.password.trim().length > 0
 
   return (
-    <fieldset disabled={disabled} className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 disabled:opacity-60">
+    <fieldset disabled={disabled} className="space-y-4 rounded-xl border border-stone-200 bg-white p-4 disabled:opacity-60">
       <div>
         <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
           <input

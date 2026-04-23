@@ -223,12 +223,13 @@ export class ToolDispatcher {
                 ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
             },
         });
-        eventBus.emit("tool.before", {
-            sessionId: ctx.sessionId,
-            runId: ctx.runId,
-            toolName: name,
-            params,
-        });
+    eventBus.emit("tool.before", {
+        sessionId: ctx.sessionId,
+        runId: ctx.runId,
+        requestGroupId,
+        toolName: name,
+        params,
+    });
         const startMs = Date.now();
         let result;
         const approvalRequired = this.shouldRequireApproval(tool, ctx);
@@ -347,13 +348,14 @@ export class ToolDispatcher {
             rateLimitLease?.release();
         }
         const durationMs = Date.now() - startMs;
-        eventBus.emit("tool.after", {
-            sessionId: ctx.sessionId,
-            runId: ctx.runId,
-            toolName: name,
-            success: result.success,
-            durationMs,
-        });
+    eventBus.emit("tool.after", {
+        sessionId: ctx.sessionId,
+        runId: ctx.runId,
+        requestGroupId,
+        toolName: name,
+        success: result.success,
+        durationMs,
+    });
         this.writeAudit(ctx, name, params, result, durationMs, approvalRequired, approvedBy);
         recordMessageLedgerEvent({
             runId: ctx.runId,

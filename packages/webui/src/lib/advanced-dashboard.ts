@@ -117,7 +117,7 @@ export function buildAdvancedDashboardCards(input: {
         `Yeonjang: ${yeonjangConfigured ? t("준비됨", "ready") : t("확인 필요", "needs check")}`,
         `${t("저장", "Storage")}: ${setupReady ? t("준비됨", "ready") : t("확인 필요", "needs check")}`,
       ],
-      href: "/advanced/settings",
+      href: "/advanced/ai",
     },
     {
       id: "recent_runs",

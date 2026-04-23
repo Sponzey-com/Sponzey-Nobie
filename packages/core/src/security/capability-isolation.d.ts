@@ -59,6 +59,7 @@ export interface AgentCapabilityRateLimitLease {
     key: string;
     release: () => void;
 }
+export declare function normalizeSkillMcpAllowlist(input: Partial<SkillMcpAllowlist> | null | undefined): SkillMcpAllowlist;
 export declare function parseMcpRegisteredToolName(toolName: string): McpRegisteredToolRef | null;
 export declare function resolveToolCapabilityRisk(toolName: string, fallback?: RiskLevel | CapabilityRiskLevel): CapabilityRiskLevel;
 export declare function isToolAllowedBySkillMcpAllowlist(input: {

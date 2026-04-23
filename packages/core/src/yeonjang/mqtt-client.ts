@@ -10,6 +10,17 @@ export interface YeonjangRequestEnvelope {
   id: string
   method: string
   params: Record<string, unknown>
+  metadata?: YeonjangRequestMetadata
+}
+
+export interface YeonjangRequestMetadata {
+  runId?: string
+  requestGroupId?: string
+  sessionId?: string
+  source?: "webui" | "cli" | "telegram" | "slack"
+  agentId?: string
+  auditId?: string
+  capabilityDelegationId?: string
 }
 
 export interface YeonjangErrorBody {
@@ -39,6 +50,7 @@ export interface YeonjangClientOptions {
   extensionId?: string
   timeoutMs?: number
   forceRefresh?: boolean
+  metadata?: YeonjangRequestMetadata
 }
 
 export interface YeonjangMethodCapability {
@@ -94,6 +106,7 @@ export const DEFAULT_YEONJANG_EXTENSION_ID = "yeonjang-main"
 const YEONJANG_CAPABILITY_TTL_MS = 5_000
 
 const capabilityCache = new Map<string, { payload: YeonjangCapabilitiesPayload; cachedAt: number }>()
+const extensionExecutionQueues = new Map<string, Promise<void>>()
 
 export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID): {
   statusTopic: string
@@ -119,26 +132,47 @@ export async function invokeYeonjangMethod<T = unknown>(
   options: YeonjangClientOptions = {},
 ): Promise<T> {
   const extensionId = options.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID
-  const timeoutMs = clampTimeout(options.timeoutMs)
-  const topics = buildYeonjangTopics(extensionId)
-  const requestId = randomUUID()
-  const client = createClient()
+  const execute = async (): Promise<T> => {
+    const timeoutMs = clampTimeout(options.timeoutMs)
+    const topics = buildYeonjangTopics(extensionId)
+    const requestId = randomUUID()
+    const metadata = normalizeYeonjangRequestMetadata(options.metadata)
+    const client = createClient()
 
-  log.debug(`invoking ${method} on ${extensionId}`)
+    log.debug(`invoking ${method} on ${extensionId}`)
 
-  try {
-    await waitForConnect(client, timeoutMs)
-    await subscribe(client, topics.responseTopic)
-    await publish(client, topics.requestTopic, {
-      id: requestId,
-      method,
-      params,
-    })
-    const response = await waitForResponse<T>(client, topics.responseTopic, requestId, timeoutMs)
-    return response
-  } finally {
-    await closeClient(client)
+    try {
+      await waitForConnect(client, timeoutMs)
+      await subscribe(client, topics.responseTopic)
+      await publish(client, topics.requestTopic, {
+        id: requestId,
+        method,
+        params,
+        ...(metadata ? { metadata } : {}),
+      })
+      const response = await waitForResponse<T>(client, topics.responseTopic, requestId, timeoutMs)
+      return response
+    } finally {
+      await closeClient(client)
+    }
   }
+
+  if (!shouldSerializeYeonjangMethod(method)) {
+    return await execute()
+  }
+  return await enqueueYeonjangExtensionExecution(extensionId, execute)
+}
+
+function normalizeYeonjangRequestMetadata(
+  metadata?: YeonjangRequestMetadata,
+): YeonjangRequestMetadata | undefined {
+  if (!metadata) return undefined
+  const normalizedEntries = Object.entries(metadata).filter(([, value]) => {
+    if (typeof value === "string") return value.trim().length > 0
+    return value != null
+  })
+  if (normalizedEntries.length === 0) return undefined
+  return Object.fromEntries(normalizedEntries) as YeonjangRequestMetadata
 }
 
 export async function getYeonjangCapabilities(options: YeonjangClientOptions = {}): Promise<YeonjangCapabilitiesPayload> {
@@ -166,6 +200,37 @@ export async function getYeonjangCapabilities(options: YeonjangClientOptions = {
 
 export function clearYeonjangCapabilityCache(): void {
   capabilityCache.clear()
+}
+
+export function shouldSerializeYeonjangMethod(method: string): boolean {
+  const normalized = method.trim().toLowerCase()
+  return normalized !== "node.capabilities" && normalized !== "camera.list"
+}
+
+export async function enqueueYeonjangExtensionExecution<T>(
+  extensionId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const normalizedExtensionId = normalizeExtensionId(extensionId)
+  const previous = extensionExecutionQueues.get(normalizedExtensionId) ?? Promise.resolve()
+  let releaseCurrentQueue!: () => void
+  const currentQueue = new Promise<void>((resolve) => {
+    releaseCurrentQueue = resolve
+  })
+  const queued = previous
+    .catch(() => undefined)
+    .then(() => currentQueue)
+  extensionExecutionQueues.set(normalizedExtensionId, queued)
+
+  await previous.catch(() => undefined)
+  try {
+    return await task()
+  } finally {
+    releaseCurrentQueue()
+    if (extensionExecutionQueues.get(normalizedExtensionId) === queued) {
+      extensionExecutionQueues.delete(normalizedExtensionId)
+    }
+  }
 }
 
 export async function canYeonjangHandleMethod(

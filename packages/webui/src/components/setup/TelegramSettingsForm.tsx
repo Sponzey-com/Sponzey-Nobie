@@ -15,7 +15,7 @@ export function TelegramSettingsForm({
   const { text } = useUiI18n()
 
   return (
-    <fieldset disabled={disabled} className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 disabled:opacity-60">
+    <fieldset disabled={disabled} className="space-y-4 rounded-xl border border-stone-200 bg-white p-4 disabled:opacity-60">
       <div>
         <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
           <input
@@ -40,7 +40,7 @@ export function TelegramSettingsForm({
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("허용 사용자 ID", "Allowed User IDs")}</label>
         <textarea
-          className="input min-h-[80px] font-mono text-sm"
+          className="input min-h-[72px] font-mono text-sm"
           value={value.allowedUserIds}
           onChange={(event) => onChange({ allowedUserIds: event.target.value })}
           placeholder="123456789"
@@ -49,7 +49,7 @@ export function TelegramSettingsForm({
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("허용 그룹 ID", "Allowed Group IDs")}</label>
         <textarea
-          className="input min-h-[80px] font-mono text-sm"
+          className="input min-h-[72px] font-mono text-sm"
           value={value.allowedGroupIds}
           onChange={(event) => onChange({ allowedGroupIds: event.target.value })}
           placeholder="-1001234567890"

@@ -93,8 +93,6 @@ export function SetupVisualizationCanvas({
                                   ? t("설정 완료 직전의 readiness tile과 위험 경로를 board 관점으로 요약합니다.", "Summarizes readiness tiles and risk paths right before setup completion.")
                   : scene.id === "scene:done"
                                     ? t("설정 완료 후 현재 활성 구조를 AI, 채널, 확장, 저장 상태 기준으로 요약합니다.", "Summarizes the active structure after setup across AI, channels, extensions, and storage.")
-                                    : scene.id === "scene:orchestration_topology"
-                                      ? t("노비, 팀, 서브 에이전트, capability, 해결 안 된 연결을 read-only topology로 투영합니다.", "Projects Nobie, teams, sub-agents, capabilities, and unresolved links as a read-only topology.")
                               : t("현재 단계의 구조를 지도로 보여줍니다.", "Shows the structure of the current step as a map.")}
             </p>
           </div>
@@ -153,8 +151,6 @@ export function SetupVisualizationCanvas({
           <ReviewSceneLayout scene={scene} language={language} selectedNodeId={selectedNodeId} onSelectNode={onSelectNode} />
         ) : scene.id === "scene:done" ? (
           <DoneSceneLayout scene={scene} language={language} selectedNodeId={selectedNodeId} onSelectNode={onSelectNode} />
-        ) : scene.id === "scene:orchestration_topology" ? (
-          <OrchestrationTopologySceneLayout scene={scene} language={language} selectedNodeId={selectedNodeId} onSelectNode={onSelectNode} />
         ) : (
           <GenericSceneLayout scene={scene} language={language} selectedNodeId={selectedNodeId} onSelectNode={onSelectNode} />
         )}
@@ -786,114 +782,6 @@ function DoneSceneLayout({
             onSelect={onSelectNode}
           />
         ))}
-      </div>
-    </div>
-  )
-}
-
-function OrchestrationTopologySceneLayout({
-  scene,
-  language,
-  selectedNodeId,
-  onSelectNode,
-}: {
-  scene: VisualizationScene
-  language: UiLanguage
-  selectedNodeId?: string | null
-  onSelectNode?: (nodeId: string) => void
-}) {
-  const t = (korean: string, english: string) => pickUiText(language, korean, english)
-  const nodeMap = new Map(scene.nodes.map((node) => [node.id, node]))
-  const coordinator = nodeMap.get("node:orchestration:coordinator") ?? null
-  const teamNodes = getClusterNodes(scene, "cluster:orchestration:teams")
-  const unresolvedNodes = getClusterNodes(scene, "cluster:orchestration:unresolved")
-  const agentNodes = getClusterNodes(scene, "cluster:orchestration:agents")
-  const capabilityNodes = getClusterNodes(scene, "cluster:orchestration:capabilities")
-  const selectedNode = scene.nodes.find((node) => node.id === selectedNodeId)
-    ?? unresolvedNodes[0]
-    ?? agentNodes.find((node) => node.status === "warning" || node.status === "error")
-    ?? teamNodes.find((node) => node.status === "warning" || node.status === "error")
-    ?? agentNodes[0]
-    ?? teamNodes[0]
-    ?? capabilityNodes[0]
-    ?? coordinator
-    ?? null
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.1fr_0.95fr]">
-        <div className="space-y-4">
-          <VisualizationClusterColumn
-            title={t("팀 구조", "Team structure")}
-            description={t("목적과 역할별 묶음을 먼저 봅니다.", "Review purpose- and role-based groupings first.")}
-            nodes={teamNodes}
-            language={language}
-            selectedNodeId={selectedNodeId}
-            onSelectNode={onSelectNode}
-            emptyTitle={t("팀 없음", "No teams")}
-            emptyDescription={t("현재는 단일 노비 모드이거나 아직 팀을 정의하지 않았습니다.", "This is either single Nobie mode or no teams have been defined yet.")}
-          />
-          {unresolvedNodes.length > 0 ? (
-            <VisualizationClusterColumn
-              title={t("해결 안 된 연결", "Unresolved links")}
-              description={t("팀에 남아 있지만 실제 agent가 없는 연결입니다.", "These links still exist on the team, but the actual agent is missing.")}
-              nodes={unresolvedNodes}
-              language={language}
-              selectedNodeId={selectedNodeId}
-              onSelectNode={onSelectNode}
-              emptyTitle={t("해결 안 된 연결 없음", "No unresolved links")}
-              emptyDescription={t("누락된 연결이 발견되면 이 영역에 바로 나타납니다.", "Missing memberships will appear here as soon as they are detected.")}
-            />
-          ) : null}
-        </div>
-
-        <div className="space-y-4">
-          {coordinator ? (
-            <VisualizationNodeCard node={coordinator} language={language} selected={coordinator.id === selectedNodeId} onSelect={onSelectNode} large />
-          ) : null}
-          <ConnectorLabel text={t("이 장면은 setup draft를 건드리지 않는 read-only projection입니다.", "This scene is a read-only projection that does not touch the setup draft.")} />
-          {selectedNode && selectedNode.id !== coordinator?.id ? (
-            <VisualizationNodeCard node={selectedNode} language={language} selected onSelect={onSelectNode} large />
-          ) : (
-            <VisualizationEmptyCard
-              title={t("선택된 topology 노드 없음", "No topology node selected")}
-              description={t("왼쪽 팀 또는 오른쪽 agent를 선택하면 중심 카드가 해당 구조를 확대합니다.", "Select a team on the left or an agent on the right to expand it in the center card.")}
-            />
-          )}
-        </div>
-
-        <div className="space-y-4">
-          <VisualizationClusterColumn
-            title={t("서브 에이전트", "Sub-agents")}
-            description={t("실제로 위임을 받는 실행 노드와 상태입니다.", "These are the execution nodes that actually receive delegated work.")}
-            nodes={agentNodes}
-            language={language}
-            selectedNodeId={selectedNodeId}
-            onSelectNode={onSelectNode}
-            emptyTitle={t("서브 에이전트 없음", "No sub-agents")}
-            emptyDescription={t("현재는 노비가 직접 처리합니다. 나중에 역할을 나누면 이 영역이 채워집니다.", "Nobie is handling work directly right now. This area fills in once roles are split later.")}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <ConnectorLabel text={t("Capability 층은 각 agent가 실제로 어떤 Skill/MCP/도구를 쓸 수 있는지 따로 보여줍니다.", "The capability layer separately shows which Skill/MCP/tools each agent can actually use.")} />
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {capabilityNodes.length > 0 ? capabilityNodes.map((node) => (
-            <VisualizationNodeCard
-              key={node.id}
-              node={node}
-              language={language}
-              selected={node.id === selectedNodeId}
-              onSelect={onSelectNode}
-            />
-          )) : (
-            <VisualizationEmptyCard
-              title={t("Capability 정보 없음", "No capability information")}
-              description={t("agent가 생기면 Skill/MCP allowlist가 이 층에 매핑됩니다.", "Once agents exist, their Skill/MCP allowlists will map into this layer.")}
-            />
-          )}
-        </div>
       </div>
     </div>
   )

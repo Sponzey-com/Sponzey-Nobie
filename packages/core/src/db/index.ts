@@ -1422,6 +1422,10 @@ function toJson(value: unknown): string {
   return toCanonicalJson(value)
 }
 
+function toConfigJson(value: unknown): string {
+  return toCanonicalJson(value, { dropEmptyArrays: false })
+}
+
 function optionalAuditId(identityAuditId: string | undefined, override: string | null | undefined): string | null {
   return override ?? identityAuditId ?? null
 }
@@ -1494,7 +1498,7 @@ export function upsertAgentConfig(input: AgentConfig, options: AgentConfigPersis
       toJson(config.memoryPolicy),
       toJson(config.capabilityPolicy),
       config.profileVersion,
-      toJson(config),
+      toConfigJson(config),
       config.schemaVersion,
       source,
       options.auditId ?? null,
@@ -1535,7 +1539,7 @@ export function disableAgentConfig(agentId: string, now = Date.now()): boolean {
   let nextConfigJson = row.config_json
   try {
     const parsed = JSON.parse(row.config_json) as Record<string, unknown>
-    nextConfigJson = toJson({ ...parsed, status: "disabled", updatedAt: now })
+    nextConfigJson = toConfigJson({ ...parsed, status: "disabled", updatedAt: now })
   } catch {
     nextConfigJson = row.config_json
   }
@@ -1586,7 +1590,7 @@ export function upsertTeamConfig(input: TeamConfig, options: TeamConfigPersisten
       toJson(config.roleHints),
       toJson(config.memberAgentIds),
       config.profileVersion,
-      toJson(config),
+      toConfigJson(config),
       config.schemaVersion,
       source,
       options.auditId ?? null,

@@ -31,7 +31,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   { path: "/audit", mode: "advanced", component: "AuditPage", apiCalls: ["/api/audit"], status: "redirect", replacementPath: "/advanced/audit", notes: "Legacy audit URL." },
   { path: "/schedules", mode: "advanced", component: "SchedulePage", apiCalls: ["/api/schedules"], status: "redirect", replacementPath: "/advanced/schedules", notes: "Legacy schedule URL." },
   { path: "/plugins", mode: "advanced", component: "PluginsPage", apiCalls: ["/api/plugins"], status: "redirect", replacementPath: "/advanced/plugins", notes: "Legacy plugin URL." },
-  { path: "/settings", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/setup"], status: "redirect", replacementPath: "/advanced/settings", notes: "Legacy all-settings URL." },
+  { path: "/settings", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/setup"], status: "redirect", replacementPath: "/advanced/ai", notes: "Legacy all-settings URL now redirects to the AI settings entry." },
   { path: "/ai", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/setup/ai"], status: "deprecated", replacementPath: "/advanced/ai", notes: "Old direct AI setup URL." },
   { path: "/channels", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/channels"], status: "deprecated", replacementPath: "/advanced/channels", notes: "Old direct channel setup URL." },
   { path: "/extensions", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/mqtt"], status: "deprecated", replacementPath: "/advanced/extensions", notes: "Old direct Yeonjang setup URL." },
@@ -49,7 +49,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   { path: "/advanced/tools", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/capabilities"], status: "kept", replacementPath: null, notes: "Advanced tool permission configuration." },
   { path: "/advanced/dashboard", mode: "advanced", component: "DashboardPage", apiCalls: ["/api/status", "/api/doctor"], status: "kept", replacementPath: null, notes: "Advanced diagnostics." },
   { path: "/advanced/release", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/update"], status: "kept", replacementPath: null, notes: "Advanced release and version view." },
-  { path: "/advanced/settings", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/setup"], status: "kept", replacementPath: null, notes: "Full settings compatibility page." },
+  { path: "/advanced/settings", mode: "advanced", component: "SettingsPage", apiCalls: ["/api/config", "/api/setup"], status: "redirect", replacementPath: "/advanced/ai", notes: "Deprecated compatibility URL that now redirects to the AI settings entry." },
   { path: "/advanced/audit", mode: "advanced", component: "AuditPage", apiCalls: ["/api/audit"], status: "kept", replacementPath: null, notes: "Audit viewer." },
   { path: "/advanced/plugins", mode: "advanced", component: "PluginsPage", apiCalls: ["/api/plugins"], status: "kept", replacementPath: null, notes: "Plugin management." },
   { path: "/admin", mode: "admin", component: "AdminShellPage", apiCalls: ["/api/admin/*"], status: "kept", replacementPath: null, notes: "Available only when the explicit admin runtime flag is enabled." },
@@ -62,6 +62,7 @@ function normalizePathname(pathname: string): string {
 }
 
 function appendPathSuffix(target: string, source: string, base: string): string {
+  if (base === "/settings" || base === "/advanced/settings") return target
   const suffix = source.slice(base.length)
   return suffix.startsWith("/") ? `${target}${suffix}` : target
 }
@@ -101,6 +102,43 @@ export function resolveRollbackRoute(pathname: string): string {
   const migrated = resolveRouteMigration(normalized)
   if (migrated) return migrated.to
   if (normalized === "/" || normalized === "/chat" || normalized === "/tasks" || normalized === "/status") return "/advanced/dashboard"
-  if (normalized === "/setup") return "/advanced/settings"
+  if (normalized === "/setup") return "/advanced/ai"
+  return normalized
+}
+
+export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode): string {
+  const normalized = normalizePathname(pathname)
+  if (targetMode === "advanced" || targetMode === "admin") {
+    if (normalized === "/" || normalized === "/setup") return "/advanced/ai"
+    if (normalized === "/chat") return "/advanced/chat"
+    if (normalized === "/tasks") return "/advanced/runs"
+    if (normalized === "/status") return "/advanced/dashboard"
+    return resolveLegacyAdvancedRoute(normalized) ?? resolveRollbackRoute(normalized)
+  }
+
+  if (normalized === "/") return "/chat"
+  if (normalized === "/chat" || normalized === "/tasks" || normalized === "/status" || normalized === "/setup") return normalized
+  if (normalized.startsWith("/advanced/chat")) return "/chat"
+  if (normalized.startsWith("/advanced/runs")) return "/tasks"
+  if (
+    normalized.startsWith("/advanced/ai")
+    || normalized.startsWith("/advanced/channels")
+    || normalized.startsWith("/advanced/extensions")
+    || normalized.startsWith("/advanced/memory")
+    || normalized.startsWith("/advanced/tools")
+    || normalized.startsWith("/advanced/release")
+    || normalized.startsWith("/advanced/settings")
+  ) {
+    return "/setup"
+  }
+  if (
+    normalized.startsWith("/advanced/dashboard")
+    || normalized.startsWith("/advanced/audit")
+    || normalized.startsWith("/advanced/plugins")
+    || normalized.startsWith("/advanced/schedules")
+    || normalized.startsWith("/admin")
+  ) {
+    return "/status"
+  }
   return normalized
 }

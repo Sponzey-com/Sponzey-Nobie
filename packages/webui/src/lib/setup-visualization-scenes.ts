@@ -1543,8 +1543,6 @@ function buildDoneScene(
                 ? "mcp"
                 : card.id === "security"
                   ? "security"
-                  : card.id === "orchestration"
-                    ? "team"
                     : "memory",
         label: card.title,
         status: toneToStatus(card.tone),

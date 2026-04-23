@@ -12,6 +12,7 @@ import {
   getDeprecatedUiRoutes,
   getUiRouteInventory,
   resolveLegacyAdvancedRoute,
+  resolveModeSwitchRoute,
   resolveRollbackRoute,
   resolveRouteMigration,
 } from "../packages/webui/src/lib/ui-mode.js"
@@ -101,8 +102,8 @@ describe("task015 UI route migration and rollback", () => {
   })
 
   it("redirects legacy and deprecated URLs without leaving blank screens", () => {
-    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/settings")
-    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/settings/ai")
+    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
+    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
     expect(resolveLegacyAdvancedRoute("/ai")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/channels/slack")).toBe("/advanced/channels/slack")
@@ -120,9 +121,11 @@ describe("task015 UI route migration and rollback", () => {
   it("provides a rollback route policy for the mode shell", () => {
     expect(resolveRollbackRoute("/")).toBe("/advanced/dashboard")
     expect(resolveRollbackRoute("/chat")).toBe("/advanced/dashboard")
-    expect(resolveRollbackRoute("/setup")).toBe("/advanced/settings")
-    expect(resolveRollbackRoute("/settings/mqtt")).toBe("/advanced/settings/mqtt")
+    expect(resolveRollbackRoute("/setup")).toBe("/advanced/ai")
+    expect(resolveRollbackRoute("/settings/mqtt")).toBe("/advanced/ai")
     expect(resolveRollbackRoute("/advanced/runs")).toBe("/advanced/runs")
+    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/advanced/ai")
+    expect(resolveModeSwitchRoute("/advanced/ai", "beginner")).toBe("/setup")
   })
 
   it("uses an environment rollback flag to disable UI mode switching without data migration", async () => {

@@ -23,7 +23,6 @@ const AuditPage = lazy(() => import("./pages/AuditPage").then((module) => ({ def
 const SchedulePage = lazy(() => import("./pages/SchedulePage").then((module) => ({ default: module.SchedulePage })))
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })))
 const PluginsPage = lazy(() => import("./pages/PluginsPage"))
-const OrchestrationPage = lazy(() => import("./pages/OrchestrationPage").then((module) => ({ default: module.OrchestrationPage })))
 
 function LegacyAdvancedRedirect({ from }: { from: string }) {
   const location = useLocation()
@@ -833,13 +832,12 @@ export default function App() {
           <Route path="/chat" element={setupCompleted ? <ChatPage /> : <Navigate to="/setup" replace />} />
           <Route path="/tasks" element={setupCompleted ? <BeginnerTasksPage /> : <Navigate to="/setup" replace />} />
           <Route path="/status" element={setupCompleted ? <BeginnerStatusPage /> : <Navigate to="/setup" replace />} />
-          <Route path="/agents" element={<LazyPage><OrchestrationPage /></LazyPage>} />
           <Route path="/runs/*" element={<LegacyAdvancedRedirect from="/runs" />} />
           <Route path="/dashboard/*" element={<LegacyAdvancedRedirect from="/dashboard" />} />
           <Route path="/audit/*" element={<LegacyAdvancedRedirect from="/audit" />} />
           <Route path="/schedules/*" element={<LegacyAdvancedRedirect from="/schedules" />} />
           <Route path="/plugins/*" element={<LegacyAdvancedRedirect from="/plugins" />} />
-          <Route path="/settings/*" element={<LegacyAdvancedRedirect from="/settings" />} />
+          <Route path="/settings/*" element={<Navigate to="/advanced/ai" replace />} />
           <Route path="/ai/*" element={<LegacyAdvancedRedirect from="/advanced/ai" />} />
           <Route path="/channels/*" element={<LegacyAdvancedRedirect from="/advanced/channels" />} />
           <Route path="/extensions/*" element={<LegacyAdvancedRedirect from="/advanced/extensions" />} />
@@ -868,12 +866,10 @@ export default function App() {
           <Route path="/advanced/tools/*" element={<AdvancedOnly><LazyPage><SettingsPage /></LazyPage></AdvancedOnly>} />
           <Route path="/advanced/release" element={<AdvancedOnly><LazyPage><SettingsPage /></LazyPage></AdvancedOnly>} />
           <Route path="/advanced/release/*" element={<AdvancedOnly><LazyPage><SettingsPage /></LazyPage></AdvancedOnly>} />
-          <Route path="/advanced/agents" element={<AdvancedOnly><LazyPage><OrchestrationPage /></LazyPage></AdvancedOnly>} />
-          <Route path="/advanced/agents/*" element={<AdvancedOnly><LazyPage><OrchestrationPage /></LazyPage></AdvancedOnly>} />
           <Route path="/advanced/plugins" element={setupCompleted ? <AdvancedOnly><LazyPage><PluginsPage /></LazyPage></AdvancedOnly> : <Navigate to="/setup" replace />} />
           <Route path="/advanced/plugins/*" element={setupCompleted ? <AdvancedOnly><LazyPage><PluginsPage /></LazyPage></AdvancedOnly> : <Navigate to="/setup" replace />} />
-          <Route path="/advanced/settings" element={<AdvancedOnly><LazyPage><SettingsPage /></LazyPage></AdvancedOnly>} />
-          <Route path="/advanced/settings/*" element={<AdvancedOnly><LazyPage><SettingsPage /></LazyPage></AdvancedOnly>} />
+          <Route path="/advanced/settings" element={<Navigate to="/advanced/ai" replace />} />
+          <Route path="/advanced/settings/*" element={<Navigate to="/advanced/ai" replace />} />
           <Route path="/admin/*" element={<AdminOnly><AdminShellPage /></AdminOnly>} />
           <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
           <Route path="*" element={<Navigate to={setupCompleted ? "/chat" : "/setup"} replace />} />

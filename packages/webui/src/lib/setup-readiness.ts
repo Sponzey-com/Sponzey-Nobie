@@ -40,7 +40,7 @@ export interface ReviewReadinessBoard {
 }
 
 export interface DoneSummaryCard {
-  id: "ai" | "channels" | "extensions" | "security" | "orchestration" | "storage"
+  id: "ai" | "channels" | "extensions" | "security" | "storage"
   title: string
   value: string
   detail: string
@@ -48,7 +48,7 @@ export interface DoneSummaryCard {
 }
 
 export interface DoneNextAction {
-  id: "dashboard" | "settings" | "agents"
+  id: "dashboard" | "settings"
   label: string
   href: string
   tone: "primary" | "secondary"
@@ -231,10 +231,6 @@ export function buildDoneRuntimeSummary({
   const enabledChannelCount = Number(draft.channels.telegramEnabled) + Number(draft.channels.slackEnabled)
   const enabledMcpCount = draft.mcp.servers.filter((server) => server.enabled).length
   const enabledSkillCount = draft.skills.items.filter((item) => item.enabled).length
-  const orchestrationMode = status?.orchestration?.mode ?? status?.orchestratorStatus.mode ?? null
-  const subAgentCount = status?.orchestration?.activeSubAgentCount ?? status?.orchestratorStatus.activeSubAgentCount ?? 0
-  const orchestrationAvailable = orchestrationMode !== null
-
   const cards: DoneSummaryCard[] = [
     {
       id: "ai",
@@ -273,15 +269,6 @@ export function buildDoneRuntimeSummary({
       tone: draft.security.approvalMode === "off" || draft.security.approvalTimeoutFallback === "allow" || draft.security.maxDelegationTurns === 0 ? "warning" : "ready",
     },
     {
-      id: "orchestration",
-      title: t("오케스트레이션", "Orchestration"),
-      value: orchestrationAvailable ? orchestrationMode ?? "" : t("선택 사항", "Optional"),
-      detail: orchestrationAvailable
-        ? t(`활성 서브 에이전트 ${subAgentCount}개`, `${subAgentCount} active sub-agents`)
-        : t("이 배포에서는 오케스트레이션 요약이 노출되지 않습니다.", "This deployment does not expose orchestration summary."),
-      tone: orchestrationAvailable ? "ready" : "disabled",
-    },
-    {
       id: "storage",
       title: t("저장 상태", "Storage"),
       value: checks?.setupStateFile ? t("저장됨", "Saved") : t("대기", "Pending"),
@@ -294,8 +281,8 @@ export function buildDoneRuntimeSummary({
     heroTitle: state.completed ? t("설정이 끝났습니다", "Setup is complete") : t("마지막 적용을 기다리고 있습니다", "Waiting for the final apply"),
     heroMessage: state.completed
       ? t(
-        "현재 활성 구조를 확인한 뒤 dashboard, settings, orchestration 화면으로 바로 이동할 수 있습니다.",
-        "Review the active structure, then jump straight to the dashboard, settings, or orchestration view.",
+        "현재 활성 구조를 확인한 뒤 dashboard와 settings 화면으로 바로 이동할 수 있습니다.",
+        "Review the active structure, then jump straight to the dashboard or settings view.",
       )
       : t(
         "아직 setup 완료 호출 전입니다. 현재 snapshot을 먼저 확인한 뒤 마지막 적용을 진행하세요.",
@@ -304,8 +291,7 @@ export function buildDoneRuntimeSummary({
     cards,
     actions: [
       { id: "dashboard", label: t("대시보드로 이동", "Open dashboard"), href: "/advanced/dashboard", tone: "primary" },
-      { id: "settings", label: t("설정 열기", "Open settings"), href: "/advanced/settings", tone: "secondary" },
-      { id: "agents", label: t("에이전트 보기", "Open agents"), href: "/advanced/agents", tone: "secondary" },
+      { id: "settings", label: t("설정 열기", "Open settings"), href: "/advanced/ai", tone: "secondary" },
     ],
   }
 }

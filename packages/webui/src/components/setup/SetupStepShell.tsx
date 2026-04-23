@@ -78,7 +78,7 @@ export function SetupStepShell({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Link
-                to="/settings"
+                to="/advanced/ai"
                 className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-200 transition hover:bg-white/10"
               >
                 {pickUiText(language, "설정 화면 열기", "Open settings")}

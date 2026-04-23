@@ -1,8 +1,8 @@
-import { Link, useLocation } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { CapabilityBadge } from "./CapabilityBadge"
 import { UiLanguageSwitcher } from "./UiLanguageSwitcher"
 import { uiCatalogText } from "../lib/message-catalog"
-import { getUiNavigation } from "../lib/ui-mode"
+import { getUiNavigation, resolveModeSwitchRoute } from "../lib/ui-mode"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useConnectionStore } from "../stores/connection"
 import { useRunsStore } from "../stores/runs"
@@ -17,6 +17,7 @@ function isActive(pathname: string, itemPath: string) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const msg = (key: Parameters<typeof uiCatalogText>[1], params?: Record<string, string | number>) => uiCatalogText(uiLanguage, key, params)
   const { displayText } = useUiI18n()
@@ -46,9 +47,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const tasksComponent = shellComponents.find((component) => component.key === "tasks")
   const activeRuns = typeof tasksComponent?.configSummary["total"] === "number" ? tasksComponent.configSummary["total"] : storeActiveRuns
 
+  async function handlePreferredModeChange(nextMode: "beginner" | "advanced") {
+    if (preferredUiMode === nextMode) return
+    const nextPath = resolveModeSwitchRoute(location.pathname, nextMode)
+    await setPreferredMode(nextMode)
+    if (nextPath !== location.pathname) {
+      navigate(nextPath, { replace: true })
+    }
+  }
+
   return (
     <div className="flex h-screen bg-stone-100 text-stone-900">
-      <aside className="flex w-72 shrink-0 flex-col border-r border-stone-200 bg-[#111111] text-stone-100">
+      <aside className="relative z-[80] flex w-72 shrink-0 flex-col border-r border-stone-200 bg-[#111111] text-stone-100">
         <div className="border-b border-white/10 px-6 py-5">
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{msg("layout.brand.eyebrow")}</div>
           <div className="mt-2 text-lg font-semibold">스폰지 노비 · Sponzey Nobie</div>
@@ -69,14 +79,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => void setPreferredMode("beginner")}
+                onClick={() => void handlePreferredModeChange("beginner")}
                 className={`rounded-xl px-3 py-2 font-semibold ${preferredUiMode === "beginner" ? "bg-white text-stone-900" : "bg-white/5 text-stone-300"}`}
               >
                 {msg("layout.mode.beginner")}
               </button>
               <button
                 type="button"
-                onClick={() => void setPreferredMode("advanced")}
+                onClick={() => void handlePreferredModeChange("advanced")}
                 className={`rounded-xl px-3 py-2 font-semibold ${preferredUiMode === "advanced" ? "bg-white text-stone-900" : "bg-white/5 text-stone-300"}`}
               >
                 {msg("layout.mode.advanced")}
@@ -147,7 +157,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+      <main className="relative z-0 min-w-0 flex-1 overflow-hidden">{children}</main>
     </div>
   )
 }

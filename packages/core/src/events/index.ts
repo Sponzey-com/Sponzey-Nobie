@@ -49,10 +49,11 @@ export interface NobieEvents {
   "run.failed": { run: RootRun }
   "run.cancel.requested": { runId: string }
   "run.cancelled": { run: RootRun }
-  "tool.before": { sessionId: string; runId: string; toolName: string; params: unknown }
+  "tool.before": { sessionId: string; runId: string; requestGroupId?: string; toolName: string; params: unknown }
   "tool.after": {
     sessionId: string
     runId: string
+    requestGroupId?: string
     toolName: string
     success: boolean
     durationMs: number

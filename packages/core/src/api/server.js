@@ -30,8 +30,6 @@ import { registerDoctorRoute } from "./routes/doctor.js";
 import { registerControlTimelineRoute } from "./routes/control-timeline.js";
 import { registerUiModeRoute } from "./routes/ui-mode.js";
 import { registerAdminRoute } from "./routes/admin.js";
-import { registerAgentHistoryRoute } from "./routes/agent-history.js";
-import { registerOrchestrationRoute } from "./routes/orchestration.js";
 import { registerWsRoute } from "./ws/stream.js";
 import { eventBus } from "../events/index.js";
 import { stopActiveSlackChannel } from "../channels/slack/runtime.js";
@@ -92,8 +90,6 @@ export async function startServer() {
     registerControlTimelineRoute(server);
     registerUiModeRoute(server);
     registerAdminRoute(server);
-    registerAgentHistoryRoute(server);
-    registerOrchestrationRoute(server);
     registerWsRoute(server);
     const { host, port } = cfg.webui;
     await server.listen({ host, port });

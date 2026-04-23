@@ -15,7 +15,7 @@ export function SlackSettingsForm({
   const { text } = useUiI18n()
 
   return (
-    <fieldset disabled={disabled} className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 disabled:opacity-60">
+    <fieldset disabled={disabled} className="space-y-4 rounded-xl border border-stone-200 bg-white p-4 disabled:opacity-60">
       <div>
         <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
           <input
@@ -49,7 +49,7 @@ export function SlackSettingsForm({
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("허용 사용자 ID", "Allowed User IDs")}</label>
         <textarea
-          className="input min-h-[80px] font-mono text-sm"
+          className="input min-h-[72px] font-mono text-sm"
           value={value.slackAllowedUserIds}
           onChange={(event) => onChange({ slackAllowedUserIds: event.target.value })}
           placeholder="U12345678"
@@ -58,7 +58,7 @@ export function SlackSettingsForm({
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("허용 채널 ID", "Allowed Channel IDs")}</label>
         <textarea
-          className="input min-h-[80px] font-mono text-sm"
+          className="input min-h-[72px] font-mono text-sm"
           value={value.slackAllowedChannelIds}
           onChange={(event) => onChange({ slackAllowedChannelIds: event.target.value })}
           placeholder="C12345678"

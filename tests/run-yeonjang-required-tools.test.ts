@@ -42,6 +42,7 @@ function createContext(userMessage = "연장으로 실행해줘", source: ToolCo
   return {
     sessionId: "session-1",
     runId: "run-1",
+    requestGroupId: "request-group-1",
     workDir: process.cwd(),
     userMessage,
     source,
@@ -130,7 +131,15 @@ describe("yeonjang required tools", () => {
       failureKind: 'path_bug',
       extensionId: 'yeonjang-dongwooshinc28b-92049',
     })
-    expect(getYeonjangCapabilities).toHaveBeenCalledWith({ extensionId: 'yeonjang-dongwooshinc28b-92049' })
+    expect(getYeonjangCapabilities).toHaveBeenCalledWith({
+      extensionId: 'yeonjang-dongwooshinc28b-92049',
+      metadata: {
+        runId: 'run-1',
+        requestGroupId: 'request-group-1',
+        sessionId: 'session-1',
+        source: 'telegram',
+      },
+    })
   })
 
   it("uses the windows-like user request to avoid falling back to yeonjang-main", async () => {
@@ -150,11 +159,28 @@ describe("yeonjang required tools", () => {
     const result = await screenCaptureTool.execute({}, createContext('윈도우 메인화면 캡처해서 보여줘'))
 
     expect(result.success).toBe(true)
-    expect(getYeonjangCapabilities).toHaveBeenCalledWith({ extensionId: 'yeonjang-dongwooshinc28b-92049' })
+    expect(getYeonjangCapabilities).toHaveBeenCalledWith({
+      extensionId: 'yeonjang-dongwooshinc28b-92049',
+      metadata: {
+        runId: 'run-1',
+        requestGroupId: 'request-group-1',
+        sessionId: 'session-1',
+        source: 'telegram',
+      },
+    })
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       'screen.capture',
       { inline_base64: true },
-      expect.objectContaining({ extensionId: 'yeonjang-dongwooshinc28b-92049', timeoutMs: 60000 }),
+      expect.objectContaining({
+        extensionId: 'yeonjang-dongwooshinc28b-92049',
+        timeoutMs: 60000,
+        metadata: {
+          runId: 'run-1',
+          requestGroupId: 'request-group-1',
+          sessionId: 'session-1',
+          source: 'telegram',
+        },
+      }),
     )
   })
 
@@ -178,7 +204,16 @@ describe("yeonjang required tools", () => {
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       'screen.capture',
       { inline_base64: true, display: 1 },
-      expect.objectContaining({ extensionId: 'yeonjang-dongwooshinc28b-92049', timeoutMs: 60000 }),
+      expect.objectContaining({
+        extensionId: 'yeonjang-dongwooshinc28b-92049',
+        timeoutMs: 60000,
+        metadata: {
+          runId: 'run-1',
+          requestGroupId: 'request-group-1',
+          sessionId: 'session-1',
+          source: 'telegram',
+        },
+      }),
     )
   })
 
@@ -202,7 +237,15 @@ describe("yeonjang required tools", () => {
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       'screen.capture',
       { inline_base64: true, display: 1 },
-      { timeoutMs: 60000 },
+      {
+        timeoutMs: 60000,
+        metadata: {
+          runId: 'run-1',
+          requestGroupId: 'request-group-1',
+          sessionId: 'session-1',
+          source: 'telegram',
+        },
+      },
     )
   })
 

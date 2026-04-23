@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { getUiNavigation, resolveLegacyAdvancedRoute } from "../packages/webui/src/lib/ui-mode.js"
+import { getUiNavigation, resolveLegacyAdvancedRoute, resolveModeSwitchRoute, resolveRollbackRoute } from "../packages/webui/src/lib/ui-mode.js"
 
 describe("task002 UI navigation policy", () => {
   it("keeps beginner navigation to the minimum operator surface", () => {
     expect(getUiNavigation("beginner", false).map((item) => item.path)).toEqual([
       "/chat",
       "/setup",
-      "/agents",
       "/tasks",
       "/status",
     ])
@@ -22,10 +21,8 @@ describe("task002 UI navigation policy", () => {
       "/advanced/schedules",
       "/advanced/memory",
       "/advanced/tools",
-      "/advanced/agents",
       "/advanced/dashboard",
       "/advanced/release",
-      "/advanced/settings",
       "/advanced/audit",
       "/advanced/plugins",
     ])
@@ -38,9 +35,17 @@ describe("task002 UI navigation policy", () => {
   })
 
   it("maps legacy control-plane routes to advanced routes during migration", () => {
-    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/settings")
-    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/settings/ai")
+    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
+    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
     expect(resolveLegacyAdvancedRoute("/chat")).toBeNull()
+  })
+
+  it("moves setup and core beginner routes to the right advanced destinations on mode switch", () => {
+    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/advanced/ai")
+    expect(resolveModeSwitchRoute("/chat", "advanced")).toBe("/advanced/chat")
+    expect(resolveModeSwitchRoute("/tasks", "advanced")).toBe("/advanced/runs")
+    expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/advanced/dashboard")
+    expect(resolveRollbackRoute("/setup")).toBe("/advanced/ai")
   })
 })
