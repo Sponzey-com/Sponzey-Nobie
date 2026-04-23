@@ -13,7 +13,7 @@ export function SecuritySettingsForm({
   const { text } = useUiI18n()
 
   return (
-    <div className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
+    <div className="space-y-4 rounded-xl border border-stone-200 bg-white p-4">
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("승인 모드", "Approval Mode")}</label>
         <select

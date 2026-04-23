@@ -31,6 +31,7 @@ function createContext(): ToolContext {
   return {
     sessionId: "session-1",
     runId: "run-1",
+    requestGroupId: "request-group-1",
     workDir: process.cwd(),
     userMessage: "FaceTime HD 카메라로 사진 찍어줘",
     source: "telegram",
@@ -81,6 +82,12 @@ describe("yeonjang camera capture tool", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 60_000,
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
       },
     )
     expect(result.success).toBe(true)
@@ -124,6 +131,12 @@ describe("yeonjang camera capture tool", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 15_000,
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
       },
     )
     expect(result.success).toBe(false)

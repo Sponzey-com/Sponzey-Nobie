@@ -115,12 +115,14 @@ export interface NobieEvents {
     "tool.before": {
         sessionId: string;
         runId: string;
+        requestGroupId?: string;
         toolName: string;
         params: unknown;
     };
     "tool.after": {
         sessionId: string;
         runId: string;
+        requestGroupId?: string;
         toolName: string;
         success: boolean;
         durationMs: number;

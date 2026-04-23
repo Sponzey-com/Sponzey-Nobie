@@ -15,6 +15,14 @@ const EMPTY_ALLOWLIST = {
     enabledToolNames: [],
     disabledToolNames: [],
 };
+function normalizeStringList(value) {
+    if (!Array.isArray(value))
+        return [];
+    return [...new Set(value
+            .filter((item) => typeof item === "string")
+            .map((item) => item.trim())
+            .filter(Boolean))];
+}
 const rateLimitState = new Map();
 function normalizeToken(value) {
     return value.trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, "_");
@@ -32,13 +40,24 @@ function nonEmpty(value) {
     const trimmed = value?.trim();
     return trimmed ? trimmed : undefined;
 }
-function cloneAllowlist(input) {
+export function normalizeSkillMcpAllowlist(input) {
+    const secretScopeId = typeof input?.secretScopeId === "string" ? nonEmpty(input.secretScopeId) : undefined;
     return {
-        enabledSkillIds: [...input.enabledSkillIds],
-        enabledMcpServerIds: [...input.enabledMcpServerIds],
-        enabledToolNames: [...input.enabledToolNames],
-        disabledToolNames: [...input.disabledToolNames],
-        ...(input.secretScopeId ? { secretScopeId: input.secretScopeId } : {}),
+        enabledSkillIds: normalizeStringList(input?.enabledSkillIds),
+        enabledMcpServerIds: normalizeStringList(input?.enabledMcpServerIds),
+        enabledToolNames: normalizeStringList(input?.enabledToolNames),
+        disabledToolNames: normalizeStringList(input?.disabledToolNames),
+        ...(secretScopeId ? { secretScopeId } : {}),
+    };
+}
+function cloneAllowlist(input) {
+    const allowlist = normalizeSkillMcpAllowlist(input);
+    return {
+        enabledSkillIds: [...allowlist.enabledSkillIds],
+        enabledMcpServerIds: [...allowlist.enabledMcpServerIds],
+        enabledToolNames: [...allowlist.enabledToolNames],
+        disabledToolNames: [...allowlist.disabledToolNames],
+        ...(allowlist.secretScopeId ? { secretScopeId: allowlist.secretScopeId } : {}),
     };
 }
 function clonePermissionProfile(input) {
@@ -80,12 +99,13 @@ function ownerIdentityOwner(owner) {
     return { ownerType: owner.ownerType, ownerId: owner.ownerId };
 }
 function contextPolicy(ctx) {
+    const skillMcpAllowlist = ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist;
     return {
         ...(ctx.capabilityPolicy?.permissionProfile ?? ctx.permissionProfile
             ? { permissionProfile: ctx.capabilityPolicy?.permissionProfile ?? ctx.permissionProfile }
             : {}),
-        ...(ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist
-            ? { skillMcpAllowlist: ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist }
+        ...(skillMcpAllowlist
+            ? { skillMcpAllowlist: normalizeSkillMcpAllowlist(skillMcpAllowlist) }
             : {}),
         ...(ctx.capabilityPolicy?.rateLimit ?? ctx.capabilityRateLimit
             ? { rateLimit: ctx.capabilityPolicy?.rateLimit ?? ctx.capabilityRateLimit }
@@ -128,8 +148,9 @@ export function resolveToolCapabilityRisk(toolName, fallback = "safe") {
     return "safe";
 }
 export function isToolAllowedBySkillMcpAllowlist(input) {
-    const enabledTools = makeSet(input.allowlist.enabledToolNames);
-    const disabledTools = makeSet(input.allowlist.disabledToolNames);
+    const allowlist = normalizeSkillMcpAllowlist(input.allowlist);
+    const enabledTools = makeSet(allowlist.enabledToolNames);
+    const disabledTools = makeSet(allowlist.disabledToolNames);
     const names = new Set([normalizeToken(input.toolName)]);
     if (input.mcpTool) {
         names.add(normalizeToken(input.mcpTool.toolName));
@@ -143,7 +164,7 @@ export function isToolAllowedBySkillMcpAllowlist(input) {
     return [...names].some((name) => enabledTools.has(name));
 }
 export function isMcpServerAllowed(input) {
-    const enabledServers = makeSet(input.allowlist.enabledMcpServerIds);
+    const enabledServers = makeSet(normalizeSkillMcpAllowlist(input.allowlist).enabledMcpServerIds);
     if (enabledServers.size === 0)
         return true;
     return enabledServers.has(normalizeToken(input.serverId));
@@ -186,7 +207,7 @@ export function evaluateAgentToolCapabilityPolicy(input) {
             diagnostic: { capabilityRisk, agentId: input.ctx.agentId },
         };
     }
-    const allowlist = policy.skillMcpAllowlist ?? EMPTY_ALLOWLIST;
+    const allowlist = policy.skillMcpAllowlist ? normalizeSkillMcpAllowlist(policy.skillMcpAllowlist) : EMPTY_ALLOWLIST;
     const secretScopeId = input.ctx.secretScopeId ?? allowlist.secretScopeId;
     if (mcpTool && !secretScopeId?.trim()) {
         return {
@@ -332,7 +353,7 @@ export function toAgentCapabilityCallContext(ctx) {
         agentId: ctx.agentId,
         sessionId: ctx.sessionId,
         permissionProfile,
-        skillMcpAllowlist,
+        skillMcpAllowlist: normalizeSkillMcpAllowlist(skillMcpAllowlist),
         secretScopeId,
         auditId,
         ...(ctx.runId ? { runId: ctx.runId } : {}),

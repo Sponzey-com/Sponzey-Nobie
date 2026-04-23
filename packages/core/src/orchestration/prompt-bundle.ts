@@ -12,6 +12,7 @@ import {
   type TeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
 import { loadPromptSourceRegistry, type LoadedPromptSource } from "../memory/nobie-md.js"
+import { normalizeSkillMcpAllowlist } from "../security/capability-isolation.js"
 import {
   validateAgentPromptBundleContextScope,
   type PromptBundleContextMemoryRef,
@@ -443,7 +444,7 @@ function formatMemoryPolicy(agent: AgentConfig): string {
 }
 
 function formatCapabilityPolicy(agent: AgentConfig): string {
-  const allowlist = agent.capabilityPolicy.skillMcpAllowlist
+  const allowlist = normalizeSkillMcpAllowlist(agent.capabilityPolicy.skillMcpAllowlist)
   return [
     `enabledSkills: ${formatList(allowlist.enabledSkillIds)}`,
     `enabledMcpServers: ${formatList(allowlist.enabledMcpServerIds)}`,

@@ -23,6 +23,8 @@ import {
   type SubAgentConfig,
   type TeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import { normalizeSkillMcpAllowlist } from "../security/capability-isolation.js"
+import { normalizeLegacyAgentConfigRow, normalizeLegacyTeamConfigRow } from "./config-normalization.js"
 
 export interface AgentRuntimeLoadSnapshot {
   activeSubSessions: number
@@ -113,13 +115,13 @@ function parseJsonObject(value: string): unknown {
 }
 
 function parseAgentConfigRow(row: DbAgentConfig): AgentConfig | undefined {
-  const parsed = parseJsonObject(row.config_json)
+  const parsed = normalizeLegacyAgentConfigRow(parseJsonObject(row.config_json))
   const validation = validateAgentConfig(parsed)
   return validation.ok ? validation.value : undefined
 }
 
 function parseTeamConfigRow(row: DbTeamConfig): TeamConfig | undefined {
-  const parsed = parseJsonObject(row.config_json)
+  const parsed = normalizeLegacyTeamConfigRow(parseJsonObject(row.config_json))
   const validation = validateTeamConfig(parsed)
   return validation.ok ? validation.value : undefined
 }
@@ -180,7 +182,7 @@ function failureRateForAgent(agentId: string, now: number, windowMs: number): Ag
 }
 
 function agentSkillMcpSummary(config: SubAgentConfig): AgentSkillMcpSummary {
-  const allowlist = config.capabilityPolicy.skillMcpAllowlist
+  const allowlist = normalizeSkillMcpAllowlist(config.capabilityPolicy.skillMcpAllowlist)
   return {
     enabledSkillIds: [...allowlist.enabledSkillIds],
     enabledMcpServerIds: [...allowlist.enabledMcpServerIds],
@@ -237,8 +239,19 @@ export function buildOrchestrationRegistrySnapshot(
   const diagnostics: OrchestrationRegistrySnapshot["diagnostics"] = []
   const agentsById = new Map<string, AgentRegistryEntry>()
   const teamsById = new Map<string, TeamConfig & { source: TeamRegistryEntry["source"] }>()
+  const archivedAgentIds = new Set(
+    listAgentConfigs({ includeArchived: true, agentType: "sub_agent" })
+      .filter((row) => row.status === "archived")
+      .map((row) => row.agent_id),
+  )
+  const archivedTeamIds = new Set(
+    listTeamConfigs({ includeArchived: true })
+      .filter((row) => row.status === "archived")
+      .map((row) => row.team_id),
+  )
 
   for (const agent of cfg.orchestration.subAgents ?? []) {
+    if (archivedAgentIds.has(agent.agentId)) continue
     agentsById.set(agent.agentId, agentEntry(agent, "config", now, failureWindowMs))
   }
 
@@ -253,6 +266,7 @@ export function buildOrchestrationRegistrySnapshot(
   }
 
   for (const team of cfg.orchestration.teams ?? []) {
+    if (archivedTeamIds.has(team.teamId)) continue
     teamsById.set(team.teamId, { ...team, source: "config" })
   }
 

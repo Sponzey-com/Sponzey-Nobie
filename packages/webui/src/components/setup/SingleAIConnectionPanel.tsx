@@ -30,27 +30,22 @@ export function SingleAIConnectionPanel({
   const enabledBackend = backends.find((backend) => backend.enabled) ?? null
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-stone-200 bg-white p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-sm font-semibold text-stone-900">{text("현재 AI 연결", "Current AI connection")}</div>
-            <div className="mt-1 text-sm leading-6 text-stone-600">
-              {enabledBackend
-                ? text(
-                    `현재는 ${enabledBackend.label} 하나만 활성화되어 있습니다. 다른 연결을 고르면 이전 연결은 자동으로 비활성화됩니다.`,
-                    `${enabledBackend.label} is the only active connection. Choosing another connection disables the previous one automatically.`,
-                  )
-                : text(
-                    "아직 활성화된 AI가 없습니다. 아래에서 연결 하나를 골라 활성화하면 됩니다.",
-                    "There is no active AI yet. Pick one connection below and enable it.",
-                  )}
-            </div>
-          </div>
-          <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-700">
-            {enabledBackend ? text("활성 1개", "1 active") : text("활성 없음", "Not active")}
-          </span>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
+        <div className="text-sm text-stone-600">
+          {enabledBackend
+            ? text(
+                `현재는 ${enabledBackend.label} 하나만 활성화되어 있습니다. 다른 연결을 고르면 이전 연결은 자동으로 비활성화됩니다.`,
+                `${enabledBackend.label} is the only active connection. Choosing another connection disables the previous one automatically.`,
+              )
+            : text(
+                "아직 활성화된 AI가 없습니다. 아래에서 연결 하나를 골라 활성화하면 됩니다.",
+                "There is no active AI yet. Pick one connection below and enable it.",
+              )}
         </div>
+        <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-700">
+          {enabledBackend ? text("활성 1개", "1 active") : text("활성 없음", "Not active")}
+        </span>
       </div>
 
       {activeBackend ? (

@@ -135,7 +135,7 @@ export function DashboardPage() {
               {setupState.completed ? text("채팅 열기", "Open chat") : text("Setup 열기", "Open setup")}
             </Link>
             <Link
-              to="/settings"
+              to="/advanced/ai"
               className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-white"
             >
               {text("설정", "Settings")}
@@ -230,10 +230,6 @@ export function DashboardPage() {
               <StatusRow label="Uptime" value={status ? `${status.uptime}s` : ""} />
               <StatusRow label={text("도구 수", "Tool count")} value={status ? String(status.toolCount) : ""} />
               <StatusRow label={text("기본 대상", "Primary target")} value={primaryTargetLabel} />
-              <StatusRow label="Orchestrator" value={status?.orchestratorStatus.status ?? ""} />
-              <StatusRow label={text("동작 모드", "Runtime mode")} value={status?.orchestration?.mode ?? status?.orchestratorStatus.mode ?? ""} />
-              {status?.orchestration ? <StatusRow label={text("활성 서브 에이전트", "Active sub-agents")} value={`${status.orchestration.activeSubAgentCount}/${status.orchestration.totalSubAgentCount}`} /> : null}
-              {status?.orchestratorStatus.reason ? <StatusRow label={text("오케스트레이터 사유", "Orchestrator reason")} value={displayText(status.orchestratorStatus.reason)} /> : null}
               {fastResponse ? <StatusRow label={text("빠른 응답", "Fast response")} value={`${fastResponse.status} · ${displayText(fastResponse.reason)}`} /> : null}
               {ingressAckMetric?.p95Ms != null ? <StatusRow label={text("접수 응답 p95", "Ack p95")} value={`${ingressAckMetric.p95Ms}ms / ${ingressAckMetric.budgetMs}ms`} /> : null}
               {contractComparisonMetric?.p95Ms != null ? <StatusRow label={text("AI 비교 p95", "AI comparison p95")} value={`${contractComparisonMetric.p95Ms}ms / ${contractComparisonMetric.budgetMs}ms`} /> : null}

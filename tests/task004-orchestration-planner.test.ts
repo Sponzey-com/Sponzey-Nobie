@@ -15,6 +15,7 @@ import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-ag
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
+import { upsertAgentConfig, upsertTeamConfig } from "../packages/core/src/db/index.js"
 import type { OrchestrationModeSnapshot } from "../packages/core/src/orchestration/mode.ts"
 import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
 import {
@@ -277,6 +278,57 @@ describe("task004 orchestration registry and planner", () => {
     expect(snapshot.agents[0]?.currentLoad.activeSubSessions).toBe(0)
     expect(snapshot.agents[0]?.failureRate.value).toBe(0)
     expect(snapshot.teams[0]?.activeMemberAgentIds).toEqual(["agent:researcher"])
+  })
+
+  it("normalizes legacy allowlists missing disabledToolNames in registry snapshots", () => {
+    const agent = subAgent({
+      agentId: "agent:legacy",
+      skillMcpAllowlist: {
+        enabledSkillIds: ["research"],
+        enabledMcpServerIds: ["browser"],
+        enabledToolNames: ["web_search"],
+        secretScopeId: "agent:legacy",
+      } as unknown as SkillMcpAllowlist,
+    })
+
+    const snapshot = buildOrchestrationRegistrySnapshot({
+      getConfig: () => ({
+        orchestration: {
+          maxDelegationTurns: 5,
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [agent],
+          teams: [],
+        },
+      }),
+      now: () => now,
+    })
+
+    expect(snapshot.agents[0]?.skillMcpSummary.disabledToolNames).toEqual([])
+  })
+
+  it("keeps archived db rows from reintroducing config-defined agents and teams into the registry snapshot", () => {
+    const configAgent = subAgent({ agentId: "agent:config-archived", displayName: "Config Archived Agent" })
+    const configTeam = team("team:config-archived", ["agent:config-archived"])
+
+    upsertAgentConfig({ ...configAgent, status: "archived" }, { source: "manual", now })
+    upsertTeamConfig({ ...configTeam, status: "archived" }, { source: "manual", now })
+
+    const snapshot = buildOrchestrationRegistrySnapshot({
+      getConfig: () => ({
+        orchestration: {
+          maxDelegationTurns: 5,
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [configAgent],
+          teams: [configTeam],
+        },
+      }),
+      now: () => now,
+    })
+
+    expect(snapshot.agents.some((agent) => agent.agentId === configAgent.agentId)).toBe(false)
+    expect(snapshot.teams.some((team) => team.teamId === configTeam.teamId)).toBe(false)
   })
 
   it("excludes disabled agents and chooses an eligible candidate by structured fields", () => {

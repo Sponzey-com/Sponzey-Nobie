@@ -6,6 +6,7 @@
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
+import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js"
 
 const TYPE_DELAY_MS = 500
 
@@ -132,14 +133,15 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("keyboard.type", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("keyboard.type", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangKeyboardTypeResult>(
           "keyboard.type",
           { text: params.text },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.typed,
@@ -183,12 +185,13 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     const shortcut = splitShortcutKeys(params.keys)
 
     try {
-      if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
           "keyboard.action",
           {
@@ -196,7 +199,7 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
             key: shortcut.key,
             modifiers: shortcut.modifiers,
           },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.accepted,
@@ -252,10 +255,11 @@ export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     try {
-      if (await canYeonjangHandleMethod("keyboard.action", extensionId ? { extensionId } : {})) {
+      if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
         const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
           "keyboard.action",
           {
@@ -264,7 +268,7 @@ export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
             ...(typeof params.key === "string" ? { key: params.key } : {}),
             ...(params.modifiers?.length ? { modifiers: params.modifiers } : {}),
           },
-          { timeoutMs: 15_000, ...(extensionId ? { extensionId } : {}) },
+          { ...yeonjangOptions, timeoutMs: 15_000 },
         )
         return {
           success: remote.accepted,

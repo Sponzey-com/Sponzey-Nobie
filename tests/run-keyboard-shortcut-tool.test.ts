@@ -18,6 +18,7 @@ function createContext(): ToolContext {
   return {
     sessionId: "session-1",
     runId: "run-1",
+    requestGroupId: "request-group-1",
     workDir: process.cwd(),
     userMessage: "단축키 실행해줘",
     source: "telegram",
@@ -43,7 +44,14 @@ describe("keyboard shortcut tool", () => {
       createContext(),
     )
 
-    expect(canYeonjangHandleMethod).toHaveBeenCalledWith("keyboard.action", {})
+    expect(canYeonjangHandleMethod).toHaveBeenCalledWith("keyboard.action", {
+      metadata: {
+        runId: "run-1",
+        requestGroupId: "request-group-1",
+        sessionId: "session-1",
+        source: "telegram",
+      },
+    })
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       "keyboard.action",
       {
@@ -51,7 +59,15 @@ describe("keyboard shortcut tool", () => {
         key: "Space",
         modifiers: ["meta"],
       },
-      { timeoutMs: 15_000 },
+      {
+        timeoutMs: 15_000,
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
+      },
     )
     expect(result.success).toBe(true)
     expect(result.details).toMatchObject({

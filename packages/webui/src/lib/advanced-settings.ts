@@ -1,6 +1,6 @@
 import { pickUiText, type UiLanguage } from "../stores/uiLanguage"
 
-export type AdvancedSettingsTabId = "ai" | "channels" | "yeonjang" | "memory" | "schedules" | "tool_permissions" | "agents" | "release"
+export type AdvancedSettingsTabId = "ai" | "channels" | "yeonjang" | "memory" | "schedules" | "tool_permissions" | "release"
 
 export interface AdvancedSettingsTabDefinition {
   id: AdvancedSettingsTabId
@@ -17,7 +17,6 @@ export const ADVANCED_SETTINGS_TAB_ORDER: AdvancedSettingsTabId[] = [
   "memory",
   "schedules",
   "tool_permissions",
-  "agents",
   "release",
 ]
 
@@ -67,13 +66,6 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
       savesDraft: true,
     },
     {
-      id: "agents",
-      label: t("에이전트/팀", "Agents and teams"),
-      description: t("노비와 서브 에이전트, 팀, 관계도, 스킬/MCP allowlist를 관리합니다.", "Manage Nobie, sub-agents, teams, relationship graphs, and skill/MCP allowlists."),
-      capabilityKey: "settings.control",
-      savesDraft: false,
-    },
-    {
       id: "release",
       label: t("백업/배포", "Backup and release"),
       description: t("버전, 업데이트, DB 백업, 설정 내보내기, 마이그레이션 상태를 확인합니다.", "Inspect version, updates, DB backup, config export, and migration state."),
@@ -89,4 +81,35 @@ export function isDraftSavingAdvancedSettingsTab(tabId: AdvancedSettingsTabId): 
 
 export function hasMultipleAiConnectionCreationTab(tabs: AdvancedSettingsTabDefinition[]): boolean {
   return tabs.some((tab) => /add.*ai|new.*ai|multi.*ai|새.*ai|여러.*ai/i.test(`${tab.id} ${tab.label} ${tab.description}`))
+}
+
+export function resolveAdvancedSettingsTabFromPath(pathname: string): AdvancedSettingsTabId {
+  const normalized = pathname.toLowerCase()
+  if (normalized.startsWith("/advanced/channels")) return "channels"
+  if (normalized.startsWith("/advanced/extensions")) return "yeonjang"
+  if (normalized.startsWith("/advanced/memory")) return "memory"
+  if (normalized.startsWith("/advanced/tools")) return "tool_permissions"
+  if (normalized.startsWith("/advanced/release")) return "release"
+  if (normalized.startsWith("/advanced/ai")) return "ai"
+  return "ai"
+}
+
+export function resolveAdvancedSettingsPath(tabId: AdvancedSettingsTabId): string {
+  switch (tabId) {
+    case "channels":
+      return "/advanced/channels"
+    case "yeonjang":
+      return "/advanced/extensions"
+    case "memory":
+      return "/advanced/memory"
+    case "schedules":
+      return "/advanced/schedules"
+    case "tool_permissions":
+      return "/advanced/tools"
+    case "release":
+      return "/advanced/release"
+    case "ai":
+    default:
+      return "/advanced/ai"
+  }
 }

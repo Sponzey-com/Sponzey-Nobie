@@ -193,7 +193,7 @@ export function BackendHealthCard({
     Boolean(backend.endpoint?.trim()) && hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key")
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+    <div className="rounded-xl border border-stone-200 bg-white p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">{getBackendDisplayLabel(backend.id, backend.label, language)}</div>
@@ -204,7 +204,7 @@ export function BackendHealthCard({
 
       {backend.summary.trim() ? <p className="text-sm leading-6 text-stone-600">{backend.summary}</p> : null}
 
-      <div className="mt-4 space-y-4">
+      <div className="mt-3 space-y-3">
         <div>
           <label className="mb-1 block text-sm font-medium text-stone-700">{text("AI 종류 (Provider Type)", "AI Type (Provider Type)")}</label>
           <select

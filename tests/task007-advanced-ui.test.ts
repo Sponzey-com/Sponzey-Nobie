@@ -5,7 +5,14 @@ import type { OperationsSummary } from "../packages/webui/src/contracts/operatio
 import type { RootRun } from "../packages/webui/src/contracts/runs.ts"
 import type { SetupDraft } from "../packages/webui/src/contracts/setup.ts"
 import { buildAdvancedDashboardCards, loadAdvancedDashboardSources } from "../packages/webui/src/lib/advanced-dashboard.js"
-import { ADVANCED_SETTINGS_TAB_ORDER, buildAdvancedSettingsTabs, hasMultipleAiConnectionCreationTab, isDraftSavingAdvancedSettingsTab } from "../packages/webui/src/lib/advanced-settings.js"
+import {
+  ADVANCED_SETTINGS_TAB_ORDER,
+  buildAdvancedSettingsTabs,
+  hasMultipleAiConnectionCreationTab,
+  isDraftSavingAdvancedSettingsTab,
+  resolveAdvancedSettingsPath,
+  resolveAdvancedSettingsTabFromPath,
+} from "../packages/webui/src/lib/advanced-settings.js"
 
 function draft(): SetupDraft {
   return {
@@ -166,10 +173,13 @@ describe("task007 advanced dashboard and settings", () => {
     const tabs = buildAdvancedSettingsTabs("ko")
 
     expect(tabs.map((tab) => tab.id)).toEqual(ADVANCED_SETTINGS_TAB_ORDER)
-    expect(tabs.map((tab) => tab.label)).toEqual(["AI 연결", "채널", "연장", "메모리", "스케줄", "도구 권한", "에이전트/팀", "백업/배포"])
+    expect(tabs.map((tab) => tab.label)).toEqual(["AI 연결", "채널", "연장", "메모리", "스케줄", "도구 권한", "백업/배포"])
     expect(hasMultipleAiConnectionCreationTab(tabs)).toBe(false)
     expect(isDraftSavingAdvancedSettingsTab("ai")).toBe(true)
     expect(isDraftSavingAdvancedSettingsTab("memory")).toBe(false)
     expect(isDraftSavingAdvancedSettingsTab("release")).toBe(false)
+    expect(resolveAdvancedSettingsTabFromPath("/advanced/channels")).toBe("channels")
+    expect(resolveAdvancedSettingsTabFromPath("/advanced/extensions")).toBe("yeonjang")
+    expect(resolveAdvancedSettingsPath("tool_permissions")).toBe("/advanced/tools")
   })
 })

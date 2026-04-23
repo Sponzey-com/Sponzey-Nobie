@@ -18,6 +18,7 @@ import {
   type YeonjangClientOptions,
 } from "../../../yeonjang/mqtt-client.js"
 import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
+import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js"
 import { PATHS } from "../../../config/index.js"
 
 interface YeonjangScreenCaptureResult {
@@ -243,7 +244,7 @@ function resolveRequestedDisplay(display: number | string | undefined, userMessa
 }
 
 async function captureScreenViaYeonjang(params: {
-  extensionId?: string
+  options: YeonjangClientOptions
   display?: number
 }): Promise<{
   base64: string
@@ -255,7 +256,7 @@ async function captureScreenViaYeonjang(params: {
       inline_base64: true,
       ...(params.display !== undefined ? { display: params.display } : {}),
     },
-    { timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS, ...(params.extensionId ? { extensionId: params.extensionId } : {}) },
+    { ...params.options, timeoutMs: DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS },
   )
   return {
     base64: validateYeonjangBinaryResult(remote),
@@ -287,15 +288,15 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     })
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
     const display = resolveRequestedDisplay(params.display, ctx.userMessage)
     try {
-      const yeonjangOptions = extensionId ? { extensionId } : {}
       const preflightFailure = await preflightYeonjangScreenCapture(yeonjangOptions)
       if (preflightFailure) return preflightFailure
 
       {
         const { base64, remote } = await captureScreenViaYeonjang({
-          ...(extensionId ? { extensionId } : {}),
+          options: yeonjangOptions,
           ...(display !== undefined ? { display } : {}),
         })
         const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
@@ -371,12 +372,13 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
       userMessage: ctx.userMessage || params.text,
     })
     try {
-      const preflightFailure = await preflightYeonjangScreenCapture(extensionId ? { extensionId } : {})
+      const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
+      const preflightFailure = await preflightYeonjangScreenCapture(yeonjangOptions)
       if (preflightFailure) return preflightFailure
       const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`)
       const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`)
 
-      const { base64 } = await captureScreenViaYeonjang(extensionId ? { extensionId } : {})
+      const { base64 } = await captureScreenViaYeonjang({ options: yeonjangOptions })
       writeFileSync(tmpPng, Buffer.from(base64, "base64"))
 
       const { execFile } = await import("node:child_process")

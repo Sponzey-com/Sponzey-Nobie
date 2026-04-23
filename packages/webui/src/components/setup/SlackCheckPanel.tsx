@@ -44,7 +44,7 @@ export function SlackCheckPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+    <div className="rounded-xl border border-stone-200 bg-white p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("Slack 연결 점검", "Slack Connection Check")}</div>
@@ -58,7 +58,7 @@ export function SlackCheckPanel({
         <button
           onClick={() => void runCheck()}
           disabled={!botToken.trim() || !appToken.trim() || loading}
-          className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? text("점검 중...", "Checking...") : text("연결 테스트", "Test Connection")}
         </button>

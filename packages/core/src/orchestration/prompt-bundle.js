@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { loadPromptSourceRegistry } from "../memory/nobie-md.js";
+import { normalizeSkillMcpAllowlist } from "../security/capability-isolation.js";
 import { validateAgentPromptBundleContextScope, } from "../runs/context-preflight.js";
 export const AGENT_PROMPT_BUNDLE_VERSION = "agent-prompt-bundle-v1";
 const LINKED_PROMPT_SOURCE_IDS = new Set(["definitions", "identity", "user", "soul", "planner", "bootstrap"]);
@@ -328,7 +329,7 @@ function formatMemoryPolicy(agent) {
     ].join("\n");
 }
 function formatCapabilityPolicy(agent) {
-    const allowlist = agent.capabilityPolicy.skillMcpAllowlist;
+    const allowlist = normalizeSkillMcpAllowlist(agent.capabilityPolicy.skillMcpAllowlist);
     return [
         `enabledSkills: ${formatList(allowlist.enabledSkillIds)}`,
         `enabledMcpServers: ${formatList(allowlist.enabledMcpServerIds)}`,

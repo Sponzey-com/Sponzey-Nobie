@@ -1,5 +1,6 @@
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 const DEFAULT_TIMEOUT_SEC = 300;
 // Simple obfuscation patterns to reject
 const OBFUSCATION_PATTERNS = [
@@ -79,9 +80,10 @@ export const shellExecTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         });
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
         const workDir = resolveRemoteWorkDir(params.workDir);
         try {
-            if (await canYeonjangHandleMethod("system.exec", extensionId ? { extensionId } : {})) {
+            if (await canYeonjangHandleMethod("system.exec", yeonjangOptions)) {
                 ctx.onProgress(`Yeonjang${extensionId ? `(${extensionId})` : ""}에서 명령 실행: ${params.command}`);
                 const remote = await invokeYeonjangMethod("system.exec", {
                     command: params.command,
@@ -91,8 +93,8 @@ export const shellExecTool = {
                     ...(params.env ? { env: params.env } : {}),
                     timeout_sec: params.timeoutSec ?? DEFAULT_TIMEOUT_SEC,
                 }, {
+                    ...yeonjangOptions,
                     timeoutMs: (params.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000,
-                    ...(extensionId ? { extensionId } : {}),
                 });
                 const combined = [remote.stdout, remote.stderr ? `[stderr]\n${remote.stderr}` : ""].filter(Boolean).join("\n");
                 return {

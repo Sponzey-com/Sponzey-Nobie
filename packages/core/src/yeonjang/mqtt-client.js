@@ -7,6 +7,7 @@ const log = createLogger("yeonjang:mqtt");
 export const DEFAULT_YEONJANG_EXTENSION_ID = "yeonjang-main";
 const YEONJANG_CAPABILITY_TTL_MS = 5_000;
 const capabilityCache = new Map();
+const extensionExecutionQueues = new Map();
 export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID) {
     const normalized = extensionId.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
     const prefix = `nobie/v1/node/${normalized}`;
@@ -20,25 +21,45 @@ export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID)
 }
 export async function invokeYeonjangMethod(method, params = {}, options = {}) {
     const extensionId = options.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
-    const timeoutMs = clampTimeout(options.timeoutMs);
-    const topics = buildYeonjangTopics(extensionId);
-    const requestId = randomUUID();
-    const client = createClient();
-    log.debug(`invoking ${method} on ${extensionId}`);
-    try {
-        await waitForConnect(client, timeoutMs);
-        await subscribe(client, topics.responseTopic);
-        await publish(client, topics.requestTopic, {
-            id: requestId,
-            method,
-            params,
-        });
-        const response = await waitForResponse(client, topics.responseTopic, requestId, timeoutMs);
-        return response;
+    const execute = async () => {
+        const timeoutMs = clampTimeout(options.timeoutMs);
+        const topics = buildYeonjangTopics(extensionId);
+        const requestId = randomUUID();
+        const metadata = normalizeYeonjangRequestMetadata(options.metadata);
+        const client = createClient();
+        log.debug(`invoking ${method} on ${extensionId}`);
+        try {
+            await waitForConnect(client, timeoutMs);
+            await subscribe(client, topics.responseTopic);
+            await publish(client, topics.requestTopic, {
+                id: requestId,
+                method,
+                params,
+                ...(metadata ? { metadata } : {}),
+            });
+            const response = await waitForResponse(client, topics.responseTopic, requestId, timeoutMs);
+            return response;
+        }
+        finally {
+            await closeClient(client);
+        }
+    };
+    if (!shouldSerializeYeonjangMethod(method)) {
+        return await execute();
     }
-    finally {
-        await closeClient(client);
-    }
+    return await enqueueYeonjangExtensionExecution(extensionId, execute);
+}
+function normalizeYeonjangRequestMetadata(metadata) {
+    if (!metadata)
+        return undefined;
+    const normalizedEntries = Object.entries(metadata).filter(([, value]) => {
+        if (typeof value === "string")
+            return value.trim().length > 0;
+        return value != null;
+    });
+    if (normalizedEntries.length === 0)
+        return undefined;
+    return Object.fromEntries(normalizedEntries);
 }
 export async function getYeonjangCapabilities(options = {}) {
     const extensionId = normalizeExtensionId(options.extensionId);
@@ -59,6 +80,32 @@ export async function getYeonjangCapabilities(options = {}) {
 }
 export function clearYeonjangCapabilityCache() {
     capabilityCache.clear();
+}
+export function shouldSerializeYeonjangMethod(method) {
+    const normalized = method.trim().toLowerCase();
+    return normalized !== "node.capabilities" && normalized !== "camera.list";
+}
+export async function enqueueYeonjangExtensionExecution(extensionId, task) {
+    const normalizedExtensionId = normalizeExtensionId(extensionId);
+    const previous = extensionExecutionQueues.get(normalizedExtensionId) ?? Promise.resolve();
+    let releaseCurrentQueue;
+    const currentQueue = new Promise((resolve) => {
+        releaseCurrentQueue = resolve;
+    });
+    const queued = previous
+        .catch(() => undefined)
+        .then(() => currentQueue);
+    extensionExecutionQueues.set(normalizedExtensionId, queued);
+    await previous.catch(() => undefined);
+    try {
+        return await task();
+    }
+    finally {
+        releaseCurrentQueue();
+        if (extensionExecutionQueues.get(normalizedExtensionId) === queued) {
+            extensionExecutionQueues.delete(normalizedExtensionId);
+        }
+    }
 }
 export async function canYeonjangHandleMethod(method, options = {}) {
     try {

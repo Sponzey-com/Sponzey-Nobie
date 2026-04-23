@@ -1,4 +1,4 @@
-import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "./sub-agent-orchestration"
+export type RunOrchestrationMode = "single_nobie" | "orchestration"
 
 export type RunStatus =
   | "queued"
@@ -63,10 +63,10 @@ export interface RootRun {
   contextMode: RunContextMode
   delegationTurnCount: number
   maxDelegationTurns: number
-  orchestrationMode?: OrchestrationMode
-  orchestrationPlanSnapshot?: OrchestrationPlan
+  orchestrationMode?: RunOrchestrationMode
+  orchestrationPlanSnapshot?: Record<string, unknown>
   subSessionIds?: string[]
-  subSessionsSnapshot?: SubSessionContract[]
+  subSessionsSnapshot?: Array<Record<string, unknown>>
   agentDisplayName?: string
   agentNickname?: string
   currentStepKey: string
@@ -90,7 +90,7 @@ export interface RunProgressSnapshot {
   targetLabel?: string
   workerSessionId?: string
   contextMode: RunContextMode
-  orchestrationMode?: OrchestrationMode
+  orchestrationMode?: RunOrchestrationMode
   subSessionIds?: string[]
   summary: string
   recentEvents: RunEvent[]

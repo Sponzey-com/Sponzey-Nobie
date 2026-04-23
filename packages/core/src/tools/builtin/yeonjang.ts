@@ -3,6 +3,7 @@ import { join } from "node:path"
 import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult } from "../types.js"
 import { invokeYeonjangMethod, DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js"
 import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js"
+import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js"
 import { PATHS } from "../../config/index.js"
 
 interface YeonjangCameraDevice {
@@ -207,6 +208,7 @@ export const yeonjangCameraListTool: AgentTool<YeonjangCameraListParams> = {
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     }) ?? DEFAULT_YEONJANG_EXTENSION_ID
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId })
     ctx.onProgress(`연장 ${extensionId} 카메라 목록을 조회합니다.`)
     try {
       const timeoutMs = resolveTimeoutMs(params.timeoutSec)
@@ -214,7 +216,7 @@ export const yeonjangCameraListTool: AgentTool<YeonjangCameraListParams> = {
         "camera.list",
         {},
         {
-          extensionId,
+          ...yeonjangOptions,
           ...(timeoutMs != null ? { timeoutMs } : {}),
         },
       )
@@ -275,6 +277,7 @@ export const yeonjangCameraCaptureTool: AgentTool<YeonjangCameraCaptureParams> =
       requestedExtensionId: params.extensionId,
       userMessage: ctx.userMessage,
     }) ?? DEFAULT_YEONJANG_EXTENSION_ID
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId })
     const inlineBase64 = true
     ctx.onProgress(`연장 ${extensionId} 카메라 캡처를 요청합니다.`)
     try {
@@ -285,7 +288,7 @@ export const yeonjangCameraCaptureTool: AgentTool<YeonjangCameraCaptureParams> =
           "camera.list",
           {},
           {
-            extensionId,
+            ...yeonjangOptions,
             ...(listTimeoutMs != null ? { timeoutMs: listTimeoutMs } : {}),
           },
         )
@@ -317,7 +320,7 @@ export const yeonjangCameraCaptureTool: AgentTool<YeonjangCameraCaptureParams> =
           inline_base64: inlineBase64,
         },
         {
-          extensionId,
+          ...yeonjangOptions,
           timeoutMs: resolveTimeoutMs(params.timeoutSec) ?? DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS,
         },
       )

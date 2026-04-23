@@ -442,6 +442,9 @@ function toJsonOrNull(value) {
 function toJson(value) {
     return toCanonicalJson(value);
 }
+function toConfigJson(value) {
+    return toCanonicalJson(value, { dropEmptyArrays: false });
+}
 function optionalAuditId(identityAuditId, override) {
     return override ?? identityAuditId ?? null;
 }
@@ -498,7 +501,7 @@ export function upsertAgentConfig(input, options = {}) {
          idempotency_key = COALESCE(excluded.idempotency_key, agent_configs.idempotency_key),
          updated_at = excluded.updated_at,
          archived_at = excluded.archived_at`)
-        .run(config.agentId, config.agentType, config.status, config.displayName, config.nickname ?? null, config.role, config.personality, toJson(config.specialtyTags), toJson(config.avoidTasks), toJson(config.memoryPolicy), toJson(config.capabilityPolicy), config.profileVersion, toJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+        .run(config.agentId, config.agentType, config.status, config.displayName, config.nickname ?? null, config.role, config.personality, toJson(config.specialtyTags), toJson(config.avoidTasks), toJson(config.memoryPolicy), toJson(config.capabilityPolicy), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
 }
 export function getAgentConfig(agentId) {
     return getDb().prepare("SELECT * FROM agent_configs WHERE agent_id = ?").get(agentId);
@@ -527,7 +530,7 @@ export function disableAgentConfig(agentId, now = Date.now()) {
     let nextConfigJson = row.config_json;
     try {
         const parsed = JSON.parse(row.config_json);
-        nextConfigJson = toJson({ ...parsed, status: "disabled", updatedAt: now });
+        nextConfigJson = toConfigJson({ ...parsed, status: "disabled", updatedAt: now });
     }
     catch {
         nextConfigJson = row.config_json;
@@ -565,7 +568,7 @@ export function upsertTeamConfig(input, options = {}) {
          audit_id = excluded.audit_id,
          idempotency_key = COALESCE(excluded.idempotency_key, team_configs.idempotency_key),
          updated_at = excluded.updated_at,
-         archived_at = excluded.archived_at`).run(config.teamId, config.status, config.displayName, config.nickname ?? null, config.purpose, toJson(config.roleHints), toJson(config.memberAgentIds), config.profileVersion, toJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+         archived_at = excluded.archived_at`).run(config.teamId, config.status, config.displayName, config.nickname ?? null, config.purpose, toJson(config.roleHints), toJson(config.memberAgentIds), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
         db.prepare(`UPDATE agent_team_memberships SET status = 'removed', updated_at = ? WHERE team_id = ?`).run(updatedAt, config.teamId);
         const agentExists = db.prepare("SELECT agent_id FROM agent_configs WHERE agent_id = ? LIMIT 1");
         const upsertMember = db.prepare(`INSERT INTO agent_team_memberships

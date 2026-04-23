@@ -787,6 +787,7 @@ export function installControlEventProjection(): void {
       severity: "info",
       summary: `${payload.toolName} dispatched`,
       runId: payload.runId,
+      requestGroupId: payload.requestGroupId ?? null,
       sessionKey: payload.sessionId,
       detail: { toolName: payload.toolName, params: payload.params },
     })
@@ -799,6 +800,7 @@ export function installControlEventProjection(): void {
       severity: payload.success ? "info" : "warning",
       summary: `${payload.toolName} ${payload.success ? "completed" : "failed"}`,
       runId: payload.runId,
+      requestGroupId: payload.requestGroupId ?? null,
       sessionKey: payload.sessionId,
       detail: { toolName: payload.toolName, durationMs: payload.durationMs },
     })

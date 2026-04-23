@@ -97,6 +97,16 @@ const EMPTY_ALLOWLIST: SkillMcpAllowlist = {
   disabledToolNames: [],
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )]
+}
+
 const rateLimitState = new Map<string, { concurrent: number; calls: number[] }>()
 
 function normalizeToken(value: string): string {
@@ -120,13 +130,25 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
-function cloneAllowlist(input: SkillMcpAllowlist): SkillMcpAllowlist {
+export function normalizeSkillMcpAllowlist(input: Partial<SkillMcpAllowlist> | null | undefined): SkillMcpAllowlist {
+  const secretScopeId = typeof input?.secretScopeId === "string" ? nonEmpty(input.secretScopeId) : undefined
   return {
-    enabledSkillIds: [...input.enabledSkillIds],
-    enabledMcpServerIds: [...input.enabledMcpServerIds],
-    enabledToolNames: [...input.enabledToolNames],
-    disabledToolNames: [...input.disabledToolNames],
-    ...(input.secretScopeId ? { secretScopeId: input.secretScopeId } : {}),
+    enabledSkillIds: normalizeStringList(input?.enabledSkillIds),
+    enabledMcpServerIds: normalizeStringList(input?.enabledMcpServerIds),
+    enabledToolNames: normalizeStringList(input?.enabledToolNames),
+    disabledToolNames: normalizeStringList(input?.disabledToolNames),
+    ...(secretScopeId ? { secretScopeId } : {}),
+  }
+}
+
+function cloneAllowlist(input: Partial<SkillMcpAllowlist> | null | undefined): SkillMcpAllowlist {
+  const allowlist = normalizeSkillMcpAllowlist(input)
+  return {
+    enabledSkillIds: [...allowlist.enabledSkillIds],
+    enabledMcpServerIds: [...allowlist.enabledMcpServerIds],
+    enabledToolNames: [...allowlist.enabledToolNames],
+    disabledToolNames: [...allowlist.disabledToolNames],
+    ...(allowlist.secretScopeId ? { secretScopeId: allowlist.secretScopeId } : {}),
   }
 }
 
@@ -177,12 +199,13 @@ function contextPolicy(ctx: ToolContext): {
   skillMcpAllowlist?: SkillMcpAllowlist
   rateLimit?: CapabilityPolicy["rateLimit"]
 } {
+  const skillMcpAllowlist = ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist
   return {
     ...(ctx.capabilityPolicy?.permissionProfile ?? ctx.permissionProfile
       ? { permissionProfile: ctx.capabilityPolicy?.permissionProfile ?? ctx.permissionProfile }
       : {}),
-    ...(ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist
-      ? { skillMcpAllowlist: ctx.capabilityPolicy?.skillMcpAllowlist ?? ctx.skillMcpAllowlist }
+    ...(skillMcpAllowlist
+      ? { skillMcpAllowlist: normalizeSkillMcpAllowlist(skillMcpAllowlist) }
       : {}),
     ...(ctx.capabilityPolicy?.rateLimit ?? ctx.capabilityRateLimit
       ? { rateLimit: ctx.capabilityPolicy?.rateLimit ?? ctx.capabilityRateLimit }
@@ -222,8 +245,9 @@ export function isToolAllowedBySkillMcpAllowlist(input: {
   allowlist: SkillMcpAllowlist
   mcpTool?: McpRegisteredToolRef | null
 }): boolean {
-  const enabledTools = makeSet(input.allowlist.enabledToolNames)
-  const disabledTools = makeSet(input.allowlist.disabledToolNames)
+  const allowlist = normalizeSkillMcpAllowlist(input.allowlist)
+  const enabledTools = makeSet(allowlist.enabledToolNames)
+  const disabledTools = makeSet(allowlist.disabledToolNames)
   const names = new Set<string>([normalizeToken(input.toolName)])
   if (input.mcpTool) {
     names.add(normalizeToken(input.mcpTool.toolName))
@@ -240,7 +264,7 @@ export function isMcpServerAllowed(input: {
   serverId: string
   allowlist: SkillMcpAllowlist
 }): boolean {
-  const enabledServers = makeSet(input.allowlist.enabledMcpServerIds)
+  const enabledServers = makeSet(normalizeSkillMcpAllowlist(input.allowlist).enabledMcpServerIds)
   if (enabledServers.size === 0) return true
   return enabledServers.has(normalizeToken(input.serverId))
 }
@@ -291,7 +315,7 @@ export function evaluateAgentToolCapabilityPolicy(input: {
     }
   }
 
-  const allowlist = policy.skillMcpAllowlist ?? EMPTY_ALLOWLIST
+  const allowlist = policy.skillMcpAllowlist ? normalizeSkillMcpAllowlist(policy.skillMcpAllowlist) : EMPTY_ALLOWLIST
   const secretScopeId = input.ctx.secretScopeId ?? allowlist.secretScopeId
   if (mcpTool && !secretScopeId?.trim()) {
     return {
@@ -444,7 +468,7 @@ export function toAgentCapabilityCallContext(ctx: ToolContext): AgentCapabilityC
     agentId: ctx.agentId,
     sessionId: ctx.sessionId,
     permissionProfile,
-    skillMcpAllowlist,
+    skillMcpAllowlist: normalizeSkillMcpAllowlist(skillMcpAllowlist),
     secretScopeId,
     auditId,
     ...(ctx.runId ? { runId: ctx.runId } : {}),

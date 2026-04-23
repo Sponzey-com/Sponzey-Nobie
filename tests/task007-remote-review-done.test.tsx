@@ -396,20 +396,13 @@ describe("task007 remote access, review, and done", () => {
       language: "ko",
     })
 
-    expect(withOrchestration.cards.find((card) => card.id === "orchestration")).toEqual(expect.objectContaining({
-      value: "orchestration",
-      tone: "ready",
-      detail: "활성 서브 에이전트 2개",
-    }))
-    expect(withoutOrchestration.cards.find((card) => card.id === "orchestration")).toEqual(expect.objectContaining({
-      value: "single_nobie",
-      tone: "ready",
-      detail: "활성 서브 에이전트 0개",
-    }))
     expect(withOrchestration.actions.map((action) => action.href)).toEqual([
       "/advanced/dashboard",
       "/advanced/settings",
-      "/advanced/agents",
+    ])
+    expect(withoutOrchestration.actions.map((action) => action.href)).toEqual([
+      "/advanced/dashboard",
+      "/advanced/settings",
     ])
   })
 })

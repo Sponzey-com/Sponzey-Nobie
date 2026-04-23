@@ -50,7 +50,7 @@ export function UpdatePanel() {
           : "border-emerald-200 bg-emerald-50 text-emerald-700"
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+    <div className="rounded-xl border border-stone-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("업데이트", "Updates")}</div>
@@ -59,7 +59,7 @@ export function UpdatePanel() {
         <button
           onClick={() => void check()}
           disabled={checking}
-          className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {checking ? text("확인 중...", "Checking...") : text("업데이트 확인", "Check for updates")}
         </button>

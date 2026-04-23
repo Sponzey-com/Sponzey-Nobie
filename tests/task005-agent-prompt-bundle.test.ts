@@ -276,6 +276,31 @@ describe("task005 agent prompt bundle", () => {
     expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:ko" && fragment.status === "inactive")).toBe(true)
   })
 
+  it("renders capability policy when legacy allowlists omit disabledToolNames", () => {
+    const legacyAllowlist = {
+      enabledSkillIds: ["research"],
+      enabledMcpServerIds: ["browser"],
+      enabledToolNames: ["web_search"],
+      secretScopeId: "scope:researcher",
+    } as unknown as SkillMcpAllowlist
+
+    const result = buildAgentPromptBundle({
+      agent: subAgent({
+        capabilityPolicy: {
+          permissionProfile,
+          skillMcpAllowlist: legacyAllowlist,
+          rateLimit: { maxConcurrentCalls: 2 },
+        },
+      }),
+      taskScope,
+      teams: [team()],
+      promptSources: [],
+      now: () => now,
+    })
+
+    expect(result.bundle.renderedPrompt).toContain("disabledTools: none")
+  })
+
   it("keeps team context from overriding the agent personality snapshot", () => {
     const result = buildAgentPromptBundle({
       agent: subAgent({ personality: "Calm and terse." }),

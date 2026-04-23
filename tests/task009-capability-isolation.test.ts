@@ -233,6 +233,24 @@ describe("task009 capability isolation", () => {
     expect(scoped[0]?.tools.map((tool) => tool.registeredName)).toEqual(["mcp__browser__search"])
   })
 
+  it("accepts legacy allowlists that omit disabledToolNames", () => {
+    const legacyAllowlist = {
+      enabledSkillIds: ["research"],
+      enabledMcpServerIds: ["browser"],
+      enabledToolNames: ["web_search", "mcp__browser__search", "search"],
+      secretScopeId: "secret:agent:researcher",
+    } as unknown as SkillMcpAllowlist
+
+    const decision = evaluateAgentToolCapabilityPolicy({
+      toolName: "mcp__browser__search",
+      riskLevel: "moderate",
+      ctx: toolContext(capabilityPolicy({ skillMcpAllowlist: legacyAllowlist })),
+    })
+
+    expect(decision.allowed).toBe(true)
+    expect(decision.reasonCode).toBe("capability_allowed")
+  })
+
   it("passes mandatory agent metadata into MCP tool call payloads", () => {
     const policy = capabilityPolicy()
     const payload = buildMcpToolCallPayload("search", { q: "nobie" }, {

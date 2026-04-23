@@ -20,6 +20,7 @@ function createContext(): ToolContext {
   return {
     sessionId: "session-1",
     runId: "run-1",
+    requestGroupId: "request-group-1",
     workDir: process.cwd(),
     userMessage: "연장 액션 실행",
     source: "telegram",
@@ -57,7 +58,15 @@ describe("yeonjang action tools", () => {
 
     expect(canYeonjangHandleMethod).toHaveBeenCalledWith(
       "system.exec",
-      { extensionId: "yeonjang-dongwooshinc28b-92049" },
+      {
+        extensionId: "yeonjang-dongwooshinc28b-92049",
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
+      },
     )
     expect(invokeYeonjangMethod).toHaveBeenCalledWith(
       "system.exec",
@@ -68,7 +77,16 @@ describe("yeonjang action tools", () => {
         env: { HELLO: "world" },
         timeout_sec: 12,
       },
-      { timeoutMs: 12_000, extensionId: "yeonjang-dongwooshinc28b-92049" },
+      {
+        timeoutMs: 12_000,
+        extensionId: "yeonjang-dongwooshinc28b-92049",
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
+      },
     )
   })
 
@@ -98,7 +116,15 @@ describe("yeonjang action tools", () => {
         delta_x: 10,
         delta_y: -40,
       },
-      { timeoutMs: 15_000 },
+      {
+        timeoutMs: 15_000,
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
+      },
     )
     expect(result.success).toBe(true)
     expect(result.details).toMatchObject({
@@ -135,7 +161,15 @@ describe("yeonjang action tools", () => {
         key: "c",
         modifiers: ["meta"],
       },
-      { timeoutMs: 15_000 },
+      {
+        timeoutMs: 15_000,
+        metadata: {
+          runId: "run-1",
+          requestGroupId: "request-group-1",
+          sessionId: "session-1",
+          source: "telegram",
+        },
+      },
     )
     expect(result.success).toBe(true)
     expect(result.details).toMatchObject({

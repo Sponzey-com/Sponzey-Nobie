@@ -2,6 +2,7 @@ import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { invokeYeonjangMethod, DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js";
 import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 import { PATHS } from "../../config/index.js";
 function validateYeonjangBinaryCaptureResult(result) {
     if (!result.base64_data) {
@@ -143,11 +144,12 @@ export const yeonjangCameraListTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         }) ?? DEFAULT_YEONJANG_EXTENSION_ID;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId });
         ctx.onProgress(`연장 ${extensionId} 카메라 목록을 조회합니다.`);
         try {
             const timeoutMs = resolveTimeoutMs(params.timeoutSec);
             const devices = await invokeYeonjangMethod("camera.list", {}, {
-                extensionId,
+                ...yeonjangOptions,
                 ...(timeoutMs != null ? { timeoutMs } : {}),
             });
             return {
@@ -207,6 +209,7 @@ export const yeonjangCameraCaptureTool = {
             requestedExtensionId: params.extensionId,
             userMessage: ctx.userMessage,
         }) ?? DEFAULT_YEONJANG_EXTENSION_ID;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId });
         const inlineBase64 = true;
         ctx.onProgress(`연장 ${extensionId} 카메라 캡처를 요청합니다.`);
         try {
@@ -214,7 +217,7 @@ export const yeonjangCameraCaptureTool = {
             if (requestedFacing && params.deviceId) {
                 const listTimeoutMs = resolveTimeoutMs(15);
                 const listedDevices = await invokeYeonjangMethod("camera.list", {}, {
-                    extensionId,
+                    ...yeonjangOptions,
                     ...(listTimeoutMs != null ? { timeoutMs: listTimeoutMs } : {}),
                 });
                 const selectedDevice = findCameraDeviceById(listedDevices, params.deviceId);
@@ -241,7 +244,7 @@ export const yeonjangCameraCaptureTool = {
                 ...(params.deviceId ? { device_id: params.deviceId } : {}),
                 inline_base64: inlineBase64,
             }, {
-                extensionId,
+                ...yeonjangOptions,
                 timeoutMs: resolveTimeoutMs(params.timeoutSec) ?? DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS,
             });
             const details = {

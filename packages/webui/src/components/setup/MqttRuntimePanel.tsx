@@ -57,8 +57,8 @@ export function MqttRuntimePanel({
   const logs = runtime?.logs ?? []
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-stone-200 bg-white p-5">
+    <div className="space-y-3">
+      <section className="rounded-xl border border-stone-200 bg-white p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-stone-900">{text("연결된 연장", "Connected Extensions")}</h3>
@@ -68,7 +68,7 @@ export function MqttRuntimePanel({
           </div>
           <button
             onClick={onRefresh}
-            className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700"
+            className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700"
           >
             {text("새로고침", "Refresh")}
           </button>
@@ -165,7 +165,7 @@ export function MqttRuntimePanel({
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5">
+      <section className="rounded-xl border border-stone-200 bg-white p-4">
         <div>
           <h3 className="text-sm font-semibold text-stone-900">{text("주고받은 JSON 로그", "JSON Exchange Log")}</h3>
           <p className="mt-1 text-xs leading-5 text-stone-500">

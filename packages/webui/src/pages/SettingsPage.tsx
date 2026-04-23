@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
+import { Link, useLocation } from "react-router-dom"
 import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
-import { CapabilityBadge } from "../components/CapabilityBadge"
-import { OrchestrationControlPanel } from "../components/orchestration/OrchestrationControlPanel"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
@@ -22,7 +20,12 @@ import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
 import { type AIBackendCard, type NewAIBackendInput } from "../contracts/ai"
 import type { ConfigurationOperationsSnapshot, MigrationDryRunResult } from "../contracts/config-operations"
 import type { SetupDraft } from "../contracts/setup"
-import { buildAdvancedSettingsTabs, isDraftSavingAdvancedSettingsTab, type AdvancedSettingsTabId } from "../lib/advanced-settings"
+import {
+  buildAdvancedSettingsTabs,
+  isDraftSavingAdvancedSettingsTab,
+  resolveAdvancedSettingsTabFromPath,
+  type AdvancedSettingsTabId,
+} from "../lib/advanced-settings"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
@@ -89,7 +92,8 @@ function createBackendId(kind: AIBackendCard["kind"], label: string, existingIds
 }
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<TabId>("ai")
+  const location = useLocation()
+  const tab = resolveAdvancedSettingsTabFromPath(location.pathname)
   const [localDraft, setLocalDraft] = useState<SetupDraft | null>(null)
   const [selectedAiBackendId, setSelectedAiBackendId] = useState<string | null>(null)
   const [editorVersion, setEditorVersion] = useState(0)
@@ -313,6 +317,8 @@ export function SettingsPage() {
   )
 
   const activeTab = tabs.find((item) => item.id === tab) ?? tabs[0]
+  const pageTitle = activeTab.label
+  const pageDescription = activeTab.description
   const activeCapability = resolveSettingsCapability(
     activeTab.id,
     capabilities.find((item) => item.key === activeTab.capabilityKey),
@@ -466,16 +472,21 @@ export function SettingsPage() {
       case "ai":
         return (
           <div key={`ai-${editorVersion}`} className="space-y-4">
-            <SingleAIConnectionPanel
-              backends={activeDraft.aiBackends}
-              routingProfiles={activeDraft.routingProfiles}
-              activeBackendId={selectedAiBackendId}
-              onSelectBackend={setSelectedAiBackendId}
-              onUpdateBackend={updateBackend}
-              onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
-              onRemoveBackend={removeBackend}
-              onSetRoutingTargetEnabled={setRoutingTargetEnabled}
-            />
+            <CompactSection
+              title={text("AI 연결", "AI connection")}
+              description={text("현재 사용하는 연결 하나를 관리하고 상태와 기본 모델을 바로 조정합니다.", "Manage the active connection, its state, and the default model in one place.")}
+            >
+              <SingleAIConnectionPanel
+                backends={activeDraft.aiBackends}
+                routingProfiles={activeDraft.routingProfiles}
+                activeBackendId={selectedAiBackendId}
+                onSelectBackend={setSelectedAiBackendId}
+                onUpdateBackend={updateBackend}
+                onToggleBackend={(backendId, enabled) => setRoutingTargetEnabled("default", backendId, enabled)}
+                onRemoveBackend={removeBackend}
+                onSetRoutingTargetEnabled={setRoutingTargetEnabled}
+              />
+            </CompactSection>
           </div>
         )
 
@@ -488,14 +499,20 @@ export function SettingsPage() {
               <RuntimeNotice title={text("채널 상태", "Channel Status")} message={activeCapability.reason} tone="info" />
             ) : null}
             <div className="grid gap-4 xl:grid-cols-2">
-              <div className="space-y-4">
+              <CompactSection
+                title={text("Telegram", "Telegram")}
+                description={text("입력 채널 설정과 연결 점검을 함께 묶었습니다.", "The input channel settings and connection check are grouped together.")}
+              >
                 <TelegramSettingsForm
                   value={activeDraft.channels}
                   onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
                 />
                 <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
-              </div>
-              <div className="space-y-4">
+              </CompactSection>
+              <CompactSection
+                title={text("Slack", "Slack")}
+                description={text("토큰, 허용 대상, 연결 점검을 한 묶음으로 정리했습니다.", "Tokens, allowed targets, and the connection check are kept together.")}
+              >
                 <SlackSettingsForm
                   value={activeDraft.channels}
                   onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
@@ -504,7 +521,7 @@ export function SettingsPage() {
                   botToken={activeDraft.channels.slackBotToken}
                   appToken={activeDraft.channels.slackAppToken}
                 />
-              </div>
+              </CompactSection>
             </div>
           </div>
         )
@@ -519,46 +536,56 @@ export function SettingsPage() {
                 tone={activeCapability.status === "error" ? "error" : "info"}
               />
             ) : null}
-            <MqttSettingsForm
-              value={activeDraft.mqtt}
-              onChange={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
-            />
-            <MqttRuntimePanel
-              runtime={mqttRuntime}
-              loading={mqttRuntimeLoading}
-              error={mqttRuntimeError}
-              disconnectingExtensionId={disconnectingExtensionId}
-              onRefresh={() => void loadMqttRuntime()}
-              onDisconnect={(extensionId) => void handleDisconnectMqttExtension(extensionId)}
-            />
+            <CompactSection
+              title={text("브로커와 연결 상태", "Broker and runtime")}
+              description={text("브로커 설정과 현재 연결된 연장 상태를 같은 묶음으로 봅니다.", "Broker settings and connected extension state are shown together.")}
+            >
+              <MqttSettingsForm
+                value={activeDraft.mqtt}
+                onChange={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
+              />
+              <MqttRuntimePanel
+                runtime={mqttRuntime}
+                loading={mqttRuntimeLoading}
+                error={mqttRuntimeError}
+                disconnectingExtensionId={disconnectingExtensionId}
+                onRefresh={() => void loadMqttRuntime()}
+                onDisconnect={(extensionId) => void handleDisconnectMqttExtension(extensionId)}
+              />
+            </CompactSection>
           </div>
         )
 
       case "memory":
         return (
           <div className="space-y-4">
-            <OperationsDiagnosticsPanel
-              snapshot={operationsDiagnostics}
-              loading={operationsDiagnosticsLoading}
-              error={operationsDiagnosticsError}
-              onRefresh={() => void loadOperationsDiagnostics()}
-            />
-            <MemoryQualityDashboardPanel
-              snapshot={memoryQuality}
-              loading={memoryQualityLoading}
-              error={memoryQualityError}
-              onRefresh={() => void loadMemoryQuality()}
-            />
-            <MemoryWritebackReviewPanel
-              candidates={memoryReviewItems}
-              edits={memoryReviewEdits}
-              loading={memoryReviewLoading}
-              error={memoryReviewError}
-              actionId={memoryReviewActionId}
-              onRefresh={() => void loadMemoryWritebackReview()}
-              onEdit={(candidateId, value) => setMemoryReviewEdits((current) => ({ ...current, [candidateId]: value }))}
-              onAction={(candidateId, action) => void handleMemoryReviewAction(candidateId, action)}
-            />
+            <CompactSection
+              title={text("메모리 운영", "Memory operations")}
+              description={text("정책, 품질, writeback 검토를 한 흐름으로 묶었습니다.", "Policy, quality, and writeback review are grouped into one flow.")}
+            >
+              <OperationsDiagnosticsPanel
+                snapshot={operationsDiagnostics}
+                loading={operationsDiagnosticsLoading}
+                error={operationsDiagnosticsError}
+                onRefresh={() => void loadOperationsDiagnostics()}
+              />
+              <MemoryQualityDashboardPanel
+                snapshot={memoryQuality}
+                loading={memoryQualityLoading}
+                error={memoryQualityError}
+                onRefresh={() => void loadMemoryQuality()}
+              />
+              <MemoryWritebackReviewPanel
+                candidates={memoryReviewItems}
+                edits={memoryReviewEdits}
+                loading={memoryReviewLoading}
+                error={memoryReviewError}
+                actionId={memoryReviewActionId}
+                onRefresh={() => void loadMemoryWritebackReview()}
+                onEdit={(candidateId, value) => setMemoryReviewEdits((current) => ({ ...current, [candidateId]: value }))}
+                onAction={(candidateId, action) => void handleMemoryReviewAction(candidateId, action)}
+              />
+            </CompactSection>
           </div>
         )
 
@@ -577,44 +604,61 @@ export function SettingsPage() {
       case "tool_permissions":
         return (
           <div key={`tool-permissions-${editorVersion}`} className="space-y-4">
-            <SecuritySettingsForm
-              value={activeDraft.security}
-              onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
-            />
-            <McpServersPanel />
-            <ActiveInstructionsPanel />
+            <CompactSection
+              title={text("승인과 보안", "Approvals and security")}
+              description={text("승인 정책과 자동 후속 처리 제한을 같은 성격으로 묶었습니다.", "Approval policy and automatic follow-up limits are grouped by purpose.")}
+            >
+              <SecuritySettingsForm
+                value={activeDraft.security}
+                onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
+              />
+            </CompactSection>
+            <CompactSection
+              title={text("도구 연결과 지침", "Tool connections and instructions")}
+              description={text("외부 도구 연결과 활성 지침을 한 묶음으로 관리합니다.", "External tool connections and active instructions are managed together.")}
+            >
+              <McpServersPanel />
+              <ActiveInstructionsPanel />
+            </CompactSection>
           </div>
         )
-
-      case "agents":
-        return <OrchestrationControlPanel surface="settings" />
 
       case "release":
         return (
           <div className="space-y-4">
-            <ConfigMigrationPanel
-              snapshot={configOperationsSnapshot}
-              dryRun={configMigrationDryRun}
-              loading={configOperationsLoading}
-              error={configOperationsError}
-              result={configOperationResult}
-              promptImportPath={promptImportPath}
-              dbImportPath={dbImportPath}
-              onPromptImportPathChange={setPromptImportPath}
-              onDbImportPathChange={setDbImportPath}
-              onRefresh={() => void loadConfigOperations()}
-              onAction={(action) => void handleConfigAction(action)}
-            />
-            <UpdatePanel />
-            <RemoteAccessForm
-              value={activeDraft.remoteAccess}
-              onChange={(patch) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, ...patch })}
-            />
-            <AuthTokenPanel
-              authEnabled={activeDraft.remoteAccess.authEnabled}
-              authToken={activeDraft.remoteAccess.authToken}
-              onGenerated={(token) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, authToken: token })}
-            />
+            <CompactSection
+              title={text("백업과 배포", "Backup and release")}
+              description={text("백업, 마이그레이션, 업데이트 점검을 한 묶음으로 정리했습니다.", "Backup, migration, and update checks are grouped together.")}
+            >
+              <ConfigMigrationPanel
+                snapshot={configOperationsSnapshot}
+                dryRun={configMigrationDryRun}
+                loading={configOperationsLoading}
+                error={configOperationsError}
+                result={configOperationResult}
+                promptImportPath={promptImportPath}
+                dbImportPath={dbImportPath}
+                onPromptImportPathChange={setPromptImportPath}
+                onDbImportPathChange={setDbImportPath}
+                onRefresh={() => void loadConfigOperations()}
+                onAction={(action) => void handleConfigAction(action)}
+              />
+              <UpdatePanel />
+            </CompactSection>
+            <CompactSection
+              title={text("원격 접근", "Remote access")}
+              description={text("접속 토큰과 호스트/포트 설정을 한 묶음으로 관리합니다.", "Token plus host/port settings are grouped together.")}
+            >
+              <RemoteAccessForm
+                value={activeDraft.remoteAccess}
+                onChange={(patch) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, ...patch })}
+              />
+              <AuthTokenPanel
+                authEnabled={activeDraft.remoteAccess.authEnabled}
+                authToken={activeDraft.remoteAccess.authToken}
+                onGenerated={(token) => patchDraft("remoteAccess", { ...activeDraft.remoteAccess, authToken: token })}
+              />
+            </CompactSection>
           </div>
         )
     }
@@ -625,9 +669,9 @@ export function SettingsPage() {
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{pickUiText(uiLanguage, "설정", "Settings")}</div>
-          <h1 className="mt-2 text-2xl font-semibold text-stone-900">{pickUiText(uiLanguage, "WebUI 제어 설정", "WebUI Control Settings")}</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-stone-900">{pageTitle}</h1>
           <p className="mt-2 max-w-3xl text-sm leading-7 text-stone-600">
-            {pickUiText(uiLanguage, "Settings 화면에서는 변경사항을 즉시 저장하지 않습니다. 각 설정 화면에서 저장 버튼을 눌러야 실제 로컬 설정에 반영됩니다.", "Changes are not saved immediately in Settings. Press Save on each settings page to apply them locally.")}
+            {pageDescription}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -661,50 +705,8 @@ export function SettingsPage() {
         <SetupChecksPanel checks={checks} loading={checksLoading} onRefresh={() => void refreshChecks(true)} />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[18rem_1fr]">
-        <aside className="rounded-[1.75rem] border border-stone-200 bg-white p-4">
-          <div className="space-y-2">
-            {tabs.map((item) => {
-              const capability = resolveSettingsCapability(
-                item.id,
-                capabilities.find((candidate) => candidate.key === item.capabilityKey),
-                activeDraft,
-                isDirty,
-              )
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setTab(item.id)}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                    tab === item.id
-                      ? "border-stone-900 bg-stone-900 text-white"
-                      : "border-stone-200 bg-stone-50 text-stone-700 hover:bg-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold">{item.label}</span>
-                    {capability ? <CapabilityBadge status={capability.status} /> : null}
-                  </div>
-                  <div className={`mt-2 text-xs leading-5 ${tab === item.id ? "text-stone-300" : "text-stone-500"}`}>
-                    {capability?.reason ? displayText(capability.reason) : capability?.label ?? text("준비 중", "Coming soon")}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </aside>
-
-        <section className="rounded-[1.75rem] border border-stone-200 bg-white p-6">
-          <div className="mb-6 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-stone-900">{activeTab.label}</div>
-              <div className="mt-1 text-xs text-stone-500">{activeCapability?.key}</div>
-            </div>
-            <div className="flex items-center gap-3">
-              {isDirty && isDraftSavingAdvancedSettingsTab(tab) ? <span className="text-xs font-semibold text-amber-700">{pickUiText(uiLanguage, "저장되지 않은 변경사항", "Unsaved changes")}</span> : null}
-              {activeCapability ? <CapabilityBadge status={activeCapability.status} /> : null}
-            </div>
-          </div>
+      <div className="mt-6">
+        <section className="rounded-[1.5rem] border border-stone-200 bg-white p-5">
           {renderContent()}
           {renderActions()}
         </section>
@@ -785,6 +787,26 @@ function RuntimeNotice({
   )
 }
 
+function CompactSection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+      <div className="mb-3">
+        <div className="text-sm font-semibold text-stone-900">{title}</div>
+        {description ? <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div> : null}
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  )
+}
+
 function formatMetric(value: number | null): string {
   return value == null ? "-" : String(value)
 }
@@ -807,7 +829,7 @@ function MemoryQualityDashboardPanel({
     : "border-emerald-200 bg-emerald-50 text-emerald-700"
 
   return (
-    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("메모리 품질 대시보드", "Memory quality dashboard")}</div>
@@ -943,7 +965,7 @@ function MemoryWritebackReviewPanel({
   const { text, displayText } = useUiI18n()
 
   return (
-    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("장기 기억 검토", "Long-term memory review")}</div>
@@ -1089,7 +1111,7 @@ function ConfigMigrationPanel({
   const pendingVersions = dryRun?.willApply.map((migration) => migration.version) ?? database?.pendingVersions ?? []
 
   return (
-    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("설정/마이그레이션 백업", "Config, migration, backup")}</div>
@@ -1247,7 +1269,7 @@ function OperationsDiagnosticsPanel({
   const { text, displayText } = useUiI18n()
 
   return (
-    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("운영 진단", "Operational diagnostics")}</div>
@@ -1328,7 +1350,7 @@ function AdvancedScheduleStatusPanel({
   const nextRuns = snapshot?.nextRuns ?? []
 
   return (
-    <div className="rounded-[1.75rem] border border-stone-200 bg-stone-50 p-5">
+    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("스케줄 상태", "Schedule status")}</div>
