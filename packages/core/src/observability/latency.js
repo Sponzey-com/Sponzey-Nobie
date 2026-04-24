@@ -8,8 +8,11 @@ export const LATENCY_BUDGET_MS = {
     orchestration_planning_latency_ms: 2_000,
     candidate_search_latency_ms: 250,
     contract_ai_comparison_latency_ms: 1_800,
+    sub_session_spawn_ack_ms: 300,
     sub_session_queue_wait_ms: 500,
     first_progress_latency_ms: 3_000,
+    model_execution_latency_ms: 5_000,
+    monitoring_snapshot_latency_ms: 1_000,
     approval_aggregation_latency_ms: 1_000,
     finalization_latency_ms: 1_500,
     execution_latency_ms: 5_000,
@@ -117,9 +120,7 @@ export function getFastResponseHealthSnapshot(input = {}) {
         reason,
         recentWindowMs,
         metrics,
-        recentTimeouts: recent
-            .filter((record) => record.status === "timeout")
-            .slice(-10),
+        recentTimeouts: recent.filter((record) => record.status === "timeout").slice(-10),
     };
 }
 //# sourceMappingURL=latency.js.map

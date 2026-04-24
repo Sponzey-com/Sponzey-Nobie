@@ -1,6 +1,6 @@
 # Sponzey Nobie
 
-[한국어](./README.md) | [English](./README.en.md)
+[English](./README.md) | [한국어](./README.ko.md)
 
 <p align="center">
   <img src="./resource/nobie-1-512.png" alt="Nobie" width="220" />

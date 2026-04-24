@@ -36,6 +36,8 @@ export interface McpToolCallPayload extends Record<string, unknown> {
         nobie: {
             agent_id: string;
             session_id: string;
+            binding_id?: string;
+            client_session_id?: string;
             permission_profile: {
                 profile_id: string;
                 risk_ceiling: string;

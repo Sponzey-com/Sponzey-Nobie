@@ -11,7 +11,9 @@ function toArray(value) {
     return Array.isArray(value) ? value : [];
 }
 function toStringArray(value) {
-    return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+    return Array.isArray(value)
+        ? value.filter((item) => typeof item === "string")
+        : [];
 }
 function normalizeInputSchema(value) {
     const raw = toObject(value);
@@ -43,10 +45,10 @@ function extractToolOutput(payload) {
     return JSON.stringify(payload, null, 2);
 }
 function isAbortSignal(value) {
-    return Boolean(value
-        && typeof value === "object"
-        && "aborted" in value
-        && typeof value.addEventListener === "function");
+    return Boolean(value &&
+        typeof value === "object" &&
+        "aborted" in value &&
+        typeof value.addEventListener === "function");
 }
 export function buildMcpToolCallPayload(name, args, context) {
     if (!context) {
@@ -59,6 +61,8 @@ export function buildMcpToolCallPayload(name, args, context) {
             nobie: {
                 agent_id: context.agentId,
                 session_id: context.sessionId,
+                ...(context.bindingId ? { binding_id: context.bindingId } : {}),
+                ...(context.clientSessionId ? { client_session_id: context.clientSessionId } : {}),
                 permission_profile: {
                     profile_id: context.permissionProfile.profileId,
                     risk_ceiling: context.permissionProfile.riskCeiling,
@@ -72,7 +76,9 @@ export function buildMcpToolCallPayload(name, args, context) {
                 audit_id: context.auditId,
                 ...(context.runId ? { run_id: context.runId } : {}),
                 ...(context.requestGroupId ? { request_group_id: context.requestGroupId } : {}),
-                ...(context.capabilityDelegationId ? { capability_delegation_id: context.capabilityDelegationId } : {}),
+                ...(context.capabilityDelegationId
+                    ? { capability_delegation_id: context.capabilityDelegationId }
+                    : {}),
             },
         },
     };
@@ -245,20 +251,12 @@ export class McpStdioClient {
         const payload = JSON.stringify({ jsonrpc: "2.0", method, params });
         child.stdin.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`);
     }
-    request(method, params, timeoutMs, signal) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                await this.ensureProcess();
-            }
-            catch (error) {
-                reject(error instanceof Error ? error : new Error(String(error)));
-                return;
-            }
-            const child = this.process;
-            if (!child) {
-                reject(new Error(`MCP server "${this.name}" process is not available.`));
-                return;
-            }
+    async request(method, params, timeoutMs, signal) {
+        await this.ensureProcess();
+        const child = this.process;
+        if (!child)
+            throw new Error(`MCP server "${this.name}" process is not available.`);
+        return new Promise((resolve, reject) => {
             const id = ++this.requestId;
             const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
             const timeout = setTimeout(() => {

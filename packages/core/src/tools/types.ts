@@ -23,9 +23,14 @@ export interface ToolContext {
   permissionProfile?: PermissionProfile
   skillMcpAllowlist?: SkillMcpAllowlist
   capabilityRateLimit?: CapabilityPolicy["rateLimit"]
+  capabilityBindingId?: string
   secretScopeId?: string
+  parentSecretScopeId?: string
+  allowParentSecretFallback?: boolean
+  fallbackSecretScopeAllowlist?: string[]
   auditId?: string
   capabilityDelegationId?: string
+  capabilityResultSharing?: "data_exchange" | "result_report_artifact"
 }
 
 export interface ArtifactDeliveryResultDetails {
@@ -38,15 +43,21 @@ export interface ArtifactDeliveryResultDetails {
   source: ToolContext["source"]
 }
 
-export function isArtifactDeliveryResultDetails(value: unknown): value is ArtifactDeliveryResultDetails {
+export function isArtifactDeliveryResultDetails(
+  value: unknown,
+): value is ArtifactDeliveryResultDetails {
   if (!value || typeof value !== "object") return false
 
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
-  return candidate.kind === "artifact_delivery"
-    && (candidate.channel === "telegram" || candidate.channel === "webui" || candidate.channel === "slack")
-    && typeof candidate.filePath === "string"
-    && typeof candidate.size === "number"
-    && typeof candidate.source === "string"
+  return (
+    candidate.kind === "artifact_delivery" &&
+    (candidate.channel === "telegram" ||
+      candidate.channel === "webui" ||
+      candidate.channel === "slack") &&
+    typeof candidate.filePath === "string" &&
+    typeof candidate.size === "number" &&
+    typeof candidate.source === "string"
+  )
 }
 
 export interface ToolResult {

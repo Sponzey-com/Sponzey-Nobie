@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { normalizeNickname } from "../contracts/sub-agent-orchestration.js";
 import { beginMigrationLock, ensureMigrationSafetyTables, failMigrationLock, getActiveMigrationLock, releaseMigrationLock, updateMigrationLockPhase, verifyMigrationState, } from "./migration-safety.js";
 const MEMORY_SCOPE_SQL = "'global', 'session', 'task', 'artifact', 'diagnostic', 'long-term', 'short-term', 'schedule', 'flash-feedback'";
 function rebuildMemoryScopeTables(db) {
@@ -103,6 +104,55 @@ function rebuildMemoryScopeTables(db) {
 
     PRAGMA foreign_keys = ON;
   `);
+}
+function isRecord(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function asString(value) {
+    return typeof value === "string" && value.trim() ? value : undefined;
+}
+function asNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+function asBoolean(value) {
+    return typeof value === "boolean" ? value : undefined;
+}
+function asStringArray(value) {
+    if (Array.isArray(value))
+        return value.filter((item) => typeof item === "string" && item.trim().length > 0);
+    return [];
+}
+function parseJsonRecord(value) {
+    if (!value)
+        return undefined;
+    try {
+        const parsed = JSON.parse(value);
+        return isRecord(parsed) ? parsed : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function parseJsonStringArray(value) {
+    if (!value)
+        return [];
+    try {
+        return asStringArray(JSON.parse(value));
+    }
+    catch {
+        return [];
+    }
+}
+function toJsonOrNull(value) {
+    return isRecord(value) || Array.isArray(value) ? JSON.stringify(value) : null;
+}
+function tableColumns(db, table) {
+    return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+}
+function tableExists(db, table) {
+    return Boolean(db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table));
 }
 export const MIGRATIONS = [
     {
@@ -848,7 +898,9 @@ export const MIGRATIONS = [
     {
         version: 23,
         up(db) {
-            const scheduleRunsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schedule_runs'").get();
+            const scheduleRunsTable = db
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schedule_runs'")
+                .get();
             if (scheduleRunsTable) {
                 const scheduleRunColumns = db.prepare(`PRAGMA table_info(schedule_runs)`).all();
                 const hasRunColumn = (name) => scheduleRunColumns.some((column) => column.name === name);
@@ -1599,14 +1651,485 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 36,
+        up(db) {
+            const agentColumns = tableColumns(db, "agent_configs");
+            if (!agentColumns.has("normalized_nickname")) {
+                db.exec(`ALTER TABLE agent_configs ADD COLUMN normalized_nickname TEXT`);
+            }
+            if (!agentColumns.has("model_profile_json")) {
+                db.exec(`ALTER TABLE agent_configs ADD COLUMN model_profile_json TEXT`);
+            }
+            if (!agentColumns.has("delegation_policy_json")) {
+                db.exec(`ALTER TABLE agent_configs ADD COLUMN delegation_policy_json TEXT`);
+            }
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_normalized_nickname
+          ON agent_configs(normalized_nickname)
+          WHERE normalized_nickname IS NOT NULL;
+      `);
+            const teamColumns = tableColumns(db, "team_configs");
+            if (!teamColumns.has("normalized_nickname")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN normalized_nickname TEXT`);
+            }
+            if (!teamColumns.has("owner_agent_id")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN owner_agent_id TEXT`);
+            }
+            if (!teamColumns.has("lead_agent_id")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN lead_agent_id TEXT`);
+            }
+            if (!teamColumns.has("member_count_min")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN member_count_min INTEGER`);
+            }
+            if (!teamColumns.has("member_count_max")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN member_count_max INTEGER`);
+            }
+            if (!teamColumns.has("required_team_roles_json")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN required_team_roles_json TEXT`);
+            }
+            if (!teamColumns.has("required_capability_tags_json")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN required_capability_tags_json TEXT`);
+            }
+            if (!teamColumns.has("result_policy")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN result_policy TEXT`);
+            }
+            if (!teamColumns.has("conflict_policy")) {
+                db.exec(`ALTER TABLE team_configs ADD COLUMN conflict_policy TEXT`);
+            }
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_team_configs_normalized_nickname
+          ON team_configs(normalized_nickname)
+          WHERE normalized_nickname IS NOT NULL;
+      `);
+            const membershipColumns = tableColumns(db, "agent_team_memberships");
+            const needsMembershipRebuild = !membershipColumns.has("membership_id") ||
+                !membershipColumns.has("owner_agent_id_snapshot") ||
+                !membershipColumns.has("team_roles_json") ||
+                !membershipColumns.has("primary_role") ||
+                !membershipColumns.has("required") ||
+                !membershipColumns.has("fallback_for_agent_id") ||
+                !membershipColumns.has("sort_order");
+            if (needsMembershipRebuild) {
+                db.exec(`
+          ALTER TABLE agent_team_memberships RENAME TO agent_team_memberships_v36;
+          DROP INDEX IF EXISTS idx_agent_team_memberships_agent;
+          DROP INDEX IF EXISTS idx_agent_team_memberships_team;
+          DROP INDEX IF EXISTS idx_agent_team_memberships_membership_id;
+
+          CREATE TABLE agent_team_memberships (
+            membership_id TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            owner_agent_id_snapshot TEXT,
+            team_roles_json TEXT NOT NULL,
+            primary_role TEXT NOT NULL,
+            required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0, 1)),
+            fallback_for_agent_id TEXT,
+            status TEXT NOT NULL CHECK(status IN ('active', 'inactive', 'fallback_only', 'unresolved', 'removed')),
+            role_hint TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            schema_version INTEGER NOT NULL,
+            audit_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (team_id, agent_id)
+          );
+        `);
+                const legacyMemberships = db
+                    .prepare(`SELECT team_id, agent_id, status, role_hint, schema_version, audit_id, created_at, updated_at
+           FROM agent_team_memberships_v36
+           ORDER BY team_id ASC, created_at ASC, agent_id ASC`)
+                    .all();
+                const nextSortOrder = new Map();
+                const insertMembership = db.prepare(`INSERT INTO agent_team_memberships
+           (membership_id, team_id, agent_id, owner_agent_id_snapshot, team_roles_json, primary_role, required,
+            fallback_for_agent_id, status, role_hint, sort_order, schema_version, audit_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+                for (const row of legacyMemberships) {
+                    const sortOrder = nextSortOrder.get(row.team_id) ?? 0;
+                    nextSortOrder.set(row.team_id, sortOrder + 1);
+                    const primaryRole = row.role_hint?.trim() || "member";
+                    const nextStatus = row.status === "removed"
+                        ? "removed"
+                        : row.status === "unresolved"
+                            ? "unresolved"
+                            : "active";
+                    insertMembership.run(`${row.team_id}:membership:${sortOrder + 1}`, row.team_id, row.agent_id, null, JSON.stringify([primaryRole]), primaryRole, nextStatus === "removed" ? 0 : 1, null, nextStatus, row.role_hint, sortOrder, row.schema_version, row.audit_id, row.created_at, row.updated_at);
+                }
+                db.exec(`DROP TABLE agent_team_memberships_v36`);
+            }
+            db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_team_memberships_membership_id
+          ON agent_team_memberships(membership_id);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_team_memberships_agent
+          ON agent_team_memberships(agent_id, status, sort_order ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_team_memberships_team
+          ON agent_team_memberships(team_id, status, sort_order ASC);
+      `);
+            const subSessionColumns = tableColumns(db, "run_subsessions");
+            if (!subSessionColumns.has("parent_sub_session_id")) {
+                db.exec(`ALTER TABLE run_subsessions ADD COLUMN parent_sub_session_id TEXT`);
+            }
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_run_subsessions_parent_sub_session
+          ON run_subsessions(parent_sub_session_id, created_at ASC)
+          WHERE parent_sub_session_id IS NOT NULL;
+      `);
+            const exchangeColumns = tableColumns(db, "agent_data_exchanges");
+            if (!exchangeColumns.has("source_nickname_snapshot")) {
+                db.exec(`ALTER TABLE agent_data_exchanges ADD COLUMN source_nickname_snapshot TEXT`);
+            }
+            if (!exchangeColumns.has("recipient_nickname_snapshot")) {
+                db.exec(`ALTER TABLE agent_data_exchanges ADD COLUMN recipient_nickname_snapshot TEXT`);
+            }
+            if (!exchangeColumns.has("contract_json")) {
+                db.exec(`ALTER TABLE agent_data_exchanges ADD COLUMN contract_json TEXT`);
+            }
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS nickname_namespaces (
+          normalized_nickname TEXT PRIMARY KEY,
+          entity_type TEXT NOT NULL CHECK(entity_type IN ('agent', 'team')),
+          entity_id TEXT NOT NULL,
+          nickname_snapshot TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL CHECK(source IN ('manual', 'import', 'system')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nickname_namespaces_entity
+          ON nickname_namespaces(entity_type, entity_id);
+
+        CREATE INDEX IF NOT EXISTS idx_nickname_namespaces_status
+          ON nickname_namespaces(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_relationships (
+          edge_id TEXT PRIMARY KEY,
+          parent_agent_id TEXT NOT NULL,
+          child_agent_id TEXT NOT NULL,
+          relationship_type TEXT NOT NULL CHECK(relationship_type IN ('parent_child')),
+          status TEXT NOT NULL CHECK(status IN ('active', 'disabled', 'archived')),
+          sort_order INTEGER NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(parent_agent_id, child_agent_id, relationship_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_relationships_parent
+          ON agent_relationships(parent_agent_id, status, sort_order ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_relationships_child
+          ON agent_relationships(child_agent_id, status, sort_order ASC);
+
+        CREATE TABLE IF NOT EXISTS team_execution_plans (
+          team_execution_plan_id TEXT PRIMARY KEY,
+          parent_run_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          team_nickname_snapshot TEXT,
+          owner_agent_id TEXT NOT NULL,
+          lead_agent_id TEXT NOT NULL,
+          member_task_assignments_json TEXT NOT NULL,
+          reviewer_agent_ids_json TEXT NOT NULL,
+          verifier_agent_ids_json TEXT NOT NULL,
+          fallback_assignments_json TEXT NOT NULL,
+          coverage_report_json TEXT NOT NULL,
+          conflict_policy_snapshot TEXT NOT NULL CHECK(conflict_policy_snapshot IN ('lead_decides', 'owner_decides', 'reviewer_decides', 'report_conflict')),
+          result_policy_snapshot TEXT NOT NULL CHECK(result_policy_snapshot IN ('lead_synthesis', 'owner_synthesis', 'reviewer_required', 'verifier_required', 'quorum_required')),
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_team_execution_plans_parent_run
+          ON team_execution_plans(parent_run_id, created_at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_team_execution_plans_team
+          ON team_execution_plans(team_id, created_at DESC);
+      `);
+            const deleteNicknameNamespaceByEntity = db.prepare("DELETE FROM nickname_namespaces WHERE entity_type = ? AND entity_id = ?");
+            const existingNicknameNamespace = db.prepare("SELECT normalized_nickname, entity_type, entity_id FROM nickname_namespaces WHERE normalized_nickname = ?");
+            const insertNicknameNamespace = db.prepare(`INSERT INTO nickname_namespaces
+         (normalized_nickname, entity_type, entity_id, nickname_snapshot, status, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+            const agentRows = db
+                .prepare(`SELECT agent_id, nickname, status, source, config_json, created_at, updated_at
+         FROM agent_configs
+         ORDER BY updated_at DESC, agent_id ASC`)
+                .all();
+            const updateAgentConfig = db.prepare(`UPDATE agent_configs
+         SET normalized_nickname = ?, model_profile_json = ?, delegation_policy_json = ?
+         WHERE agent_id = ?`);
+            for (const row of agentRows) {
+                const config = parseJsonRecord(row.config_json);
+                const normalizedNickname = row.nickname ? normalizeNickname(row.nickname) : null;
+                const modelProfileJson = toJsonOrNull(config?.["modelProfile"]);
+                const delegationPolicy = isRecord(config?.["delegationPolicy"])
+                    ? config["delegationPolicy"]
+                    : isRecord(config?.["delegation"])
+                        ? {
+                            enabled: asBoolean(config["delegation"]["enabled"]) ?? false,
+                            maxParallelSessions: asNumber(config["delegation"]["maxParallelSessions"]) ?? 1,
+                            retryBudget: asNumber(config["delegation"]["retryBudget"]) ?? 0,
+                        }
+                        : null;
+                updateAgentConfig.run(normalizedNickname, modelProfileJson, toJsonOrNull(delegationPolicy), row.agent_id);
+                deleteNicknameNamespaceByEntity.run("agent", row.agent_id);
+                if (!normalizedNickname)
+                    continue;
+                const existing = existingNicknameNamespace.get(normalizedNickname);
+                if (existing && (existing.entity_type !== "agent" || existing.entity_id !== row.agent_id))
+                    continue;
+                insertNicknameNamespace.run(normalizedNickname, "agent", row.agent_id, row.nickname ?? normalizedNickname, row.status, row.source, row.created_at, row.updated_at);
+            }
+            const teamRows = db
+                .prepare(`SELECT team_id, nickname, status, source, config_json, role_hints_json, member_agent_ids_json, created_at, updated_at
+         FROM team_configs
+         ORDER BY updated_at DESC, team_id ASC`)
+                .all();
+            const updateTeamConfig = db.prepare(`UPDATE team_configs
+         SET normalized_nickname = ?, owner_agent_id = ?, lead_agent_id = ?, member_count_min = ?, member_count_max = ?,
+             required_team_roles_json = ?, required_capability_tags_json = ?, result_policy = ?, conflict_policy = ?
+         WHERE team_id = ?`);
+            for (const row of teamRows) {
+                const config = parseJsonRecord(row.config_json);
+                const memberAgentIds = asStringArray(config?.["memberAgentIds"]);
+                const fallbackMemberAgentIds = memberAgentIds.length > 0
+                    ? memberAgentIds
+                    : parseJsonStringArray(row.member_agent_ids_json);
+                const roleHints = asStringArray(config?.["roleHints"]);
+                const fallbackRoleHints = roleHints.length > 0 ? roleHints : parseJsonStringArray(row.role_hints_json);
+                const ownerAgentId = asString(config?.["ownerAgentId"]) ?? "agent:nobie";
+                const leadAgentId = asString(config?.["leadAgentId"]) ?? fallbackMemberAgentIds[0] ?? ownerAgentId;
+                const requiredTeamRoles = Array.from(new Set([...asStringArray(config?.["requiredTeamRoles"]), ...fallbackRoleHints]));
+                const requiredCount = Array.isArray(config?.["memberships"])
+                    ? config["memberships"].filter((membership) => {
+                        if (!isRecord(membership))
+                            return false;
+                        return asBoolean(membership["required"]) ?? true;
+                    }).length
+                    : fallbackMemberAgentIds.length;
+                const memberCountMin = asNumber(config?.["memberCountMin"]) ?? requiredCount;
+                const memberCountMax = asNumber(config?.["memberCountMax"]) ??
+                    Math.max(memberCountMin, fallbackMemberAgentIds.length);
+                const normalizedNickname = row.nickname ? normalizeNickname(row.nickname) : null;
+                updateTeamConfig.run(normalizedNickname, ownerAgentId, leadAgentId, memberCountMin, memberCountMax, JSON.stringify(requiredTeamRoles), JSON.stringify(asStringArray(config?.["requiredCapabilityTags"])), asString(config?.["resultPolicy"]) ?? "lead_synthesis", asString(config?.["conflictPolicy"]) ?? "lead_decides", row.team_id);
+                deleteNicknameNamespaceByEntity.run("team", row.team_id);
+                if (!normalizedNickname)
+                    continue;
+                const existing = existingNicknameNamespace.get(normalizedNickname);
+                if (existing && (existing.entity_type !== "team" || existing.entity_id !== row.team_id))
+                    continue;
+                insertNicknameNamespace.run(normalizedNickname, "team", row.team_id, row.nickname ?? normalizedNickname, row.status, row.source, row.created_at, row.updated_at);
+            }
+        },
+    },
+    {
+        version: 37,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_catalog (
+          skill_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          display_name TEXT NOT NULL,
+          risk TEXT NOT NULL CHECK(risk IN ('safe', 'moderate', 'external', 'sensitive', 'dangerous')),
+          tool_names_json TEXT NOT NULL,
+          metadata_json TEXT,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_catalog_status
+          ON skill_catalog(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_catalog_audit
+          ON skill_catalog(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS mcp_server_catalog (
+          mcp_server_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          display_name TEXT NOT NULL,
+          risk TEXT NOT NULL CHECK(risk IN ('safe', 'moderate', 'external', 'sensitive', 'dangerous')),
+          tool_names_json TEXT NOT NULL,
+          metadata_json TEXT,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_server_catalog_status
+          ON mcp_server_catalog(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_server_catalog_audit
+          ON mcp_server_catalog(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS agent_capability_bindings (
+          binding_id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          capability_kind TEXT NOT NULL CHECK(capability_kind IN ('skill', 'mcp_server')),
+          catalog_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          secret_scope_id TEXT,
+          enabled_tool_names_json TEXT NOT NULL,
+          disabled_tool_names_json TEXT NOT NULL,
+          permission_profile_json TEXT,
+          rate_limit_json TEXT,
+          approval_required_from TEXT,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER,
+          UNIQUE(agent_id, capability_kind, catalog_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_capability_bindings_agent
+          ON agent_capability_bindings(agent_id, status, capability_kind, catalog_id);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_capability_bindings_catalog
+          ON agent_capability_bindings(capability_kind, catalog_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_capability_bindings_audit
+          ON agent_capability_bindings(audit_id)
+          WHERE audit_id IS NOT NULL;
+      `);
+        },
+    },
+    {
+        version: 38,
+        up(db) {
+            if (!tableExists(db, "capability_delegations"))
+                return;
+            db.exec(`
+        PRAGMA foreign_keys = OFF;
+        PRAGMA defer_foreign_keys = ON;
+
+        CREATE TABLE IF NOT EXISTS capability_delegations_v38 (
+          delegation_id TEXT PRIMARY KEY,
+          requester_owner_type TEXT NOT NULL,
+          requester_owner_id TEXT NOT NULL,
+          provider_owner_type TEXT NOT NULL,
+          provider_owner_id TEXT NOT NULL,
+          capability TEXT NOT NULL,
+          risk TEXT NOT NULL CHECK(risk IN ('safe', 'moderate', 'external', 'sensitive', 'dangerous')),
+          status TEXT NOT NULL CHECK(status IN ('requested', 'approved', 'denied', 'expired', 'completed', 'failed')),
+          input_package_ids_json TEXT NOT NULL,
+          result_package_id TEXT,
+          approval_id TEXT,
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        INSERT INTO capability_delegations_v38
+          (delegation_id, requester_owner_type, requester_owner_id, provider_owner_type, provider_owner_id, capability, risk,
+           status, input_package_ids_json, result_package_id, approval_id, contract_json, schema_version, audit_id,
+           idempotency_key, created_at, updated_at)
+        SELECT delegation_id, requester_owner_type, requester_owner_id, provider_owner_type, provider_owner_id, capability, risk,
+               status, input_package_ids_json, result_package_id, approval_id, contract_json, schema_version, audit_id,
+               idempotency_key, created_at, updated_at
+        FROM capability_delegations;
+
+        DROP TABLE capability_delegations;
+        ALTER TABLE capability_delegations_v38 RENAME TO capability_delegations;
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_requester
+          ON capability_delegations(requester_owner_type, requester_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_provider
+          ON capability_delegations(provider_owner_type, provider_owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_status
+          ON capability_delegations(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_capability_delegations_audit
+          ON capability_delegations(audit_id)
+          WHERE audit_id IS NOT NULL;
+
+        PRAGMA foreign_keys = ON;
+      `);
+        },
+    },
+    {
+        version: 39,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS orchestration_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          emitted_at INTEGER NOT NULL,
+          event_kind TEXT NOT NULL,
+          run_id TEXT,
+          parent_run_id TEXT,
+          request_group_id TEXT,
+          sub_session_id TEXT,
+          agent_id TEXT,
+          team_id TEXT,
+          exchange_id TEXT,
+          approval_id TEXT,
+          correlation_id TEXT NOT NULL,
+          dedupe_key TEXT,
+          source TEXT NOT NULL,
+          severity TEXT NOT NULL CHECK(severity IN ('debug', 'info', 'warning', 'error')),
+          summary TEXT NOT NULL,
+          payload_redacted_json TEXT NOT NULL,
+          payload_raw_ref TEXT,
+          producer_task TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_run
+          ON orchestration_events(run_id, sequence ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_request_group
+          ON orchestration_events(request_group_id, sequence ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_sub_session
+          ON orchestration_events(sub_session_id, sequence ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_kind
+          ON orchestration_events(event_kind, sequence DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_cursor
+          ON orchestration_events(sequence ASC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_orchestration_events_dedupe
+          ON orchestration_events(dedupe_key)
+          WHERE dedupe_key IS NOT NULL AND dedupe_key != '';
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
-    return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get());
+    return Boolean(db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+        .get());
 }
 export function getAppliedMigrationVersions(db) {
     if (!schemaMigrationsTableExists(db))
         return [];
-    return db.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
+    return db
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all()
+        .map((row) => row.version);
 }
 export function getPendingMigrationVersions(db) {
     const applied = new Set(getAppliedMigrationVersions(db));

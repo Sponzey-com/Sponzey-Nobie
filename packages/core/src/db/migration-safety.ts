@@ -1,7 +1,14 @@
 import type Database from "better-sqlite3"
 
 export type MigrationLockStatus = "active" | "released" | "failed"
-export type MigrationLockPhase = "preflight" | "backup" | "lock" | "apply" | "verify" | "unlock" | "failed"
+export type MigrationLockPhase =
+  | "preflight"
+  | "backup"
+  | "lock"
+  | "apply"
+  | "verify"
+  | "unlock"
+  | "failed"
 
 export interface MigrationLockRow {
   id: string
@@ -44,6 +51,19 @@ const REQUIRED_TABLES = [
   "rollout_evidence",
   "root_runs",
   "audit_logs",
+  "agent_configs",
+  "team_configs",
+  "agent_team_memberships",
+  "nickname_namespaces",
+  "agent_relationships",
+  "run_subsessions",
+  "agent_data_exchanges",
+  "capability_delegations",
+  "learning_events",
+  "profile_history_versions",
+  "profile_restore_events",
+  "team_execution_plans",
+  "orchestration_events",
 ]
 
 const REQUIRED_INDEXES = [
@@ -51,6 +71,12 @@ const REQUIRED_INDEXES = [
   "idx_runtime_feature_flags_mode",
   "idx_rollout_shadow_compares_feature",
   "idx_rollout_evidence_feature",
+  "idx_nickname_namespaces_entity",
+  "idx_agent_relationships_parent",
+  "idx_run_subsessions_parent_sub_session",
+  "idx_team_execution_plans_parent_run",
+  "idx_orchestration_events_run",
+  "idx_orchestration_events_cursor",
 ]
 
 export const MIGRATION_ROLLBACK_RUNBOOK_REF = "migration-rollback-runbook"
@@ -79,30 +105,41 @@ export function ensureMigrationSafetyTables(db: Database.Database): void {
 
 export function getActiveMigrationLock(db: Database.Database): MigrationLockRow | null {
   ensureMigrationSafetyTables(db)
-  return db.prepare<[], MigrationLockRow>(
-    `SELECT * FROM migration_locks
+  return (
+    db
+      .prepare<[], MigrationLockRow>(
+        `SELECT * FROM migration_locks
      WHERE status = 'active'
      ORDER BY updated_at DESC
      LIMIT 1`,
-  ).get() ?? null
+      )
+      .get() ?? null
+  )
 }
 
 export function getLatestMigrationLock(db: Database.Database): MigrationLockRow | null {
   ensureMigrationSafetyTables(db)
-  return db.prepare<[], MigrationLockRow>(
-    `SELECT * FROM migration_locks
+  return (
+    db
+      .prepare<[], MigrationLockRow>(
+        `SELECT * FROM migration_locks
      ORDER BY updated_at DESC
      LIMIT 1`,
-  ).get() ?? null
+      )
+      .get() ?? null
+  )
 }
 
-export function beginMigrationLock(db: Database.Database, input: {
-  id: string
-  pendingVersions: number[]
-  lockedBy?: string
-  backupSnapshotId?: string | null
-  now?: number
-}): MigrationLockRow {
+export function beginMigrationLock(
+  db: Database.Database,
+  input: {
+    id: string
+    pendingVersions: number[]
+    lockedBy?: string
+    backupSnapshotId?: string | null
+    now?: number
+  },
+): MigrationLockRow {
   ensureMigrationSafetyTables(db)
   const existing = getActiveMigrationLock(db)
   if (existing) return existing
@@ -122,19 +159,31 @@ export function beginMigrationLock(db: Database.Database, input: {
     JSON.stringify(input.pendingVersions),
     MIGRATION_ROLLBACK_RUNBOOK_REF,
   )
-  return getActiveMigrationLock(db)!
+  const active = getActiveMigrationLock(db)
+  if (!active) throw new Error("migration lock was not created")
+  return active
 }
 
-export function updateMigrationLockPhase(db: Database.Database, lockId: string, phase: MigrationLockPhase, now = Date.now()): void {
+export function updateMigrationLockPhase(
+  db: Database.Database,
+  lockId: string,
+  phase: MigrationLockPhase,
+  now = Date.now(),
+): void {
   ensureMigrationSafetyTables(db)
-  db.prepare(`UPDATE migration_locks SET phase = ?, updated_at = ? WHERE id = ? AND status = 'active'`).run(phase, now, lockId)
+  db.prepare(
+    `UPDATE migration_locks SET phase = ?, updated_at = ? WHERE id = ? AND status = 'active'`,
+  ).run(phase, now, lockId)
 }
 
-export function releaseMigrationLock(db: Database.Database, input: {
-  lockId: string
-  verifyReport: MigrationVerificationReport
-  now?: number
-}): void {
+export function releaseMigrationLock(
+  db: Database.Database,
+  input: {
+    lockId: string
+    verifyReport: MigrationVerificationReport
+    now?: number
+  },
+): void {
   ensureMigrationSafetyTables(db)
   const now = input.now ?? Date.now()
   db.prepare(
@@ -144,38 +193,60 @@ export function releaseMigrationLock(db: Database.Database, input: {
   ).run(now, now, JSON.stringify(input.verifyReport), input.lockId)
 }
 
-export function failMigrationLock(db: Database.Database, input: {
-  lockId: string
-  error: string
-  verifyReport?: MigrationVerificationReport | null
-  now?: number
-}): void {
+export function failMigrationLock(
+  db: Database.Database,
+  input: {
+    lockId: string
+    error: string
+    verifyReport?: MigrationVerificationReport | null
+    now?: number
+  },
+): void {
   ensureMigrationSafetyTables(db)
   const now = input.now ?? Date.now()
   db.prepare(
     `UPDATE migration_locks
      SET status = 'failed', phase = 'failed', updated_at = ?, error_message = ?, verify_report_json = ?
      WHERE id = ?`,
-  ).run(now, input.error, input.verifyReport ? JSON.stringify(input.verifyReport) : null, input.lockId)
+  ).run(
+    now,
+    input.error,
+    input.verifyReport ? JSON.stringify(input.verifyReport) : null,
+    input.lockId,
+  )
 }
 
 function objectExists(db: Database.Database, type: "table" | "index", name: string): boolean {
-  const row = db.prepare<[string, string], { name: string }>(
-    `SELECT name FROM sqlite_master WHERE type = ? AND name = ?`,
-  ).get(type, name)
+  const row = db
+    .prepare<[string, string], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = ? AND name = ?",
+    )
+    .get(type, name)
   return Boolean(row)
 }
 
 function latestSchemaVersion(db: Database.Database): number {
   if (!objectExists(db, "table", "schema_migrations")) return 0
-  return db.prepare<[], { version: number | null }>(`SELECT MAX(version) AS version FROM schema_migrations`).get()?.version ?? 0
+  return (
+    db
+      .prepare<[], { version: number | null }>(
+        "SELECT MAX(version) AS version FROM schema_migrations",
+      )
+      .get()?.version ?? 0
+  )
 }
 
 export function verifyMigrationState(db: Database.Database): MigrationVerificationReport {
   ensureMigrationSafetyTables(db)
-  const requiredTables = REQUIRED_TABLES.map((name) => ({ name, ok: objectExists(db, "table", name) }))
-  const requiredIndexes = REQUIRED_INDEXES.map((name) => ({ name, ok: objectExists(db, "index", name) }))
-  const integrityRow = db.prepare<[], { integrity_check: string }>(`PRAGMA integrity_check`).get()
+  const requiredTables = REQUIRED_TABLES.map((name) => ({
+    name,
+    ok: objectExists(db, "table", name),
+  }))
+  const requiredIndexes = REQUIRED_INDEXES.map((name) => ({
+    name,
+    ok: objectExists(db, "index", name),
+  }))
+  const integrityRow = db.prepare<[], { integrity_check: string }>("PRAGMA integrity_check").get()
   const integrityCheck = integrityRow?.integrity_check ?? "unknown"
   const missingTables = requiredTables.filter((item) => !item.ok).map((item) => item.name)
   const missingIndexes = requiredIndexes.filter((item) => !item.ok).map((item) => item.name)
@@ -190,7 +261,10 @@ export function verifyMigrationState(db: Database.Database): MigrationVerificati
   }
 }
 
-export function checkMigrationWriteGuard(db: Database.Database, operation: string): MigrationWriteGuardResult {
+export function checkMigrationWriteGuard(
+  db: Database.Database,
+  operation: string,
+): MigrationWriteGuardResult {
   const lock = getActiveMigrationLock(db)
   if (!lock) {
     return { ok: true, operation, lock: null, userMessage: null, recoveryGuide: null }
@@ -208,7 +282,8 @@ export function assertMigrationWriteAllowed(db: Database.Database, operation: st
   const guard = checkMigrationWriteGuard(db, operation)
   if (!guard.ok) {
     const error = new Error(`${guard.userMessage} (${operation})`)
-    ;(error as Error & { code?: string; lockId?: string | undefined }).code = "MIGRATION_LOCK_ACTIVE"
+    ;(error as Error & { code?: string; lockId?: string | undefined }).code =
+      "MIGRATION_LOCK_ACTIVE"
     ;(error as Error & { code?: string; lockId?: string | undefined }).lockId = guard.lock?.id
     throw error
   }

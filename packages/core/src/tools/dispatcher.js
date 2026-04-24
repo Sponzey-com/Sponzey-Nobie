@@ -1,14 +1,14 @@
-import { eventBus } from "../events/index.js";
-import { insertAuditLog, upsertTaskContinuity } from "../db/index.js";
-import { createLogger } from "../logger/index.js";
 import { getConfig } from "../config/index.js";
-import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus } from "../runs/store.js";
+import { insertAuditLog, upsertTaskContinuity } from "../db/index.js";
+import { eventBus } from "../events/index.js";
+import { createLogger } from "../logger/index.js";
 import { consumeApprovalRegistryDecision, createApprovalRegistryRequest, expireApprovalRegistryRequest, resolveApprovalRegistryDecision, } from "../runs/approval-registry.js";
-import { evaluateAndRecordToolPolicy, sanitizePolicyDenialForUser } from "../security/tool-policy.js";
+import { buildToolCallIdempotencyKey, findDuplicateToolCall, getAllowRepeatReason, isDedupeTargetTool, recordMessageLedgerEvent, } from "../runs/message-ledger.js";
+import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus, } from "../runs/store.js";
+import { buildWebRetrievalPolicyDecision } from "../runs/web-retrieval-policy.js";
 import { acquireAgentCapabilityRateLimit, evaluateAgentToolCapabilityPolicy, } from "../security/capability-isolation.js";
 import { isToolExtensionSelectable } from "../security/extension-governance.js";
-import { buildToolCallIdempotencyKey, findDuplicateToolCall, getAllowRepeatReason, isDedupeTargetTool, recordMessageLedgerEvent, } from "../runs/message-ledger.js";
-import { buildWebRetrievalPolicyDecision } from "../runs/web-retrieval-policy.js";
+import { evaluateAndRecordToolPolicy, sanitizePolicyDenialForUser, } from "../security/tool-policy.js";
 const log = createLogger("tools:dispatcher");
 function rememberApprovalContinuity(runId, params) {
     try {
@@ -119,10 +119,45 @@ export class ToolDispatcher {
     }
     getAll(options = {}) {
         const tools = [...this.tools.values()];
-        return options.includeIsolated ? tools : tools.filter((tool) => isToolExtensionSelectable(tool.name));
+        return options.includeIsolated
+            ? tools
+            : tools.filter((tool) => isToolExtensionSelectable(tool.name));
     }
     get(name) {
         return this.tools.get(name);
+    }
+    async dispatchAgentScoped(input) {
+        const agentId = input.ctx.agentId.trim();
+        const bindingId = input.capabilityBindingId.trim();
+        const auditId = input.ctx.auditId.trim();
+        if (!agentId) {
+            return {
+                success: false,
+                output: "에이전트 id가 없어 agent-scoped tool call을 실행하지 않았습니다.",
+                error: "agent_context_required",
+            };
+        }
+        if (!bindingId) {
+            return {
+                success: false,
+                output: "capability binding id가 없어 agent-scoped tool call을 실행하지 않았습니다.",
+                error: "capability_binding_id_required",
+            };
+        }
+        if (!auditId) {
+            return {
+                success: false,
+                output: "audit id가 없어 agent-scoped tool call을 실행하지 않았습니다.",
+                error: "audit_id_required",
+            };
+        }
+        return this.dispatch(input.toolName, input.params, {
+            ...input.ctx,
+            agentId,
+            auditId,
+            capabilityBindingId: bindingId,
+            capabilityResultSharing: input.resultSharing,
+        });
     }
     isToolAvailableForSource(tool, source) {
         return tool.availableSources == null || tool.availableSources.includes(source);
@@ -131,7 +166,7 @@ export class ToolDispatcher {
         if ((name === "web_search" || name === "web_fetch") && !ctx.allowWebAccess) {
             return {
                 success: false,
-                output: '웹 검색은 사용자가 명시적으로 요청했거나 최신/외부 정보 확인이 필요한 경우에만 허용됩니다.',
+                output: "웹 검색은 사용자가 명시적으로 요청했거나 최신/외부 정보 확인이 필요한 경우에만 허용됩니다.",
                 error: "WEB_ACCESS_DISABLED_BY_POLICY",
             };
         }
@@ -172,9 +207,16 @@ export class ToolDispatcher {
             toolName: name,
             params: idempotencyParams,
         });
-        const executionLedgerKey = allowRepeatReason ? `${toolIdempotencyBase}:repeat:${Date.now()}` : toolIdempotencyBase;
+        const executionLedgerKey = allowRepeatReason
+            ? `${toolIdempotencyBase}:repeat:${Date.now()}`
+            : toolIdempotencyBase;
         if (isDedupeTargetTool(name) && !allowRepeatReason) {
-            const duplicate = findDuplicateToolCall({ runId: ctx.runId, requestGroupId, toolName: name, params: idempotencyParams });
+            const duplicate = findDuplicateToolCall({
+                runId: ctx.runId,
+                requestGroupId,
+                toolName: name,
+                params: idempotencyParams,
+            });
             if (duplicate) {
                 const result = {
                     success: true,
@@ -223,15 +265,51 @@ export class ToolDispatcher {
                 ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
             },
         });
-    eventBus.emit("tool.before", {
-        sessionId: ctx.sessionId,
-        runId: ctx.runId,
-        requestGroupId,
-        toolName: name,
-        params,
-    });
+        eventBus.emit("tool.before", {
+            sessionId: ctx.sessionId,
+            runId: ctx.runId,
+            requestGroupId,
+            toolName: name,
+            params,
+        });
         const startMs = Date.now();
         let result;
+        const capabilityDecision = evaluateAgentToolCapabilityPolicy({
+            toolName: name,
+            riskLevel: tool.riskLevel,
+            ctx,
+        });
+        if (!capabilityDecision.allowed) {
+            result = {
+                success: false,
+                output: capabilityDecision.userMessage ??
+                    "에이전트 capability 정책에 따라 도구 실행을 시작하지 않았습니다.",
+                error: capabilityDecision.reasonCode,
+                details: {
+                    kind: "tool_policy_denied",
+                    reasonCode: capabilityDecision.reasonCode,
+                    capabilityPolicy: capabilityDecision.diagnostic,
+                },
+            };
+            recordMessageLedgerEvent({
+                runId: ctx.runId,
+                requestGroupId,
+                sessionKey: ctx.sessionId,
+                channel: ctx.source,
+                eventKind: "tool_failed",
+                idempotencyKey: `${executionLedgerKey}:capability-denied`,
+                status: "failed",
+                summary: `${name} capability denied`,
+                detail: {
+                    toolName: name,
+                    reasonCode: capabilityDecision.reasonCode,
+                    ...(capabilityDecision.agentId ? { agentId: capabilityDecision.agentId } : {}),
+                    ...(capabilityDecision.bindingId ? { bindingId: capabilityDecision.bindingId } : {}),
+                },
+            });
+            this.writeAudit(ctx, name, params, result, Date.now() - startMs, false, "policy:capability");
+            return result;
+        }
         const approvalRequired = this.shouldRequireApproval(tool, ctx);
         let approvedBy;
         let approvalGrant;
@@ -265,7 +343,9 @@ export class ToolDispatcher {
             params,
             ctx,
             ...(approvalGrant?.approvalId ? { approvalId: approvalGrant.approvalId } : {}),
-            ...(approvalGrant?.decision && approvalGrant.decision !== "deny" ? { approvalDecision: approvalGrant.decision } : {}),
+            ...(approvalGrant?.decision && approvalGrant.decision !== "deny"
+                ? { approvalDecision: approvalGrant.decision }
+                : {}),
         });
         if (policyDecision.decision === "deny") {
             result = {
@@ -287,16 +367,15 @@ export class ToolDispatcher {
                 idempotencyKey: `${executionLedgerKey}:policy-denied`,
                 status: "failed",
                 summary: `${name} policy denied`,
-                detail: { toolName: name, reasonCode: policyDecision.reasonCode, decisionId: policyDecision.id },
+                detail: {
+                    toolName: name,
+                    reasonCode: policyDecision.reasonCode,
+                    decisionId: policyDecision.id,
+                },
             });
             this.writeAudit(ctx, name, params, result, Date.now() - startMs, approvalRequired, approvedBy ?? "policy:deny");
             return result;
         }
-        const capabilityDecision = evaluateAgentToolCapabilityPolicy({
-            toolName: name,
-            riskLevel: tool.riskLevel,
-            ctx,
-        });
         let rateLimitLease;
         try {
             rateLimitLease = acquireAgentCapabilityRateLimit({ decision: capabilityDecision });
@@ -333,7 +412,11 @@ export class ToolDispatcher {
                 result = {
                     ...result,
                     details: {
-                        ...(result.details && typeof result.details === "object" && !Array.isArray(result.details) ? result.details : { rawDetails: result.details ?? null }),
+                        ...(result.details &&
+                            typeof result.details === "object" &&
+                            !Array.isArray(result.details)
+                            ? result.details
+                            : { rawDetails: result.details ?? null }),
                         webRetrievalPolicy,
                     },
                 };
@@ -348,14 +431,14 @@ export class ToolDispatcher {
             rateLimitLease?.release();
         }
         const durationMs = Date.now() - startMs;
-    eventBus.emit("tool.after", {
-        sessionId: ctx.sessionId,
-        runId: ctx.runId,
-        requestGroupId,
-        toolName: name,
-        success: result.success,
-        durationMs,
-    });
+        eventBus.emit("tool.after", {
+            sessionId: ctx.sessionId,
+            runId: ctx.runId,
+            requestGroupId,
+            toolName: name,
+            success: result.success,
+            durationMs,
+        });
         this.writeAudit(ctx, name, params, result, durationMs, approvalRequired, approvedBy);
         recordMessageLedgerEvent({
             runId: ctx.runId,
@@ -396,7 +479,9 @@ export class ToolDispatcher {
             riskLevel: tool.riskLevel,
             ctx,
         });
-        return tool.requiresApproval || APPROVAL_REQUIRED_TOOL_NAMES.has(tool.name) || capabilityDecision.approvalRequired;
+        return (tool.requiresApproval ||
+            APPROVAL_REQUIRED_TOOL_NAMES.has(tool.name) ||
+            capabilityDecision.approvalRequired);
     }
     async requestApproval(toolName, params, ctx, riskLevel) {
         const ownerKey = this.getApprovalOwnerKey(ctx.runId);
@@ -427,7 +512,9 @@ export class ToolDispatcher {
             });
             return Promise.resolve({ decision: "allow_once" });
         }
-        const kind = SCREEN_INTERACTION_TOOL_NAMES.has(toolName) ? "screen_confirmation" : "approval";
+        const kind = SCREEN_INTERACTION_TOOL_NAMES.has(toolName)
+            ? "screen_confirmation"
+            : "approval";
         const stepKey = kind === "screen_confirmation" ? "awaiting_user" : "awaiting_approval";
         const summary = kind === "screen_confirmation"
             ? `${toolName} 실행 전 화면 준비 확인을 기다립니다.`
@@ -448,7 +535,9 @@ export class ToolDispatcher {
                 sessionId: ctx.sessionId,
                 workDir: ctx.workDir,
                 ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
-                ...(ctx.capabilityDelegationId ? { capabilityDelegationId: ctx.capabilityDelegationId } : {}),
+                ...(ctx.capabilityDelegationId
+                    ? { capabilityDelegationId: ctx.capabilityDelegationId }
+                    : {}),
                 ...(ctx.secretScopeId ? { secretScopeId: ctx.secretScopeId } : {}),
                 ...(ctx.auditId ? { auditId: ctx.auditId } : {}),
             },
@@ -470,10 +559,17 @@ export class ToolDispatcher {
                 riskLevel,
                 expiresAt,
                 ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
-                ...(ctx.capabilityDelegationId ? { capabilityDelegationId: ctx.capabilityDelegationId } : {}),
+                ...(ctx.capabilityDelegationId
+                    ? { capabilityDelegationId: ctx.capabilityDelegationId }
+                    : {}),
             },
         });
-        this.pendingInteractionKinds.set(ctx.runId, { approvalId: approval.id, toolName, kind, stepKey });
+        this.pendingInteractionKinds.set(ctx.runId, {
+            approvalId: approval.id,
+            toolName,
+            kind,
+            stepKey,
+        });
         appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`);
         setRunStepStatus(ctx.runId, stepKey, "running", summary);
         updateRunStatus(ctx.runId, stepKey, summary, true);
@@ -492,7 +588,14 @@ export class ToolDispatcher {
                         log.warn(`Approval timeout for approvalId=${approval.id} tool="${toolName}"`);
                         expireApprovalRegistryRequest(approval.id);
                         this.finishApproval(ctx.runId, toolName, "deny", "timeout");
-                        eventBus.emit("approval.resolved", { approvalId: approval.id, runId: ctx.runId, decision: "deny", toolName, kind, reason: "timeout" });
+                        eventBus.emit("approval.resolved", {
+                            approvalId: approval.id,
+                            runId: ctx.runId,
+                            decision: "deny",
+                            toolName,
+                            kind,
+                            reason: "timeout",
+                        });
                         resolve({ decision: "deny", approvalId: approval.id });
                     }
                 }, timeoutMs ?? 60_000);
@@ -613,26 +716,42 @@ export class ToolDispatcher {
             const summary = kind === "screen_confirmation"
                 ? `${toolName} 실행 전 준비 확인을 이 요청 전체에 대해 마쳤습니다.`
                 : `${toolName} 실행을 이 요청 전체에 대해 허용했습니다.`;
-            appendRunEvent(runId, kind === "screen_confirmation" ? `${toolName} 준비 확인 완료(전체)` : `${toolName} 전체 승인`);
+            appendRunEvent(runId, kind === "screen_confirmation"
+                ? `${toolName} 준비 확인 완료(전체)`
+                : `${toolName} 전체 승인`);
             setRunStepStatus(runId, stepKey, "completed", summary);
             setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`);
             updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true);
-            rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: summary });
+            rememberApprovalContinuity(runId, {
+                pendingApprovals: [],
+                status: "running",
+                lastGoodState: summary,
+            });
             return;
         }
         if (decision === "allow_once") {
-            appendRunEvent(runId, kind === "screen_confirmation" ? `${toolName} 준비 확인 완료(이번 단계)` : `${toolName} 단계 승인`);
+            appendRunEvent(runId, kind === "screen_confirmation"
+                ? `${toolName} 준비 확인 완료(이번 단계)`
+                : `${toolName} 단계 승인`);
             setRunStepStatus(runId, stepKey, "completed", kind === "screen_confirmation"
                 ? `${toolName} 실행 전 준비 확인을 이번 단계에 대해 마쳤습니다.`
                 : `${toolName} 실행을 이번 단계에 대해 허용했습니다.`);
             setRunStepStatus(runId, "executing", "running", `${toolName} 실행을 계속합니다.`);
             updateRunStatus(runId, "running", `${toolName} 실행을 계속합니다.`, true);
-            rememberApprovalContinuity(runId, { pendingApprovals: [], status: "running", lastGoodState: `${toolName} 승인 완료` });
+            rememberApprovalContinuity(runId, {
+                pendingApprovals: [],
+                status: "running",
+                lastGoodState: `${toolName} 승인 완료`,
+            });
             return;
         }
         const denial = describeApprovalDenial(toolName, kind, reason);
         setRunStepStatus(runId, stepKey, "cancelled", denial.stepSummary);
-        rememberApprovalContinuity(runId, { pendingApprovals: [], status: "cancelled", lastGoodState: denial.runSummary });
+        rememberApprovalContinuity(runId, {
+            pendingApprovals: [],
+            status: "cancelled",
+            lastGoodState: denial.runSummary,
+        });
         cancelRootRun(runId, denial);
     }
     writeAudit(ctx, toolName, params, result, durationMs, approvalRequired, approvedBy) {
@@ -646,7 +765,9 @@ export class ToolDispatcher {
                 source: "agent",
                 tool_name: toolName,
                 params: JSON.stringify(params),
-                output: result.output.length > 4000 ? result.output.slice(0, 4000) + "\n…(truncated)" : result.output,
+                output: result.output.length > 4000
+                    ? `${result.output.slice(0, 4000)}\n…(truncated)`
+                    : result.output,
                 result: result.error === "denied" ? "denied" : result.success ? "success" : "failed",
                 duration_ms: durationMs,
                 approval_required: approvalRequired ? 1 : 0,

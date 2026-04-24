@@ -6,8 +6,11 @@ export type LatencyMetricName =
   | "orchestration_planning_latency_ms"
   | "candidate_search_latency_ms"
   | "contract_ai_comparison_latency_ms"
+  | "sub_session_spawn_ack_ms"
   | "sub_session_queue_wait_ms"
   | "first_progress_latency_ms"
+  | "model_execution_latency_ms"
+  | "monitoring_snapshot_latency_ms"
   | "approval_aggregation_latency_ms"
   | "finalization_latency_ms"
   | "execution_latency_ms"
@@ -64,8 +67,11 @@ export const LATENCY_BUDGET_MS: Record<LatencyMetricName, number> = {
   orchestration_planning_latency_ms: 2_000,
   candidate_search_latency_ms: 250,
   contract_ai_comparison_latency_ms: 1_800,
+  sub_session_spawn_ack_ms: 300,
   sub_session_queue_wait_ms: 500,
   first_progress_latency_ms: 3_000,
+  model_execution_latency_ms: 5_000,
+  monitoring_snapshot_latency_ms: 1_000,
   approval_aggregation_latency_ms: 1_000,
   finalization_latency_ms: 1_500,
   execution_latency_ms: 5_000,
@@ -81,7 +87,11 @@ function normalizeDuration(value: number): number {
   return Math.max(0, Math.round(Number.isFinite(value) ? value : 0))
 }
 
-function classifyLatency(durationMs: number, budgetMs: number, timeout?: boolean): LatencyMetricStatus {
+function classifyLatency(
+  durationMs: number,
+  budgetMs: number,
+  timeout?: boolean,
+): LatencyMetricStatus {
   if (timeout) return "timeout"
   if (durationMs > budgetMs) return "slow"
   return "ok"
@@ -129,11 +139,14 @@ export function recordLatencyMetric(input: {
   }
 
   latencyRecords.push(record)
-  if (latencyRecords.length > MAX_LATENCY_RECORDS) latencyRecords.splice(0, latencyRecords.length - MAX_LATENCY_RECORDS)
+  if (latencyRecords.length > MAX_LATENCY_RECORDS)
+    latencyRecords.splice(0, latencyRecords.length - MAX_LATENCY_RECORDS)
   return record
 }
 
-export function buildLatencyEventLabel(record: Pick<LatencyMetricRecord, "name" | "durationMs" | "status">): string {
+export function buildLatencyEventLabel(
+  record: Pick<LatencyMetricRecord, "name" | "durationMs" | "status">,
+): string {
   return record.status === "ok"
     ? `${record.name}=${record.durationMs}ms`
     : `${record.name}=${record.durationMs}ms status=${record.status}`
@@ -162,10 +175,12 @@ export function resetLatencyMetrics(): void {
   latencyRecords.splice(0, latencyRecords.length)
 }
 
-export function getFastResponseHealthSnapshot(input: {
-  now?: number
-  windowMs?: number
-} = {}): FastResponseHealthSnapshot {
+export function getFastResponseHealthSnapshot(
+  input: {
+    now?: number
+    windowMs?: number
+  } = {},
+): FastResponseHealthSnapshot {
   const now = input.now ?? Date.now()
   const recentWindowMs = input.windowMs ?? DEFAULT_RECENT_WINDOW_MS
   const recent = latencyRecords.filter((record) => now - record.createdAt <= recentWindowMs)
@@ -187,11 +202,12 @@ export function getFastResponseHealthSnapshot(input: {
     }
   })
   const status = worstStatus(metrics.map((metric) => metric.status))
-  const reason = status === "timeout"
-    ? "최근 빠른 응답 경로에서 timeout이 발생했습니다."
-    : status === "slow"
-      ? "최근 빠른 응답 경로 중 일부가 latency budget을 초과했습니다."
-      : "최근 빠른 응답 경로가 budget 안에서 동작했습니다."
+  const reason =
+    status === "timeout"
+      ? "최근 빠른 응답 경로에서 timeout이 발생했습니다."
+      : status === "slow"
+        ? "최근 빠른 응답 경로 중 일부가 latency budget을 초과했습니다."
+        : "최근 빠른 응답 경로가 budget 안에서 동작했습니다."
 
   return {
     generatedAt: now,
@@ -199,8 +215,6 @@ export function getFastResponseHealthSnapshot(input: {
     reason,
     recentWindowMs,
     metrics,
-    recentTimeouts: recent
-      .filter((record) => record.status === "timeout")
-      .slice(-10),
+    recentTimeouts: recent.filter((record) => record.status === "timeout").slice(-10),
   }
 }

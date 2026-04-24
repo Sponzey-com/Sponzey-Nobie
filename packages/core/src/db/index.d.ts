@@ -1,7 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
-import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
 import { type ScheduleContract } from "../contracts/index.js";
-import { type AgentConfig, type AgentEntityType, type AgentStatus, type CapabilityDelegationRequest, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type RestoreEvent, type SubSessionContract, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
+import { type AgentConfig, type AgentEntityType, type AgentRelationship, type AgentStatus, type CapabilityDelegationRequest, type CapabilityPolicy, type CapabilityRiskLevel, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type PermissionProfile, type RestoreEvent, type SubSessionContract, type TeamConfig, type TeamConflictPolicyMode, type TeamExecutionPlan, type TeamResultPolicyMode } from "../contracts/sub-agent-orchestration.js";
+import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
 export declare function getDb(): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
@@ -186,12 +186,15 @@ export interface DbAgentConfig {
     status: AgentStatus;
     display_name: string;
     nickname: string | null;
+    normalized_nickname: string | null;
     role: string;
     personality: string;
     specialty_tags_json: string;
     avoid_tasks_json: string;
+    model_profile_json: string | null;
     memory_policy_json: string;
     capability_policy_json: string;
+    delegation_policy_json: string | null;
     profile_version: number;
     config_json: string;
     schema_version: number;
@@ -207,7 +210,16 @@ export interface DbTeamConfig {
     status: Exclude<AgentStatus, "degraded">;
     display_name: string;
     nickname: string | null;
+    normalized_nickname: string | null;
     purpose: string;
+    owner_agent_id: string | null;
+    lead_agent_id: string | null;
+    member_count_min: number | null;
+    member_count_max: number | null;
+    required_team_roles_json: string | null;
+    required_capability_tags_json: string | null;
+    result_policy: TeamResultPolicyMode | null;
+    conflict_policy: TeamConflictPolicyMode | null;
     role_hints_json: string;
     member_agent_ids_json: string;
     profile_version: number;
@@ -221,10 +233,39 @@ export interface DbTeamConfig {
     archived_at: number | null;
 }
 export interface DbAgentTeamMembership {
+    membership_id: string;
     team_id: string;
     agent_id: string;
-    status: "active" | "unresolved" | "removed";
+    owner_agent_id_snapshot: string | null;
+    team_roles_json: string;
+    primary_role: string;
+    required: number;
+    fallback_for_agent_id: string | null;
+    status: "active" | "inactive" | "fallback_only" | "unresolved" | "removed";
     role_hint: string | null;
+    sort_order: number;
+    schema_version: number;
+    audit_id: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbNicknameNamespace {
+    normalized_nickname: string;
+    entity_type: "agent" | "team";
+    entity_id: string;
+    nickname_snapshot: string;
+    status: string;
+    source: DbConfigSource;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbAgentRelationship {
+    edge_id: string;
+    parent_agent_id: string;
+    child_agent_id: string;
+    relationship_type: "parent_child";
+    status: AgentRelationship["status"];
+    sort_order: number;
     schema_version: number;
     audit_id: string | null;
     created_at: number;
@@ -234,6 +275,7 @@ export interface DbRunSubSession {
     sub_session_id: string;
     parent_run_id: string;
     parent_session_id: string;
+    parent_sub_session_id: string | null;
     parent_request_id: string | null;
     agent_id: string;
     agent_display_name: string;
@@ -255,20 +297,42 @@ export interface DbAgentDataExchange {
     exchange_id: string;
     source_owner_type: DataExchangePackage["sourceOwner"]["ownerType"];
     source_owner_id: string;
+    source_nickname_snapshot: string | null;
     recipient_owner_type: DataExchangePackage["recipientOwner"]["ownerType"];
     recipient_owner_id: string;
+    recipient_nickname_snapshot: string | null;
     purpose: string;
     allowed_use: DataExchangePackage["allowedUse"];
     retention_policy: DataExchangePackage["retentionPolicy"];
     redaction_state: DataExchangePackage["redactionState"];
     provenance_refs_json: string;
     payload_json: string;
+    contract_json: string | null;
     schema_version: number;
     audit_id: string | null;
     idempotency_key: string;
     created_at: number;
     updated_at: number;
     expires_at: number | null;
+}
+export interface DbTeamExecutionPlan {
+    team_execution_plan_id: string;
+    parent_run_id: string;
+    team_id: string;
+    team_nickname_snapshot: string | null;
+    owner_agent_id: string;
+    lead_agent_id: string;
+    member_task_assignments_json: string;
+    reviewer_agent_ids_json: string;
+    verifier_agent_ids_json: string;
+    fallback_assignments_json: string;
+    coverage_report_json: string;
+    conflict_policy_snapshot: TeamConflictPolicyMode;
+    result_policy_snapshot: TeamResultPolicyMode;
+    contract_json: string;
+    schema_version: number;
+    audit_id: string | null;
+    created_at: number;
 }
 export interface DbCapabilityDelegation {
     delegation_id: string;
@@ -330,6 +394,56 @@ export interface DbProfileRestoreEvent {
     idempotency_key: string;
     created_at: number;
 }
+export type DbCapabilityCatalogStatus = "enabled" | "disabled" | "archived";
+export type DbAgentCapabilityBindingStatus = "enabled" | "disabled" | "archived";
+export type DbAgentCapabilityKind = "skill" | "mcp_server";
+export interface DbSkillCatalogEntry {
+    skill_id: string;
+    status: DbCapabilityCatalogStatus;
+    display_name: string;
+    risk: CapabilityRiskLevel;
+    tool_names_json: string;
+    metadata_json: string | null;
+    schema_version: number;
+    source: DbConfigSource;
+    audit_id: string | null;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+}
+export interface DbMcpServerCatalogEntry {
+    mcp_server_id: string;
+    status: DbCapabilityCatalogStatus;
+    display_name: string;
+    risk: CapabilityRiskLevel;
+    tool_names_json: string;
+    metadata_json: string | null;
+    schema_version: number;
+    source: DbConfigSource;
+    audit_id: string | null;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+}
+export interface DbAgentCapabilityBinding {
+    binding_id: string;
+    agent_id: string;
+    capability_kind: DbAgentCapabilityKind;
+    catalog_id: string;
+    status: DbAgentCapabilityBindingStatus;
+    secret_scope_id: string | null;
+    enabled_tool_names_json: string;
+    disabled_tool_names_json: string;
+    permission_profile_json: string | null;
+    rate_limit_json: string | null;
+    approval_required_from: CapabilityRiskLevel | null;
+    schema_version: number;
+    source: DbConfigSource;
+    audit_id: string | null;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+}
 export interface AgentConfigPersistenceOptions {
     imported?: boolean;
     source?: DbConfigSource;
@@ -338,6 +452,61 @@ export interface AgentConfigPersistenceOptions {
     now?: number;
 }
 export interface TeamConfigPersistenceOptions extends AgentConfigPersistenceOptions {
+}
+export interface CapabilityCatalogPersistenceOptions {
+    source?: DbConfigSource;
+    auditId?: string | null;
+    now?: number;
+}
+export interface SkillCatalogEntryInput {
+    skillId: string;
+    displayName: string;
+    status?: DbCapabilityCatalogStatus;
+    risk?: CapabilityRiskLevel;
+    toolNames?: string[];
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface McpServerCatalogEntryInput {
+    mcpServerId: string;
+    displayName: string;
+    status?: DbCapabilityCatalogStatus;
+    risk?: CapabilityRiskLevel;
+    toolNames?: string[];
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface AgentCapabilityBindingInput {
+    bindingId?: string;
+    agentId: string;
+    capabilityKind: DbAgentCapabilityKind;
+    catalogId: string;
+    status?: DbAgentCapabilityBindingStatus;
+    secretScopeId?: string;
+    enabledToolNames?: string[];
+    disabledToolNames?: string[];
+    permissionProfile?: PermissionProfile;
+    rateLimit?: CapabilityPolicy["rateLimit"];
+    approvalRequiredFrom?: CapabilityRiskLevel;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface NicknameNamespaceErrorDetails {
+    reasonCode: "nickname_required" | "nickname_conflict";
+    attemptedEntityType: "agent" | "team";
+    attemptedEntityId: string;
+    nickname: string | null;
+    normalizedNickname: string;
+    existingEntityType?: "agent" | "team";
+    existingEntityId?: string;
+    existingNickname?: string | null;
+    existingStatus?: string;
+}
+export declare class NicknameNamespaceError extends Error {
+    readonly details: NicknameNamespaceErrorDetails;
+    constructor(details: NicknameNamespaceErrorDetails);
 }
 export type DbControlEventSeverity = "debug" | "info" | "warning" | "error";
 export interface DbControlEvent {
@@ -365,6 +534,52 @@ export interface DbControlEventInput {
     severity?: DbControlEventSeverity;
     summary: string;
     detail?: Record<string, unknown>;
+}
+export type DbOrchestrationEventSeverity = DbControlEventSeverity;
+export interface DbOrchestrationEvent {
+    sequence: number;
+    id: string;
+    created_at: number;
+    emitted_at: number;
+    event_kind: string;
+    run_id: string | null;
+    parent_run_id: string | null;
+    request_group_id: string | null;
+    sub_session_id: string | null;
+    agent_id: string | null;
+    team_id: string | null;
+    exchange_id: string | null;
+    approval_id: string | null;
+    correlation_id: string;
+    dedupe_key: string | null;
+    source: string;
+    severity: DbOrchestrationEventSeverity;
+    summary: string;
+    payload_redacted_json: string;
+    payload_raw_ref: string | null;
+    producer_task: string | null;
+}
+export interface DbOrchestrationEventInput {
+    id?: string;
+    createdAt?: number;
+    emittedAt?: number;
+    eventKind: string;
+    runId?: string | null;
+    parentRunId?: string | null;
+    requestGroupId?: string | null;
+    subSessionId?: string | null;
+    agentId?: string | null;
+    teamId?: string | null;
+    exchangeId?: string | null;
+    approvalId?: string | null;
+    correlationId: string;
+    dedupeKey?: string | null;
+    source: string;
+    severity?: DbOrchestrationEventSeverity;
+    summary: string;
+    payloadRedacted: Record<string, unknown>;
+    payloadRawRef?: string | null;
+    producerTask?: string | null;
 }
 export type DbChannelSmokeRunMode = "dry-run" | "live-run";
 export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped";
@@ -534,6 +749,22 @@ export declare function listControlEvents(params?: {
     severity?: DbControlEventSeverity;
     limit?: number;
 }): DbControlEvent[];
+export declare function insertOrchestrationEvent(input: DbOrchestrationEventInput): DbOrchestrationEvent;
+export declare function getOrchestrationEventById(id: string): DbOrchestrationEvent | undefined;
+export declare function getOrchestrationEventByDedupeKey(dedupeKey: string): DbOrchestrationEvent | undefined;
+export declare function listOrchestrationEvents(params?: {
+    runId?: string;
+    requestGroupId?: string;
+    subSessionId?: string;
+    agentId?: string;
+    teamId?: string;
+    exchangeId?: string;
+    approvalId?: string;
+    correlationId?: string;
+    eventKind?: string;
+    afterSequence?: number;
+    limit?: number;
+}): DbOrchestrationEvent[];
 export declare function upsertWebRetrievalCacheEntry(input: DbWebRetrievalCacheEntryInput): void;
 export declare function getWebRetrievalCacheEntry(cacheKey: string): DbWebRetrievalCacheEntry | undefined;
 export declare function listWebRetrievalCacheEntries(params?: {
@@ -673,6 +904,40 @@ export declare function listTeamConfigs(filters?: {
     includeArchived?: boolean;
 }): DbTeamConfig[];
 export declare function listAgentTeamMemberships(teamId?: string): DbAgentTeamMembership[];
+export declare function upsertSkillCatalogEntry(input: SkillCatalogEntryInput, options?: CapabilityCatalogPersistenceOptions): void;
+export declare function upsertMcpServerCatalogEntry(input: McpServerCatalogEntryInput, options?: CapabilityCatalogPersistenceOptions): void;
+export declare function upsertAgentCapabilityBinding(input: AgentCapabilityBindingInput, options?: CapabilityCatalogPersistenceOptions): void;
+export declare function getAgentCapabilityBinding(bindingId: string): DbAgentCapabilityBinding | undefined;
+export declare function listSkillCatalogEntries(filters?: {
+    includeArchived?: boolean;
+    enabledOnly?: boolean;
+}): DbSkillCatalogEntry[];
+export declare function listMcpServerCatalogEntries(filters?: {
+    includeArchived?: boolean;
+    enabledOnly?: boolean;
+}): DbMcpServerCatalogEntry[];
+export declare function listAgentCapabilityBindings(filters?: {
+    agentId?: string;
+    capabilityKind?: DbAgentCapabilityKind;
+    includeArchived?: boolean;
+    enabledOnly?: boolean;
+}): DbAgentCapabilityBinding[];
+export declare function listNicknameNamespaces(): DbNicknameNamespace[];
+export declare function upsertAgentRelationship(input: AgentRelationship, options?: {
+    auditId?: string | null;
+    now?: number;
+}): void;
+export declare function getAgentRelationship(edgeId: string): DbAgentRelationship | undefined;
+export declare function listAgentRelationships(filters?: {
+    parentAgentId?: string;
+    childAgentId?: string;
+    status?: AgentRelationship["status"];
+}): DbAgentRelationship[];
+export declare function insertTeamExecutionPlan(input: TeamExecutionPlan, options?: {
+    auditId?: string | null;
+}): boolean;
+export declare function getTeamExecutionPlan(teamExecutionPlanId: string): DbTeamExecutionPlan | undefined;
+export declare function listTeamExecutionPlansForParentRun(parentRunId: string): DbTeamExecutionPlan[];
 export declare function insertRunSubSession(input: SubSessionContract, options?: {
     auditId?: string | null;
     now?: number;
@@ -703,6 +968,16 @@ export declare function listAgentDataExchangesForSource(sourceOwner: OwnerScope,
     limit?: number;
 }): DbAgentDataExchange[];
 export declare function insertCapabilityDelegation(input: CapabilityDelegationRequest, options?: {
+    auditId?: string | null;
+    now?: number;
+}): boolean;
+export declare function updateCapabilityDelegation(input: {
+    delegationId: string;
+    status: CapabilityDelegationRequest["status"];
+    resultPackageId?: string | null;
+    approvalId?: string | null;
+    contract?: CapabilityDelegationRequest;
+}, options?: {
     auditId?: string | null;
     now?: number;
 }): boolean;

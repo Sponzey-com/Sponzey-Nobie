@@ -2,39 +2,40 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import {
-  type CapabilityRiskLevel,
-  type MemoryPolicy,
-  type PermissionProfile,
-  type SkillMcpAllowlist,
-  type StructuredTaskScope,
-  type SubAgentConfig,
-  type TeamConfig,
-} from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
-import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import { reloadConfig } from "../packages/core/src/config/index.js"
+import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
+import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
+import type {
+  CapabilityRiskLevel,
+  MemoryPolicy,
+  PermissionProfile,
+  SkillMcpAllowlist,
+  StructuredTaskScope,
+  SubAgentConfig,
+  TeamConfig,
+} from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { upsertAgentConfig, upsertTeamConfig } from "../packages/core/src/db/index.js"
+import { resolveAgentCapabilityModelSummary } from "../packages/core/src/orchestration/capability-model.ts"
 import type { OrchestrationModeSnapshot } from "../packages/core/src/orchestration/mode.ts"
 import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
 import {
-  buildOrchestrationRegistrySnapshot,
   type AgentRegistryEntry,
   type OrchestrationRegistrySnapshot,
+  buildOrchestrationRegistrySnapshot,
 } from "../packages/core/src/orchestration/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env.NOBIE_STATE_DIR
+const previousConfig = process.env.NOBIE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "nobie-task004-orchestration-planner-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env.NOBIE_STATE_DIR = stateDir
+  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -44,10 +45,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
+  else process.env.NOBIE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
+  else process.env.NOBIE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -111,6 +112,13 @@ function subAgent(input: {
     personality: "Precise",
     specialtyTags: input.specialtyTags ?? ["research"],
     avoidTasks: [],
+    modelProfile: {
+      providerId: "openai",
+      modelId: "gpt-5.4",
+      timeoutMs: 30_000,
+      retryCount: 2,
+      costBudget: 5,
+    },
     memoryPolicy: memoryPolicy(input.agentId),
     capabilityPolicy: {
       permissionProfile: permissionProfile({
@@ -149,6 +157,7 @@ function team(teamId: string, memberAgentIds: string[]): TeamConfig {
 }
 
 function registryEntry(config: SubAgentConfig): AgentRegistryEntry {
+  const capabilityModelSummary = resolveAgentCapabilityModelSummary(config)
   return {
     agentId: config.agentId,
     displayName: config.displayName,
@@ -164,13 +173,10 @@ function registryEntry(config: SubAgentConfig): AgentRegistryEntry {
     config,
     permissionProfile: config.capabilityPolicy.permissionProfile,
     capabilityPolicy: config.capabilityPolicy,
-    skillMcpSummary: {
-      enabledSkillIds: config.capabilityPolicy.skillMcpAllowlist.enabledSkillIds,
-      enabledMcpServerIds: config.capabilityPolicy.skillMcpAllowlist.enabledMcpServerIds,
-      enabledToolNames: config.capabilityPolicy.skillMcpAllowlist.enabledToolNames,
-      disabledToolNames: config.capabilityPolicy.skillMcpAllowlist.disabledToolNames,
-      ...(config.capabilityPolicy.skillMcpAllowlist.secretScopeId ? { secretScopeId: config.capabilityPolicy.skillMcpAllowlist.secretScopeId } : {}),
-    },
+    skillMcpSummary: capabilityModelSummary.skillMcpSummary,
+    capabilitySummary: capabilityModelSummary.capabilitySummary,
+    modelSummary: capabilityModelSummary.modelSummary,
+    degradedReasonCodes: capabilityModelSummary.degradedReasonCodes,
     currentLoad: {
       activeSubSessions: 0,
       queuedSubSessions: 0,
@@ -188,8 +194,13 @@ function registryEntry(config: SubAgentConfig): AgentRegistryEntry {
   }
 }
 
-function registry(agents: SubAgentConfig[], teams: TeamConfig[] = []): OrchestrationRegistrySnapshot {
-  const enabledAgentIds = new Set(agents.filter((agent) => agent.status === "enabled").map((agent) => agent.agentId))
+function registry(
+  agents: SubAgentConfig[],
+  teams: TeamConfig[] = [],
+): OrchestrationRegistrySnapshot {
+  const enabledAgentIds = new Set(
+    agents.filter((agent) => agent.status === "enabled").map((agent) => agent.agentId),
+  )
   return {
     generatedAt: now,
     agents: agents.map(registryEntry),
@@ -202,16 +213,20 @@ function registry(agents: SubAgentConfig[], teams: TeamConfig[] = []): Orchestra
       roleHints: entry.roleHints,
       memberAgentIds: entry.memberAgentIds,
       activeMemberAgentIds: entry.memberAgentIds.filter((agentId) => enabledAgentIds.has(agentId)),
-      unresolvedMemberAgentIds: entry.memberAgentIds.filter((agentId) => !enabledAgentIds.has(agentId)),
+      unresolvedMemberAgentIds: entry.memberAgentIds.filter(
+        (agentId) => !enabledAgentIds.has(agentId),
+      ),
       source: "config",
       config: entry,
     })),
-    membershipEdges: teams.flatMap((entry) => entry.memberAgentIds.map((agentId, index) => ({
-      teamId: entry.teamId,
-      agentId,
-      status: enabledAgentIds.has(agentId) ? "active" as const : "unresolved" as const,
-      roleHint: entry.roleHints[index] ?? "member",
-    }))),
+    membershipEdges: teams.flatMap((entry) =>
+      entry.memberAgentIds.map((agentId, index) => ({
+        teamId: entry.teamId,
+        agentId,
+        status: enabledAgentIds.has(agentId) ? ("active" as const) : ("unresolved" as const),
+        roleHint: entry.roleHints[index] ?? "member",
+      })),
+    ),
     diagnostics: [],
   }
 }
@@ -238,24 +253,30 @@ function taskScope(id: string): StructuredTaskScope {
     intentType: "structured_test",
     actionType: "research",
     constraints: [],
-    expectedOutputs: [{
-      outputId: `output:${id}`,
-      kind: "text",
-      description: "answer",
-      required: true,
-      acceptance: {
-        requiredEvidenceKinds: [],
-        artifactRequired: false,
-        reasonCodes: ["ok"],
+    expectedOutputs: [
+      {
+        outputId: `output:${id}`,
+        kind: "text",
+        description: "answer",
+        required: true,
+        acceptance: {
+          requiredEvidenceKinds: [],
+          artifactRequired: false,
+          reasonCodes: ["ok"],
+        },
       },
-    }],
+    ],
     reasonCodes: [`scope:${id}`],
   }
 }
 
 describe("task004 orchestration registry and planner", () => {
   it("builds a registry snapshot with enabled agent state, team membership, permissions, skills, load, and failure rate", () => {
-    const agent = subAgent({ agentId: "agent:researcher", displayName: "Researcher", teamIds: ["team:research"] })
+    const agent = subAgent({
+      agentId: "agent:researcher",
+      displayName: "Researcher",
+      teamIds: ["team:research"],
+    })
     const researchTeam = team("team:research", ["agent:researcher"])
 
     const snapshot = buildOrchestrationRegistrySnapshot({
@@ -308,7 +329,10 @@ describe("task004 orchestration registry and planner", () => {
   })
 
   it("keeps archived db rows from reintroducing config-defined agents and teams into the registry snapshot", () => {
-    const configAgent = subAgent({ agentId: "agent:config-archived", displayName: "Config Archived Agent" })
+    const configAgent = subAgent({
+      agentId: "agent:config-archived",
+      displayName: "Config Archived Agent",
+    })
     const configTeam = team("team:config-archived", ["agent:config-archived"])
 
     upsertAgentConfig({ ...configAgent, status: "archived" }, { source: "manual", now })
@@ -346,7 +370,10 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe("agent:enabled")
-    expect(result.candidateScores.find((candidate) => candidate.agentId === "agent:disabled")?.excludedReasonCodes).toContain("agent_not_enabled")
+    expect(
+      result.candidateScores.find((candidate) => candidate.agentId === "agent:disabled")
+        ?.excludedReasonCodes,
+    ).toContain("agent_not_enabled")
     expect(result.plan.plannerMetadata?.semanticComparisonUsed).toBe(false)
   })
 
@@ -365,7 +392,10 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe("agent:preferred")
-    expect(result.candidateScores.find((candidate) => candidate.agentId === "agent:preferred")?.reasonCodes).toContain("explicit_agent_target")
+    expect(
+      result.candidateScores.find((candidate) => candidate.agentId === "agent:preferred")
+        ?.reasonCodes,
+    ).toContain("explicit_agent_target")
   })
 
   it("does not substitute another agent when an explicit target is unavailable", () => {
@@ -385,10 +415,10 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.plan.delegatedTasks).toHaveLength(0)
     expect(result.plan.directNobieTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy.mode).toBe("ask_user")
-    expect(result.plan.fallbackStrategy.reasonCode).toBe("explicit_target_unavailable")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("explicit_agent_target_unavailable")
   })
 
-  it("interprets an explicit team target as selecting an eligible member agent", () => {
+  it("marks an explicit team target as requiring team expansion before execution", () => {
     const member = subAgent({ agentId: "agent:team-member", teamIds: ["team:research"] })
     const outsider = subAgent({ agentId: "agent:outsider" })
     const result = buildOrchestrationPlan({
@@ -396,15 +426,23 @@ describe("task004 orchestration registry and planner", () => {
       parentRequestId: "request:4",
       userRequest: "team target",
       modeSnapshot: modeSnapshot(),
-      registrySnapshot: registry([member, outsider], [team("team:research", ["agent:team-member"])]),
+      registrySnapshot: registry(
+        [member, outsider],
+        [team("team:research", ["agent:team-member"])],
+      ),
       intent: { explicitTeamId: "team:research" },
       now: () => now,
       idProvider: () => "plan:team",
     })
 
-    expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe("agent:team-member")
-    expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBe("team:research")
-    expect(result.candidateScores.find((candidate) => candidate.agentId === "agent:outsider")?.excludedReasonCodes).toContain("not_explicit_target")
+    expect(result.plan.delegatedTasks).toHaveLength(0)
+    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.plan.plannerMetadata?.status).toBe("requires_team_expansion")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("requires_team_expansion")
+    expect(
+      result.candidateScores.find((candidate) => candidate.agentId === "agent:outsider")
+        ?.excludedReasonCodes,
+    ).toContain("not_explicit_target")
   })
 
   it("marks approval required when permission profile threshold requires it", () => {
@@ -425,15 +463,33 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe("agent:risky")
-    expect(result.plan.approvalRequirements[0]?.reasonCode).toBe("agent_permission_profile_requires_approval")
+    expect(result.plan.approvalRequirements[0]?.reasonCode).toBe(
+      "agent_permission_profile_requires_approval",
+    )
   })
 
   it("serializes delegated tasks when exclusive resource locks conflict", () => {
     const first = subAgent({ agentId: "agent:first" })
     const second = subAgent({ agentId: "agent:second" })
     const locks = {
-      "plan:locks:delegated:0": [{ lockId: "lock:file", kind: "file" as const, target: "/tmp/a.txt", mode: "exclusive" as const, reasonCode: "write_file" }],
-      "plan:locks:delegated:1": [{ lockId: "lock:file", kind: "file" as const, target: "/tmp/a.txt", mode: "exclusive" as const, reasonCode: "write_file" }],
+      "plan:locks:delegated:0": [
+        {
+          lockId: "lock:file",
+          kind: "file" as const,
+          target: "/tmp/a.txt",
+          mode: "exclusive" as const,
+          reasonCode: "write_file",
+        },
+      ],
+      "plan:locks:delegated:1": [
+        {
+          lockId: "lock:file",
+          kind: "file" as const,
+          target: "/tmp/a.txt",
+          mode: "exclusive" as const,
+          reasonCode: "write_file",
+        },
+      ],
     }
     const result = buildOrchestrationPlan({
       parentRunId: "run:6",
@@ -479,7 +535,8 @@ describe("task004 orchestration registry and planner", () => {
     const result = buildOrchestrationPlan({
       parentRunId: "run:8",
       parentRequestId: "request:8",
-      userRequest: "research라는 단어가 있어도 specialtyTags 입력이 없으면 문자열 의미 비교를 하지 않는다",
+      userRequest:
+        "research라는 단어가 있어도 specialtyTags 입력이 없으면 문자열 의미 비교를 하지 않는다",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([agent]),
       now: () => now,

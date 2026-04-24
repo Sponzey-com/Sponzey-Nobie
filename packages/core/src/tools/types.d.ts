@@ -16,9 +16,14 @@ export interface ToolContext {
     permissionProfile?: PermissionProfile;
     skillMcpAllowlist?: SkillMcpAllowlist;
     capabilityRateLimit?: CapabilityPolicy["rateLimit"];
+    capabilityBindingId?: string;
     secretScopeId?: string;
+    parentSecretScopeId?: string;
+    allowParentSecretFallback?: boolean;
+    fallbackSecretScopeAllowlist?: string[];
     auditId?: string;
     capabilityDelegationId?: string;
+    capabilityResultSharing?: "data_exchange" | "result_report_artifact";
 }
 export interface ArtifactDeliveryResultDetails {
     kind: "artifact_delivery";

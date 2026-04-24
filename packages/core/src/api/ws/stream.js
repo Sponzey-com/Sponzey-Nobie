@@ -1,9 +1,9 @@
 import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { recordLatencyMetric } from "../../observability/latency.js";
+import { listRunsForActiveRequestGroups } from "../../runs/store.js";
 import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { listRunsForActiveRequestGroups } from "../../runs/store.js";
 const log = createLogger("api:ws");
 const clients = new Set();
 export function getWebUiWsClientCount() {
@@ -21,7 +21,7 @@ function stampBroadcastPayload(data) {
     if (!data || typeof data !== "object" || Array.isArray(data))
         return data;
     const record = data;
-    if (typeof record["emittedAt"] === "number")
+    if (typeof record.emittedAt === "number")
         return data;
     return {
         ...record,
@@ -35,6 +35,7 @@ function setupEventForwarding() {
     eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }));
     eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }));
     eventBus.on("control.event", (e) => broadcast({ type: "control.event", ...e }));
+    eventBus.on("orchestration.event", (e) => broadcast({ type: "orchestration.event", ...e }));
     eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }));
     eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }));
     eventBus.on("run.step.started", (e) => broadcast({ type: "run.step.started", ...e }));
@@ -50,7 +51,16 @@ function setupEventForwarding() {
     eventBus.on("approval.request", ({ approvalId, runId, toolName, params, kind, guidance, expiresAt, resolve }) => {
         registerApprovalFromWs(runId, resolve, approvalId);
         log.info(`approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`);
-        broadcast({ type: "approval.request", approvalId, runId, toolName, params, kind, guidance, expiresAt });
+        broadcast({
+            type: "approval.request",
+            approvalId,
+            runId,
+            toolName,
+            params,
+            kind,
+            guidance,
+            expiresAt,
+        });
     });
     eventBus.on("approval.resolved", (e) => {
         pendingApprovals.delete(e.runId);
@@ -82,7 +92,7 @@ export function resolveWebUiApprovalResponse(msg) {
             ? "allow_once"
             : "deny";
     const resolve = typeof msg.approvalId === "string"
-        ? pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId)
+        ? (pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId))
         : pendingApprovals.get(msg.runId);
     if (resolve) {
         resolve(decision, "user");
@@ -113,7 +123,9 @@ export function resolveWebUiApprovalResponse(msg) {
     return false;
 }
 export function resolveWebUiLiveUpdateAck(msg, now = () => Date.now()) {
-    if (msg.type !== "ui.live_update_ack" || typeof msg.emittedAt !== "number" || !Number.isFinite(msg.emittedAt)) {
+    if (msg.type !== "ui.live_update_ack" ||
+        typeof msg.emittedAt !== "number" ||
+        !Number.isFinite(msg.emittedAt)) {
         return false;
     }
     recordLatencyMetric({
@@ -148,7 +160,9 @@ export function registerWsRoute(app) {
                 resolveWebUiApprovalResponse(msg);
                 resolveWebUiLiveUpdateAck(msg);
             }
-            catch { /* ignore malformed messages */ }
+            catch {
+                /* ignore malformed messages */
+            }
         });
         socket.on("close", () => {
             clients.delete(socket);

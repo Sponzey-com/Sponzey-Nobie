@@ -1,27 +1,41 @@
-import { createHash } from "node:crypto"
 import { execFileSync } from "node:child_process"
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { basename, dirname, join, relative, resolve, sep } from "node:path"
-import { buildBackupTargetInventory, buildMigrationPreflightReport, type MigrationPreflightReport } from "../config/backup-rehearsal.js"
-import { DEFAULT_CONFIG, type OrchestrationConfig } from "../config/types.js"
-import { getWorkspaceRootPath, getCurrentAppVersion, getCurrentDisplayVersion } from "../version.js"
-import { loadPromptSourceRegistry, type PromptSourceMetadata } from "../memory/nobie-md.js"
-import { buildRolloutSafetySnapshot, type FeatureFlagMode } from "../runtime/rollout-safety.js"
-import { resolveOrchestrationModeSnapshotSync, type OrchestrationModeSnapshot } from "../orchestration/mode.js"
-import { runPlanDriftCheck, type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js"
+import { createHash } from "node:crypto"
 import {
+  constants,
+  accessSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
+import {
+  type MigrationPreflightReport,
+  buildBackupTargetInventory,
+  buildMigrationPreflightReport,
+} from "../config/backup-rehearsal.js"
+import { DEFAULT_CONFIG, type OrchestrationConfig } from "../config/types.js"
+import { type PlanDriftReleaseNoteEvidence, runPlanDriftCheck } from "../diagnostics/plan-drift.js"
+import { type PromptSourceMetadata, loadPromptSourceRegistry } from "../memory/nobie-md.js"
+import {
+  type OrchestrationModeSnapshot,
+  resolveOrchestrationModeSnapshotSync,
+} from "../orchestration/mode.js"
+import {
+  type WebRetrievalReleaseGateSummary,
   buildFixtureRegressionFromWorkspace,
   buildWebRetrievalReleaseGateSummary,
-  type WebRetrievalReleaseGateSummary,
 } from "../runs/web-retrieval-smoke.js"
+import { type FeatureFlagMode, buildRolloutSafetySnapshot } from "../runtime/rollout-safety.js"
+import { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspaceRootPath } from "../version.js"
 import {
-  buildUiModeReleaseGateSummary,
-  type UiModeReleaseGateSummary,
-} from "./ui-mode-gate.js"
-import {
-  buildReleasePerformanceSummary,
   type ReleasePerformanceSummary,
+  buildReleasePerformanceSummary,
 } from "./performance-gate.js"
+import { type UiModeReleaseGateSummary, buildUiModeReleaseGateSummary } from "./ui-mode-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -76,7 +90,10 @@ export interface ReleaseManifest {
     logicalCoverage: string[]
   }
   updatePreflight: ReleaseUpdatePreflightReport
-  migrationPreflight: Pick<MigrationPreflightReport, "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions">
+  migrationPreflight: Pick<
+    MigrationPreflightReport,
+    "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions"
+  >
   featureFlags: ReleaseFeatureFlagState[]
   rolloutEvidence: ReleaseRolloutEvidenceSummary
   planEvidence: PlanDriftReleaseNoteEvidence
@@ -198,14 +215,27 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
   const targetPlatforms = options.targetPlatforms ?? DEFAULT_TARGET_PLATFORMS
   const releaseVersion = options.releaseVersion ?? getCurrentDisplayVersion()
   const appVersion = getCurrentAppVersion()
-  const gitTag = options.gitTag === undefined ? readGitValue(rootDir, ["describe", "--tags", "--always", "--dirty"]) : options.gitTag
-  const gitCommit = options.gitCommit === undefined ? readGitValue(rootDir, ["rev-parse", "--short", "HEAD"]) : options.gitCommit
+  const gitTag =
+    options.gitTag === undefined
+      ? readGitValue(rootDir, ["describe", "--tags", "--always", "--dirty"])
+      : options.gitTag
+  const gitCommit =
+    options.gitCommit === undefined
+      ? readGitValue(rootDir, ["rev-parse", "--short", "HEAD"])
+      : options.gitCommit
   const promptSources = options.promptSources ?? safePromptSources(rootDir)
   const definitions = buildReleaseArtifactDefinitions({ rootDir, targetPlatforms, promptSources })
   const artifacts = definitions.map(materializeArtifact)
   const backupInventory = safeBackupInventory(rootDir)
-  const migrationPreflight = buildMigrationPreflightReport({ providerConfigSane: true, canWrite: true })
-  const updatePreflight = buildReleaseUpdatePreflightReport({ rootDir, targetPlatforms, promptSourceCount: promptSources.length })
+  const migrationPreflight = buildMigrationPreflightReport({
+    providerConfigSane: true,
+    canWrite: true,
+  })
+  const updatePreflight = buildReleaseUpdatePreflightReport({
+    rootDir,
+    targetPlatforms,
+    promptSourceCount: promptSources.length,
+  })
   const rollout = buildRolloutSafetySnapshot()
   const planDrift = safePlanDrift(rootDir)
   const webRetrievalEvidence = buildWebRetrievalReleaseGateSummary({
@@ -248,10 +278,19 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     rootDir,
     targetPlatforms,
     artifacts,
-    requiredMissing: artifacts.filter((artifact) => artifact.status === "missing_required").map((artifact) => artifact.id),
+    requiredMissing: artifacts
+      .filter((artifact) => artifact.status === "missing_required")
+      .map((artifact) => artifact.id),
     checksums: artifacts
-      .filter((artifact): artifact is ReleaseArtifact & { checksum: string } => artifact.checksum !== null)
-      .map((artifact) => ({ id: artifact.id, checksum: artifact.checksum, packagePath: artifact.packagePath })),
+      .filter(
+        (artifact): artifact is ReleaseArtifact & { checksum: string } =>
+          artifact.checksum !== null,
+      )
+      .map((artifact) => ({
+        id: artifact.id,
+        checksum: artifact.checksum,
+        packagePath: artifact.packagePath,
+      })),
     backupInventory: {
       included: backupInventory.included,
       excluded: backupInventory.excluded,
@@ -271,7 +310,12 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
       mismatchCount: rollout.shadowCompare.mismatchCount,
       warningCount: rollout.evidence.warningCount,
       blockedCount: rollout.evidence.blockedCount,
-      latest: rollout.evidence.latest.map((item) => ({ featureKey: item.feature_key, stage: item.stage, status: item.status, summary: item.summary })),
+      latest: rollout.evidence.latest.map((item) => ({
+        featureKey: item.feature_key,
+        stage: item.stage,
+        status: item.status,
+        summary: item.summary,
+      })),
     },
     planEvidence: planDrift.releaseNoteEvidence,
     webRetrievalEvidence,
@@ -294,14 +338,70 @@ export function buildReleaseArtifactDefinitions(input: {
   const targetPlatforms = new Set(input.targetPlatforms ?? DEFAULT_TARGET_PLATFORMS)
   const promptSources = input.promptSources ?? safePromptSources(rootDir)
   const definitions: ReleaseArtifactDefinition[] = [
-    requiredArtifact("gateway:cli", "gateway_node_bundle", rootDir, "packages/cli/dist/index.js", "gateway/packages/cli/dist/index.js", "CLI daemon entrypoint bundle."),
-    requiredArtifact("gateway:core", "gateway_node_bundle", rootDir, "packages/core/dist/index.js", "gateway/packages/core/dist/index.js", "Core runtime bundle."),
-    requiredArtifact("webui:static", "webui_static", rootDir, "packages/webui/dist", "webui/dist", "Static WebUI build directory."),
-    requiredArtifact("db:migrations", "db_migration", rootDir, "packages/core/src/db/migrations.ts", "db/migrations.ts", "DB migration source included for release audit."),
-    requiredArtifact("yeonjang:protocol", "yeonjang_protocol", rootDir, "Yeonjang/src/protocol.rs", "yeonjang/protocol.rs", "Yeonjang protocol contract source."),
-    requiredArtifact("yeonjang:permissions", "yeonjang_protocol", rootDir, "Yeonjang/manifests/permissions.json", "yeonjang/permissions.json", "Yeonjang permission manifest."),
-    requiredArtifact("runbook:release", "release_runbook", rootDir, "docs/release-runbook.md", "docs/release-runbook.md", "Install, update, rollback, and recovery runbook."),
-    optionalArtifact("admin:diagnostic-bundle", "admin_diagnostic_bundle", rootDir, "release/admin-diagnostics.json", "diagnostics/admin-diagnostics.json", "Sanitized admin diagnostics bundle captured during release dry-run."),
+    requiredArtifact(
+      "gateway:cli",
+      "gateway_node_bundle",
+      rootDir,
+      "packages/cli/dist/index.js",
+      "gateway/packages/cli/dist/index.js",
+      "CLI daemon entrypoint bundle.",
+    ),
+    requiredArtifact(
+      "gateway:core",
+      "gateway_node_bundle",
+      rootDir,
+      "packages/core/dist/index.js",
+      "gateway/packages/core/dist/index.js",
+      "Core runtime bundle.",
+    ),
+    requiredArtifact(
+      "webui:static",
+      "webui_static",
+      rootDir,
+      "packages/webui/dist",
+      "webui/dist",
+      "Static WebUI build directory.",
+    ),
+    requiredArtifact(
+      "db:migrations",
+      "db_migration",
+      rootDir,
+      "packages/core/src/db/migrations.ts",
+      "db/migrations.ts",
+      "DB migration source included for release audit.",
+    ),
+    requiredArtifact(
+      "yeonjang:protocol",
+      "yeonjang_protocol",
+      rootDir,
+      "Yeonjang/src/protocol.rs",
+      "yeonjang/protocol.rs",
+      "Yeonjang protocol contract source.",
+    ),
+    requiredArtifact(
+      "yeonjang:permissions",
+      "yeonjang_protocol",
+      rootDir,
+      "Yeonjang/manifests/permissions.json",
+      "yeonjang/permissions.json",
+      "Yeonjang permission manifest.",
+    ),
+    requiredArtifact(
+      "runbook:release",
+      "release_runbook",
+      rootDir,
+      "docs/release-runbook.md",
+      "docs/release-runbook.md",
+      "Install, update, rollback, and recovery runbook.",
+    ),
+    optionalArtifact(
+      "admin:diagnostic-bundle",
+      "admin_diagnostic_bundle",
+      rootDir,
+      "release/admin-diagnostics.json",
+      "diagnostics/admin-diagnostics.json",
+      "Sanitized admin diagnostics bundle captured during release dry-run.",
+    ),
   ]
 
   for (const source of promptSources) {
@@ -316,48 +416,327 @@ export function buildReleaseArtifactDefinitions(input: {
   }
 
   if (targetPlatforms.has("macos")) {
-    definitions.push(optionalArtifact("yeonjang:macos:app", "yeonjang_macos_app", rootDir, "Yeonjang/target/release/Yeonjang.app", "yeonjang/macos/Yeonjang.app", "macOS tray app bundle.", "macos"))
-    definitions.push(requiredArtifact("yeonjang:macos:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-macos.sh", "scripts/build-yeonjang-macos.sh", "macOS Yeonjang build script.", "macos"))
-    definitions.push(requiredArtifact("yeonjang:macos:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-macos.sh", "scripts/start-yeonjang-macos.sh", "macOS Yeonjang start script.", "macos"))
+    definitions.push(
+      optionalArtifact(
+        "yeonjang:macos:app",
+        "yeonjang_macos_app",
+        rootDir,
+        "Yeonjang/target/release/Yeonjang.app",
+        "yeonjang/macos/Yeonjang.app",
+        "macOS tray app bundle.",
+        "macos",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:macos:build-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/build-yeonjang-macos.sh",
+        "scripts/build-yeonjang-macos.sh",
+        "macOS Yeonjang build script.",
+        "macos",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:macos:start-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/start-yeonjang-macos.sh",
+        "scripts/start-yeonjang-macos.sh",
+        "macOS Yeonjang start script.",
+        "macos",
+      ),
+    )
   }
 
   if (targetPlatforms.has("windows")) {
-    definitions.push(optionalArtifact("yeonjang:windows:exe", "yeonjang_windows_exe", rootDir, "Yeonjang/target/release/nobie-yeonjang.exe", "yeonjang/windows/nobie-yeonjang.exe", "Windows tray executable.", "windows"))
-    definitions.push(requiredArtifact("yeonjang:windows:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-windows.bat", "scripts/build-yeonjang-windows.bat", "Windows Yeonjang build/start package script.", "windows"))
-    definitions.push(requiredArtifact("yeonjang:windows:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-windows.bat", "scripts/start-yeonjang-windows.bat", "Windows Yeonjang start script.", "windows"))
-    definitions.push(requiredArtifact("yeonjang:windows:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-windows.bat", "scripts/stop-yeonjang-windows.bat", "Windows Yeonjang stop script.", "windows"))
+    definitions.push(
+      optionalArtifact(
+        "yeonjang:windows:exe",
+        "yeonjang_windows_exe",
+        rootDir,
+        "Yeonjang/target/release/nobie-yeonjang.exe",
+        "yeonjang/windows/nobie-yeonjang.exe",
+        "Windows tray executable.",
+        "windows",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:windows:build-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/build-yeonjang-windows.bat",
+        "scripts/build-yeonjang-windows.bat",
+        "Windows Yeonjang build/start package script.",
+        "windows",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:windows:start-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/start-yeonjang-windows.bat",
+        "scripts/start-yeonjang-windows.bat",
+        "Windows Yeonjang start script.",
+        "windows",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:windows:stop-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/stop-yeonjang-windows.bat",
+        "scripts/stop-yeonjang-windows.bat",
+        "Windows Yeonjang stop script.",
+        "windows",
+      ),
+    )
   }
 
   if (targetPlatforms.has("linux")) {
-    definitions.push(optionalArtifact("yeonjang:linux:binary", "yeonjang_linux_binary", rootDir, "Yeonjang/target/release/nobie-yeonjang", "yeonjang/linux/nobie-yeonjang", "Linux Yeonjang executable.", "linux"))
+    definitions.push(
+      optionalArtifact(
+        "yeonjang:linux:binary",
+        "yeonjang_linux_binary",
+        rootDir,
+        "Yeonjang/target/release/nobie-yeonjang",
+        "yeonjang/linux/nobie-yeonjang",
+        "Linux Yeonjang executable.",
+        "linux",
+      ),
+    )
   }
 
   return definitions
 }
 
-export function buildReleasePipelinePlan(input: { targetPlatforms?: ReleaseTargetPlatform[] } = {}): ReleasePipelinePlan {
+export function buildReleasePipelinePlan(
+  input: { targetPlatforms?: ReleaseTargetPlatform[] } = {},
+): ReleasePipelinePlan {
   const targetPlatforms = new Set(input.targetPlatforms ?? DEFAULT_TARGET_PLATFORMS)
   const steps: ReleasePipelineStep[] = [
-    step("environment-preflight", "Environment preflight", ["node", "scripts/release-package.mjs", "--dry-run", "--json"], true, false, "Validate version, artifact definitions, migration state, and backup inventory without mutating runtime state."),
-    step("clean-build", "Clean build", ["pnpm", "-r", "build"], true, false, "Build Gateway, CLI, Core, and WebUI from a clean checkout."),
-    step("typecheck", "Typecheck", ["pnpm", "-r", "typecheck"], true, false, "Run TypeScript type checks before packaging."),
-    step("unit-tests", "Unit and integration tests", ["pnpm", "test"], true, false, "Run automated regression tests."),
-    step("orchestration-release-gate", "Orchestration release gate", ["pnpm", "exec", "vitest", "run", "tests/task001-sub-agent-contracts.test.ts", "tests/task003-orchestration-mode.test.ts", "tests/task004-orchestration-planner.test.ts", "tests/task006-sub-session-runtime.test.ts", "tests/task013-channel-delivery-observability.test.ts"], true, false, "Verify feature flag off parity, no-agent fallback, orchestration contracts, planner, runtime, and channel delivery orchestration guards."),
-    step("performance-release-gate", "Performance and release summary gate", ["pnpm", "exec", "vitest", "run", "tests/task014-release-readiness.test.ts"], true, false, "Verify latency targets, release performance evidence, orchestration feature flag defaults, rollback notes, and release summary warnings."),
-    step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
-    step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
-    step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
-    step("admin-diagnostic-export", "Admin diagnostic export rehearsal", ["pnpm", "exec", "vitest", "run", "tests/task014-admin-platform-export.test.ts"], true, false, "Verify sanitized admin diagnostics export and bundle generation contract."),
-    step("channel-smoke-dry-run", "Channel smoke dry-run", ["pnpm", "run", "smoke:channels"], true, true, "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured."),
+    step(
+      "environment-preflight",
+      "Environment preflight",
+      ["node", "scripts/release-package.mjs", "--dry-run", "--json"],
+      true,
+      false,
+      "Validate version, artifact definitions, migration state, and backup inventory without mutating runtime state.",
+    ),
+    step(
+      "clean-build",
+      "Clean build",
+      ["pnpm", "-r", "build"],
+      true,
+      false,
+      "Build Gateway, CLI, Core, and WebUI from a clean checkout.",
+    ),
+    step(
+      "typecheck",
+      "Typecheck",
+      ["pnpm", "-r", "typecheck"],
+      true,
+      false,
+      "Run TypeScript type checks before packaging.",
+    ),
+    step(
+      "unit-tests",
+      "Unit and integration tests",
+      ["pnpm", "test"],
+      true,
+      false,
+      "Run automated regression tests.",
+    ),
+    step(
+      "orchestration-release-gate",
+      "Orchestration release gate",
+      [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "tests/task001-sub-agent-contracts.test.ts",
+        "tests/task003-orchestration-mode.test.ts",
+        "tests/task004-orchestration-planner.test.ts",
+        "tests/task006-sub-session-runtime.test.ts",
+        "tests/task013-channel-delivery-observability.test.ts",
+      ],
+      true,
+      false,
+      "Verify feature flag off parity, no-agent fallback, orchestration contracts, planner, runtime, and channel delivery orchestration guards.",
+    ),
+    step(
+      "memory-isolation-release-gate",
+      "Memory isolation release gate",
+      ["pnpm", "test", "tests/task019-memory-isolation-writeback.test.ts"],
+      true,
+      false,
+      "Verify owner-scope memory isolation, DataExchange-only shared context, writeback owner policy, and memory access audit regressions.",
+    ),
+    step(
+      "capability-isolation-release-gate",
+      "Capability isolation release gate",
+      [
+        "pnpm",
+        "test",
+        "tests/task020-capability-approval-isolation.test.ts",
+        "tests/mcp-client.test.ts",
+      ],
+      true,
+      false,
+      "Verify agent-scoped tool and MCP capability binding isolation, secret scope separation, approval propagation, and capability delegation audit regressions.",
+    ),
+    step(
+      "model-execution-release-gate",
+      "Model execution policy release gate",
+      ["pnpm", "test", "tests/task021-model-execution-policy.test.ts"],
+      true,
+      false,
+      "Verify agent model resolver, provider capability matrix, timeout retry and fallback behavior, model cost budgets, and token cost latency audit summaries.",
+    ),
+    step(
+      "performance-release-gate",
+      "Performance and release summary gate",
+      ["pnpm", "exec", "vitest", "run", "tests/task014-release-readiness.test.ts"],
+      true,
+      false,
+      "Verify latency targets, release performance evidence, orchestration feature flag defaults, rollback notes, and release summary warnings.",
+    ),
+    step(
+      "web-retrieval-fixture-regression",
+      "Web retrieval fixture regression",
+      ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"],
+      true,
+      false,
+      "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures.",
+    ),
+    step(
+      "ui-mode-release-gate",
+      "UI mode release gate",
+      ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"],
+      true,
+      false,
+      "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers.",
+    ),
+    step(
+      "backup-rehearsal",
+      "Backup and restore rehearsal",
+      ["pnpm", "run", "backup:rehearsal"],
+      true,
+      false,
+      "Verify DB, prompt, migration, and restore rehearsal paths.",
+    ),
+    step(
+      "admin-diagnostic-export",
+      "Admin diagnostic export rehearsal",
+      ["pnpm", "exec", "vitest", "run", "tests/task014-admin-platform-export.test.ts"],
+      true,
+      false,
+      "Verify sanitized admin diagnostics export and bundle generation contract.",
+    ),
+    step(
+      "channel-smoke-dry-run",
+      "Channel smoke dry-run",
+      ["pnpm", "run", "smoke:channels"],
+      true,
+      true,
+      "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured.",
+    ),
   ]
-  if (targetPlatforms.has("macos")) steps.push(step("yeonjang-macos", "Yeonjang macOS package", ["bash", "scripts/build-yeonjang-macos.sh"], false, true, "Build macOS tray app bundle when running on macOS."))
-  if (targetPlatforms.has("windows")) steps.push(step("yeonjang-windows", "Yeonjang Windows package", ["scripts\\build-yeonjang-windows.bat"], false, true, "Build Windows tray executable on Windows or a Windows build host."))
-  if (targetPlatforms.has("linux")) steps.push(step("yeonjang-linux", "Yeonjang Linux package", ["cargo", "build", "--manifest-path", "Yeonjang/Cargo.toml", "--release"], false, true, "Build Linux Yeonjang binary on a Linux build host."))
-  steps.push(step("package-manifest", "Package manifest and checksums", ["node", "scripts/release-package.mjs"], true, false, "Copy release payload entries and generate manifest.json plus SHA256SUMS."))
-  steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."))
-  steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."))
-  steps.push(step("web-retrieval-live-smoke", "Web retrieval live smoke", ["env", "NOBIE_LIVE_WEB_SMOKE=1", "pnpm", "test", "tests/task008-live-web-smoke-dry-run.test.ts"], false, true, "Opt-in latest-value smoke gate for KOSPI, KOSDAQ, NASDAQ, and weather; exact values are not asserted."))
-  steps.push(step("live-smoke-gate", "Live smoke gate", ["pnpm", "exec", "nobie", "smoke", "channels", "--live"], false, true, "Run at least one real channel live smoke before publishing a public release."))
+  if (targetPlatforms.has("macos"))
+    steps.push(
+      step(
+        "yeonjang-macos",
+        "Yeonjang macOS package",
+        ["bash", "scripts/build-yeonjang-macos.sh"],
+        false,
+        true,
+        "Build macOS tray app bundle when running on macOS.",
+      ),
+    )
+  if (targetPlatforms.has("windows"))
+    steps.push(
+      step(
+        "yeonjang-windows",
+        "Yeonjang Windows package",
+        ["scripts\\build-yeonjang-windows.bat"],
+        false,
+        true,
+        "Build Windows tray executable on Windows or a Windows build host.",
+      ),
+    )
+  if (targetPlatforms.has("linux"))
+    steps.push(
+      step(
+        "yeonjang-linux",
+        "Yeonjang Linux package",
+        ["cargo", "build", "--manifest-path", "Yeonjang/Cargo.toml", "--release"],
+        false,
+        true,
+        "Build Linux Yeonjang binary on a Linux build host.",
+      ),
+    )
+  steps.push(
+    step(
+      "package-manifest",
+      "Package manifest and checksums",
+      ["node", "scripts/release-package.mjs"],
+      true,
+      false,
+      "Copy release payload entries and generate manifest.json plus SHA256SUMS.",
+    ),
+  )
+  steps.push(
+    step(
+      "rollout-shadow-evidence",
+      "Rollout shadow evidence review",
+      ["pnpm", "exec", "nobie", "doctor", "--json"],
+      true,
+      false,
+      "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout.",
+    ),
+  )
+  steps.push(
+    step(
+      "plan-drift-evidence",
+      "Plan and task evidence review",
+      ["pnpm", "exec", "nobie", "doctor", "--json"],
+      true,
+      false,
+      "Confirm phase plans, task evidence, and release-note evidence summary before publishing.",
+    ),
+  )
+  steps.push(
+    step(
+      "web-retrieval-live-smoke",
+      "Web retrieval live smoke",
+      [
+        "env",
+        "NOBIE_LIVE_WEB_SMOKE=1",
+        "pnpm",
+        "test",
+        "tests/task008-live-web-smoke-dry-run.test.ts",
+      ],
+      false,
+      true,
+      "Opt-in latest-value smoke gate for KOSPI, KOSDAQ, NASDAQ, and weather; exact values are not asserted.",
+    ),
+  )
+  steps.push(
+    step(
+      "live-smoke-gate",
+      "Live smoke gate",
+      ["pnpm", "exec", "nobie", "smoke", "channels", "--live"],
+      false,
+      true,
+      "Run at least one real channel live smoke before publishing a public release.",
+    ),
+  )
   return { dryRunSafe: true, order: steps.map((item) => item.id), steps }
 }
 
@@ -409,38 +788,133 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
 
 export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
   return [
-    { id: "node", required: true, description: "Node.js 22+ is installed and `node --version` passes." },
+    {
+      id: "node",
+      required: true,
+      description: "Node.js 22+ is installed and `node --version` passes.",
+    },
     { id: "pnpm", required: true, description: "pnpm is available for workspace install/build." },
-    { id: "state-dir", required: true, description: "A writable NOBIE_STATE_DIR or default ~/.nobie state directory exists." },
-    { id: "prompt-seed", required: true, description: "Prompt seed files are present and prompt source registry loads without sys_prop dependency." },
-    { id: "db-migration", required: true, description: "Initial DB migration applies cleanly from an empty database." },
-    { id: "feature-flags", required: true, description: "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout." },
-    { id: "orchestration-release-gate", required: true, description: "Sub-agent orchestration feature flag default, off-state parity, and no-agent fallback evidence are reviewed before publish." },
-    { id: "performance-release-gate", required: true, description: "Latency targets, queue wait, first progress, finalization, delivery dedupe, and concurrency block evidence are reviewed in the release summary." },
-    { id: "plan-drift", required: true, description: "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings." },
-    { id: "web-retrieval-fixtures", required: true, description: "Offline web retrieval fixture regression passes and release manifest includes retrieval policy evidence." },
-    { id: "ui-mode-release-gate", required: true, description: "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass." },
-    { id: "admin-diagnostics", required: true, description: "A sanitized admin diagnostics bundle is exportable and attached or explicitly marked missing in the release artifact list." },
-    { id: "webui", required: true, description: "WebUI static files are served and /api/status returns displayVersion." },
-    { id: "yeonjang-macos", required: false, description: "macOS Yeonjang app enters tray and publishes MQTT capability status." },
-    { id: "yeonjang-windows", required: false, description: "Windows Yeonjang starts without console and screen capture smoke passes." },
-    { id: "channel-smoke", required: true, description: "At least WebUI dry-run smoke passes; live Telegram/Slack smoke is required before public publish." },
+    {
+      id: "state-dir",
+      required: true,
+      description: "A writable NOBIE_STATE_DIR or default ~/.nobie state directory exists.",
+    },
+    {
+      id: "prompt-seed",
+      required: true,
+      description:
+        "Prompt seed files are present and prompt source registry loads without sys_prop dependency.",
+    },
+    {
+      id: "db-migration",
+      required: true,
+      description: "Initial DB migration applies cleanly from an empty database.",
+    },
+    {
+      id: "feature-flags",
+      required: true,
+      description:
+        "Runtime feature flags are reviewed and any rollback/shadow mismatch evidence is accepted before enforced rollout.",
+    },
+    {
+      id: "orchestration-release-gate",
+      required: true,
+      description:
+        "Sub-agent orchestration feature flag default, off-state parity, and no-agent fallback evidence are reviewed before publish.",
+    },
+    {
+      id: "memory-isolation-release-gate",
+      required: true,
+      description:
+        "Owner-scoped memory, DataExchange-only context sharing, writeback owner policy, and memory access audit regressions pass.",
+    },
+    {
+      id: "capability-isolation-release-gate",
+      required: true,
+      description:
+        "Agent-scoped tool, MCP, Skill, secret scope, approval propagation, and capability delegation audit regressions pass.",
+    },
+    {
+      id: "model-execution-release-gate",
+      required: true,
+      description:
+        "Agent model resolver, provider matrix, timeout retry and fallback policy, cost budget, and token cost latency audit regressions pass.",
+    },
+    {
+      id: "performance-release-gate",
+      required: true,
+      description:
+        "Latency targets, queue wait, first progress, finalization, delivery dedupe, and concurrency block evidence are reviewed in the release summary.",
+    },
+    {
+      id: "plan-drift",
+      required: true,
+      description:
+        "Phase plan and task evidence drift check has no unreviewed completed-without-evidence warnings.",
+    },
+    {
+      id: "web-retrieval-fixtures",
+      required: true,
+      description:
+        "Offline web retrieval fixture regression passes and release manifest includes retrieval policy evidence.",
+    },
+    {
+      id: "ui-mode-release-gate",
+      required: true,
+      description:
+        "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass.",
+    },
+    {
+      id: "admin-diagnostics",
+      required: true,
+      description:
+        "A sanitized admin diagnostics bundle is exportable and attached or explicitly marked missing in the release artifact list.",
+    },
+    {
+      id: "webui",
+      required: true,
+      description: "WebUI static files are served and /api/status returns displayVersion.",
+    },
+    {
+      id: "yeonjang-macos",
+      required: false,
+      description: "macOS Yeonjang app enters tray and publishes MQTT capability status.",
+    },
+    {
+      id: "yeonjang-windows",
+      required: false,
+      description: "Windows Yeonjang starts without console and screen capture smoke passes.",
+    },
+    {
+      id: "channel-smoke",
+      required: true,
+      description:
+        "At least WebUI dry-run smoke passes; live Telegram/Slack smoke is required before public publish.",
+    },
   ]
 }
 
 function buildReleaseNoteSummary(input: {
   featureFlags: ReleaseFeatureFlagState[]
-  migrationPreflight: Pick<MigrationPreflightReport, "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions">
+  migrationPreflight: Pick<
+    MigrationPreflightReport,
+    "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions"
+  >
   performanceEvidence: ReleasePerformanceSummary
   orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
   rollback: ReleaseRollbackRunbook
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
 }): ReleaseNoteSummary {
-  const orchestrationFlag = input.featureFlags.find((flag) => flag.featureKey === "sub_agent_orchestration")
+  const orchestrationFlag = input.featureFlags.find(
+    (flag) => flag.featureKey === "sub_agent_orchestration",
+  )
   return {
     featureFlagDefaults: input.featureFlags
-      .map((flag) => `${flag.featureKey}: mode=${flag.mode}, compatibility=${flag.compatibilityMode ? "on" : "off"}`)
+      .map(
+        (flag) =>
+          `${flag.featureKey}: mode=${flag.mode}, compatibility=${flag.compatibilityMode ? "on" : "off"}`,
+      )
       .sort(),
     migrationCautions: [
       `schema current=${input.migrationPreflight.currentSchemaVersion}, latest=${input.migrationPreflight.latestSchemaVersion}, pending=${input.migrationPreflight.pendingVersions.join(",") || "none"}`,
@@ -466,11 +940,13 @@ function buildReleaseNoteSummary(input: {
   }
 }
 
-export function buildReleaseUpdatePreflightReport(input: {
-  rootDir?: string
-  targetPlatforms?: ReleaseTargetPlatform[]
-  promptSourceCount?: number
-} = {}): ReleaseUpdatePreflightReport {
+export function buildReleaseUpdatePreflightReport(
+  input: {
+    rootDir?: string
+    targetPlatforms?: ReleaseTargetPlatform[]
+    promptSourceCount?: number
+  } = {},
+): ReleaseUpdatePreflightReport {
   const rootDir = resolve(input.rootDir ?? getWorkspaceRootPath())
   const targetPlatforms = new Set(input.targetPlatforms ?? DEFAULT_TARGET_PLATFORMS)
   const checks: ReleaseUpdatePreflightCheck[] = []
@@ -480,13 +956,26 @@ export function buildReleaseUpdatePreflightReport(input: {
     id: "node-22",
     ok: nodeMajor >= 22,
     required: true,
-    message: nodeMajor >= 22 ? `Node.js ${process.version} is supported.` : `Node.js 22+ is required; current ${process.version}.`,
+    message:
+      nodeMajor >= 22
+        ? `Node.js ${process.version} is supported.`
+        : `Node.js 22+ is required; current ${process.version}.`,
   })
-  checks.push(commandCheck("pnpm", ["--version"], true, "pnpm is available for workspace install/build."))
-  checks.push(commandCheck("cargo", ["--version"], targetPlatforms.size > 0, "Rust/Cargo is available for Yeonjang builds."))
+  checks.push(
+    commandCheck("pnpm", ["--version"], true, "pnpm is available for workspace install/build."),
+  )
+  checks.push(
+    commandCheck(
+      "cargo",
+      ["--version"],
+      targetPlatforms.size > 0,
+      "Rust/Cargo is available for Yeonjang builds.",
+    ),
+  )
   checks.push({
     id: "os-supported",
-    ok: process.platform === "darwin" || process.platform === "win32" || process.platform === "linux",
+    ok:
+      process.platform === "darwin" || process.platform === "win32" || process.platform === "linux",
     required: true,
     message: `Current OS platform is ${process.platform}.`,
   })
@@ -494,7 +983,9 @@ export function buildReleaseUpdatePreflightReport(input: {
     id: "write-permission",
     ok: canWrite(rootDir),
     required: true,
-    message: canWrite(rootDir) ? "Workspace write permission is available." : "Workspace write permission is blocked.",
+    message: canWrite(rootDir)
+      ? "Workspace write permission is available."
+      : "Workspace write permission is blocked.",
   })
   checks.push({
     id: "prompt-seed",
@@ -504,7 +995,9 @@ export function buildReleaseUpdatePreflightReport(input: {
   })
   checks.push({
     id: "yeonjang-protocol",
-    ok: existsSync(join(rootDir, "Yeonjang", "src", "protocol.rs")) && existsSync(join(rootDir, "Yeonjang", "manifests", "permissions.json")),
+    ok:
+      existsSync(join(rootDir, "Yeonjang", "src", "protocol.rs")) &&
+      existsSync(join(rootDir, "Yeonjang", "manifests", "permissions.json")),
     required: true,
     message: "Yeonjang protocol and permission manifest must be packaged with the release.",
   })
@@ -512,7 +1005,8 @@ export function buildReleaseUpdatePreflightReport(input: {
     id: "db-backup-required",
     ok: false,
     required: false,
-    message: "A verified DB/prompt backup snapshot is required immediately before updating a live installation.",
+    message:
+      "A verified DB/prompt backup snapshot is required immediately before updating a live installation.",
   })
 
   return {
@@ -521,7 +1015,9 @@ export function buildReleaseUpdatePreflightReport(input: {
   }
 }
 
-export function writeReleasePackage(options: ReleaseManifestOptions & { outputDir: string; copyPayload?: boolean }): ReleasePackageWriteResult {
+export function writeReleasePackage(
+  options: ReleaseManifestOptions & { outputDir: string; copyPayload?: boolean },
+): ReleasePackageWriteResult {
   const manifest = buildReleaseManifest(options)
   const outputDir = resolve(options.outputDir)
   const payloadDir = join(outputDir, "payload")
@@ -540,10 +1036,10 @@ export function writeReleasePackage(options: ReleaseManifestOptions & { outputDi
 
   const manifestPath = join(outputDir, "manifest.json")
   const checksumPath = join(outputDir, "SHA256SUMS")
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf-8")
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8")
   writeFileSync(
     checksumPath,
-    manifest.checksums.map((entry) => `${entry.checksum}  ${entry.packagePath}`).join("\n") + "\n",
+    `${manifest.checksums.map((entry) => `${entry.checksum}  ${entry.packagePath}`).join("\n")}\n`,
     "utf-8",
   )
   return { outputDir, manifestPath, checksumPath, copiedArtifacts, manifest }
@@ -558,7 +1054,15 @@ function requiredArtifact(
   description: string,
   platform?: ReleaseTargetPlatform,
 ): ReleaseArtifactDefinition {
-  return { id, kind, sourcePath: resolve(rootDir, relativeSourcePath), packagePath, required: true, description, ...(platform ? { platform } : {}) }
+  return {
+    id,
+    kind,
+    sourcePath: resolve(rootDir, relativeSourcePath),
+    packagePath,
+    required: true,
+    description,
+    ...(platform ? { platform } : {}),
+  }
 }
 
 function optionalArtifact(
@@ -570,7 +1074,15 @@ function optionalArtifact(
   description: string,
   platform?: ReleaseTargetPlatform,
 ): ReleaseArtifactDefinition {
-  return { id, kind, sourcePath: resolve(rootDir, relativeSourcePath), packagePath, required: false, description, ...(platform ? { platform } : {}) }
+  return {
+    id,
+    kind,
+    sourcePath: resolve(rootDir, relativeSourcePath),
+    packagePath,
+    required: false,
+    description,
+    ...(platform ? { platform } : {}),
+  }
 }
 
 function materializeArtifact(definition: ReleaseArtifactDefinition): ReleaseArtifact {
@@ -590,16 +1102,33 @@ function materializeArtifact(definition: ReleaseArtifactDefinition): ReleaseArti
   }
 }
 
-function step(id: string, title: string, command: string[], required: boolean, smoke: boolean, description: string): ReleasePipelineStep {
+function step(
+  id: string,
+  title: string,
+  command: string[],
+  required: boolean,
+  smoke: boolean,
+  description: string,
+): ReleasePipelineStep {
   return { id, title, command, required, smoke, description }
 }
 
-function commandCheck(command: string, args: string[], required: boolean, successMessage: string): ReleaseUpdatePreflightCheck {
+function commandCheck(
+  command: string,
+  args: string[],
+  required: boolean,
+  successMessage: string,
+): ReleaseUpdatePreflightCheck {
   try {
     execFileSync(command, args, { stdio: ["ignore", "ignore", "ignore"] })
     return { id: `command:${command}`, ok: true, required, message: successMessage }
   } catch {
-    return { id: `command:${command}`, ok: false, required, message: `${command} was not found or failed to run.` }
+    return {
+      id: `command:${command}`,
+      ok: false,
+      required,
+      message: `${command} was not found or failed to run.`,
+    }
   }
 }
 
@@ -620,14 +1149,21 @@ function safePromptSources(rootDir: string): PromptSourceMetadata[] {
   }
 }
 
-function safeBackupInventory(rootDir: string): { included: number; excluded: number; promptSources: number; logicalCoverage: string[] } {
+function safeBackupInventory(rootDir: string): {
+  included: number
+  excluded: number
+  promptSources: number
+  logicalCoverage: string[]
+} {
   try {
     const inventory = buildBackupTargetInventory({ workDir: rootDir })
     return {
       included: inventory.included.length,
       excluded: inventory.excluded.length,
       promptSources: inventory.promptSources.length,
-      logicalCoverage: inventory.targets.filter((target) => target.kind === "logical_sqlite_table").map((target) => target.relativePath),
+      logicalCoverage: inventory.targets
+        .filter((target) => target.kind === "logical_sqlite_table")
+        .map((target) => target.relativePath),
     }
   } catch {
     return { included: 0, excluded: 0, promptSources: 0, logicalCoverage: [] }
@@ -666,7 +1202,11 @@ function safeWebRetrievalFixtureRegression(rootDir: string) {
 
 function readGitValue(rootDir: string, args: string[]): string | null {
   try {
-    const value = execFileSync("git", args, { cwd: rootDir, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
+    const value = execFileSync("git", args, {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
     return value || null
   } catch {
     return null
@@ -691,26 +1231,33 @@ export function buildReleaseOrchestrationEvidence(input: {
     loadRegistry: () => {
       offRegistryLookups += 1
       return {
-        activeSubAgents: [{ agentId: "agent:unexpected", displayName: "Unexpected", source: "config" as const }],
+        activeSubAgents: [
+          { agentId: "agent:unexpected", displayName: "Unexpected", source: "config" as const },
+        ],
         totalSubAgentCount: 1,
         disabledSubAgentCount: 0,
       }
     },
     now: () => input.now.getTime(),
   })
-  checks.push(buildOrchestrationCheck({
-    id: "feature_flag_off_parity",
-    pass: offParitySnapshot.mode === "single_nobie"
-      && offParitySnapshot.reasonCode === "feature_flag_off"
-      && offRegistryLookups === 0,
-    summary: offParitySnapshot.mode === "single_nobie" && offParitySnapshot.reasonCode === "feature_flag_off"
-      ? "Feature flag off state keeps the resolver on the single Nobie path without touching the registry."
-      : "Feature flag off state no longer guarantees a clean single Nobie fallback.",
-    detail: {
-      registryLookups: offRegistryLookups,
-      snapshot: serializeOrchestrationSnapshot(offParitySnapshot),
-    },
-  }))
+  checks.push(
+    buildOrchestrationCheck({
+      id: "feature_flag_off_parity",
+      pass:
+        offParitySnapshot.mode === "single_nobie" &&
+        offParitySnapshot.reasonCode === "feature_flag_off" &&
+        offRegistryLookups === 0,
+      summary:
+        offParitySnapshot.mode === "single_nobie" &&
+        offParitySnapshot.reasonCode === "feature_flag_off"
+          ? "Feature flag off state keeps the resolver on the single Nobie path without touching the registry."
+          : "Feature flag off state no longer guarantees a clean single Nobie fallback.",
+      detail: {
+        registryLookups: offRegistryLookups,
+        snapshot: serializeOrchestrationSnapshot(offParitySnapshot),
+      },
+    }),
+  )
 
   const noAgentFallbackSnapshot = resolveOrchestrationModeSnapshotSync({
     getConfig: () => ({
@@ -727,38 +1274,47 @@ export function buildReleaseOrchestrationEvidence(input: {
     }),
     now: () => input.now.getTime(),
   })
-  checks.push(buildOrchestrationCheck({
-    id: "no_agent_fallback",
-    pass: noAgentFallbackSnapshot.mode === "single_nobie"
-      && noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents",
-    summary: noAgentFallbackSnapshot.mode === "single_nobie" && noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents"
-      ? "No-agent orchestration requests still fall back to single Nobie automatically."
-      : "No-agent fallback no longer resolves cleanly to the single Nobie path.",
-    detail: {
-      snapshot: serializeOrchestrationSnapshot(noAgentFallbackSnapshot),
-    },
-  }))
+  checks.push(
+    buildOrchestrationCheck({
+      id: "no_agent_fallback",
+      pass:
+        noAgentFallbackSnapshot.mode === "single_nobie" &&
+        noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents",
+      summary:
+        noAgentFallbackSnapshot.mode === "single_nobie" &&
+        noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents"
+          ? "No-agent orchestration requests still fall back to single Nobie automatically."
+          : "No-agent fallback no longer resolves cleanly to the single Nobie path.",
+      detail: {
+        snapshot: serializeOrchestrationSnapshot(noAgentFallbackSnapshot),
+      },
+    }),
+  )
 
-  const runtimeFlag = input.featureFlags.find((flag) => flag.featureKey === "sub_agent_orchestration")
+  const runtimeFlag = input.featureFlags.find(
+    (flag) => flag.featureKey === "sub_agent_orchestration",
+  )
   checks.push({
     id: "runtime_flag_default",
-    status: runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
-      ? "passed"
-      : runtimeFlag
-        ? "warning"
-        : "warning",
-    summary: runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
-      ? "Runtime orchestration flag default remains off with compatibility mode enabled."
-      : runtimeFlag
-        ? `Runtime orchestration flag is ${runtimeFlag.mode}; verify this is intentional before public rollout.`
-        : "Runtime orchestration flag snapshot is missing.",
+    status:
+      runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
+        ? "passed"
+        : runtimeFlag
+          ? "warning"
+          : "warning",
+    summary:
+      runtimeFlag?.mode === "off" && runtimeFlag.compatibilityMode
+        ? "Runtime orchestration flag default remains off with compatibility mode enabled."
+        : runtimeFlag
+          ? `Runtime orchestration flag is ${runtimeFlag.mode}; verify this is intentional before public rollout.`
+          : "Runtime orchestration flag snapshot is missing.",
     detail: runtimeFlag
       ? {
-        featureKey: runtimeFlag.featureKey,
-        mode: runtimeFlag.mode,
-        compatibilityMode: runtimeFlag.compatibilityMode,
-        source: runtimeFlag.source,
-      }
+          featureKey: runtimeFlag.featureKey,
+          mode: runtimeFlag.mode,
+          compatibilityMode: runtimeFlag.compatibilityMode,
+          source: runtimeFlag.source,
+        }
       : { featureKey: "sub_agent_orchestration", missing: true },
   })
 
@@ -772,11 +1328,7 @@ export function buildReleaseOrchestrationEvidence(input: {
   return {
     kind: "nobie.release.orchestration",
     generatedAt: input.now.toISOString(),
-    gateStatus: blockingFailures.length > 0
-      ? "failed"
-      : warnings.length > 0
-        ? "warning"
-        : "passed",
+    gateStatus: blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed",
     checks,
     warnings,
     blockingFailures,
@@ -797,7 +1349,9 @@ function buildOrchestrationCheck(input: {
   }
 }
 
-function serializeOrchestrationSnapshot(snapshot: OrchestrationModeSnapshot): Record<string, unknown> {
+function serializeOrchestrationSnapshot(
+  snapshot: OrchestrationModeSnapshot,
+): Record<string, unknown> {
   return {
     mode: snapshot.mode,
     status: snapshot.status,

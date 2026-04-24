@@ -3,17 +3,30 @@ import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 export function reviewSubAgentResult(input) {
     const retryBudgetLimit = getSubAgentResultRetryBudgetLimit(input.retryClass ?? "default");
     const issues = collectResultReviewIssues(input);
-    const normalizedFailureKey = issues.length > 0 ? normalizeResultReviewFailureKey(issues) : undefined;
-    const repeatedFailure = Boolean(normalizedFailureKey && (input.previousFailureKeys ?? []).includes(normalizedFailureKey));
+    const blockingIssues = issues.filter((issue) => !isLimitedSuccessIssue(issue, input.resultReport));
+    const normalizedReviewKey = issues.length > 0 ? normalizeResultReviewFailureKey(issues) : undefined;
+    const normalizedBlockingFailureKey = blockingIssues.length > 0 ? normalizeResultReviewFailureKey(blockingIssues) : undefined;
+    const normalizedFailureKey = normalizedBlockingFailureKey ?? normalizedReviewKey;
+    const repeatedFailure = Boolean(normalizedBlockingFailureKey &&
+        (input.previousFailureKeys ?? []).includes(normalizedBlockingFailureKey));
     const retryBudgetRemaining = Math.min(Math.max(0, input.retryBudgetRemaining), retryBudgetLimit);
-    const canRetry = issues.length > 0 && retryBudgetRemaining > 0 && !repeatedFailure;
+    const canRetry = blockingIssues.length > 0 &&
+        retryBudgetRemaining > 0 &&
+        !repeatedFailure &&
+        !input.resultReport.impossibleReason;
     if (issues.length === 0) {
         return {
             accepted: true,
             status: "completed",
+            verdict: "accept",
+            parentIntegrationStatus: "ready_for_parent_integration",
             issues: [],
             missingItems: [],
             requiredChanges: [],
+            risksOrGaps: [],
+            ...(input.resultReport.impossibleReason
+                ? { impossibleReason: input.resultReport.impossibleReason }
+                : {}),
             retryBudgetLimit,
             retryBudgetRemaining,
             repeatedFailure: false,
@@ -23,13 +36,40 @@ export function reviewSubAgentResult(input) {
     const missingItems = issues.map(describeMissingItem);
     const requiredChanges = issues.map(describeRequiredChange);
     const failureKey = normalizedFailureKey ?? "sub_agent_result_review:unknown";
+    if (blockingIssues.length === 0) {
+        return {
+            accepted: true,
+            status: "completed",
+            verdict: "limited_success",
+            parentIntegrationStatus: "limited_parent_integration",
+            issues,
+            normalizedFailureKey: failureKey,
+            missingItems,
+            requiredChanges,
+            risksOrGaps: input.resultReport.risksOrGaps.filter((riskOrGap) => riskOrGap.trim()),
+            ...(input.resultReport.impossibleReason
+                ? { impossibleReason: input.resultReport.impossibleReason }
+                : {}),
+            retryBudgetLimit,
+            retryBudgetRemaining,
+            repeatedFailure: false,
+            canRetry: false,
+        };
+    }
+    const verdict = resolveBlockingReviewVerdict({ blockingIssues, canRetry });
     const base = {
         accepted: false,
         status: canRetry ? "needs_revision" : "failed",
+        verdict,
+        parentIntegrationStatus: resolveParentIntegrationStatus(verdict),
         issues,
         normalizedFailureKey: failureKey,
         missingItems,
         requiredChanges,
+        risksOrGaps: input.resultReport.risksOrGaps.filter((riskOrGap) => riskOrGap.trim()),
+        ...(input.resultReport.impossibleReason
+            ? { impossibleReason: input.resultReport.impossibleReason }
+            : {}),
         retryBudgetLimit,
         retryBudgetRemaining,
         repeatedFailure,
@@ -149,6 +189,12 @@ export function collectResultReviewIssues(input) {
             detail: `ResultReport has risk_or_gap #${index + 1}.`,
         });
     }
+    if (report.impossibleReason) {
+        issues.push({
+            code: "impossible_reason_reported",
+            detail: `ResultReport has ${report.impossibleReason.kind} impossible reason ${report.impossibleReason.reasonCode}.`,
+        });
+    }
     return dedupeIssues(issues);
 }
 export function normalizeResultReviewFailureKey(issues) {
@@ -167,14 +213,45 @@ export function getSubAgentResultRetryBudgetLimit(retryClass) {
         case "risk_or_external":
         case "expensive":
             return 1;
-        case "default":
         default:
             return 2;
+    }
+}
+function isLimitedSuccessIssue(issue, resultReport) {
+    if (issue.code === "reported_risk_or_gap" || issue.code === "impossible_reason_reported") {
+        return true;
+    }
+    if (issue.code !== "required_output_not_satisfied" || !resultReport.impossibleReason) {
+        return false;
+    }
+    const output = resultReport.outputs.find((item) => item.outputId === issue.outputId);
+    return output?.status === "partial";
+}
+function resolveBlockingReviewVerdict(input) {
+    if (!input.canRetry)
+        return "reject";
+    return input.blockingIssues.some((issue) => issue.code === "required_evidence_missing" || issue.code === "evidence_source_missing")
+        ? "insufficient_evidence"
+        : "needs_revision";
+}
+function resolveParentIntegrationStatus(verdict) {
+    switch (verdict) {
+        case "accept":
+            return "ready_for_parent_integration";
+        case "limited_success":
+            return "limited_parent_integration";
+        case "insufficient_evidence":
+            return "blocked_insufficient_evidence";
+        case "reject":
+            return "blocked_rejected";
+        default:
+            return "requires_revision";
     }
 }
 export function buildFeedbackRequest(input) {
     const now = input.now?.() ?? Date.now();
     const feedbackRequestId = input.idProvider?.() ?? randomUUID();
+    const synthesizedContextExchangeId = input.additionalContextRefs.find((ref) => ref.startsWith("exchange:"));
     const identity = {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: "sub_session",
@@ -186,34 +263,74 @@ export function buildFeedbackRequest(input) {
             parentRunId: input.resultReport.parentRunId,
             parentSubSessionId: input.resultReport.subSessionId,
         },
-        ...(input.resultReport.identity.auditCorrelationId ? { auditCorrelationId: input.resultReport.identity.auditCorrelationId } : {}),
+        ...(input.resultReport.identity.auditCorrelationId
+            ? { auditCorrelationId: input.resultReport.identity.auditCorrelationId }
+            : {}),
     };
     return {
         identity,
         feedbackRequestId,
         parentRunId: input.resultReport.parentRunId,
         subSessionId: input.resultReport.subSessionId,
+        sourceResultReportIds: [input.resultReport.resultReportId],
+        previousSubSessionIds: [input.resultReport.subSessionId],
+        targetAgentPolicy: "same_agent",
+        ...(input.resultReport.identity.owner.ownerType === "sub_agent"
+            ? { targetAgentId: input.resultReport.identity.owner.ownerId }
+            : {}),
+        ...(input.resultReport.source?.nicknameSnapshot
+            ? { targetAgentNicknameSnapshot: input.resultReport.source.nicknameSnapshot }
+            : {}),
+        ...(synthesizedContextExchangeId ? { synthesizedContextExchangeId } : {}),
+        carryForwardOutputs: input.resultReport.outputs
+            .filter((output) => output.status !== "missing")
+            .map((output) => ({
+            outputId: output.outputId,
+            status: output.status === "partial" ? "partial" : "satisfied",
+            ...(output.value !== undefined ? { value: output.value } : {}),
+        })),
         missingItems: input.missingItems,
+        conflictItems: [],
         requiredChanges: input.requiredChanges,
+        additionalConstraints: [],
         additionalContextRefs: input.additionalContextRefs,
         expectedRevisionOutputs: input.expectedOutputs.filter((output) => output.required),
         retryBudgetRemaining: input.retryBudgetRemaining,
         reasonCode: input.reasonCode,
+        createdAt: now,
     };
 }
 export function decideSubSessionCompletionIntegration(reviews) {
     const blocked = reviews.filter((item) => !item.review.accepted);
+    const limited = reviews.filter((item) => item.review.accepted &&
+        (item.review.verdict === "limited_success" ||
+            item.review.parentIntegrationStatus === "limited_parent_integration"));
+    const reviewStatuses = reviews.map((item) => ({
+        subSessionId: item.subSessionId,
+        ...(item.review.verdict ? { verdict: item.review.verdict } : {}),
+        ...(item.review.parentIntegrationStatus
+            ? { parentIntegrationStatus: item.review.parentIntegrationStatus }
+            : {}),
+    }));
     if (blocked.length === 0) {
         return {
             finalDeliveryAllowed: true,
             blockedSubSessionIds: [],
-            reasonCodes: ["all_sub_session_results_accepted"],
+            limitedSubSessionIds: limited.map((item) => item.subSessionId),
+            reviewStatuses,
+            reasonCodes: limited.length > 0
+                ? ["all_sub_session_results_accepted", "limited_success_parent_integration"]
+                : ["all_sub_session_results_accepted"],
         };
     }
     return {
         finalDeliveryAllowed: false,
         blockedSubSessionIds: blocked.map((item) => item.subSessionId),
-        reasonCodes: [...new Set(blocked.map((item) => item.review.normalizedFailureKey ?? "sub_session_result_not_accepted"))].sort(),
+        limitedSubSessionIds: limited.map((item) => item.subSessionId),
+        reviewStatuses,
+        reasonCodes: [
+            ...new Set(blocked.map((item) => item.review.normalizedFailureKey ?? "sub_session_result_not_accepted")),
+        ].sort(),
     };
 }
 function dedupeIssues(issues) {
@@ -245,8 +362,8 @@ function describeMissingItem(issue) {
             return `${issue.code}:${issue.artifactId ?? "unknown"}`;
         case "reported_risk_or_gap":
             return "reported_risk_or_gap";
-        case "result_report_failed":
-        case "result_report_not_completed":
+        case "impossible_reason_reported":
+            return "impossible_reason_reported";
         default:
             return issue.code;
     }
@@ -269,9 +386,10 @@ function describeRequiredChange(issue) {
             return `Regenerate or attach an existing artifact for ${issue.artifactId ?? "unknown"}.`;
         case "reported_risk_or_gap":
             return "Resolve the reported risk or gap, or explicitly mark it as a non-blocking reviewed gap in a revised result.";
+        case "impossible_reason_reported":
+            return "Review the structured impossible reason and decide whether the parent can integrate a limited success.";
         case "result_report_failed":
             return "Retry the delegated work and return a non-failed ResultReport.";
-        case "result_report_not_completed":
         default:
             return "Return a completed ResultReport after addressing the typed completion criteria.";
     }

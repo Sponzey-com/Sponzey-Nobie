@@ -1,19 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { buildReleasePerformanceSummary } from "../packages/core/src/release/performance-gate.ts"
-import {
-  listLatencyMetrics,
-  recordLatencyMetric,
-  resetLatencyMetrics,
-} from "../packages/core/src/observability/latency.js"
-import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
-import {
-  SubSessionRunner,
-  createTextResultReport,
-  runParallelSubSessionGroup,
-  type RunSubSessionInput,
-  type SubSessionContract,
-  type SubSessionRuntimeDependencies,
-} from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { resolveWebUiLiveUpdateAck } from "../packages/core/src/api/ws/stream.ts"
+import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
   CommandRequest,
@@ -25,9 +12,22 @@ import type {
   SkillMcpAllowlist,
   StructuredTaskScope,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
+import {
+  listLatencyMetrics,
+  recordLatencyMetric,
+  resetLatencyMetrics,
+} from "../packages/core/src/observability/latency.js"
+import {
+  type RunSubSessionInput,
+  type SubSessionContract,
+  SubSessionRunner,
+  type SubSessionRuntimeDependencies,
+  createTextResultReport,
+  runParallelSubSessionGroup,
+} from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { buildReleasePerformanceSummary } from "../packages/core/src/release/performance-gate.ts"
+import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { acknowledgeLiveUpdateMessage } from "../packages/webui/src/api/ws.ts"
-import { resolveWebUiLiveUpdateAck } from "../packages/core/src/api/ws/stream.ts"
 
 const startRootRunMock = vi.fn()
 
@@ -85,7 +85,21 @@ const memoryPolicy: MemoryPolicy = {
   writebackReviewRequired: true,
 }
 
-function identity(entityType: RuntimeIdentity["entityType"], entityId: string, idempotencyKey = `idem:${entityId}`): RuntimeIdentity {
+const modelProfile = {
+  providerId: "openai",
+  modelId: "gpt-5.4-mini",
+  effort: "low",
+  maxOutputTokens: 512,
+  timeoutMs: 1000,
+  retryCount: 0,
+  costBudget: 1,
+}
+
+function identity(
+  entityType: RuntimeIdentity["entityType"],
+  entityId: string,
+  idempotencyKey = `idem:${entityId}`,
+): RuntimeIdentity {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType,
@@ -117,6 +131,7 @@ function promptBundle(createdAt: number): AgentPromptBundle {
       skillMcpAllowlist: allowlist,
       rateLimit: { maxConcurrentCalls: 2 },
     },
+    modelProfileSnapshot: modelProfile,
     taskScope,
     safetyRules: ["Do not deliver sub-session results directly to the user."],
     sourceProvenance: [{ sourceId: "profile:agent:researcher", version: "1" }],
@@ -151,7 +166,10 @@ function runInput(id: string, createdAt: number): RunSubSessionInput {
   }
 }
 
-function makeRuntimeDependencies(baseTime: number): { dependencies: SubSessionRuntimeDependencies; nowRef: { value: number } } {
+function makeRuntimeDependencies(baseTime: number): {
+  dependencies: SubSessionRuntimeDependencies
+  nowRef: { value: number }
+} {
   const sessions = new Map<string, SubSessionContract>()
   const nowRef = { value: baseTime }
   const clone = <T>(value: T): T => structuredClone(value)
@@ -159,7 +177,11 @@ function makeRuntimeDependencies(baseTime: number): { dependencies: SubSessionRu
     now: () => nowRef.value,
     idProvider: () => `id-${++nowRef.value}`,
     loadSubSessionByIdempotencyKey: (idempotencyKey) =>
-      clone([...sessions.values()].find((session) => session.identity.idempotencyKey === idempotencyKey)),
+      clone(
+        [...sessions.values()].find(
+          (session) => session.identity.idempotencyKey === idempotencyKey,
+        ),
+      ),
     persistSubSession: (subSession) => {
       sessions.set(subSession.subSessionId, clone(subSession))
       return true
@@ -211,48 +233,51 @@ describe("task014 performance slo", () => {
     })
     expect(ingress.receipt.text).toBe("요청을 접수했습니다. 분석을 시작합니다.")
 
-    await buildStartPlan({
-      message: "작업을 병렬로 나눠줘",
-      sessionId: "session-task014",
-      runId: "run-task014",
-      requestGroupId: "group-task014",
-      source: "webui",
-    }, {
-      analyzeRequestEntrySemantics: vi.fn(() => ({
-        reuse_conversation_context: false,
-        active_queue_cancellation_mode: null,
-      })),
-      isReusableRequestGroup: vi.fn(() => false),
-      listActiveSessionRequestGroups: vi.fn(() => []),
-      compareRequestContinuation: vi.fn(),
-      getRequestGroupDelegationTurnCount: vi.fn(() => 0),
-      buildWorkerSessionId: vi.fn(() => undefined),
-      normalizeTaskProfile: vi.fn((profile) => profile ?? "general_chat"),
-      findLatestWorkerSessionRun: vi.fn(() => undefined),
-      resolveOrchestrationMode: vi.fn(async () => ({
-        mode: "single_nobie",
-        status: "ok",
-        reasonCode: "feature_flag_off",
-        reason: "orchestration disabled",
-        configSubAgentCount: 0,
-        activeSubAgentCount: 0,
-        disabledSubAgentCount: 0,
-        requestedMode: "single_nobie",
-        featureFlagEnabled: false,
-      })),
-      buildOrchestrationPlan: vi.fn(() => ({
-        plan: {
-          planId: "plan-task014-slo",
-          plannerVersion: "structured-v1",
+    await buildStartPlan(
+      {
+        message: "작업을 병렬로 나눠줘",
+        sessionId: "session-task014",
+        runId: "run-task014",
+        requestGroupId: "group-task014",
+        source: "webui",
+      },
+      {
+        analyzeRequestEntrySemantics: vi.fn(() => ({
+          reuse_conversation_context: false,
+          active_queue_cancellation_mode: null,
+        })),
+        isReusableRequestGroup: vi.fn(() => false),
+        listActiveSessionRequestGroups: vi.fn(() => []),
+        compareRequestContinuation: vi.fn(),
+        getRequestGroupDelegationTurnCount: vi.fn(() => 0),
+        buildWorkerSessionId: vi.fn(() => undefined),
+        normalizeTaskProfile: vi.fn((profile) => profile ?? "general_chat"),
+        findLatestWorkerSessionRun: vi.fn(() => undefined),
+        resolveOrchestrationMode: vi.fn(async () => ({
           mode: "single_nobie",
-          delegatedTasks: [],
-          directTasks: [],
-          parallelGroups: [],
-          fallbackStrategy: { reasonCode: "single_nobie_mode", summary: "direct execution" },
-          audit: { rationale: [], warnings: [] },
-        },
-      })),
-    })
+          status: "ok",
+          reasonCode: "feature_flag_off",
+          reason: "orchestration disabled",
+          configSubAgentCount: 0,
+          activeSubAgentCount: 0,
+          disabledSubAgentCount: 0,
+          requestedMode: "single_nobie",
+          featureFlagEnabled: false,
+        })),
+        buildOrchestrationPlan: vi.fn(() => ({
+          plan: {
+            planId: "plan-task014-slo",
+            plannerVersion: "structured-v1",
+            mode: "single_nobie",
+            delegatedTasks: [],
+            directTasks: [],
+            parallelGroups: [],
+            fallbackStrategy: { reasonCode: "single_nobie_mode", summary: "direct execution" },
+            audit: { rationale: [], warnings: [] },
+          },
+        })),
+      },
+    )
 
     const { dependencies, nowRef } = makeRuntimeDependencies(baseTime)
     const runner = new SubSessionRunner(dependencies)
@@ -325,22 +350,30 @@ describe("task014 performance slo", () => {
     )
 
     const outboundAcks: unknown[] = []
-    acknowledgeLiveUpdateMessage({
-      type: "run.progress",
-      emittedAt: baseTime + 500,
-      runId: "run-webui",
-      sessionId: "session-webui",
-      requestGroupId: "group-webui",
-    }, (payload) => outboundAcks.push(payload))
-    expect(resolveWebUiLiveUpdateAck(outboundAcks[0] as {
-      type: string
-      eventType: string
-      emittedAt: number
-      runId: string
-      sessionId: string
-      requestGroupId: string
-      source: string
-    }, () => baseTime + 900)).toBe(true)
+    acknowledgeLiveUpdateMessage(
+      {
+        type: "run.progress",
+        emittedAt: baseTime + 500,
+        runId: "run-webui",
+        sessionId: "session-webui",
+        requestGroupId: "group-webui",
+      },
+      (payload) => outboundAcks.push(payload),
+    )
+    expect(
+      resolveWebUiLiveUpdateAck(
+        outboundAcks[0] as {
+          type: string
+          eventType: string
+          emittedAt: number
+          runId: string
+          sessionId: string
+          requestGroupId: string
+          source: string
+        },
+        () => baseTime + 900,
+      ),
+    ).toBe(true)
 
     recordLatencyMetric({
       name: "approval_aggregation_latency_ms",
@@ -368,26 +401,54 @@ describe("task014 performance slo", () => {
 
     expect(summary.gateStatus).toBe("passed")
     expect(summary.missingRequiredMetrics).toEqual([])
-    expect(summary.metrics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ targetId: "intake_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "registry_lookup_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "orchestration_mode_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "orchestration_planning_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "sub_session_queue_wait", status: "ok" }),
-      expect.objectContaining({ targetId: "first_progress_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "approval_aggregation_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "finalization_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "delivery_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "webui_live_update_latency", status: "ok" }),
-      expect.objectContaining({ targetId: "resource_lock_wait", status: "ok" }),
-    ]))
-    expect(listLatencyMetrics()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "ingress_ack_latency_ms", runId: "run-ingress", sessionId: "session-ingress" }),
-      expect.objectContaining({ name: "registry_lookup_latency_ms", runId: "run-task014", sessionId: "session-task014" }),
-      expect.objectContaining({ name: "orchestration_mode_latency_ms", runId: "run-task014", sessionId: "session-task014" }),
-      expect.objectContaining({ name: "orchestration_planning_latency_ms", runId: "run-task014", sessionId: "session-task014" }),
-      expect.objectContaining({ name: "first_progress_latency_ms", runId: "run-parent", sessionId: "session-parent" }),
-      expect.objectContaining({ name: "webui_live_update_latency_ms", runId: "run-webui", sessionId: "session-webui" }),
-    ]))
+    expect(summary.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ targetId: "intake_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "registry_lookup_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "orchestration_mode_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "orchestration_planning_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "sub_session_queue_wait", status: "ok" }),
+        expect.objectContaining({ targetId: "first_progress_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "approval_aggregation_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "finalization_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "delivery_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "webui_live_update_latency", status: "ok" }),
+        expect.objectContaining({ targetId: "resource_lock_wait", status: "ok" }),
+      ]),
+    )
+    expect(listLatencyMetrics()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "ingress_ack_latency_ms",
+          runId: "run-ingress",
+          sessionId: "session-ingress",
+        }),
+        expect.objectContaining({
+          name: "registry_lookup_latency_ms",
+          runId: "run-task014",
+          sessionId: "session-task014",
+        }),
+        expect.objectContaining({
+          name: "orchestration_mode_latency_ms",
+          runId: "run-task014",
+          sessionId: "session-task014",
+        }),
+        expect.objectContaining({
+          name: "orchestration_planning_latency_ms",
+          runId: "run-task014",
+          sessionId: "session-task014",
+        }),
+        expect.objectContaining({
+          name: "first_progress_latency_ms",
+          runId: "run-parent",
+          sessionId: "session-parent",
+        }),
+        expect.objectContaining({
+          name: "webui_live_update_latency_ms",
+          runId: "run-webui",
+          sessionId: "session-webui",
+        }),
+      ]),
+    )
   })
 })
