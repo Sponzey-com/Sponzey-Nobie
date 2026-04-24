@@ -2,6 +2,7 @@ import type { AgentContextMode } from "../agent/index.js";
 import type { IntentContract } from "../contracts/index.js";
 import type { OrchestrationMode, OrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
 import { buildOrchestrationPlan } from "../orchestration/planner.js";
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
 import { resolveOrchestrationModeSnapshot, type OrchestrationModeSnapshot } from "../orchestration/mode.js";
 import { analyzeRequestEntrySemantics, type RequestEntrySemantics } from "./entry-semantics.js";
 import { type RequestContinuationDecision } from "./entry-comparison.js";
@@ -69,6 +70,7 @@ export declare function buildStartPlan(params: {
     model?: string | undefined;
     targetId?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
 }, dependencies: StartPlanDependencies): Promise<StartPlan>;
 export { defaultDependencies as defaultStartPlanDependencies };
 //# sourceMappingURL=start-plan.d.ts.map

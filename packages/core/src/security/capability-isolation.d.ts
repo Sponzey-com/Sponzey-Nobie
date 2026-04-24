@@ -1,5 +1,5 @@
 import { type JsonObject } from "../contracts/index.js";
-import type { CapabilityDelegationRequest, CapabilityPolicy, CapabilityRiskLevel, DataExchangePackage, OwnerScope, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
+import type { CapabilityDelegationRequest, CapabilityPolicy, CapabilityRiskLevel, DataExchangePackage, DepthScopedToolKind, DepthScopedToolPolicy, OwnerScope, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 import type { RiskLevel, ToolContext } from "../tools/types.js";
 export declare const CAPABILITY_RISK_ORDER: Record<CapabilityRiskLevel, number>;
 export interface McpRegisteredToolRef {
@@ -36,6 +36,14 @@ export interface AgentCapabilityPolicyDecision {
     rateLimit?: CapabilityPolicy["rateLimit"];
     mcpTool?: McpRegisteredToolRef;
     diagnostic: Record<string, unknown>;
+}
+export interface DepthScopedToolPolicyDecision {
+    allowed: boolean;
+    toolName: string;
+    toolKind: DepthScopedToolKind;
+    depth: number;
+    reasonCode: "depth_scoped_tool_allowed" | "depth_scoped_tool_denied";
+    limit?: number;
 }
 export type DangerousCapabilityFixtureRiskLevel = "low" | "medium" | "high" | "critical";
 export type CapabilityApprovalActor = "parent_agent" | "user" | "admin";
@@ -87,6 +95,12 @@ export interface AgentCapabilityRateLimitLease {
 export declare function normalizeSkillMcpAllowlist(input: Partial<SkillMcpAllowlist> | null | undefined): SkillMcpAllowlist;
 export declare function parseMcpRegisteredToolName(toolName: string): McpRegisteredToolRef | null;
 export declare function resolveToolCapabilityRisk(toolName: string, fallback?: RiskLevel | CapabilityRiskLevel): CapabilityRiskLevel;
+export declare function classifyDepthScopedToolKind(toolName: string): DepthScopedToolKind;
+export declare function evaluateDepthScopedToolPolicy(input: {
+    toolName: string;
+    depth?: number;
+    policy?: DepthScopedToolPolicy;
+}): DepthScopedToolPolicyDecision;
 export declare function isToolAllowedBySkillMcpAllowlist(input: {
     toolName: string;
     allowlist: SkillMcpAllowlist;

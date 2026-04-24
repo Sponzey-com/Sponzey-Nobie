@@ -38,11 +38,36 @@ Platform binaries are optional on a single-host local release build, but must be
 4. Typecheck packages: `pnpm -r typecheck`.
 5. Run automated tests: `pnpm test`.
 6. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
-7. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-8. Run channel smoke dry-run: `pnpm run smoke:channels`.
-9. Build Yeonjang packages for each target OS.
-10. Generate release manifest and checksum files: `pnpm run release:package`.
-11. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+7. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
+8. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+9. Run channel smoke dry-run: `pnpm run smoke:channels`.
+10. Build Yeonjang packages for each target OS.
+11. Generate release manifest and checksum files: `pnpm run release:package`.
+12. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## Sub-Agent Rollout Gate
+
+Sub-agent orchestration must move through these release modes in order:
+
+1. `flag_off`: `sub_agent_orchestration=off`, compatibility mode on, single Nobie only.
+2. `dry_run_only`: shadow dry-run evidence only, no sub-agent final answer can become user-facing output.
+3. `limited_beta`: limited operator beta with rollback smoke, benchmark thresholds, and restart-resume soak passing.
+4. `full_enable`: public default only after limited beta evidence remains clean for the release window.
+
+The release manifest must include `subAgentReleaseGate`. This evidence is the final sub-agent release blocker and must include:
+
+- Release dry-run summary for orchestration mode, hot registry lookup, planner hot path, event stream recovery, final delivery dedupe, and migration rehearsal.
+- Fallback gates for feature flag off, no sub-agent, and disabled sub-agent states.
+- Delegation gates for one sub-agent, multiple parallel sub-agents, team composition, team target expansion, result review, nested delegation, and cascade stop.
+- Isolation gates for memory scope, redacted data exchange, capability permission, approval, model/cost audit, and fallback reason audit.
+- WebUI gates for React Flow topology validation, runtime projection, focus mode, templates, and import safety.
+- Learning/history/restore append-only evidence with review-pending semantics.
+- Benchmark thresholds: duplicate final answer count `0`, spawn ack p95 `<=300ms`, hot registry p95 `<=100ms`, planner hot path p95 `<=700ms`, first progress p95 `<=1.5s`, restart recovery p95 `<=3s`.
+- Restart-resume soak evidence that verifies projection recovery, finalizer recovery, zero orphan sub-sessions, zero duplicate events, and zero duplicate final answers.
+
+Do not proceed to full enablement when `subAgentReleaseGate.gateStatus` is `failed` or when `subAgentReleaseGate.blockingFailures` is non-empty.
+
+MVP scope includes explicit sub-agent delegation, team target expansion, nested delegation within configured depth, memory/capability isolation, WebUI topology/runtime projection, benchmark evidence, and rollback by feature flag off. MVP excludes advanced automatic learning, complete external tool sandbox coverage, and cross-tree reference group UI.
 
 ## UI Mode Release Gate
 
@@ -96,13 +121,15 @@ Rollback steps:
 
 1. Verify target release manifest and target backup snapshot checksums.
 2. Copy current runtime state aside as rollback-of-rollback evidence.
-3. Restore previous Gateway/CLI/Core bundle.
-4. Restore previous WebUI static build.
-5. Restore DB, memory DB, prompt seed files, setup state, and prompt registry from the verified snapshot.
-6. Restore config skeleton and re-enter secrets if the restored release requires them.
-7. Restore Yeonjang binary and protocol/permission files compatible with the Gateway release.
-8. Start Gateway and Yeonjang.
-9. Confirm `/api/status`, prompt checksum, schedule list, memory search, Yeonjang capability status, and channel smoke.
+3. Set `sub_agent_orchestration=off` before restoring binaries or state when the incident involves delegation, channel finalization, memory isolation, WebUI projection, or nested delegation.
+4. Confirm the single Nobie path can create a run and produce one final answer without deleting data.
+5. Restore previous Gateway/CLI/Core bundle when feature flag rollback alone is not enough.
+6. Restore previous WebUI static build.
+7. Restore DB, memory DB, prompt seed files, setup state, and prompt registry from the verified snapshot only after rehearsal passes.
+8. Restore config skeleton and re-enter secrets if the restored release requires them.
+9. Restore Yeonjang binary and protocol/permission files compatible with the Gateway release.
+10. Start Gateway and Yeonjang.
+11. Confirm `/api/status`, prompt checksum, schedule list, memory search, Yeonjang capability status, and channel smoke.
 
 Do not retry rollback automatically when:
 
@@ -121,5 +148,6 @@ Store these files with every release candidate:
 - Backup snapshot `manifest.json`.
 - Restore rehearsal report.
 - UI mode release gate summary from `manifest.json` under `uiModeEvidence`.
+- Sub-agent release readiness summary from `manifest.json` under `subAgentReleaseGate`.
 - Channel smoke result.
 - Yeonjang smoke result.

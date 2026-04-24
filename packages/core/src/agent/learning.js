@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
-import { getAgentConfig, getTeamConfig, insertLearningEvent, insertProfileHistoryVersion, insertProfileRestoreEvent, listLearningEvents, listProfileHistoryVersions, listProfileRestoreEvents, updateLearningEventApprovalState, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
+import { getAgentConfig, getTeamConfig, insertLearningEvent, insertProfileHistoryVersion, insertProfileRestoreEvent, listLearningEventsByApprovalState, listLearningEvents, listProfileHistoryVersions, listProfileRestoreEvents, updateLearningEventApprovalState, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
 import { storeOwnerScopedMemory } from "../memory/isolation.js";
+import { recordOrchestrationEvent } from "../orchestration/event-ledger.js";
 function sameOwner(a, b) {
     return a.ownerType === b.ownerType && a.ownerId === b.ownerId;
 }
@@ -34,12 +35,21 @@ function normalizedKeys(value) {
 function containsPermissionOrCapabilityExpansion(input) {
     const sensitiveKeys = new Set([
         "capabilitypolicy",
+        "capabilitybinding",
+        "agentcapabilitybinding",
+        "capabilitycatalog",
         "permissionprofile",
         "skillmcpallowlist",
+        "catalogid",
+        "bindingid",
+        "skillbinding",
+        "mcpserverbinding",
         "enabledskillids",
         "enabledmcpserverids",
         "enabledtoolnames",
         "secretscopeid",
+        "secretscopes",
+        "secretaccess",
         "allowexternalnetwork",
         "allowfilesystemwrite",
         "allowshellexecution",
@@ -63,6 +73,9 @@ function lockedFieldConflict(input) {
         return false;
     const afterKeys = normalizedKeys(input.after);
     return [...locked].some((field) => afterKeys.has(field.toLowerCase()) || hasOwn(input.after, field));
+}
+function hasEvidenceRefs(evidenceRefs) {
+    return (evidenceRefs ?? []).some((ref) => ref.trim().length > 0);
 }
 function redactString(value) {
     let changed = false;
@@ -221,6 +234,18 @@ export function evaluateLearningPolicy(input) {
             issues: ["locked_setting_conflict"],
         };
     }
+    if (!hasEvidenceRefs(input.evidenceRefs)) {
+        return {
+            approvalState: "pending_review",
+            reasonCode: "pending_missing_evidence",
+            autoApply: false,
+            requiresReview: true,
+            blocked: false,
+            confidence,
+            risk,
+            issues: ["evidence_refs_required_for_auto_apply"],
+        };
+    }
     if (confidence < 0.85) {
         return {
             approvalState: "pending_review",
@@ -284,6 +309,79 @@ export function buildHistoryVersion(input) {
 export function recordHistoryVersion(input, options = {}) {
     return insertProfileHistoryVersion(input, options);
 }
+function emitLearningRecorded(input) {
+    if (!input.inserted)
+        return;
+    recordOrchestrationEvent({
+        eventKind: "learning_recorded",
+        runId: input.event.sourceRunId ?? input.event.identity.parent?.parentRunId ?? null,
+        requestGroupId: input.event.identity.parent?.parentRequestId ?? null,
+        subSessionId: input.event.sourceSubSessionId ?? input.event.identity.parent?.parentSubSessionId ?? null,
+        agentId: input.event.agentId,
+        correlationId: input.event.identity.auditCorrelationId ?? input.event.learningEventId,
+        dedupeKey: `learning_recorded:${input.event.learningEventId}:${input.event.approvalState}`,
+        source: "learning-event-service",
+        severity: input.policy.blocked ? "warning" : "info",
+        summary: `Learning recorded for ${input.event.agentId}: ${input.event.learningTarget}`,
+        payload: {
+            learningEventId: input.event.learningEventId,
+            agentId: input.event.agentId,
+            agentType: input.event.agentType,
+            learningTarget: input.event.learningTarget,
+            evidenceRefs: input.event.evidenceRefs,
+            confidence: input.event.confidence,
+            approvalState: input.event.approvalState,
+            policyReasonCode: input.event.policyReasonCode,
+            autoApply: input.policy.autoApply,
+            requiresReview: input.policy.requiresReview,
+            blocked: input.policy.blocked,
+            ...(input.history
+                ? {
+                    historyVersionId: input.history.historyVersionId,
+                    historyVersion: input.history.version,
+                    targetEntityType: input.history.targetEntityType,
+                    targetEntityId: input.history.targetEntityId,
+                }
+                : {}),
+        },
+        producerTask: "task028",
+        createdAt: input.createdAt,
+        emittedAt: input.createdAt,
+    });
+}
+function emitHistoryRestored(input) {
+    if (!input.inserted)
+        return;
+    recordOrchestrationEvent({
+        eventKind: "history_restored",
+        runId: input.event.identity.parent?.parentRunId ?? null,
+        requestGroupId: input.event.identity.parent?.parentRequestId ?? null,
+        subSessionId: input.event.identity.parent?.parentSubSessionId ?? null,
+        agentId: input.event.targetEntityType === "agent" || input.event.targetEntityType === "memory"
+            ? input.event.targetEntityId
+            : null,
+        teamId: input.event.targetEntityType === "team" ? input.event.targetEntityId : null,
+        correlationId: input.event.identity.auditCorrelationId ?? input.event.restoreEventId,
+        dedupeKey: `history_restored:${input.event.restoreEventId}`,
+        source: "learning-event-service",
+        severity: input.ok ? "info" : "warning",
+        summary: `History restore ${input.event.dryRun ? "dry-run" : "event"} for ${input.event.targetEntityType}:${input.event.targetEntityId}`,
+        payload: {
+            restoreEventId: input.event.restoreEventId,
+            targetEntityType: input.event.targetEntityType,
+            targetEntityId: input.event.targetEntityId,
+            restoredHistoryVersionId: input.event.restoredHistoryVersionId,
+            dryRun: input.event.dryRun,
+            applied: input.applied,
+            ok: input.ok,
+            effectSummary: input.event.effectSummary,
+            conflictCodes: input.conflictCodes,
+        },
+        producerTask: "task028",
+        createdAt: input.createdAt,
+        emittedAt: input.createdAt,
+    });
+}
 export async function recordLearningEvent(input) {
     const policy = evaluateLearningPolicy(input);
     const createdAt = input.now?.() ?? Date.now();
@@ -303,6 +401,7 @@ export async function recordLearningEvent(input) {
         learningEventId,
         agentId: input.agentId,
         agentType: input.agentType,
+        ...(input.sourceRunId ? { sourceRunId: input.sourceRunId } : {}),
         ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
         ...(input.sourceSubSessionId ? { sourceSubSessionId: input.sourceSubSessionId } : {}),
         learningTarget: input.learningTarget,
@@ -360,6 +459,13 @@ export async function recordLearningEvent(input) {
         });
         memoryDocumentId = stored.documentId;
     }
+    emitLearningRecorded({
+        event,
+        policy,
+        inserted,
+        createdAt,
+        ...(history ? { history } : {}),
+    });
     return {
         event,
         policy,
@@ -377,9 +483,16 @@ export function dbLearningEventToContract(row) {
         identity: parsed["identity"],
         learningEventId: row.learning_event_id,
         agentId: row.agent_id,
-        ...(typeof parsed["agentType"] === "string" ? { agentType: parsed["agentType"] } : {}),
-        ...(typeof parsed["sourceSessionId"] === "string" ? { sourceSessionId: parsed["sourceSessionId"] } : {}),
-        ...(typeof parsed["sourceSubSessionId"] === "string" ? { sourceSubSessionId: parsed["sourceSubSessionId"] } : {}),
+        ...(typeof parsed["agentType"] === "string"
+            ? { agentType: parsed["agentType"] }
+            : {}),
+        ...(typeof parsed["sourceRunId"] === "string" ? { sourceRunId: parsed["sourceRunId"] } : {}),
+        ...(typeof parsed["sourceSessionId"] === "string"
+            ? { sourceSessionId: parsed["sourceSessionId"] }
+            : {}),
+        ...(typeof parsed["sourceSubSessionId"] === "string"
+            ? { sourceSubSessionId: parsed["sourceSubSessionId"] }
+            : {}),
         learningTarget: row.learning_target,
         ...(hasAfter
             ? {
@@ -394,7 +507,9 @@ export function dbLearningEventToContract(row) {
         evidenceRefs: parseStringArray(row.evidence_refs_json),
         confidence: row.confidence,
         approvalState: row.approval_state,
-        ...(typeof parsed["policyReasonCode"] === "string" ? { policyReasonCode: parsed["policyReasonCode"] } : {}),
+        ...(typeof parsed["policyReasonCode"] === "string"
+            ? { policyReasonCode: parsed["policyReasonCode"] }
+            : {}),
     };
 }
 function targetEntityTypeForLearningTarget(target) {
@@ -523,7 +638,9 @@ function findHistoryVersion(targetEntityType, targetEntityId, historyVersionId) 
 }
 function changedKeys(before, after) {
     const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-    return [...keys].filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])).sort();
+    return [...keys]
+        .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+        .sort();
 }
 export function dryRunRestoreHistoryVersion(input) {
     const history = findHistoryVersion(input.targetEntityType, input.targetEntityId, input.restoredHistoryVersionId);
@@ -563,7 +680,10 @@ function applyRestorePayload(input, payload, now) {
         return false;
     if (input.targetEntityType === "agent") {
         const config = payload;
-        if (!config || typeof config !== "object" || !("agentId" in config) || config.agentId !== input.targetEntityId)
+        if (!config ||
+            typeof config !== "object" ||
+            !("agentId" in config) ||
+            config.agentId !== input.targetEntityId)
             return false;
         upsertAgentConfig({ ...config, updatedAt: now }, {
             source: "system",
@@ -575,7 +695,10 @@ function applyRestorePayload(input, payload, now) {
     }
     if (input.targetEntityType === "team") {
         const config = payload;
-        if (!config || typeof config !== "object" || !("teamId" in config) || config.teamId !== input.targetEntityId)
+        if (!config ||
+            typeof config !== "object" ||
+            !("teamId" in config) ||
+            config.teamId !== input.targetEntityId)
             return false;
         upsertTeamConfig({ ...config, updatedAt: now }, {
             source: "system",
@@ -598,6 +721,10 @@ export function restoreHistoryVersion(input) {
             owner: input.owner,
             idempotencyKey: input.idempotencyKey ?? `restore:${restoreEventId}`,
             ...(input.auditCorrelationId ? { auditCorrelationId: input.auditCorrelationId } : {}),
+            ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+            ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
+            ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+            ...(input.parentRequestId ? { parentRequestId: input.parentRequestId } : {}),
         }),
         restoreEventId,
         targetEntityType: input.targetEntityType,
@@ -611,6 +738,14 @@ export function restoreHistoryVersion(input) {
         ...(input.auditCorrelationId ? { auditId: input.auditCorrelationId } : {}),
     });
     const applied = dryRun.ok ? applyRestorePayload(input, dryRun.restorePayload, createdAt) : false;
+    emitHistoryRestored({
+        event,
+        inserted,
+        applied,
+        ok: dryRun.ok,
+        conflictCodes: dryRun.conflictCodes,
+        createdAt,
+    });
     return {
         ...dryRun,
         event,
@@ -620,6 +755,9 @@ export function restoreHistoryVersion(input) {
 }
 export function listAgentLearningEvents(agentId) {
     return listLearningEvents(agentId).map(dbLearningEventToContract);
+}
+export function listLearningReviewQueue(query = {}) {
+    return listLearningEventsByApprovalState("pending_review", query).map(dbLearningEventToContract);
 }
 export function listHistoryVersions(targetEntityType, targetEntityId) {
     return listProfileHistoryVersions(targetEntityType, targetEntityId).map(dbHistoryVersionToContract);

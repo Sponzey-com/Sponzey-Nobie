@@ -39,9 +39,17 @@ export async function buildStartPlan(params, dependencies) {
     })));
     const orchestrationModeStartedAt = Date.now();
     const orchestrationRegistrySnapshot = await (dependencies.resolveOrchestrationMode ?? resolveOrchestrationModeSnapshot)();
+    const orchestrationRegistryLatencyMs = Date.now() - orchestrationModeStartedAt;
+    recordLatencyMetric({
+        name: "registry_lookup_latency_ms",
+        durationMs: orchestrationRegistryLatencyMs,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        ...(params.source ? { source: params.source } : {}),
+    });
     latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
         name: "orchestration_mode_latency_ms",
-        durationMs: Date.now() - orchestrationModeStartedAt,
+        durationMs: orchestrationRegistryLatencyMs,
         runId: params.runId,
         sessionId: params.sessionId,
         ...(params.source ? { source: params.source } : {}),
@@ -52,6 +60,7 @@ export async function buildStartPlan(params, dependencies) {
         parentRequestId: params.runId,
         userRequest: params.message,
         modeSnapshot: orchestrationRegistrySnapshot,
+        ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
     }).plan;
     latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
         name: "orchestration_planning_latency_ms",

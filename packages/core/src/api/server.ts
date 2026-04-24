@@ -24,8 +24,10 @@ import { registerAdminRoute } from "./routes/admin.js"
 import { registerAgentRoutes } from "./routes/agent.js"
 import { registerArtifactsRoute } from "./routes/artifacts.js"
 import { registerAuditRoute } from "./routes/audit.js"
+import { registerBenchmarkRoutes } from "./routes/benchmarks.js"
 import { registerCapabilitiesRoute } from "./routes/capabilities.js"
 import { registerChannelSmokeRoute } from "./routes/channel-smoke.js"
+import { registerCommandPaletteRoutes } from "./routes/command-palette.js"
 import { registerConfigOperationsRoute } from "./routes/config-operations.js"
 import { registerControlTimelineRoute } from "./routes/control-timeline.js"
 import { registerDataExchangeRoutes } from "./routes/data-exchanges.js"
@@ -90,6 +92,7 @@ export async function startServer(): Promise<void> {
   }
 
   registerStatusRoute(server)
+  registerBenchmarkRoutes(server)
   registerCapabilitiesRoute(server)
   registerArtifactsRoute(server)
   registerAgentRoutes(server)
@@ -99,6 +102,7 @@ export async function startServer(): Promise<void> {
   registerSetupRoute(server)
   registerRunsRoute(server)
   registerSubSessionRoutes(server)
+  registerCommandPaletteRoutes(server)
   registerDataExchangeRoutes(server)
   registerInstructionsRoute(server)
   registerMcpRoute(server)

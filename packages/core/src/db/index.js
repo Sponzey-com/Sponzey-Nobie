@@ -1608,6 +1608,22 @@ export function listLearningEvents(agentId) {
         .prepare("SELECT * FROM learning_events WHERE agent_id = ? ORDER BY created_at DESC")
         .all(agentId);
 }
+export function listLearningEventsByApprovalState(approvalState, filters = {}) {
+    const clauses = ["approval_state = ?"];
+    const values = [approvalState];
+    if (filters.agentId?.trim()) {
+        clauses.push("agent_id = ?");
+        values.push(filters.agentId.trim());
+    }
+    const requestedLimit = Math.floor(filters.limit ?? 100);
+    values.push(Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100);
+    return getDb()
+        .prepare(`SELECT * FROM learning_events
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at ASC, learning_event_id ASC
+       LIMIT ?`)
+        .all(...values);
+}
 export function updateLearningEventApprovalState(learningEventId, approvalState, options = {}) {
     assertMigrationWriteAllowed(getDb(), "agent.learning_event.update_approval");
     const now = options.now ?? Date.now();

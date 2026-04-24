@@ -2,7 +2,7 @@ import { type JsonObject } from "../contracts/index.js";
 import { type DbLearningEvent, type DbProfileHistoryVersion, type DbProfileRestoreEvent } from "../db/index.js";
 import type { AgentEntityType, HistoryVersion, LearningApprovalState, LearningEvent, OwnerScope, RestoreEvent } from "../contracts/sub-agent-orchestration.js";
 export type LearningRiskLevel = "low" | "medium" | "high";
-export type LearningPolicyReasonCode = "auto_apply_self_memory_high_confidence" | "pending_medium_confidence" | "pending_non_memory_target" | "pending_locked_setting_conflict" | "pending_permission_or_capability_expansion" | "rejected_low_confidence" | "rejected_cross_agent_write";
+export type LearningPolicyReasonCode = "auto_apply_self_memory_high_confidence" | "pending_missing_evidence" | "pending_medium_confidence" | "pending_non_memory_target" | "pending_locked_setting_conflict" | "pending_permission_or_capability_expansion" | "rejected_low_confidence" | "rejected_cross_agent_write";
 export interface LearningPolicyInput {
     actorOwner: OwnerScope;
     targetOwner: OwnerScope;
@@ -10,6 +10,7 @@ export interface LearningPolicyInput {
     before: JsonObject;
     after: JsonObject;
     confidence: number;
+    evidenceRefs?: string[];
     risk?: LearningRiskLevel;
     lockedFields?: string[];
 }
@@ -29,6 +30,7 @@ export interface LearningEventServiceInput extends LearningPolicyInput {
     beforeSummary: string;
     afterSummary: string;
     evidenceRefs: string[];
+    sourceRunId?: string;
     sourceSessionId?: string;
     sourceSubSessionId?: string;
     parentRunId?: string;
@@ -46,6 +48,10 @@ export interface LearningEventServiceResult {
     inserted: boolean;
     history?: HistoryVersion;
     memoryDocumentId?: string;
+}
+export interface LearningReviewQueueQuery {
+    agentId?: string;
+    limit?: number;
 }
 export interface HistoryVersionInput {
     targetEntityType: HistoryVersion["targetEntityType"];
@@ -82,6 +88,10 @@ export interface RestoreHistoryVersionInput {
     restoreEventId?: string;
     idempotencyKey?: string;
     auditCorrelationId?: string;
+    parentRunId?: string;
+    parentSessionId?: string;
+    parentSubSessionId?: string;
+    parentRequestId?: string;
     apply?: boolean;
     now?: () => number;
 }
@@ -122,6 +132,7 @@ export declare function dryRunRestoreHistoryVersion(input: {
 }): RestoreDryRunResult;
 export declare function restoreHistoryVersion(input: RestoreHistoryVersionInput): RestoreHistoryVersionResult;
 export declare function listAgentLearningEvents(agentId: string): LearningEvent[];
+export declare function listLearningReviewQueue(query?: LearningReviewQueueQuery): LearningEvent[];
 export declare function listHistoryVersions(targetEntityType: HistoryVersion["targetEntityType"], targetEntityId: string): HistoryVersion[];
 export declare function listRestoreEvents(targetEntityType: RestoreEvent["targetEntityType"], targetEntityId: string): RestoreEvent[];
 //# sourceMappingURL=learning.d.ts.map

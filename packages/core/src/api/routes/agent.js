@@ -1,10 +1,11 @@
-import { listHistoryVersions, listRestoreEvents, restoreHistoryVersion, } from "../../agent/learning.js";
+import { listAgentLearningEvents, listHistoryVersions, listLearningReviewQueue, listRestoreEvents, restoreHistoryVersion, } from "../../agent/learning.js";
 import { validateAgentConfig, validateTeamConfig, } from "../../contracts/sub-agent-orchestration.js";
 import { NicknameNamespaceError, getDb, listAgentTeamMemberships, } from "../../db/index.js";
 import { createAgentHierarchyService } from "../../orchestration/hierarchy.js";
 import { createAgentRegistryService, createTeamRegistryService, } from "../../orchestration/registry.js";
 import { createTeamCompositionService } from "../../orchestration/team-composition.js";
 import { createTeamExecutionPlanService } from "../../orchestration/team-execution-plan.js";
+import { createAgentTopologyService } from "../../orchestration/topology-projection.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { startLocalRun } from "./runs.js";
 function isRecord(value) {
@@ -27,6 +28,19 @@ function asStringArray(value) {
 }
 function asPositiveInteger(value) {
     return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+function asQueryLimit(value) {
+    if (!value)
+        return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+function learningQueueQuery(agentId, limit) {
+    const parsedLimit = asQueryLimit(limit);
+    return {
+        ...(agentId ? { agentId } : {}),
+        ...(parsedLimit ? { limit: parsedLimit } : {}),
+    };
 }
 function parseJsonArray(value) {
     if (!value)
@@ -98,6 +112,10 @@ function teamPayload(body) {
 function relationshipPayload(body) {
     const envelope = requestEnvelope(body);
     return envelope.relationship ?? body;
+}
+function topologyEdgePayload(body) {
+    const envelope = requestEnvelope(body);
+    return envelope.edge ?? body;
 }
 function teamCompositionInput(teamId, body) {
     const envelope = requestEnvelope(body);
@@ -294,6 +312,17 @@ export function registerAgentRoutes(app) {
         history: listHistoryVersions("agent", req.params.agentId),
         restores: listRestoreEvents("agent", req.params.agentId),
     }));
+    app.get("/api/agents/:agentId/learning", { preHandler: authMiddleware }, async (req) => ({
+        ok: true,
+        agentId: req.params.agentId,
+        events: listAgentLearningEvents(req.params.agentId),
+        reviewQueue: listLearningReviewQueue(learningQueueQuery(req.params.agentId, req.query.limit)),
+    }));
+    app.get("/api/learning/review-queue", { preHandler: authMiddleware }, async (req) => ({
+        ok: true,
+        generatedAt: Date.now(),
+        items: listLearningReviewQueue(learningQueueQuery(undefined, req.query.limit)),
+    }));
     app.post("/api/agents/:agentId/restore", { preHandler: authMiddleware }, async (req, reply) => {
         const body = requestEnvelope(req.body);
         const restoredHistoryVersionId = asString(body.restoredHistoryVersionId) ?? asString(body.historyVersionId);
@@ -420,6 +449,15 @@ export function registerAgentRoutes(app) {
             roleHints: nextRoleHints ?? current.roleHints,
             ...(Array.isArray(body.memberships) ? { memberships: body.memberships } : {}),
         }, req.params.teamId);
+        const topologyValidation = createAgentTopologyService().validateActiveTeamMembers(next);
+        if (!topologyValidation.valid) {
+            return reply.status(400).send({
+                ok: false,
+                error: topologyValidation.diagnostics[0]?.reasonCode ?? "invalid_team_membership",
+                reasonCode: topologyValidation.diagnostics[0]?.reasonCode ?? "invalid_team_membership",
+                diagnostics: topologyValidation.diagnostics,
+            });
+        }
         const stored = validateAndStoreTeam(reply, next, req.body);
         if (isFastifyReply(stored))
             return stored;
@@ -525,6 +563,20 @@ export function registerAgentRoutes(app) {
         return {
             ok: true,
             valid: result.ok,
+            relationship: result.relationship,
+            diagnostics: result.diagnostics,
+        };
+    });
+    app.get("/api/agent-topology", { preHandler: authMiddleware }, async () => ({
+        ok: true,
+        ...createAgentTopologyService().buildProjection(),
+    }));
+    app.post("/api/agent-topology/edges/validate", { preHandler: authMiddleware }, async (req) => {
+        const result = createAgentTopologyService().validateEdge(topologyEdgePayload(req.body));
+        return {
+            ok: result.ok,
+            valid: result.valid,
+            kind: result.kind,
             relationship: result.relationship,
             diagnostics: result.diagnostics,
         };

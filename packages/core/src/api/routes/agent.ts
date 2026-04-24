@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
 import {
+  listAgentLearningEvents,
   listHistoryVersions,
+  listLearningReviewQueue,
   listRestoreEvents,
   restoreHistoryVersion,
 } from "../../agent/learning.js"
@@ -24,6 +26,7 @@ import {
 } from "../../orchestration/registry.js"
 import { createTeamCompositionService } from "../../orchestration/team-composition.js"
 import { createTeamExecutionPlanService } from "../../orchestration/team-execution-plan.js"
+import { createAgentTopologyService } from "../../orchestration/topology-projection.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { startLocalRun } from "./runs.js"
 
@@ -41,6 +44,7 @@ type EntityEnvelope = {
   roleHints?: unknown
   memberships?: unknown
   relationship?: unknown
+  edge?: unknown
   layout?: unknown
   maxDepth?: unknown
   maxChildCount?: unknown
@@ -49,6 +53,10 @@ type EntityEnvelope = {
   parentRequestId?: string
   userRequest?: string
   persist?: boolean
+}
+
+type LearningQueueQuery = {
+  limit?: string
 }
 
 type ApiTeamMember = Omit<TeamMembership, "status"> & {
@@ -85,6 +93,20 @@ function asStringArray(value: unknown): string[] | undefined {
 
 function asPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined
+}
+
+function asQueryLimit(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function learningQueueQuery(agentId: string | undefined, limit: string | undefined) {
+  const parsedLimit = asQueryLimit(limit)
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...(parsedLimit ? { limit: parsedLimit } : {}),
+  }
 }
 
 function parseJsonArray(value: string | null): string[] {
@@ -168,6 +190,11 @@ function teamPayload(body: unknown): unknown {
 function relationshipPayload(body: unknown): unknown {
   const envelope = requestEnvelope(body)
   return envelope.relationship ?? body
+}
+
+function topologyEdgePayload(body: unknown): unknown {
+  const envelope = requestEnvelope(body)
+  return envelope.edge ?? body
 }
 
 function teamCompositionInput(teamId: string, body: unknown): string | unknown {
@@ -438,6 +465,27 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     }),
   )
 
+  app.get<{ Params: { agentId: string }; Querystring: LearningQueueQuery }>(
+    "/api/agents/:agentId/learning",
+    { preHandler: authMiddleware },
+    async (req) => ({
+      ok: true,
+      agentId: req.params.agentId,
+      events: listAgentLearningEvents(req.params.agentId),
+      reviewQueue: listLearningReviewQueue(learningQueueQuery(req.params.agentId, req.query.limit)),
+    }),
+  )
+
+  app.get<{ Querystring: LearningQueueQuery }>(
+    "/api/learning/review-queue",
+    { preHandler: authMiddleware },
+    async (req) => ({
+      ok: true,
+      generatedAt: Date.now(),
+      items: listLearningReviewQueue(learningQueueQuery(undefined, req.query.limit)),
+    }),
+  )
+
   app.post<{
     Params: { agentId: string }
     Body: EntityEnvelope
@@ -609,6 +657,15 @@ export function registerAgentRoutes(app: FastifyInstance): void {
       },
       req.params.teamId,
     )
+    const topologyValidation = createAgentTopologyService().validateActiveTeamMembers(next)
+    if (!topologyValidation.valid) {
+      return reply.status(400).send({
+        ok: false,
+        error: topologyValidation.diagnostics[0]?.reasonCode ?? "invalid_team_membership",
+        reasonCode: topologyValidation.diagnostics[0]?.reasonCode ?? "invalid_team_membership",
+        diagnostics: topologyValidation.diagnostics,
+      })
+    }
     const stored = validateAndStoreTeam(reply, next, req.body)
     if (isFastifyReply(stored)) return stored
     return { ok: true, team: stored, ...teamMembersResponse(stored) }
@@ -746,6 +803,30 @@ export function registerAgentRoutes(app: FastifyInstance): void {
       return {
         ok: true,
         valid: result.ok,
+        relationship: result.relationship,
+        diagnostics: result.diagnostics,
+      }
+    },
+  )
+
+  app.get("/api/agent-topology", { preHandler: authMiddleware }, async () => ({
+    ok: true,
+    ...createAgentTopologyService().buildProjection(),
+  }))
+
+  app.post<{ Body: EntityEnvelope }>(
+    "/api/agent-topology/edges/validate",
+    { preHandler: authMiddleware },
+    async (req) => {
+      const result = createAgentTopologyService().validateEdge(
+        topologyEdgePayload(req.body) as Parameters<
+          ReturnType<typeof createAgentTopologyService>["validateEdge"]
+        >[0],
+      )
+      return {
+        ok: result.ok,
+        valid: result.valid,
+        kind: result.kind,
         relationship: result.relationship,
         diagnostics: result.diagnostics,
       }

@@ -109,6 +109,16 @@ const memoryPolicy: MemoryPolicy = {
   writebackReviewRequired: true,
 }
 
+const modelProfile = {
+  providerId: "openai",
+  modelId: "gpt-5.4-mini",
+  effort: "low",
+  maxOutputTokens: 512,
+  timeoutMs: 1000,
+  retryCount: 0,
+  costBudget: 1,
+}
+
 function resultReport(overrides: Partial<ResultReport> = {}): ResultReport {
   return {
     identity: identity("sub_session", "sub:review"),
@@ -156,6 +166,7 @@ function promptBundle(
       skillMcpAllowlist: allowlist,
       rateLimit: { maxConcurrentCalls: 1 },
     },
+    modelProfileSnapshot: modelProfile,
     taskScope: { ...taskScope, expectedOutputs },
     safetyRules: ["Do not send sub-session results directly to the user."],
     sourceProvenance: [{ sourceId: "profile:agent:reviewer", version: "1" }],

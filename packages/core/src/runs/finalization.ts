@@ -1,10 +1,15 @@
+import { commitFinalDelivery } from "./channel-finalizer.js"
 import {
+  type RunChunkDeliveryHandler,
   emitAssistantTextDelivery,
   resolveAssistantTextDeliveryOutcome,
-  type RunChunkDeliveryHandler,
 } from "./delivery.js"
 import { recordMessageLedgerEvent } from "./message-ledger.js"
-import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser } from "./recovery.js"
+import {
+  describeAssistantTextDeliveryFailure,
+  summarizeRawErrorActionHintForUser,
+  summarizeRawErrorForUser,
+} from "./recovery.js"
 import type { RunStatus, RunStepStatus } from "./types.js"
 
 export type FinalizationSource = "webui" | "cli" | "telegram" | "slack"
@@ -38,7 +43,9 @@ export interface FinalizationDependencies {
     title?: string
   }) => void
   onDeliveryError?: (message: string) => void
-  deliveryDependencies?: NonNullable<Parameters<typeof emitAssistantTextDelivery>[0]["dependencies"]>
+  deliveryDependencies?: NonNullable<
+    Parameters<typeof emitAssistantTextDelivery>[0]["dependencies"]
+  >
 }
 
 export function markRunCompleted(params: {
@@ -64,12 +71,7 @@ export function markRunCompleted(params: {
     text: params.text,
     summary: params.summary,
   })
-  params.dependencies.setRunStepStatus(
-    params.runId,
-    "executing",
-    "completed",
-    executingSummary,
-  )
+  params.dependencies.setRunStepStatus(params.runId, "executing", "completed", executingSummary)
   params.dependencies.setRunStepStatus(
     params.runId,
     "reviewing",
@@ -82,18 +84,8 @@ export function markRunCompleted(params: {
     "completed",
     params.finalizingSummary ?? "실행 결과를 저장했습니다.",
   )
-  params.dependencies.setRunStepStatus(
-    params.runId,
-    "completed",
-    "completed",
-    completedSummary,
-  )
-  params.dependencies.updateRunStatus(
-    params.runId,
-    "completed",
-    completedSummary,
-    false,
-  )
+  params.dependencies.setRunStepStatus(params.runId, "completed", "completed", completedSummary)
+  params.dependencies.updateRunStatus(params.runId, "completed", completedSummary, false)
   params.dependencies.appendRunEvent(params.runId, params.eventLabel ?? "실행 완료")
 }
 
@@ -106,32 +98,26 @@ export async function completeRunWithAssistantMessage(params: {
   dependencies: FinalizationDependencies
 }): Promise<void> {
   if (params.text) {
-    recordMessageLedgerEvent({
-      runId: params.runId,
-      sessionKey: params.sessionId,
-      channel: params.source,
-      eventKind: "final_answer_generated",
-      idempotencyKey: `final-answer:${params.runId}`,
-      status: "generated",
-      summary: "최종 응답을 생성했습니다.",
-      detail: { textLength: params.text.trim().length },
-    })
-    const deliveryReceipt = await emitAssistantTextDelivery({
-      runId: params.runId,
+    const finalDelivery = await commitFinalDelivery({
+      parentRunId: params.runId,
       sessionId: params.sessionId,
       text: params.text,
       source: params.source,
       onChunk: params.onChunk,
-      ...(params.dependencies.onDeliveryError ? { onError: params.dependencies.onDeliveryError } : {}),
+      ...(params.dependencies.onDeliveryError
+        ? { onDeliveryError: params.dependencies.onDeliveryError }
+        : {}),
       ...(params.dependencies.deliveryDependencies
-        ? { dependencies: params.dependencies.deliveryDependencies }
+        ? { deliveryDependencies: params.dependencies.deliveryDependencies }
         : {}),
     })
-    const deliveryOutcome = resolveAssistantTextDeliveryOutcome(deliveryReceipt)
-    if (deliveryOutcome.hasDeliveryFailure) {
+    if (finalDelivery.deliveryOutcome?.hasDeliveryFailure) {
       params.dependencies.appendRunEvent(
         params.runId,
-        describeAssistantTextDeliveryFailure({ source: params.source, outcome: deliveryOutcome }),
+        describeAssistantTextDeliveryFailure({
+          source: params.source,
+          outcome: finalDelivery.deliveryOutcome,
+        }),
       )
     }
   }
@@ -154,7 +140,10 @@ export async function emitStandaloneAssistantMessage(params: {
   text: string
   source: FinalizationSource
   onChunk: RunChunkDeliveryHandler | undefined
-  dependencies: Pick<FinalizationDependencies, "appendRunEvent" | "onDeliveryError" | "deliveryDependencies">
+  dependencies: Pick<
+    FinalizationDependencies,
+    "appendRunEvent" | "onDeliveryError" | "deliveryDependencies"
+  >
 }): Promise<void> {
   if (!params.text.trim()) return
   const deliveryReceipt = await emitAssistantTextDelivery({
@@ -163,7 +152,10 @@ export async function emitStandaloneAssistantMessage(params: {
     text: params.text,
     source: params.source,
     onChunk: params.onChunk,
-    ...(params.dependencies.onDeliveryError ? { onError: params.dependencies.onDeliveryError } : {}),
+    deliveryKind: "progress",
+    ...(params.dependencies.onDeliveryError
+      ? { onError: params.dependencies.onDeliveryError }
+      : {}),
     ...(params.dependencies.deliveryDependencies
       ? { dependencies: params.dependencies.deliveryDependencies }
       : {}),
@@ -247,7 +239,12 @@ export async function moveRunToCancelledAfterStop(params: {
     title: "cancelled_after_stop",
   })
   params.dependencies.setRunStepStatus(params.runId, "reviewing", "completed", summary)
-  params.dependencies.setRunStepStatus(params.runId, "finalizing", "completed", "중단 결과를 사용자에게 안내했습니다.")
+  params.dependencies.setRunStepStatus(
+    params.runId,
+    "finalizing",
+    "completed",
+    "중단 결과를 사용자에게 안내했습니다.",
+  )
   params.dependencies.updateRunStatus(params.runId, "cancelled", summary, false)
   params.dependencies.appendRunEvent(params.runId, "자동 진행 중단 후 요청 취소")
 }
@@ -259,13 +256,25 @@ export function buildAwaitingUserMessage(params: AwaitingUserParams): string {
     params.preview.trim() ? `현재까지 결과:\n${params.preview.trim()}` : "",
     remainingItems.length > 0 ? `남은 항목:\n- ${remainingItems.join("\n- ")}` : "",
     params.reason?.trim() ? `중단 사유: ${params.reason.trim()}` : "",
-    summarizeRawErrorForUser(params.rawMessage) ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}` : "",
-    summarizeRawErrorActionHintForUser(params.rawMessage) ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}` : "",
+    summarizeRawErrorForUser(params.rawMessage)
+      ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}`
+      : "",
+    summarizeRawErrorActionHintForUser(params.rawMessage)
+      ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}`
+      : "",
   ].filter(Boolean)
 
   return lines.join("\n\n")
 }
 
 function buildCancelledAfterStopDetail(params: AwaitingUserParams): string {
-  return [params.reason, params.rawMessage, params.userMessage, params.preview, params.remainingItems?.join("\n")].filter(Boolean).join("\n")
+  return [
+    params.reason,
+    params.rawMessage,
+    params.userMessage,
+    params.preview,
+    params.remainingItems?.join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n")
 }

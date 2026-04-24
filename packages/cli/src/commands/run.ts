@@ -75,6 +75,7 @@ export async function runCommand(message: string, options: {
     source: "cli",
     onChunk: async (chunk: AgentChunk) => {
       handleChunk(chunk)
+      return undefined
     },
   })
   if (receipt.text.trim()) {

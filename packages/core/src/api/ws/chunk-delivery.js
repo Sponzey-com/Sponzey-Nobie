@@ -1,17 +1,17 @@
 import { basename } from "node:path";
-import { eventBus } from "../../events/index.js";
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
-import { deliverArtifactOnce } from "../../runs/delivery.js";
+import { eventBus } from "../../events/index.js";
+import { deliverArtifactOnce, } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
 function isWebUiArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
     const candidate = value;
-    return candidate.kind === "artifact_delivery"
-        && candidate.channel === "webui"
-        && typeof candidate.filePath === "string"
-        && typeof candidate.size === "number"
-        && typeof candidate.source === "string";
+    return (candidate.kind === "artifact_delivery" &&
+        candidate.channel === "webui" &&
+        typeof candidate.filePath === "string" &&
+        typeof candidate.size === "number" &&
+        typeof candidate.source === "string");
 }
 export function createWebUiChunkDeliveryHandler(params) {
     let bufferedText = "";
@@ -25,7 +25,9 @@ export function createWebUiChunkDeliveryHandler(params) {
         }
         if (chunk.type === "tool_end") {
             const isolatedToolResponse = decideIsolatedToolResponse(chunk);
-            if (isolatedToolResponse.kind === "artifact" && chunk.success && isWebUiArtifactDeliveryDetails(chunk.details)) {
+            if (isolatedToolResponse.kind === "artifact" &&
+                chunk.success &&
+                isWebUiArtifactDeliveryDetails(chunk.details)) {
                 const details = chunk.details;
                 const receipt = await deliverArtifactOnce({
                     runId: params.runId,
@@ -55,7 +57,8 @@ export function createWebUiChunkDeliveryHandler(params) {
                             ...(details.caption ? { caption: details.caption } : {}),
                         });
                         return {
-                            artifactDeliveries: [{
+                            artifactDeliveries: [
+                                {
                                     toolName: chunk.toolName,
                                     channel: "webui",
                                     filePath: details.filePath,
@@ -66,7 +69,8 @@ export function createWebUiChunkDeliveryHandler(params) {
                                     mimeType: artifact.mimeType,
                                     sizeBytes: details.size,
                                     ...(details.caption ? { caption: details.caption } : {}),
-                                }],
+                                },
+                            ],
                         };
                     },
                 });
@@ -87,14 +91,16 @@ export function createWebUiChunkDeliveryHandler(params) {
             const deliveredText = bufferedText;
             bufferedText = "";
             return {
-                textDeliveries: [{
+                textDeliveries: [
+                    {
                         channel: "webui",
                         text: deliveredText,
                         ...(params.deliveryKind ? { deliveryKind: params.deliveryKind } : {}),
                         ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
                         ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
                         ...(params.agentId ? { agentId: params.agentId } : {}),
-                    }],
+                    },
+                ],
             };
         }
         if (chunk.type === "error") {

@@ -39,6 +39,15 @@ export type ResourceLockKind =
   | "external_target"
   | "custom"
 export type CapabilityRiskLevel = "safe" | "moderate" | "external" | "sensitive" | "dangerous"
+export type DepthScopedToolKind =
+  | "session_control"
+  | "system"
+  | "mcp"
+  | "shell"
+  | "filesystem"
+  | "network"
+  | "screen"
+  | "other"
 export type DataExchangeRetentionPolicy =
   | "session_only"
   | "short_term"
@@ -189,6 +198,11 @@ export interface CapabilityPolicy {
     maxConcurrentCalls: number
     maxCallsPerMinute?: number
   }
+}
+
+export interface DepthScopedToolPolicy {
+  maxDepthByToolKind: Partial<Record<DepthScopedToolKind, number>>
+  deniedToolNamesByDepth?: Record<string, string[]>
 }
 
 export interface BaseAgentConfig {
@@ -709,6 +723,7 @@ export interface LearningEvent {
   learningEventId: string
   agentId: string
   agentType?: AgentEntityType
+  sourceRunId?: string
   sourceSessionId?: string
   sourceSubSessionId?: string
   learningTarget: "memory" | "role" | "personality" | "team_profile"

@@ -3472,6 +3472,28 @@ export function listLearningEvents(agentId: string): DbLearningEvent[] {
     .all(agentId)
 }
 
+export function listLearningEventsByApprovalState(
+  approvalState: LearningEvent["approvalState"],
+  filters: { agentId?: string; limit?: number } = {},
+): DbLearningEvent[] {
+  const clauses = ["approval_state = ?"]
+  const values: Array<string | number> = [approvalState]
+  if (filters.agentId?.trim()) {
+    clauses.push("agent_id = ?")
+    values.push(filters.agentId.trim())
+  }
+  const requestedLimit = Math.floor(filters.limit ?? 100)
+  values.push(Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100)
+  return getDb()
+    .prepare<unknown[], DbLearningEvent>(
+      `SELECT * FROM learning_events
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at ASC, learning_event_id ASC
+       LIMIT ?`,
+    )
+    .all(...values)
+}
+
 export function updateLearningEventApprovalState(
   learningEventId: string,
   approvalState: LearningEvent["approvalState"],

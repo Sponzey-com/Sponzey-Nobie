@@ -46,6 +46,51 @@ export {
   getWorkspaceRootPath,
 } from "./version.js"
 
+// Benchmarks
+export {
+  SUB_AGENT_BENCHMARK_SCENARIO_IDS,
+  buildSubAgentBenchmarkReleaseGateSummary,
+  evaluateSubAgentBenchmarkReleaseGate,
+  getLatestSubAgentBenchmarkRun,
+  getSubAgentBenchmarkRun,
+  listSubAgentBenchmarkScenarios,
+  resetSubAgentBenchmarkRunsForTest,
+  runAndStoreSubAgentBenchmarkSuite,
+  runSubAgentBenchmarkSuite,
+} from "./benchmarks/sub-agent-benchmarks.js"
+export type {
+  CompiledWorkflowRecommendation,
+  RunSubAgentBenchmarkSuiteInput,
+  SubAgentBenchmarkAggregateMetrics,
+  SubAgentBenchmarkReleaseGateSummary,
+  SubAgentBenchmarkScenarioDefinition,
+  SubAgentBenchmarkScenarioId,
+  SubAgentBenchmarkScenarioMetrics,
+  SubAgentBenchmarkScenarioResult,
+  SubAgentBenchmarkStatus,
+  SubAgentBenchmarkSuiteResult,
+} from "./benchmarks/sub-agent-benchmarks.js"
+export {
+  DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS,
+  SUB_AGENT_RELEASE_MODE_SEQUENCE,
+  buildSubAgentReleaseReadinessSummary,
+  buildSubAgentRollbackEvidence,
+  runSubAgentRestartResumeSoak,
+} from "./release/sub-agent-release-gate.js"
+export type {
+  SubAgentReleaseDryRunSummary,
+  SubAgentReleaseGateCheck,
+  SubAgentReleaseGateCheckId,
+  SubAgentReleaseGateStatus,
+  SubAgentReleaseModeDefinition,
+  SubAgentReleaseModeId,
+  SubAgentReleaseReadinessOptions,
+  SubAgentReleaseReadinessSummary,
+  SubAgentReleaseThresholds,
+  SubAgentRestartResumeSoakResult,
+  SubAgentRollbackEvidence,
+} from "./release/sub-agent-release-gate.js"
+
 // Runtime manifest and diagnostics
 export {
   buildRuntimeManifest,
@@ -128,6 +173,12 @@ export {
   validateRedelegationTarget,
 } from "./orchestration/feedback-loop.js"
 export {
+  applyNestedSpawnBudget,
+  buildNestedDelegationPlan,
+  calculateSubSessionDepth,
+  validateNestedCommandRequest,
+} from "./orchestration/nested-delegation.js"
+export {
   FAST_PATH_CLASSIFIER_TARGET_P95_MS,
   ORCHESTRATION_PLANNER_TARGET_P95_MS,
   createOrchestrationPlanner,
@@ -171,11 +222,41 @@ export {
   resolveModelExecutionPolicy,
 } from "./orchestration/model-execution-policy.js"
 export { createAgentHierarchyService } from "./orchestration/hierarchy.js"
+export { createAgentTopologyService } from "./orchestration/topology-projection.js"
+export {
+  AGENT_TEMPLATES,
+  TEAM_TEMPLATES,
+  clearFocusBinding,
+  createOneClickBackgroundTask,
+  executeWorkspaceCommand,
+  getFocusBinding,
+  importExternalAgentProfileDraft,
+  instantiateAgentTemplate,
+  instantiateTeamTemplate,
+  lintAgentDescription,
+  resolveFocusBinding,
+  searchCommandPalette,
+  setFocusBinding,
+} from "./orchestration/command-workspace.js"
 export { createTeamCompositionService } from "./orchestration/team-composition.js"
 export {
   buildTeamExecutionPlan,
   createTeamExecutionPlanService,
 } from "./orchestration/team-execution-plan.js"
+export type {
+  AgentDescriptionLintWarning,
+  AgentTemplateDefinition,
+  CommandPaletteResultKind,
+  CommandPaletteSearchResponse,
+  CommandPaletteSearchResult,
+  FocusBinding,
+  FocusResolveFailure,
+  FocusResolveResult,
+  FocusResolveSuccess,
+  FocusTarget,
+  FocusTargetKind,
+  TeamTemplateDefinition,
+} from "./orchestration/command-workspace.js"
 export type {
   SubSessionControlAction,
   SubSessionControlResult,
@@ -236,6 +317,24 @@ export type {
   HierarchyDiagnosticSeverity,
 } from "./orchestration/hierarchy.js"
 export type {
+  AgentTopologyAgentInspector,
+  AgentTopologyDiagnostic,
+  AgentTopologyDiagnosticSeverity,
+  AgentTopologyEdge,
+  AgentTopologyEdgeKind,
+  AgentTopologyEdgeStyle,
+  AgentTopologyEdgeValidationInput,
+  AgentTopologyEdgeValidationResult,
+  AgentTopologyNode,
+  AgentTopologyNodeKind,
+  AgentTopologyPosition,
+  AgentTopologyProjection,
+  AgentTopologyServiceDependencies,
+  AgentTopologyTeamBuilderCandidate,
+  AgentTopologyTeamInspector,
+  AgentTopologyTeamMemberInspector,
+} from "./orchestration/topology-projection.js"
+export type {
   TeamCompositionDiagnostic,
   TeamCompositionDiagnosticSeverity,
   TeamCompositionMemberCoverage,
@@ -285,6 +384,13 @@ export type {
   RedelegationTargetValidationResult,
 } from "./orchestration/feedback-loop.js"
 export type {
+  NestedCommandValidationResult,
+  NestedDelegationPlanResult,
+  NestedDelegationPlannerInput,
+  NestedSpawnBudgetDecision,
+  NestedSpawnBudgetInput,
+} from "./orchestration/nested-delegation.js"
+export type {
   FastPathClassification,
   FastPathClassificationResult,
   FastPathClassifierInput,
@@ -293,6 +399,7 @@ export type {
   OrchestrationPlannerDiagnostic,
   OrchestrationPlannerInput,
   OrchestrationPlannerIntent,
+  OrchestrationPlannerLearningHint,
 } from "./orchestration/planner.js"
 export type {
   AgentFailureRateSnapshot,
@@ -471,6 +578,48 @@ export type {
   MessageLedgerEventInput,
   MessageLedgerEventKind,
 } from "./runs/message-ledger.js"
+export {
+  buildFinalDeliveryAttributions,
+  buildNamedResultDeliveryEvent,
+  buildNobieFinalAnswer,
+  commitFinalDelivery,
+  findCommittedFinalDelivery,
+  listPendingFinalizers,
+  recordApprovalAggregation,
+  recordLateResultNoReply,
+} from "./runs/channel-finalizer.js"
+export type {
+  ApprovalAggregationResult,
+  FinalDeliveryAttribution,
+  FinalDeliveryCommitResult,
+  FinalDeliverySource,
+  FinalDeliveryStatus,
+  FinalizerApprovalState,
+  FinalizerApprovalStatus,
+  FinalizerReviewState,
+  PendingFinalizerRestoreItem,
+} from "./runs/channel-finalizer.js"
+export { buildRunRuntimeInspectorProjection } from "./runs/runtime-inspector-projection.js"
+export type {
+  RunRuntimeInspectorApprovalSummary,
+  RunRuntimeInspectorDataExchangeSummary,
+  RunRuntimeInspectorExpectedOutput,
+  RunRuntimeInspectorFeedback,
+  RunRuntimeInspectorFinalizer,
+  RunRuntimeInspectorModel,
+  RunRuntimeInspectorPlanProjection,
+  RunRuntimeInspectorPlanTask,
+  RunRuntimeInspectorProgressItem,
+  RunRuntimeInspectorProjection,
+  RunRuntimeInspectorProjectionOptions,
+  RunRuntimeInspectorResult,
+  RunRuntimeInspectorReview,
+  RunRuntimeInspectorSubSession,
+  RunRuntimeInspectorTimelineEvent,
+  RuntimeInspectorAllowedControlAction,
+  RuntimeInspectorApprovalState,
+  RuntimeInspectorControlAction,
+} from "./runs/runtime-inspector-projection.js"
 export {
   WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION,
   buildFixtureRegressionFromWorkspace,
@@ -900,6 +1049,8 @@ export type {
   DataExchangeRetentionPolicy,
   DelegationPolicy,
   DependencyEdgeContract,
+  DepthScopedToolKind,
+  DepthScopedToolPolicy,
   ErrorReport,
   ExpectedOutputContract,
   FeedbackTargetAgentPolicy,
@@ -1072,7 +1223,9 @@ export {
   buildDangerousCapabilityFixtureMatrix,
   createCapabilityPolicySnapshot,
   applyCapabilityDelegationApprovalDecision,
+  classifyDepthScopedToolKind,
   evaluateAgentToolCapabilityPolicy,
+  evaluateDepthScopedToolPolicy,
   evaluateDangerousCapabilityApprovalFixture,
   isMcpServerAllowed,
   isToolAllowedBySkillMcpAllowlist,
@@ -1097,6 +1250,7 @@ export type {
   CapabilityPolicySnapshot,
   DangerousCapabilityApprovalFixture,
   DangerousCapabilityFixtureRiskLevel,
+  DepthScopedToolPolicyDecision,
   McpRegisteredToolRef,
 } from "./security/capability-isolation.js"
 
@@ -1114,6 +1268,7 @@ export {
   evaluateLearningPolicy,
   listAgentLearningEvents,
   listHistoryVersions,
+  listLearningReviewQueue,
   listRestoreEvents,
   recordHistoryVersion,
   recordLearningEvent,
@@ -1136,6 +1291,7 @@ export type {
   LearningPolicyDecision,
   LearningPolicyInput,
   LearningPolicyReasonCode,
+  LearningReviewQueueQuery,
   LearningRiskLevel,
   RestoreDryRunResult,
   RestoreHistoryVersionInput,

@@ -8,6 +8,7 @@ export type SubSessionStatus = "created" | "queued" | "running" | "waiting_for_i
 export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent";
 export type ResourceLockKind = "file" | "display" | "channel" | "mcp_server" | "secret_scope" | "external_target" | "custom";
 export type CapabilityRiskLevel = "safe" | "moderate" | "external" | "sensitive" | "dangerous";
+export type DepthScopedToolKind = "session_control" | "system" | "mcp" | "shell" | "filesystem" | "network" | "screen" | "other";
 export type DataExchangeRetentionPolicy = "session_only" | "short_term" | "long_term_candidate" | "discard_after_review";
 export type LearningApprovalState = "auto_applied" | "pending_review" | "rejected" | "applied_by_user";
 export type RelationshipEdgeType = "parent_child" | "delegation" | "data_exchange" | "permission" | "capability_delegation" | "team_membership";
@@ -116,6 +117,10 @@ export interface CapabilityPolicy {
         maxConcurrentCalls: number;
         maxCallsPerMinute?: number;
     };
+}
+export interface DepthScopedToolPolicy {
+    maxDepthByToolKind: Partial<Record<DepthScopedToolKind, number>>;
+    deniedToolNamesByDepth?: Record<string, string[]>;
 }
 export interface BaseAgentConfig {
     schemaVersion: ContractSchemaVersion;
@@ -596,6 +601,7 @@ export interface LearningEvent {
     learningEventId: string;
     agentId: string;
     agentType?: AgentEntityType;
+    sourceRunId?: string;
     sourceSessionId?: string;
     sourceSubSessionId?: string;
     learningTarget: "memory" | "role" | "personality" | "team_profile";

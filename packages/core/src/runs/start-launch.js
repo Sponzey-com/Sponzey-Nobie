@@ -40,6 +40,9 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.model ? { model: params.model } : {}),
         ...(params.targetId ? { targetId: params.targetId } : {}),
         ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+        ...(params.orchestrationPlannerIntent
+            ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+            : {}),
     }, {
         analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
         isReusableRequestGroup: dependencies.isReusableRequestGroup,

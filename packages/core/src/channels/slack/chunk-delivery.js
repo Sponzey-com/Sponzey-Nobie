@@ -1,14 +1,14 @@
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
-import { deliverArtifactOnce } from "../../runs/delivery.js";
+import { deliverArtifactOnce, } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
 function isArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
     const candidate = value;
-    return candidate.kind === "artifact_delivery"
-        && candidate.channel === "slack"
-        && typeof candidate.filePath === "string"
-        && typeof candidate.size === "number";
+    return (candidate.kind === "artifact_delivery" &&
+        candidate.channel === "slack" &&
+        typeof candidate.filePath === "string" &&
+        typeof candidate.size === "number");
 }
 function buildSlackArtifactFallbackMessage(fileName, downloadUrl, caption) {
     const title = caption?.trim() || fileName;
@@ -68,12 +68,14 @@ export function createSlackChunkDeliveryHandler(context) {
                             const sentMessageId = await context.responder.sendFile(details.filePath, details.caption);
                             recordIfRunPresent(sentMessageId, "assistant");
                             return {
-                                artifactDeliveries: [{
+                                artifactDeliveries: [
+                                    {
                                         toolName: chunk.toolName,
                                         channel: "slack",
                                         filePath: details.filePath,
                                         ...(details.caption ? { caption: details.caption } : {}),
-                                    }],
+                                    },
+                                ],
                             };
                         }
                         catch (error) {
@@ -90,24 +92,30 @@ export function createSlackChunkDeliveryHandler(context) {
                                 recordIfRunPresent(fallbackMessageId, "assistant");
                             }
                             return {
-                                textDeliveries: [{
+                                textDeliveries: [
+                                    {
                                         channel: "slack",
                                         text: fallbackText,
-                                    }],
-                                ...(artifact.ok && artifact.url ? {
-                                    artifactDeliveries: [{
-                                            toolName: chunk.toolName,
-                                            channel: "slack",
-                                            filePath: details.filePath,
-                                            url: artifact.url,
-                                            ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
-                                            ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
-                                            previewable: artifact.previewable,
-                                            mimeType: artifact.mimeType,
-                                            sizeBytes: details.size,
-                                            ...(details.caption ? { caption: details.caption } : {}),
-                                        }],
-                                } : {}),
+                                    },
+                                ],
+                                ...(artifact.ok && artifact.url
+                                    ? {
+                                        artifactDeliveries: [
+                                            {
+                                                toolName: chunk.toolName,
+                                                channel: "slack",
+                                                filePath: details.filePath,
+                                                url: artifact.url,
+                                                ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+                                                ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+                                                previewable: artifact.previewable,
+                                                mimeType: artifact.mimeType,
+                                                sizeBytes: details.size,
+                                                ...(details.caption ? { caption: details.caption } : {}),
+                                            },
+                                        ],
+                                    }
+                                    : {}),
                             };
                         }
                     },
@@ -134,14 +142,16 @@ export function createSlackChunkDeliveryHandler(context) {
             }
             bufferedText = "";
             return {
-                textDeliveries: [{
+                textDeliveries: [
+                    {
                         channel: "slack",
                         text: deliveredText,
                         ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
                         ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
                         ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
                         ...(context.agentId ? { agentId: context.agentId } : {}),
-                    }],
+                    },
+                ],
             };
         }
         if (chunk.type === "error") {

@@ -141,10 +141,42 @@ function directChildAgentIdsFor(registry, parentAgentId) {
     const hierarchyDirectChildIds = registry.hierarchy?.directChildrenByParent[parentAgentId];
     if (hierarchyDirectChildIds)
         return new Set(hierarchyDirectChildIds);
+    if (registry.hierarchy && parentAgentId !== registry.hierarchy.rootAgentId)
+        return new Set();
     return undefined;
 }
 function capabilityIndexExcludedReasons(registry, parentAgentId, agentId) {
     return (registry.capabilityIndex?.excludedCandidatesByParent[parentAgentId]?.find((candidate) => candidate.agentId === agentId)?.reasonCodes ?? []);
+}
+function learningHintDiagnostics(input) {
+    return (input.hints ?? []).map((hint, index) => {
+        const evidenceRefs = hint.evidenceRefs?.filter((ref) => ref.trim().length > 0) ?? [];
+        const confidence = typeof hint.confidence === "number" && Number.isFinite(hint.confidence) ? hint.confidence : 0;
+        const suggestedAgent = hint.suggestedAgentId
+            ? input.registry.agents.find((agent) => agent.agentId === hint.suggestedAgentId)
+            : undefined;
+        const suggestedTeam = hint.suggestedTeamId
+            ? input.registry.teams.find((team) => team.teamId === hint.suggestedTeamId)
+            : undefined;
+        const issueCodes = [
+            confidence < 0.85 ? "learning_hint_confidence_below_auto_threshold" : undefined,
+            evidenceRefs.length === 0 ? "learning_hint_missing_evidence" : undefined,
+            hint.suggestedAgentId && !suggestedAgent ? "learning_hint_agent_not_found" : undefined,
+            hint.suggestedTeamId && !suggestedTeam ? "learning_hint_team_not_found" : undefined,
+            hint.suggestedAgentId &&
+                input.directChildAgentIds &&
+                !input.directChildAgentIds.has(hint.suggestedAgentId)
+                ? "learning_hint_agent_not_direct_child"
+                : undefined,
+        ].filter((issue) => Boolean(issue));
+        return {
+            code: "learning_hint_ignored",
+            severity: issueCodes.length > 0 ? "invalid" : "info",
+            message: `Learning hint ${hint.hintId ?? index} was advisory only and did not bypass structured planner validation.${issueCodes.length > 0 ? ` Issues: ${issueCodes.join(",")}.` : ""}`,
+            ...(hint.suggestedAgentId ? { agentId: hint.suggestedAgentId } : {}),
+            ...(hint.suggestedTeamId ? { teamId: hint.suggestedTeamId } : {}),
+        };
+    });
 }
 function explanationForCandidate(input) {
     if (input.excludedReasonCodes.length > 0) {
@@ -512,12 +544,19 @@ export function buildOrchestrationPlan(input) {
         parentAgentId,
         ...(directChildAgentIds ? { directChildAgentIds } : {}),
     }));
-    const diagnostics = candidateScores.flatMap((candidate) => candidate.excludedReasonCodes.map((reasonCode) => ({
-        code: reasonCode,
-        severity: "warning",
-        message: `${candidate.agentId} was excluded from planning by ${reasonCode}.`,
-        agentId: candidate.agentId,
-    })));
+    const diagnostics = [
+        ...candidateScores.flatMap((candidate) => candidate.excludedReasonCodes.map((reasonCode) => ({
+            code: reasonCode,
+            severity: "warning",
+            message: `${candidate.agentId} was excluded from planning by ${reasonCode}.`,
+            agentId: candidate.agentId,
+        }))),
+        ...learningHintDiagnostics({
+            registry,
+            ...(input.learningHints ? { hints: input.learningHints } : {}),
+            ...(directChildAgentIds ? { directChildAgentIds } : {}),
+        }),
+    ];
     if (intent.explicitTeamId) {
         const team = registry.teams.find((candidate) => candidate.teamId === intent.explicitTeamId);
         const teamHealthStatus = team?.health?.status;

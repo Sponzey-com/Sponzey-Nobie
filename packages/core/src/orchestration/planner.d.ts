@@ -35,6 +35,14 @@ export interface OrchestrationPlannerIntent {
     requiredToolNames?: string[];
     requiredRisk?: CapabilityRiskLevel;
 }
+export interface OrchestrationPlannerLearningHint {
+    hintId?: string;
+    suggestedAgentId?: string;
+    suggestedTeamId?: string;
+    confidence?: number;
+    evidenceRefs?: string[];
+    reasonCode?: string;
+}
 export interface OrchestrationPlannerInput {
     parentRunId: string;
     parentRequestId: string;
@@ -44,6 +52,7 @@ export interface OrchestrationPlannerInput {
     loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot;
     taskScopes?: StructuredTaskScope[];
     intent?: OrchestrationPlannerIntent;
+    learningHints?: OrchestrationPlannerLearningHint[];
     parentAgentId?: string;
     resourceLocks?: ResourceLockContract[];
     resourceLocksByTaskId?: Record<string, ResourceLockContract[]>;

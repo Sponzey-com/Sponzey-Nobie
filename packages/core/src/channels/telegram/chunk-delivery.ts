@@ -1,9 +1,13 @@
 import type { AgentChunk } from "../../agent/index.js"
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
-import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
-import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
+import {
+  type ChunkDeliveryReceipt,
+  type RunChunkDeliveryHandler,
+  deliverArtifactOnce,
+} from "../../runs/delivery.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js"
+import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 
 export interface TelegramChunkResponder {
   sendToolStatus(toolName: string): Promise<number>
@@ -38,14 +42,20 @@ function isArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryRes
   if (!value || typeof value !== "object") return false
 
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
-  return candidate.kind === "artifact_delivery"
-    && candidate.channel === "telegram"
-    && typeof candidate.filePath === "string"
-    && typeof candidate.size === "number"
-    && typeof candidate.source === "string"
+  return (
+    candidate.kind === "artifact_delivery" &&
+    candidate.channel === "telegram" &&
+    typeof candidate.filePath === "string" &&
+    typeof candidate.size === "number" &&
+    typeof candidate.source === "string"
+  )
 }
 
-function buildTelegramArtifactFallbackMessage(fileName: string, downloadUrl?: string, caption?: string): string {
+function buildTelegramArtifactFallbackMessage(
+  fileName: string,
+  downloadUrl?: string,
+  caption?: string,
+): string {
   const title = caption?.trim() || fileName
   if (!downloadUrl) {
     return `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 대화에서 완료할 수 없습니다.\n- 파일: ${title}`
@@ -73,7 +83,7 @@ export function createTelegramChunkDeliveryHandler(
     })
   }
 
-  return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | void> => {
+  return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | undefined> => {
     if (chunk.type === "text") {
       if (toolOwnedResponseActive) return
       bufferedText += chunk.delta
@@ -106,16 +116,21 @@ export function createTelegramChunkDeliveryHandler(
           ...(details.mimeType ? { mimeType: details.mimeType } : {}),
           task: async () => {
             try {
-              const sentMessageId = await context.responder.sendFile(details.filePath, details.caption)
+              const sentMessageId = await context.responder.sendFile(
+                details.filePath,
+                details.caption,
+              )
               recordIfRunPresent(sentMessageId, "assistant")
               return {
-                artifactDeliveries: [{
-                  toolName: chunk.toolName,
-                  channel: "telegram" as const,
-                  filePath: details.filePath,
-                  ...(details.caption ? { caption: details.caption } : {}),
-                  messageId: sentMessageId,
-                }],
+                artifactDeliveries: [
+                  {
+                    toolName: chunk.toolName,
+                    channel: "telegram" as const,
+                    filePath: details.filePath,
+                    ...(details.caption ? { caption: details.caption } : {}),
+                    messageId: sentMessageId,
+                  },
+                ],
               }
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
@@ -135,26 +150,34 @@ export function createTelegramChunkDeliveryHandler(
                 recordIfRunPresent(fallbackMessageId, "assistant")
               }
               return {
-                textDeliveries: [{
-                  channel: "telegram" as const,
-                  text: fallbackText,
-                  messageIds: sentMessageIds,
-                }],
-                ...(artifact.ok && artifact.url ? {
-                  artifactDeliveries: [{
-                    toolName: chunk.toolName,
+                textDeliveries: [
+                  {
                     channel: "telegram" as const,
-                    filePath: details.filePath,
-                    url: artifact.url,
-                    ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
-                    ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
-                    previewable: artifact.previewable,
-                    mimeType: artifact.mimeType,
-                    sizeBytes: details.size,
-                    ...(details.caption ? { caption: details.caption } : {}),
-                    ...(sentMessageIds[0] !== undefined ? { messageId: sentMessageIds[0] } : {}),
-                  }],
-                } : {}),
+                    text: fallbackText,
+                    messageIds: sentMessageIds,
+                  },
+                ],
+                ...(artifact.ok && artifact.url
+                  ? {
+                      artifactDeliveries: [
+                        {
+                          toolName: chunk.toolName,
+                          channel: "telegram" as const,
+                          filePath: details.filePath,
+                          url: artifact.url,
+                          ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+                          ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+                          previewable: artifact.previewable,
+                          mimeType: artifact.mimeType,
+                          sizeBytes: details.size,
+                          ...(details.caption ? { caption: details.caption } : {}),
+                          ...(sentMessageIds[0] !== undefined
+                            ? { messageId: sentMessageIds[0] }
+                            : {}),
+                        },
+                      ],
+                    }
+                  : {}),
               }
             }
           },
@@ -182,15 +205,17 @@ export function createTelegramChunkDeliveryHandler(
       }
       bufferedText = ""
       return {
-        textDeliveries: [{
-          channel: "telegram",
-          text: deliveredText,
-          messageIds: sentMessageIds,
-          ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
-          ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
-          ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
-          ...(context.agentId ? { agentId: context.agentId } : {}),
-        }],
+        textDeliveries: [
+          {
+            channel: "telegram",
+            text: deliveredText,
+            messageIds: sentMessageIds,
+            ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+            ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+            ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
+            ...(context.agentId ? { agentId: context.agentId } : {}),
+          },
+        ],
       }
     }
 

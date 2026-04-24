@@ -1,5 +1,6 @@
 import type { AgentChunk } from "../agent/index.js";
 import { type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js";
+import type { NicknameSnapshot } from "../contracts/sub-agent-orchestration.js";
 import { insertMessage } from "../db/index.js";
 import { type MessageLedgerDeliveryKind } from "./message-ledger.js";
 export interface SuccessfulFileDelivery {
@@ -38,7 +39,7 @@ export interface DeliveryOutcome {
     deliverySummary?: string;
     requiresDirectArtifactRecovery: boolean;
 }
-export type RunChunkDeliveryHandler = ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | void> | ChunkDeliveryReceipt | void) | undefined;
+export type RunChunkDeliveryHandler = ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | undefined> | ChunkDeliveryReceipt | undefined) | undefined;
 export type DeliverySource = "webui" | "cli" | "telegram" | "slack";
 export interface ArtifactDeliveryOnceParams<T> {
     runId?: string | undefined;
@@ -113,6 +114,8 @@ export declare function emitAssistantTextDelivery(params: {
     parentRunId?: string;
     subSessionId?: string;
     agentId?: string;
+    speaker?: NicknameSnapshot;
+    sourceAttributions?: unknown[];
     force?: boolean;
     onError?: (message: string) => void;
     dependencies?: Partial<AssistantTextDeliveryDependencies>;

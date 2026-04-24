@@ -23,6 +23,7 @@ import {
 import type { RootRun, TaskProfile } from "./types.js"
 import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import {
   appendRunEvent,
   clearActiveRunController,
@@ -60,6 +61,7 @@ export interface StartRootRunParams {
   targetId?: string | undefined
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
+  orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
   workDir?: string | undefined
   source: "webui" | "cli" | "telegram" | "slack"
   skipIntake?: boolean | undefined
@@ -153,6 +155,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
       ...(params.model ? { model: params.model } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+      ...(params.orchestrationPlannerIntent
+        ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+        : {}),
       ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
       hasRequestGroupExecutionQueue,
     })

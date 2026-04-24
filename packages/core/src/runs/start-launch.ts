@@ -6,6 +6,7 @@ import type { RootRun, TaskProfile } from "./types.js"
 import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import { applyStartInitialization } from "./start-initialization.js"
 import {
   buildWorkerSessionId,
@@ -41,6 +42,7 @@ interface StartLaunchDependencies {
     taskProfile: TaskProfile
     targetId?: string
     workerRuntime?: WorkerRuntimeTarget
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent
   }) => string | undefined
   normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
@@ -110,6 +112,7 @@ export async function prepareStartLaunch(
     targetLabel?: string | undefined
     model?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
     inboundMessage?: InboundMessageRecord | undefined
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
   },
@@ -129,6 +132,9 @@ export async function prepareStartLaunch(
     ...(params.model ? { model: params.model } : {}),
     ...(params.targetId ? { targetId: params.targetId } : {}),
     ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+    ...(params.orchestrationPlannerIntent
+      ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+      : {}),
   }, {
     analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
     isReusableRequestGroup: dependencies.isReusableRequestGroup,

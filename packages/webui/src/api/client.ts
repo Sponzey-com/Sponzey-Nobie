@@ -1,15 +1,47 @@
-import { localAdapter } from "./adapters/local"
-import type { ControlPlaneAdapter, MqttRuntimeResponse, ResetSetupResponse, SetupChecksResponse, StatusResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse } from "./adapters/types"
 import type { AIAuthMode, AIBackendCredentials, AIProviderType } from "../contracts/ai"
 import type { FeatureCapability } from "../contracts/capabilities"
-import type { ConfigExportResult, ConfigurationOperationsSnapshot, DatabaseBackupResult, MigrationDryRunResult, PromptSourceExportResult, PromptSourceImportResult } from "../contracts/config-operations"
+import type {
+  AgentDescriptionLintWarning,
+  CommandExecuteResponse,
+  CommandPaletteSearchResponse,
+  FocusBinding,
+  FocusResolveSuccess,
+  FocusTarget,
+} from "../contracts/command-palette"
+import type {
+  ConfigExportResult,
+  ConfigurationOperationsSnapshot,
+  DatabaseBackupResult,
+  MigrationDryRunResult,
+  PromptSourceExportResult,
+  PromptSourceImportResult,
+} from "../contracts/config-operations"
 import type { DoctorMode, DoctorResponse } from "../contracts/doctor"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
-import type { RootRun, RunEvent, RunStep } from "../contracts/runs"
+import type { RootRun, RunEvent, RunRuntimeInspectorProjection, RunStep } from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
 import type { TaskModel } from "../contracts/tasks"
+import type {
+  AgentRelationshipCreateResponse,
+  AgentTopologyEdgeValidationInput,
+  AgentTopologyEdgeValidationResponse,
+  AgentTopologyResponse,
+  AgentTopologyTeamMembersPayload,
+} from "../contracts/topology"
 import type { UpdateSnapshot } from "../contracts/update"
+import { localAdapter } from "./adapters/local"
+import type {
+  ControlPlaneAdapter,
+  MqttRuntimeResponse,
+  ResetSetupResponse,
+  SetupChecksResponse,
+  StatusResponse,
+  TestBackendResponse,
+  TestMcpServerResponse,
+  TestSkillPathResponse,
+  TestTelegramResponse,
+} from "./adapters/types"
 
 const BASE = ""
 const UI_MODE_FALLBACK_KEY = "nobie_preferred_ui_mode"
@@ -253,7 +285,13 @@ export interface AdminToolLabResponse {
       outputRedacted: unknown
       redactionApplied: boolean
       resultSummary: string | null
-      lifecycle: Array<{ at: number; source: string; eventKind: string; status: string; summary: string }>
+      lifecycle: Array<{
+        at: number
+        source: string
+        eventKind: string
+        status: string
+        summary: string
+      }>
     }>
   }
   webRetrieval: {
@@ -269,7 +307,15 @@ export interface AdminToolLabResponse {
       runId: string | null
       sessionKey: string | null
       target: unknown
-      sourceLadder: Array<{ method: string; url: string; sourceDomain: string; sourceKind: string; reliability: string; sourceLabel: string; expectedTargetBinding: string }>
+      sourceLadder: Array<{
+        method: string
+        url: string
+        sourceDomain: string
+        sourceKind: string
+        reliability: string
+        sourceLabel: string
+        expectedTargetBinding: string
+      }>
       queryVariants: string[]
       fetchAttempts: Array<{
         id: string
@@ -286,7 +332,11 @@ export interface AdminToolLabResponse {
         durationMs: number | null
         retryCount: number
       }>
-      candidateExtraction: { eventCount: number; candidateCount: number; lastSummary: string | null }
+      candidateExtraction: {
+        eventCount: number
+        candidateCount: number
+        lastSummary: string | null
+      }
       verification: {
         canAnswer: boolean | null
         evidenceSufficiency: string | null
@@ -299,10 +349,31 @@ export interface AdminToolLabResponse {
         verificationMode: string
       }
       conflictResolver: { status: string | null; conflicts: string[] }
-      cache: { status: string; entryCount: number; entries: Array<{ status: string; reason: string; value: string | null; unit: string | null; sourceDomain: string | null }> }
-      adapterMetadata: Array<{ adapterId: string; adapterVersion: string; parserVersion: string; checksum: string; status: string; degradedReason?: string | null }>
+      cache: {
+        status: string
+        entryCount: number
+        entries: Array<{
+          status: string
+          reason: string
+          value: string | null
+          unit: string | null
+          sourceDomain: string | null
+        }>
+      }
+      adapterMetadata: Array<{
+        adapterId: string
+        adapterVersion: string
+        parserVersion: string
+        checksum: string
+        status: string
+        degradedReason?: string | null
+      }>
       degradedState: { degraded: boolean; reasons: string[] }
-      policySeparation: { discovery: string; completion: string; semanticComparisonAllowed: boolean }
+      policySeparation: {
+        discovery: string
+        completion: string
+        semanticComparisonAllowed: boolean
+      }
     }>
   }
 }
@@ -314,7 +385,12 @@ export interface AdminFixtureReplayResponse {
   semanticComparisonAllowed: boolean
   verificationMode: string
   fixtureCount: number
-  summary: { kind: string; policyVersion: string; status: string; counts: { total: number; passed: number; failed: number; skipped: number } }
+  summary: {
+    kind: string
+    policyVersion: string
+    status: string
+    counts: { total: number; passed: number; failed: number; skipped: number }
+  }
   results: Array<{
     fixtureId: string
     title: string
@@ -400,10 +476,23 @@ export interface AdminRuntimeInspectorsResponse {
       }>
       degradedReasons: string[]
     }
-    linkedFailures: Array<{ at: number; source: string; component: string; summary: string; runId: string | null; requestGroupId: string | null }>
+    linkedFailures: Array<{
+      at: number
+      source: string
+      component: string
+      summary: string
+      runId: string | null
+      requestGroupId: string | null
+    }>
   }
   scheduler: {
-    summary: { schedules: number; enabled: number; missed: number; retrying: number; receipts: number }
+    summary: {
+      schedules: number
+      enabled: number
+      missed: number
+      retrying: number
+      receipts: number
+    }
     schedules: Array<{
       id: string
       name: string
@@ -437,14 +526,40 @@ export interface AdminRuntimeInspectorsResponse {
         deliveryDedupeKey: string | null
         error: string | null
       } | null
-      receipts: Array<{ dedupeKey: string; runId: string; dueAt: string; targetChannel: string; status: string; summary: string | null; error: string | null; updatedAt: number }>
+      receipts: Array<{
+        dedupeKey: string
+        runId: string
+        dueAt: string
+        targetChannel: string
+        status: string
+        summary: string | null
+        error: string | null
+        updatedAt: number
+      }>
     }>
-    timelineLinks: Array<{ at: number; eventType: string; component: string; summary: string; runId: string | null; requestGroupId: string | null }>
-    fieldChecks: { comparisonMode: string; naturalLanguageMatchingAllowed: boolean; requiredKeys: string[] }
+    timelineLinks: Array<{
+      at: number
+      eventType: string
+      component: string
+      summary: string
+      runId: string | null
+      requestGroupId: string | null
+    }>
+    fieldChecks: {
+      comparisonMode: string
+      naturalLanguageMatchingAllowed: boolean
+      requiredKeys: string[]
+    }
     degradedReasons: string[]
   }
   channels: {
-    summary: { channels: number; inbound: number; outbound: number; approvals: number; receipts: number }
+    summary: {
+      channels: number
+      inbound: number
+      outbound: number
+      approvals: number
+      receipts: number
+    }
     mappings: Array<{
       channel: string
       inboundCount: number
@@ -452,7 +567,17 @@ export interface AdminRuntimeInspectorsResponse {
       approvalCount: number
       receiptCount: number
       latestAt: number | null
-      refs: Array<{ id: string; sessionKey: string; rootRunId: string; requestGroupId: string; chatId: string; threadId: string | null; messageId: string; role: string; createdAt: number }>
+      refs: Array<{
+        id: string
+        sessionKey: string
+        rootRunId: string
+        requestGroupId: string
+        chatId: string
+        threadId: string | null
+        messageId: string
+        role: string
+        createdAt: number
+      }>
     }>
     ledgerReceipts: Array<{
       id: string
@@ -550,8 +675,25 @@ export interface AdminPlatformInspectorsResponse {
       reconnectAttempts: number
       capabilities: string[]
     }>
-    timelineLinks: Array<{ at: number; eventType: string; component: string; summary: string; extensionId: string | null; state: string | null; reconnectAttempts: number | null }>
-    exchangeLog: Array<{ id: string; timestamp: number; direction: string; topic: string; extensionId: string | null; kind: string; clientId: string | null; payloadPreview: unknown }>
+    timelineLinks: Array<{
+      at: number
+      eventType: string
+      component: string
+      summary: string
+      extensionId: string | null
+      state: string | null
+      reconnectAttempts: number | null
+    }>
+    exchangeLog: Array<{
+      id: string
+      timestamp: number
+      direction: string
+      topic: string
+      extensionId: string | null
+      kind: string
+      clientId: string | null
+      payloadPreview: unknown
+    }>
     degradedReasons: string[]
   }
   database: {
@@ -579,9 +721,33 @@ export interface AdminPlatformInspectorsResponse {
       active: unknown | null
       latest: unknown | null
     }
-    integrity: { ok: boolean; schemaVersion: number; integrityCheck: string; missingTables: string[]; missingIndexes: string[] } | null
-    backups: { snapshots: Array<{ id: string; createdAt: number; schemaVersion: number | null; latestSchemaVersion: number | null; fileCount: number; manifestFile: string }>; degradedReasons: string[] }
-    diagnostics: Array<{ id: string; kind: string; summary: string; runId: string | null; requestGroupId: string | null; createdAt: number; detail: unknown }>
+    integrity: {
+      ok: boolean
+      schemaVersion: number
+      integrityCheck: string
+      missingTables: string[]
+      missingIndexes: string[]
+    } | null
+    backups: {
+      snapshots: Array<{
+        id: string
+        createdAt: number
+        schemaVersion: number | null
+        latestSchemaVersion: number | null
+        fileCount: number
+        manifestFile: string
+      }>
+      degradedReasons: string[]
+    }
+    diagnostics: Array<{
+      id: string
+      kind: string
+      summary: string
+      runId: string | null
+      requestGroupId: string | null
+      createdAt: number
+      detail: unknown
+    }>
     degradedReasons: string[]
   }
   exports: {
@@ -608,10 +774,10 @@ export interface AdminDiagnosticExportGetResponse {
 
 function buildAdminLiveQuery(params: Record<string, unknown> = {}): string {
   const search = new URLSearchParams()
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue
     search.set(key, String(value))
-  })
+  }
   const query = search.toString()
   return query ? `?${query}` : ""
 }
@@ -687,7 +853,12 @@ function buildBrowserUiModeFallback(mode = getBrowserPreferredUiModeFallback()):
 }
 
 export function getStoredToken(): string {
-  return localStorage.getItem("nobie_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token") ?? ""
+  return (
+    localStorage.getItem("nobie_token") ??
+    localStorage.getItem("wizby_token") ??
+    localStorage.getItem("howie_token") ??
+    ""
+  )
 }
 
 export function clearStoredToken(): void {
@@ -704,7 +875,11 @@ function authHeaders(): Record<string, string> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body !== undefined
   const res = await fetch(`${BASE}${path}`, {
-    headers: { ...(hasBody ? { "Content-Type": "application/json" } : {}), ...authHeaders(), ...init?.headers },
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
+      ...init?.headers,
+    },
     ...init,
   })
   if (!res.ok) {
@@ -723,13 +898,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
               .map((issue) => issue.message?.trim())
               .filter((message): message is string => Boolean(message))
           : []
-        const summary = parsed.safeMessage?.trim() || parsed.message?.trim() || parsed.error?.trim() || ""
+        const summary =
+          parsed.safeMessage?.trim() || parsed.message?.trim() || parsed.error?.trim() || ""
         detail = [summary, ...issueMessages.slice(0, 3)].filter(Boolean).join(" / ") || detail
       } catch {
         // keep raw text
       }
     }
-    throw new Error(detail ? `${res.status} ${res.statusText}: ${detail}` : `${res.status} ${res.statusText}`)
+    throw new Error(
+      detail ? `${res.status} ${res.statusText}: ${detail}` : `${res.status} ${res.statusText}`,
+    )
   }
   return res.json() as Promise<T>
 }
@@ -749,24 +927,33 @@ export const api = {
   setupStatus: () => getControlPlaneAdapter().getSetupStatus(),
   setupChecks: () => getControlPlaneAdapter().getSetupChecks(),
   setupDraft: () => getControlPlaneAdapter().getSetupDraft(),
-  saveSetupDraft: (payload: { draft: SetupDraft; state?: SetupState }) => getControlPlaneAdapter().saveSetupDraft(payload),
+  saveSetupDraft: (payload: { draft: SetupDraft; state?: SetupState }) =>
+    getControlPlaneAdapter().saveSetupDraft(payload),
   resetSetup: () => getControlPlaneAdapter().resetSetup(),
   completeSetup: () => getControlPlaneAdapter().completeSetup(),
-  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) =>
-    getControlPlaneAdapter().testBackend(endpoint, providerType, credentials, authMode),
+  testBackend: (
+    endpoint: string,
+    providerType: AIProviderType,
+    credentials: AIBackendCredentials,
+    authMode?: AIAuthMode,
+  ) => getControlPlaneAdapter().testBackend(endpoint, providerType, credentials, authMode),
   testTelegram: (botToken: string) => getControlPlaneAdapter().testTelegram(botToken),
-  testSlack: (botToken: string, appToken: string) => getControlPlaneAdapter().testSlack(botToken, appToken),
+  testSlack: (botToken: string, appToken: string) =>
+    getControlPlaneAdapter().testSlack(botToken, appToken),
   testMcpServer: (server: SetupMcpServerDraft) => getControlPlaneAdapter().testMcpServer(server),
   testSkillPath: (path: string) => getControlPlaneAdapter().testSkillPath(path),
   generateAuthToken: () => getControlPlaneAdapter().generateAuthToken(),
   mcpServers: () => getControlPlaneAdapter().getMcpServers(),
   reloadMcpServers: () => getControlPlaneAdapter().reloadMcpServers(),
   mqttRuntime: () => getControlPlaneAdapter().getMqttRuntime(),
-  disconnectMqttExtension: (extensionId: string) => getControlPlaneAdapter().disconnectMqttExtension(extensionId),
+  disconnectMqttExtension: (extensionId: string) =>
+    getControlPlaneAdapter().disconnectMqttExtension(extensionId),
   updateStatus: () => request<UpdateSnapshot>("/api/update/status"),
   checkForUpdates: () => request<UpdateSnapshot>("/api/update/check", { method: "POST" }),
   doctor: (mode: DoctorMode = "quick", write = false) =>
-    request<DoctorResponse>(`/api/doctor?mode=${encodeURIComponent(mode)}${write ? "&write=1" : ""}`),
+    request<DoctorResponse>(
+      `/api/doctor?mode=${encodeURIComponent(mode)}${write ? "&write=1" : ""}`,
+    ),
 
   uiMode: async () => {
     try {
@@ -805,7 +992,13 @@ export const api = {
         setupState: { completed: false },
         runtimeHealth: {
           ai: { configured: false, provider: null, modelConfigured: false },
-          channels: { webui: true, telegramConfigured: false, telegramEnabled: false, slackConfigured: false, slackEnabled: false },
+          channels: {
+            webui: true,
+            telegramConfigured: false,
+            telegramEnabled: false,
+            slackConfigured: false,
+            slackEnabled: false,
+          },
           yeonjang: { mqttEnabled: false, connectedExtensions: 0 },
         },
         activeRuns: { total: 0, pendingApprovals: 0 },
@@ -838,30 +1031,59 @@ export const api = {
 
   adminShell: () => request<AdminShellResponse>("/api/admin/shell"),
 
-  adminLive: (params: AdminLiveQuery = {}) => request<AdminLiveResponse>(`/api/admin/live${buildAdminLiveQuery(params)}`),
+  adminLive: (params: AdminLiveQuery = {}) =>
+    request<AdminLiveResponse>(`/api/admin/live${buildAdminLiveQuery(params)}`),
 
-  adminToolLab: (params: AdminLiveQuery & { query?: string } = {}) => request<AdminToolLabResponse>(`/api/admin/tool-lab${buildAdminLiveQuery(params)}`),
+  adminToolLab: (params: AdminLiveQuery & { query?: string } = {}) =>
+    request<AdminToolLabResponse>(`/api/admin/tool-lab${buildAdminLiveQuery(params)}`),
 
-  adminRuntimeInspectors: (params: AdminLiveQuery = {}) => request<AdminRuntimeInspectorsResponse>(`/api/admin/runtime-inspectors${buildAdminLiveQuery(params)}`),
+  adminRuntimeInspectors: (params: AdminLiveQuery = {}) =>
+    request<AdminRuntimeInspectorsResponse>(
+      `/api/admin/runtime-inspectors${buildAdminLiveQuery(params)}`,
+    ),
 
-  adminPlatformInspectors: (params: AdminLiveQuery = {}) => request<AdminPlatformInspectorsResponse>(`/api/admin/platform-inspectors${buildAdminLiveQuery(params)}`),
+  adminPlatformInspectors: (params: AdminLiveQuery = {}) =>
+    request<AdminPlatformInspectorsResponse>(
+      `/api/admin/platform-inspectors${buildAdminLiveQuery(params)}`,
+    ),
 
-  adminDiagnosticExports: () => request<AdminDiagnosticExportListResponse>("/api/admin/diagnostic-exports"),
+  adminDiagnosticExports: () =>
+    request<AdminDiagnosticExportListResponse>("/api/admin/diagnostic-exports"),
 
-  adminDiagnosticExport: (id: string) => request<AdminDiagnosticExportGetResponse>(`/api/admin/diagnostic-exports/${encodeURIComponent(id)}`),
+  adminDiagnosticExport: (id: string) =>
+    request<AdminDiagnosticExportGetResponse>(
+      `/api/admin/diagnostic-exports/${encodeURIComponent(id)}`,
+    ),
 
-  startAdminDiagnosticExport: (body: { runId?: string; requestGroupId?: string; sessionKey?: string; channel?: string; includeTimeline?: boolean; includeReport?: boolean; limit?: number } = {}) =>
+  startAdminDiagnosticExport: (
+    body: {
+      runId?: string
+      requestGroupId?: string
+      sessionKey?: string
+      channel?: string
+      includeTimeline?: boolean
+      includeReport?: boolean
+      limit?: number
+    } = {},
+  ) =>
     request<AdminDiagnosticExportStartResponse>("/api/admin/diagnostic-exports", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  adminFixtureReplay: (body: { fixtureIds?: string[] } = {}) => request<AdminFixtureReplayResponse>("/api/admin/web-retrieval-fixtures/replay", {
-    method: "POST",
-    body: JSON.stringify(body),
-  }),
+  adminFixtureReplay: (body: { fixtureIds?: string[] } = {}) =>
+    request<AdminFixtureReplayResponse>("/api/admin/web-retrieval-fixtures/replay", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
-  adminDangerousAction: (body: { action: "retry" | "purge" | "replay" | "export"; targetId?: string; confirmation?: string; reason?: string; params?: unknown }) =>
+  adminDangerousAction: (body: {
+    action: "retry" | "purge" | "replay" | "export"
+    targetId?: string
+    confirmation?: string
+    reason?: string
+    params?: unknown
+  }) =>
     request<AdminDangerousActionResponse>("/api/admin/actions", {
       method: "POST",
       body: JSON.stringify(body),
@@ -897,11 +1119,18 @@ export const api = {
       `/api/prompt-sources/regression?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
-  writePromptSource: (sourceId: string, locale: "ko" | "en", body: { workDir?: string; content: string; createBackup?: boolean }) =>
-    request<PromptSourceWriteResult>(`/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}/write`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+  writePromptSource: (
+    sourceId: string,
+    locale: "ko" | "en",
+    body: { workDir?: string; content: string; createBackup?: boolean },
+  ) =>
+    request<PromptSourceWriteResult>(
+      `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}/write`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
 
   rollbackPromptSource: (body: { sourcePath: string; backupPath: string }) =>
     request<PromptSourceRollbackResult>("/api/prompt-sources/rollback", {
@@ -918,13 +1147,29 @@ export const api = {
     request<{ dryRun: MigrationDryRunResult }>("/api/config/migrations/dry-run"),
 
   backupDatabase: () =>
-    request<{ ok: boolean; backup: DatabaseBackupResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/backup", { method: "POST" }),
+    request<{
+      ok: boolean
+      backup: DatabaseBackupResult
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/db/backup", { method: "POST" }),
 
   exportDatabase: () =>
-    request<{ ok: boolean; export: DatabaseBackupResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/export", { method: "POST" }),
+    request<{
+      ok: boolean
+      export: DatabaseBackupResult
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/db/export", { method: "POST" }),
 
   importDatabase: (backupPath: string) =>
-    request<{ ok: boolean; import: { importedPath: string; rollbackBackup: DatabaseBackupResult; status: ConfigurationOperationsSnapshot["database"] }; snapshot: ConfigurationOperationsSnapshot }>("/api/config/db/import", {
+    request<{
+      ok: boolean
+      import: {
+        importedPath: string
+        rollbackBackup: DatabaseBackupResult
+        status: ConfigurationOperationsSnapshot["database"]
+      }
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/db/import", {
       method: "POST",
       body: JSON.stringify({ backupPath }),
     }),
@@ -933,42 +1178,92 @@ export const api = {
     request<{ ok: boolean; export: ConfigExportResult }>("/api/config/export", { method: "POST" }),
 
   exportPromptSourcesOps: (workDir?: string) =>
-    request<{ ok: boolean; export: PromptSourceExportResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/export", {
+    request<{
+      ok: boolean
+      export: PromptSourceExportResult
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/prompt-sources/export", {
       method: "POST",
       body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
     }),
 
   importPromptSourcesOps: (body: { exportPath: string; workDir?: string; overwrite?: boolean }) =>
-    request<{ ok: boolean; import: PromptSourceImportResult; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/import", {
+    request<{
+      ok: boolean
+      import: PromptSourceImportResult
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/prompt-sources/import", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   recoverPromptSourcesOps: (workDir?: string) =>
-    request<{ ok: boolean; recovery: { promptsDir: string; created: string[]; existing: string[] }; snapshot: ConfigurationOperationsSnapshot }>("/api/config/prompt-sources/recover", {
+    request<{
+      ok: boolean
+      recovery: { promptsDir: string; created: string[]; existing: string[] }
+      snapshot: ConfigurationOperationsSnapshot
+    }>("/api/config/prompt-sources/recover", {
       method: "POST",
       body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
     }),
 
   runs: () => request<{ runs: RootRun[] }>("/api/runs"),
 
-  tasks: () => request<{ tasks: TaskModel[] }>("/api/tasks"),
+  agentTopology: () => request<AgentTopologyResponse>("/api/agent-topology"),
 
-  runOperationsSummary: () => request<{ summary: OperationsSummary }>("/api/runs/operations/summary"),
-
-  cleanupStaleRuns: (staleMs?: number) =>
-    request<{ ok: boolean; cleanup: StaleRunCleanupResult; summary: OperationsSummary }>("/api/runs/operations/stale-cleanup", {
+  validateTopologyEdge: (edge: AgentTopologyEdgeValidationInput) =>
+    request<AgentTopologyEdgeValidationResponse>("/api/agent-topology/edges/validate", {
       method: "POST",
-      body: JSON.stringify({ ...(staleMs ? { staleMs } : {}) }),
+      body: JSON.stringify({ edge }),
     }),
 
+  createAgentRelationship: (relationship: unknown) =>
+    request<AgentRelationshipCreateResponse>("/api/agent-relationships", {
+      method: "POST",
+      body: JSON.stringify({ relationship }),
+    }),
+
+  saveAgentTopologyLayout: (layout: unknown) =>
+    request<{ ok: boolean; layout: AgentTopologyResponse["layout"] }>("/api/agent-tree/layout", {
+      method: "PUT",
+      body: JSON.stringify({ layout }),
+    }),
+
+  updateTeamMembers: (teamId: string, payload: AgentTopologyTeamMembersPayload) =>
+    request<{ ok: boolean; team: unknown }>(`/api/teams/${encodeURIComponent(teamId)}/members`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  tasks: () => request<{ tasks: TaskModel[] }>("/api/tasks"),
+
+  runOperationsSummary: () =>
+    request<{ summary: OperationsSummary }>("/api/runs/operations/summary"),
+
+  cleanupStaleRuns: (staleMs?: number) =>
+    request<{ ok: boolean; cleanup: StaleRunCleanupResult; summary: OperationsSummary }>(
+      "/api/runs/operations/stale-cleanup",
+      {
+        method: "POST",
+        body: JSON.stringify({ ...(staleMs ? { staleMs } : {}) }),
+      },
+    ),
+
   channelSmokeRuns: (limit = 20) =>
-    request<ChannelSmokeRunsResponse>(`/api/channel-smoke/runs?limit=${encodeURIComponent(String(limit))}`),
+    request<ChannelSmokeRunsResponse>(
+      `/api/channel-smoke/runs?limit=${encodeURIComponent(String(limit))}`,
+    ),
 
   channelSmokeRun: (id: string) =>
     request<ChannelSmokeRunDetailResponse>(`/api/channel-smoke/runs/${encodeURIComponent(id)}`),
 
-  startChannelSmokeRun: (body: { mode?: ChannelSmokeRunMode; channel?: ChannelSmokeChannel; scenarioIds?: string[] } = {}) =>
+  startChannelSmokeRun: (
+    body: {
+      mode?: ChannelSmokeRunMode
+      channel?: ChannelSmokeChannel
+      scenarioIds?: string[]
+    } = {},
+  ) =>
     request<ChannelSmokeStartResponse>("/api/channel-smoke/runs", {
       method: "POST",
       body: JSON.stringify(body),
@@ -980,16 +1275,127 @@ export const api = {
 
   runTimeline: (runId: string) => request<{ events: RunEvent[] }>(`/api/runs/${runId}/timeline`),
 
+  runRuntimeInspector: (runId: string) =>
+    request<{ projection: RunRuntimeInspectorProjection }>(
+      `/api/runs/${encodeURIComponent(runId)}/runtime-inspector`,
+    ),
+
   runRetrievalTimeline: (runId: string, limit = 500) =>
-    request<{ timeline: RetrievalTimeline }>(`/api/runs/${encodeURIComponent(runId)}/retrieval-timeline?limit=${encodeURIComponent(String(limit))}`),
+    request<{ timeline: RetrievalTimeline }>(
+      `/api/runs/${encodeURIComponent(runId)}/retrieval-timeline?limit=${encodeURIComponent(String(limit))}`,
+    ),
 
   runMemoryTrace: (runId: string, limit = 100) =>
-    request<{ traces: MemoryAccessTraceItem[] }>(`/api/runs/${encodeURIComponent(runId)}/memory-trace?limit=${encodeURIComponent(String(limit))}`),
+    request<{ traces: MemoryAccessTraceItem[] }>(
+      `/api/runs/${encodeURIComponent(runId)}/memory-trace?limit=${encodeURIComponent(String(limit))}`,
+    ),
 
-  createRun: (message: string, sessionId?: string) =>
-    request<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>("/api/runs", {
+  commandPaletteSearch: (params: { q?: string; scope?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams()
+    if (params.q) query.set("q", params.q)
+    if (params.scope) query.set("scope", params.scope)
+    if (params.limit) query.set("limit", String(params.limit))
+    const search = query.toString()
+    return request<CommandPaletteSearchResponse>(
+      `/api/command-palette/search${search ? `?${search}` : ""}`,
+    )
+  },
+
+  executeCommand: (body: {
+    command: string
+    threadId?: string
+    parentAgentId?: string
+    payload?: unknown
+  }) =>
+    request<CommandExecuteResponse>("/api/commands/execute", {
       method: "POST",
-      body: JSON.stringify({ message, sessionId }),
+      body: JSON.stringify(body),
+    }),
+
+  getFocus: (threadId: string) =>
+    request<{ ok: true; threadId: string; binding: FocusBinding | null }>(
+      `/api/focus/${encodeURIComponent(threadId)}`,
+    ),
+
+  setFocus: (threadId: string, target: FocusTarget, parentAgentId?: string) =>
+    request<{ ok: true; focus: FocusResolveSuccess }>(
+      `/api/focus/${encodeURIComponent(threadId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ target, ...(parentAgentId ? { parentAgentId } : {}) }),
+      },
+    ),
+
+  clearFocus: (threadId: string) =>
+    request<{ ok: true; threadId: string; cleared: boolean; reasonCode: string }>(
+      `/api/focus/${encodeURIComponent(threadId)}`,
+      { method: "DELETE" },
+    ),
+
+  instantiateAgentTemplate: (templateId: string, overrides: unknown = {}) =>
+    request<{ ok: true; draft: { agent: unknown; disabled: true; reviewRequired: true } }>(
+      `/api/templates/agents/${encodeURIComponent(templateId)}/instantiate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ overrides }),
+      },
+    ),
+
+  instantiateTeamTemplate: (templateId: string, overrides: unknown = {}) =>
+    request<{ ok: true; draft: { team: unknown; disabled: true; reviewRequired: true } }>(
+      `/api/templates/teams/${encodeURIComponent(templateId)}/instantiate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ overrides }),
+      },
+    ),
+
+  importAgentDraft: (profile: unknown, source = "external") =>
+    request<{ ok: true; draft: { agent: unknown; disabled: true; reviewRequired: true } }>(
+      "/api/import/agents/draft",
+      {
+        method: "POST",
+        body: JSON.stringify({ profile, source }),
+      },
+    ),
+
+  lintAgentDescription: (description: string) =>
+    request<{ ok: true; warnings: AgentDescriptionLintWarning[]; reasonCodes: string[] }>(
+      "/api/agent-description/lint",
+      {
+        method: "POST",
+        body: JSON.stringify({ description }),
+      },
+    ),
+
+  backgroundTask: (body: {
+    message: string
+    parentRunId: string
+    targetAgentId: string
+    sessionId?: string
+    dryRun?: boolean
+  }) =>
+    request<{ ok: boolean; reasonCode: string; backgroundTask?: unknown }>("/api/background-task", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  createRun: (message: string, sessionId?: string, focusThreadId?: string) =>
+    request<{
+      requestId: string
+      runId: string
+      sessionId: string
+      source: string
+      status: string
+      receipt?: string
+      focus?: {
+        binding: FocusBinding
+        plannerTarget: FocusResolveSuccess["plannerTarget"]
+        enforcement: FocusResolveSuccess["enforcement"]
+      }
+    }>("/api/runs", {
+      method: "POST",
+      body: JSON.stringify({ message, sessionId, ...(focusThreadId ? { focusThreadId } : {}) }),
     }),
 
   cancelRun: (runId: string) =>
@@ -1007,19 +1413,39 @@ export const api = {
       method: "DELETE",
     }),
 
-  sessions: () => request<{ sessions: Array<{ id: string; updated_at: number; summary: string | null }> }>("/api/agent/sessions"),
+  sessions: () =>
+    request<{ sessions: Array<{ id: string; updated_at: number; summary: string | null }> }>(
+      "/api/agent/sessions",
+    ),
 
   messages: (sessionId: string) =>
     request<{ messages: Array<{ role: string; content: string; created_at: number }> }>(
       `/api/agent/sessions/${sessionId}/messages`,
     ),
 
-  tools: () => request<{ tools: Array<{ name: string; description: string; riskLevel: string }> }>("/api/tools"),
+  tools: () =>
+    request<{ tools: Array<{ name: string; description: string; riskLevel: string }> }>(
+      "/api/tools",
+    ),
 
-  audit: (params: {
-    page?: number; limit?: number; toolName?: string; result?: string; status?: string; kind?: string; timelineKind?: string; channel?: string;
-    from?: string; to?: string; sessionId?: string; runId?: string; requestGroupId?: string; q?: string
-  } = {}) => {
+  audit: (
+    params: {
+      page?: number
+      limit?: number
+      toolName?: string
+      result?: string
+      status?: string
+      kind?: string
+      timelineKind?: string
+      channel?: string
+      from?: string
+      to?: string
+      sessionId?: string
+      runId?: string
+      requestGroupId?: string
+      q?: string
+    } = {},
+  ) => {
     const q = new URLSearchParams()
     if (params.page) q.set("page", String(params.page))
     if (params.limit) q.set("limit", String(params.limit))
@@ -1039,12 +1465,27 @@ export const api = {
   },
 
   auditTimeline: (runId: string, limit = 500) =>
-    request<AuditEventsResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/timeline?limit=${limit}`),
+    request<AuditEventsResponse>(
+      `/api/audit/runs/${encodeURIComponent(runId)}/timeline?limit=${limit}`,
+    ),
 
   auditExport: (runId: string, format: "json" | "markdown" = "markdown") =>
-    request<AuditExportResponse>(`/api/audit/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
+    request<AuditExportResponse>(
+      `/api/audit/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`,
+    ),
 
-  controlTimeline: (params: { runId?: string; requestGroupId?: string; correlationId?: string; eventType?: string; component?: string; severity?: ControlEventSeverity; limit?: number; audience?: ControlExportAudience } = {}) => {
+  controlTimeline: (
+    params: {
+      runId?: string
+      requestGroupId?: string
+      correlationId?: string
+      eventType?: string
+      component?: string
+      severity?: ControlEventSeverity
+      limit?: number
+      audience?: ControlExportAudience
+    } = {},
+  ) => {
     const q = new URLSearchParams()
     if (params.runId) q.set("runId", params.runId)
     if (params.requestGroupId) q.set("requestGroupId", params.requestGroupId)
@@ -1057,7 +1498,16 @@ export const api = {
     return request<ControlTimelineResponse>(`/api/control/timeline?${q.toString()}`)
   },
 
-  controlTimelineExport: (params: { runId?: string; requestGroupId?: string; correlationId?: string; audience?: ControlExportAudience; format?: "json" | "markdown"; limit?: number } = {}) => {
+  controlTimelineExport: (
+    params: {
+      runId?: string
+      requestGroupId?: string
+      correlationId?: string
+      audience?: ControlExportAudience
+      format?: "json" | "markdown"
+      limit?: number
+    } = {},
+  ) => {
     const q = new URLSearchParams()
     if (params.runId) q.set("runId", params.runId)
     if (params.requestGroupId) q.set("requestGroupId", params.requestGroupId)
@@ -1069,10 +1519,13 @@ export const api = {
   },
 
   promoteAuditEventToErrorCorpus: (eventId: string, note?: string) =>
-    request<AuditPromotionResponse>(`/api/audit/events/${encodeURIComponent(eventId)}/promote-error-corpus`, {
-      method: "POST",
-      body: JSON.stringify({ ...(note ? { note } : {}) }),
-    }),
+    request<AuditPromotionResponse>(
+      `/api/audit/events/${encodeURIComponent(eventId)}/promote-error-corpus`,
+      {
+        method: "POST",
+        body: JSON.stringify({ ...(note ? { note } : {}) }),
+      },
+    ),
 
   cleanupAudit: (params: { before?: number; all?: boolean }) => {
     const q = new URLSearchParams()
@@ -1089,39 +1542,58 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  reloadSettings: () =>
-    request<{ ok: boolean }>("/api/settings/reload", { method: "POST" }),
+  reloadSettings: () => request<{ ok: boolean }>("/api/settings/reload", { method: "POST" }),
 
   restartTelegram: () =>
-    request<{ ok: boolean; status?: string; error?: string }>("/api/settings/telegram/restart", { method: "POST" }),
+    request<{ ok: boolean; status?: string; error?: string }>("/api/settings/telegram/restart", {
+      method: "POST",
+    }),
 
   restartChannels: () =>
-    request<{ ok: boolean; status?: string; error?: string }>("/api/settings/channels/restart", { method: "POST" }),
+    request<{ ok: boolean; status?: string; error?: string }>("/api/settings/channels/restart", {
+      method: "POST",
+    }),
 
   testAi: () =>
     request<{ ok: boolean; response?: string; model?: string; error?: string }>(
-      "/api/settings/test-ai", { method: "POST" },
+      "/api/settings/test-ai",
+      { method: "POST" },
     ),
 
-  schedules: () =>
-    request<{ schedules: Schedule[] }>("/api/schedules"),
+  schedules: () => request<{ schedules: Schedule[] }>("/api/schedules"),
 
   legacySchedules: () =>
     request<{ schedules: LegacyScheduleMigrationItem[] }>("/api/schedules/legacy"),
 
   dryRunLegacySchedule: (id: string) =>
-    request<LegacyScheduleMigrationReport>(`/api/schedules/${id}/legacy/dry-run`, { method: "POST" }),
+    request<LegacyScheduleMigrationReport>(`/api/schedules/${id}/legacy/dry-run`, {
+      method: "POST",
+    }),
 
   convertLegacySchedule: (id: string) =>
-    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(`/api/schedules/${id}/legacy/convert`, { method: "POST" }),
+    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(
+      `/api/schedules/${id}/legacy/convert`,
+      { method: "POST" },
+    ),
 
   keepLegacySchedule: (id: string) =>
-    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(`/api/schedules/${id}/legacy/keep`, { method: "POST" }),
+    request<{ ok: boolean; report: LegacyScheduleMigrationReport }>(
+      `/api/schedules/${id}/legacy/keep`,
+      { method: "POST" },
+    ),
 
-  createSchedule: (body: { name: string; cron: string; prompt: string; model?: string; enabled?: boolean }) =>
-    request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(body) }),
+  createSchedule: (body: {
+    name: string
+    cron: string
+    prompt: string
+    model?: string
+    enabled?: boolean
+  }) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(body) }),
 
-  updateSchedule: (id: string, body: Partial<{ name: string; cron: string; prompt: string; model: string; enabled: boolean }>) =>
+  updateSchedule: (
+    id: string,
+    body: Partial<{ name: string; cron: string; prompt: string; model: string; enabled: boolean }>,
+  ) =>
     request<{ ok: boolean }>(`/api/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) }),
 
   deleteSchedule: (id: string) =>
@@ -1139,9 +1611,13 @@ export const api = {
     ),
 
   scheduleStats: (id: string) =>
-    request<{ total: number; successes: number; failures: number; avgDurationMs: number | null; lastRunAt: number | null }>(
-      `/api/schedules/${id}/stats`,
-    ),
+    request<{
+      total: number
+      successes: number
+      failures: number
+      avgDurationMs: number | null
+      lastRunAt: number | null
+    }>(`/api/schedules/${id}/stats`),
 
   schedulerHealth: () =>
     request<{
@@ -1151,13 +1627,19 @@ export const api = {
       nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
     }>("/api/scheduler/health"),
 
-  memoryQuality: () =>
-    request<{ snapshot: MemoryQualitySnapshot }>("/api/memory/quality"),
+  memoryQuality: () => request<{ snapshot: MemoryQualitySnapshot }>("/api/memory/quality"),
 
-  memoryWritebackReview: (status: "pending" | "completed" | "discarded" | "failed" | "all" = "pending") =>
-    request<{ candidates: MemoryWritebackReviewItem[] }>(`/api/memory/writeback?status=${encodeURIComponent(status)}`),
+  memoryWritebackReview: (
+    status: "pending" | "completed" | "discarded" | "failed" | "all" = "pending",
+  ) =>
+    request<{ candidates: MemoryWritebackReviewItem[] }>(
+      `/api/memory/writeback?status=${encodeURIComponent(status)}`,
+    ),
 
-  reviewMemoryWriteback: (id: string, body: { action: MemoryWritebackReviewAction; editedContent?: string; reviewerId?: string }) =>
+  reviewMemoryWriteback: (
+    id: string,
+    body: { action: MemoryWritebackReviewAction; editedContent?: string; reviewerId?: string },
+  ) =>
     request<MemoryWritebackReviewResult>(`/api/memory/writeback/${encodeURIComponent(id)}/review`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -1165,23 +1647,44 @@ export const api = {
 
   plugins: () => request<Plugin[]>("/api/plugins"),
 
-  installPlugin: (body: { name: string; version: string; description?: string; entryPath: string }) =>
-    request<Plugin>("/api/plugins", { method: "POST", body: JSON.stringify(body) }),
+  installPlugin: (body: {
+    name: string
+    version: string
+    description?: string
+    entryPath: string
+  }) => request<Plugin>("/api/plugins", { method: "POST", body: JSON.stringify(body) }),
 
   updatePlugin: (name: string, body: { enabled?: boolean; config?: Record<string, unknown> }) =>
     request<Plugin>(`/api/plugins/${name}`, { method: "PATCH", body: JSON.stringify(body) }),
 
-  uninstallPlugin: (name: string) =>
-    request<void>(`/api/plugins/${name}`, { method: "DELETE" }),
+  uninstallPlugin: (name: string) => request<void>(`/api/plugins/${name}`, { method: "DELETE" }),
 }
 
-export type { StatusResponse, SetupChecksResponse, TestBackendResponse, TestMcpServerResponse, TestSkillPathResponse, TestTelegramResponse, ResetSetupResponse, FeatureCapability, MqttRuntimeResponse }
+export type {
+  StatusResponse,
+  SetupChecksResponse,
+  TestBackendResponse,
+  TestMcpServerResponse,
+  TestSkillPathResponse,
+  TestTelegramResponse,
+  ResetSetupResponse,
+  FeatureCapability,
+  MqttRuntimeResponse,
+}
 
 export interface AuditEvent {
   id: string
   at: number
   kind: "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace"
-  timelineKind: "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion"
+  timelineKind:
+    | "ingress"
+    | "intake"
+    | "contract"
+    | "memory"
+    | "tool"
+    | "delivery"
+    | "recovery"
+    | "completion"
   status: string
   summary: string
   source: string | null
@@ -1265,7 +1768,17 @@ export interface ControlTimelineExportResponse {
   }
 }
 
-export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "candidate" | "verdict" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic"
+export type RetrievalTimelineEventKind =
+  | "session"
+  | "attempt"
+  | "source"
+  | "candidate"
+  | "verdict"
+  | "planner"
+  | "delivery"
+  | "dedupe"
+  | "stop"
+  | "diagnostic"
 
 export interface RetrievalTimelineEvent {
   id: string
@@ -1483,7 +1996,11 @@ export interface Plugin {
   updated_at: number
 }
 
-export type MemoryWritebackReviewAction = "approve_long_term" | "approve_edited" | "keep_session" | "discard"
+export type MemoryWritebackReviewAction =
+  | "approve_long_term"
+  | "approve_edited"
+  | "keep_session"
+  | "discard"
 
 export interface MemoryScopeQualityMetric {
   scope: string
@@ -1602,10 +2119,33 @@ export interface PromptSourceDocument extends PromptSourceMetadata {
 }
 
 export interface PromptSourceDryRunResult {
-  assembly: { text: string; snapshot: { diagnostics: Array<{ severity: string; code: string; sourceId: string; locale: "ko" | "en"; message: string }> } } | null
-  sourceOrder: Array<{ sourceId: string; locale: "ko" | "en"; checksum: string; version: string; path: string }>
+  assembly: {
+    text: string
+    snapshot: {
+      diagnostics: Array<{
+        severity: string
+        code: string
+        sourceId: string
+        locale: "ko" | "en"
+        message: string
+      }>
+    }
+  } | null
+  sourceOrder: Array<{
+    sourceId: string
+    locale: "ko" | "en"
+    checksum: string
+    version: string
+    path: string
+  }>
   totalChars: number
-  diagnostics: Array<{ severity: string; code: string; sourceId: string; locale: "ko" | "en"; message: string }>
+  diagnostics: Array<{
+    severity: string
+    code: string
+    sourceId: string
+    locale: "ko" | "en"
+    message: string
+  }>
 }
 
 export interface PromptSourceLocaleParityIssue {
@@ -1654,7 +2194,13 @@ export interface PromptSourceRegressionResult {
   registry: {
     sourceCount: number
     runtimeSourceCount: number
-    checksums: Array<{ sourceId: string; locale: "ko" | "en"; checksum: string; version: string; path: string }>
+    checksums: Array<{
+      sourceId: string
+      locale: "ko" | "en"
+      checksum: string
+      version: string
+      path: string
+    }>
   }
   localeParity: PromptSourceLocaleParityResult
   responsibility: PromptResponsibilityRuleResult[]
@@ -1663,13 +2209,27 @@ export interface PromptSourceRegressionResult {
 }
 
 export interface PromptSourceWriteResult {
-  backup: { backupId: string; sourceId: string; locale: "ko" | "en"; sourcePath: string; backupPath: string; checksum: string; createdAt: number } | null
+  backup: {
+    backupId: string
+    sourceId: string
+    locale: "ko" | "en"
+    sourcePath: string
+    backupPath: string
+    checksum: string
+    createdAt: number
+  } | null
   source: PromptSourceMetadata
   diff: {
     beforeChecksum: string
     afterChecksum: string
     changed: boolean
-    lines: Array<{ kind: "unchanged" | "added" | "removed" | "changed"; beforeLine?: number; afterLine?: number; before?: string; after?: string }>
+    lines: Array<{
+      kind: "unchanged" | "added" | "removed" | "changed"
+      beforeLine?: number
+      afterLine?: number
+      before?: string
+      after?: string
+    }>
   }
 }
 

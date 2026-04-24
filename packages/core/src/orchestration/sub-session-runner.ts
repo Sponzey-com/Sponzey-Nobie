@@ -31,8 +31,10 @@ import {
   updateRunSubSession,
 } from "../db/index.js"
 import { recordLatencyMetric } from "../observability/latency.js"
+import { recordLateResultNoReply } from "../runs/channel-finalizer.js"
 import { type MessageLedgerEventInput, recordMessageLedgerEvent } from "../runs/message-ledger.js"
 import { appendRunEvent, getRootRun } from "../runs/store.js"
+import { recordOrchestrationEvent } from "./event-ledger.js"
 import {
   type ModelAvailabilityDoctorSnapshot,
   type ModelExecutionAuditSummary,
@@ -43,6 +45,7 @@ import {
   resolveFallbackModelExecutionPolicy,
   resolveModelExecutionPolicy,
 } from "./model-execution-policy.js"
+import { validateNestedCommandRequest } from "./nested-delegation.js"
 import {
   type SubSessionProgressAggregationBatch,
   type SubSessionProgressAggregator,
@@ -281,6 +284,24 @@ const REPLAY_STATUSES = new Set<SubSessionStatus>([
   "failed",
   "cancelled",
 ])
+
+function recordOrchestrationEventSafely(
+  input: Parameters<typeof recordOrchestrationEvent>[0],
+): void {
+  try {
+    recordOrchestrationEvent(input)
+  } catch {
+    // Orchestration event projection is observability-only here.
+  }
+}
+
+function recordLateResultNoReplySafely(input: Parameters<typeof recordLateResultNoReply>[0]): void {
+  try {
+    recordLateResultNoReply(input)
+  } catch {
+    // Late-result policy telemetry must not change sub-session lifecycle.
+  }
+}
 
 function isReplayableStatus(status: SubSessionStatus): boolean {
   return REPLAY_STATUSES.has(status)
@@ -930,6 +951,28 @@ export class SubSessionRunner {
     }
     const queuedAt = this.now()
     const subSession = buildSubSessionContract(effectiveInput)
+    const nestedValidation = validateNestedCommandRequest({
+      command: effectiveInput.command,
+      ...(effectiveInput.parentAgent?.agentId
+        ? { parentAgentId: effectiveInput.parentAgent.agentId }
+        : {}),
+    })
+    if (!nestedValidation.ok) {
+      subSession.status = "failed"
+      const reasonCode = nestedValidation.reasonCodes[0] ?? "nested_command_invalid"
+      const errorReport = buildErrorReport({
+        idProvider: this.idProvider,
+        command: effectiveInput.command,
+        reasonCode,
+        safeMessage: `Nested sub-session command is invalid: ${nestedValidation.reasonCodes.join(", ")}`,
+        retryable: false,
+      })
+      await this.dependencies.appendParentEvent(
+        subSession.parentRunId,
+        `sub_session_blocked_by_nested_policy:${subSession.subSessionId}:${nestedValidation.reasonCodes.join("+")}`,
+      )
+      return { subSession, status: "failed", errorReport, replayed: false }
+    }
     if (modelPolicy.status === "blocked") {
       subSession.status = "failed"
       const errorReport = buildErrorReport({
@@ -1089,6 +1132,13 @@ export class SubSessionRunner {
           "Parent finalizer was already committed; late sub-session result was not integrated.",
           { resultReportId: result.resultReportId, reasonCode: "parent_finalized" },
         )
+        recordLateResultNoReplySafely({
+          parentRunId: subSession.parentRunId,
+          subSessionId: subSession.subSessionId,
+          agentId: subSession.agentId,
+          resultReportId: result.resultReportId,
+          reasonCode: "parent_finalized",
+        })
         return {
           subSession,
           status: subSession.status,
@@ -1100,6 +1150,21 @@ export class SubSessionRunner {
       }
 
       const finalizationStartedAt = this.now()
+      recordOrchestrationEventSafely({
+        eventKind: "result_reported",
+        runId: subSession.parentRunId,
+        subSessionId: subSession.subSessionId,
+        agentId: subSession.agentId,
+        correlationId: subSession.parentRunId,
+        dedupeKey: `orchestration:result-reported:${subSession.parentRunId}:${subSession.subSessionId}:${result.resultReportId}`,
+        source: "sub-session-runner",
+        summary: "Sub-session result report returned to parent review.",
+        payload: {
+          resultReportId: result.resultReportId,
+          status: result.status,
+          source: result.source ?? null,
+        },
+      })
       const review = await this.reviewResultReport(effectiveInput, result, subSession)
       const terminalStatus = review.status
       if (terminalStatus === "failed") {
@@ -1126,6 +1191,25 @@ export class SubSessionRunner {
         subSession.parentRunId,
         `sub_session_review_verdict:${subSession.subSessionId}:${review.verdict}:${review.parentIntegrationStatus}`,
       )
+      recordOrchestrationEventSafely({
+        eventKind: "result_reviewed",
+        runId: subSession.parentRunId,
+        subSessionId: subSession.subSessionId,
+        agentId: subSession.agentId,
+        correlationId: subSession.parentRunId,
+        dedupeKey: `orchestration:result-reviewed:${subSession.parentRunId}:${subSession.subSessionId}:${result.resultReportId}`,
+        source: "sub-session-runner",
+        summary: `Sub-session result review verdict: ${review.verdict}`,
+        payload: {
+          resultReportId: result.resultReportId,
+          status: review.status,
+          verdict: review.verdict,
+          parentIntegrationStatus: review.parentIntegrationStatus,
+          accepted: review.accepted,
+          issueCodes: review.issues.map((issue) => issue.code),
+          normalizedFailureKey: review.normalizedFailureKey ?? null,
+        },
+      })
       try {
         this.dependencies.recordReviewEvent({
           parentRunId: subSession.parentRunId,

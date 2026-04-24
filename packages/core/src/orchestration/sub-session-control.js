@@ -6,6 +6,7 @@ import { getDb, getRunSubSession, getRunSubSessionByIdempotencyKey, insertRunSub
 import { recordLatencyMetric } from "../observability/latency.js";
 import { appendRunEvent, getRootRun } from "../runs/store.js";
 import { buildFeedbackLoopPackage, buildRedelegatedSubSessionInput, decideFeedbackLoopContinuation, validateRedelegationTarget, } from "./feedback-loop.js";
+import { validateNestedCommandRequest } from "./nested-delegation.js";
 import { buildSubSessionContract, canTransitionSubSessionStatus, transitionSubSessionStatus, } from "./sub-session-runner.js";
 const ACTIVE_CONTROL_STATUSES = new Set([
     "created",
@@ -97,6 +98,19 @@ function parseSpawnBody(body) {
         return { approvalRequired: false, error: "invalid_parent_session" };
     if (!isRecord(input.promptBundle) || !trimmedString(input.promptBundle.bundleId)) {
         return { approvalRequired: false, error: "invalid_prompt_bundle" };
+    }
+    const parentAgentId = isRecord(input.parentAgent)
+        ? trimmedString(input.parentAgent.agentId)
+        : undefined;
+    const nestedValidation = validateNestedCommandRequest({
+        command,
+        ...(parentAgentId ? { parentAgentId } : {}),
+    });
+    if (!nestedValidation.ok) {
+        return {
+            approvalRequired: false,
+            error: nestedValidation.reasonCodes[0] ?? "nested_command_invalid",
+        };
     }
     return {
         input: input,
@@ -548,6 +562,45 @@ function uniqueStrings(values) {
 function directChildAgentIds(parentAgentId) {
     return listAgentRelationships({ parentAgentId, status: "active" }).map((relationship) => relationship.child_agent_id);
 }
+function descendantSubSessionIds(parentRunId, subSessionId) {
+    const rows = listRunSubSessionsForParentRun(parentRunId);
+    const childrenByParent = new Map();
+    for (const row of rows) {
+        const contract = parseSubSessionRow(row);
+        const parentSubSessionId = contract?.identity.parent?.parentSubSessionId ?? row.parent_sub_session_id ?? undefined;
+        if (!parentSubSessionId)
+            continue;
+        const children = childrenByParent.get(parentSubSessionId) ?? [];
+        children.push(row.sub_session_id);
+        childrenByParent.set(parentSubSessionId, children);
+    }
+    const result = [];
+    const visited = new Set();
+    const stack = [...(childrenByParent.get(subSessionId) ?? [])].reverse();
+    while (stack.length > 0) {
+        const childId = stack.pop();
+        if (!childId || visited.has(childId))
+            continue;
+        visited.add(childId);
+        result.push(childId);
+        stack.push(...[...(childrenByParent.get(childId) ?? [])].reverse());
+    }
+    return result;
+}
+function cancelDescendantSubSessions(input) {
+    const affected = [];
+    for (const descendantId of descendantSubSessionIds(input.parentRunId, input.subSessionId)) {
+        const descendant = parseSubSessionRow(getRunSubSession(descendantId));
+        if (!descendant || !ACTIVE_CONTROL_STATUSES.has(descendant.status))
+            continue;
+        if (!canTransitionSubSessionStatus(descendant.status, "cancelled"))
+            continue;
+        transitionSubSessionStatus(descendant, "cancelled", nowMs());
+        updateRunSubSession(descendant);
+        affected.push(descendant.subSessionId);
+    }
+    return affected;
+}
 export function controlSubSession(input) {
     const access = requireSubSessionAccess(input.subSessionId, input.parentRunId);
     if (!access.ok)
@@ -597,6 +650,13 @@ export function controlSubSession(input) {
         }
         transitionSubSessionStatus(subSession, "cancelled", nowMs());
         updateRunSubSession(subSession);
+        const affectedSubSessionIds = [
+            subSession.subSessionId,
+            ...cancelDescendantSubSessions({
+                parentRunId: subSession.parentRunId,
+                subSessionId: subSession.subSessionId,
+            }),
+        ];
         const controlEventId = recordSubSessionControlEvent({
             eventType: input.action === "kill" ? "subsession.kill.accepted" : "subsession.cancel.accepted",
             parentRunId: subSession.parentRunId,
@@ -605,9 +665,9 @@ export function controlSubSession(input) {
             summary: `sub-session ${input.action} accepted: ${subSession.subSessionId}`,
             severity: input.action === "kill" ? "warning" : "info",
             auditCorrelationId,
-            detail: { reason: controlTextFor(input.action, input.body) },
+            detail: { reason: controlTextFor(input.action, input.body), affectedSubSessionIds },
         });
-        appendTimeline(subSession.parentRunId, `sub_session_${input.action}_accepted:${subSession.subSessionId}`);
+        appendTimeline(subSession.parentRunId, `sub_session_${input.action}_accepted:${affectedSubSessionIds.join(",")}`);
         return {
             ok: true,
             accepted: true,
@@ -617,6 +677,7 @@ export function controlSubSession(input) {
             status: "cancelled",
             reasonCode: `sub_session_${input.action}_accepted`,
             controlEventId,
+            affectedSubSessionIds,
         };
     }
     if (!ACTIVE_CONTROL_STATUSES.has(subSession.status)) {

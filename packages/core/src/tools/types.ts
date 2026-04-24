@@ -1,6 +1,7 @@
 import type {
   AgentEntityType,
   CapabilityPolicy,
+  DepthScopedToolPolicy,
   PermissionProfile,
   SkillMcpAllowlist,
 } from "../contracts/sub-agent-orchestration.js"
@@ -23,6 +24,8 @@ export interface ToolContext {
   permissionProfile?: PermissionProfile
   skillMcpAllowlist?: SkillMcpAllowlist
   capabilityRateLimit?: CapabilityPolicy["rateLimit"]
+  delegationDepth?: number
+  depthScopedToolPolicy?: DepthScopedToolPolicy
   capabilityBindingId?: string
   secretScopeId?: string
   parentSecretScopeId?: string

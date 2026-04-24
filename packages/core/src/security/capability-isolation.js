@@ -166,6 +166,67 @@ export function resolveToolCapabilityRisk(toolName, fallback = "safe") {
         return "moderate";
     return "safe";
 }
+export function classifyDepthScopedToolKind(toolName) {
+    if (/^(subsession_|sub_session_|run_cancel|run_stop|session_)/u.test(toolName))
+        return "session_control";
+    if (toolName === "process_kill" || toolName === "app_launch")
+        return "system";
+    if (toolName === "shell_exec")
+        return "shell";
+    if (/^file_(read|write|patch|delete|list|search)$/u.test(toolName))
+        return "filesystem";
+    if (/^(web_search|web_fetch)$/u.test(toolName))
+        return "network";
+    if (toolName.startsWith("mcp__"))
+        return "mcp";
+    if (/^(mouse_|keyboard_|window_|screen_|yeonjang_camera_capture)/u.test(toolName)) {
+        return "screen";
+    }
+    return "other";
+}
+function normalizedDepth(value) {
+    if (value === undefined || !Number.isFinite(value))
+        return undefined;
+    return Math.max(0, Math.floor(value));
+}
+function normalizedToolName(value) {
+    return normalizeToken(value);
+}
+export function evaluateDepthScopedToolPolicy(input) {
+    const depth = normalizedDepth(input.depth) ?? 0;
+    const toolKind = classifyDepthScopedToolKind(input.toolName);
+    const policy = input.policy;
+    const byDepth = policy?.deniedToolNamesByDepth?.[String(depth)] ?? [];
+    const normalizedTool = normalizedToolName(input.toolName);
+    if (byDepth.map(normalizedToolName).includes(normalizedTool)) {
+        return {
+            allowed: false,
+            toolName: input.toolName,
+            toolKind,
+            depth,
+            reasonCode: "depth_scoped_tool_denied",
+        };
+    }
+    const limit = normalizedDepth(policy?.maxDepthByToolKind?.[toolKind]);
+    if (limit !== undefined && depth > limit) {
+        return {
+            allowed: false,
+            toolName: input.toolName,
+            toolKind,
+            depth,
+            reasonCode: "depth_scoped_tool_denied",
+            limit,
+        };
+    }
+    return {
+        allowed: true,
+        toolName: input.toolName,
+        toolKind,
+        depth,
+        reasonCode: "depth_scoped_tool_allowed",
+        ...(limit !== undefined ? { limit } : {}),
+    };
+}
 export function isToolAllowedBySkillMcpAllowlist(input) {
     const allowlist = normalizeSkillMcpAllowlist(input.allowlist);
     const enabledTools = makeSet(allowlist.enabledToolNames);
@@ -335,6 +396,30 @@ export function evaluateAgentToolCapabilityPolicy(input) {
             userMessage: "에이전트 권한 프로필이 없어 도구를 실행하지 않았습니다.",
             agentId: input.ctx.agentId,
             diagnostic: { capabilityRisk, agentId: input.ctx.agentId },
+        };
+    }
+    const depthDecision = evaluateDepthScopedToolPolicy({
+        toolName: input.toolName,
+        ...(input.ctx.delegationDepth !== undefined ? { depth: input.ctx.delegationDepth } : {}),
+        ...(input.ctx.depthScopedToolPolicy ? { policy: input.ctx.depthScopedToolPolicy } : {}),
+    });
+    if (!depthDecision.allowed) {
+        return {
+            allowed: false,
+            toolName: input.toolName,
+            capabilityRisk,
+            approvalRequired: false,
+            reasonCode: "depth_scoped_tool_denied",
+            userMessage: "현재 중첩 위임 depth에서 허용되지 않은 도구입니다.",
+            agentId: input.ctx.agentId,
+            permissionProfileId: policy.permissionProfile.profileId,
+            diagnostic: {
+                capabilityRisk,
+                agentId: input.ctx.agentId,
+                toolKind: depthDecision.toolKind,
+                depth: depthDecision.depth,
+                limit: depthDecision.limit ?? null,
+            },
         };
     }
     const bindingDecision = resolveAgentBindingDecision({

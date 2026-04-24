@@ -1,9 +1,11 @@
 import { type MigrationPreflightReport } from "../config/backup-rehearsal.js";
+import { type SubAgentBenchmarkReleaseGateSummary } from "../benchmarks/sub-agent-benchmarks.js";
 import { type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js";
 import { type PromptSourceMetadata } from "../memory/nobie-md.js";
 import { type WebRetrievalReleaseGateSummary } from "../runs/web-retrieval-smoke.js";
 import { type FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type ReleasePerformanceSummary } from "./performance-gate.js";
+import { type SubAgentReleaseReadinessSummary } from "./sub-agent-release-gate.js";
 import { type UiModeReleaseGateSummary } from "./ui-mode-gate.js";
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux";
 export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook" | "admin_diagnostic_bundle";
@@ -53,6 +55,8 @@ export interface ReleaseManifest {
     webRetrievalEvidence: WebRetrievalReleaseGateSummary;
     uiModeEvidence: UiModeReleaseGateSummary;
     performanceEvidence: ReleasePerformanceSummary;
+    benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary;
+    subAgentReleaseGate: SubAgentReleaseReadinessSummary;
     orchestrationEvidence: ReleaseOrchestrationEvidenceSummary;
     releaseNotes: ReleaseNoteSummary;
     pipeline: ReleasePipelinePlan;

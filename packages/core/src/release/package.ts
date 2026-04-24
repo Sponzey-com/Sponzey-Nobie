@@ -17,6 +17,10 @@ import {
   buildBackupTargetInventory,
   buildMigrationPreflightReport,
 } from "../config/backup-rehearsal.js"
+import {
+  type SubAgentBenchmarkReleaseGateSummary,
+  runSubAgentBenchmarkSuite,
+} from "../benchmarks/sub-agent-benchmarks.js"
 import { DEFAULT_CONFIG, type OrchestrationConfig } from "../config/types.js"
 import { type PlanDriftReleaseNoteEvidence, runPlanDriftCheck } from "../diagnostics/plan-drift.js"
 import { type PromptSourceMetadata, loadPromptSourceRegistry } from "../memory/nobie-md.js"
@@ -35,6 +39,10 @@ import {
   type ReleasePerformanceSummary,
   buildReleasePerformanceSummary,
 } from "./performance-gate.js"
+import {
+  type SubAgentReleaseReadinessSummary,
+  buildSubAgentReleaseReadinessSummary,
+} from "./sub-agent-release-gate.js"
 import { type UiModeReleaseGateSummary, buildUiModeReleaseGateSummary } from "./ui-mode-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
@@ -100,6 +108,8 @@ export interface ReleaseManifest {
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
   performanceEvidence: ReleasePerformanceSummary
+  benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
+  subAgentReleaseGate: SubAgentReleaseReadinessSummary
   orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
   releaseNotes: ReleaseNoteSummary
   pipeline: ReleasePipelinePlan
@@ -246,6 +256,8 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
   const performanceEvidence = buildReleasePerformanceSummary(
     options.now ? { now: options.now } : {},
   )
+  const benchmarkSuite = runSubAgentBenchmarkSuite({ now: options.now ?? new Date() })
+  const benchmarkEvidence = benchmarkSuite.releaseGate
   const featureFlags = rollout.featureFlags.map((flag) => ({
     featureKey: flag.featureKey,
     mode: flag.mode,
@@ -257,10 +269,22 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     featureFlags,
   })
   const rollback = buildReleaseRollbackRunbook()
+  const subAgentReleaseGate = buildSubAgentReleaseReadinessSummary({
+    now: options.now ?? new Date(),
+    requestedMode: "limited_beta",
+    featureFlags,
+    migrationPreflight,
+    performanceEvidence,
+    benchmarkSuite,
+    orchestrationEvidence,
+    uiModeEvidence,
+  })
   const releaseNotes = buildReleaseNoteSummary({
     featureFlags,
     migrationPreflight,
     performanceEvidence,
+    benchmarkEvidence,
+    subAgentReleaseGate,
     orchestrationEvidence,
     rollback,
     webRetrievalEvidence,
@@ -321,6 +345,8 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     webRetrievalEvidence,
     uiModeEvidence,
     performanceEvidence,
+    benchmarkEvidence,
+    subAgentReleaseGate,
     orchestrationEvidence,
     releaseNotes,
     pipeline: buildReleasePipelinePlan({ targetPlatforms }),
@@ -608,6 +634,22 @@ export function buildReleasePipelinePlan(
       "Verify latency targets, release performance evidence, orchestration feature flag defaults, rollback notes, and release summary warnings.",
     ),
     step(
+      "sub-agent-benchmark-release-gate",
+      "Sub-agent benchmark release gate",
+      ["pnpm", "test", "tests/task029-benchmarks-release-gate.test.ts"],
+      true,
+      false,
+      "Verify deterministic benchmark scenarios, parallel efficiency, cache/cost metrics, restart recovery, duplicate-final guard, and compiled workflow recommendation safety.",
+    ),
+    step(
+      "sub-agent-release-readiness-gate",
+      "Sub-agent release readiness gate",
+      ["pnpm", "test", "tests/task030-release-gate-rollback-soak.test.ts"],
+      true,
+      false,
+      "Verify rollout mode sequence, release dry-run summary, rollback-by-feature-flag, restart-resume soak, WebUI projection, nested delegation, benchmark thresholds, and duplicate-final zero tolerance.",
+    ),
+    step(
       "web-retrieval-fixture-regression",
       "Web retrieval fixture regression",
       ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"],
@@ -847,6 +889,12 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
         "Latency targets, queue wait, first progress, finalization, delivery dedupe, and concurrency block evidence are reviewed in the release summary.",
     },
     {
+      id: "sub-agent-release-readiness-gate",
+      required: true,
+      description:
+        "Sub-agent rollout modes, dry-run summary, rollback smoke, restart-resume soak, nested delegation, WebUI projection, and duplicate-final zero tolerance pass before public enablement.",
+    },
+    {
       id: "plan-drift",
       required: true,
       description:
@@ -901,6 +949,8 @@ function buildReleaseNoteSummary(input: {
     "ok" | "risk" | "currentSchemaVersion" | "latestSchemaVersion" | "pendingVersions"
   >
   performanceEvidence: ReleasePerformanceSummary
+  benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
+  subAgentReleaseGate: SubAgentReleaseReadinessSummary
   orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
   rollback: ReleaseRollbackRunbook
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
@@ -931,6 +981,8 @@ function buildReleaseNoteSummary(input: {
         ? `Missing release-window metrics: ${input.performanceEvidence.missingRequiredMetrics.join(", ")}`
         : "Release-window latency metrics were collected for all required task014 targets.",
       `Orchestration release gate: ${input.orchestrationEvidence.gateStatus}`,
+      `Sub-agent benchmark release gate: ${input.benchmarkEvidence.gateStatus}`,
+      `Sub-agent release readiness gate: ${input.subAgentReleaseGate.gateStatus}`,
       `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
       `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
       orchestrationFlag

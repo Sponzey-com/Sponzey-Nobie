@@ -993,6 +993,10 @@ export declare function insertLearningEvent(input: LearningEvent, options?: {
     now?: number;
 }): boolean;
 export declare function listLearningEvents(agentId: string): DbLearningEvent[];
+export declare function listLearningEventsByApprovalState(approvalState: LearningEvent["approvalState"], filters?: {
+    agentId?: string;
+    limit?: number;
+}): DbLearningEvent[];
 export declare function updateLearningEventApprovalState(learningEventId: string, approvalState: LearningEvent["approvalState"], options?: {
     auditId?: string | null;
     now?: number;

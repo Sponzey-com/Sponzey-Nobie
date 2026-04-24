@@ -126,6 +126,10 @@ describe("task012 release package", () => {
       manifest.featureFlags.some((flag) => flag.featureKey === "sub_agent_orchestration"),
     ).toBe(true)
     expect(manifest.performanceEvidence.kind).toBe("nobie.release.performance")
+    expect(manifest.benchmarkEvidence.kind).toBe("nobie.benchmarks.release_gate")
+    expect(manifest.benchmarkEvidence.gateStatus).toBe("passed")
+    expect(manifest.subAgentReleaseGate.kind).toBe("nobie.sub_agent.release_readiness")
+    expect(manifest.subAgentReleaseGate.gateStatus).toBe("passed")
     expect(manifest.releaseNotes.featureFlagDefaults.join("\n")).toContain(
       "sub_agent_orchestration",
     )
@@ -195,6 +199,8 @@ describe("task012 release package", () => {
       "capability-isolation-release-gate",
       "model-execution-release-gate",
       "performance-release-gate",
+      "sub-agent-benchmark-release-gate",
+      "sub-agent-release-readiness-gate",
       "web-retrieval-fixture-regression",
       "ui-mode-release-gate",
       "backup-rehearsal",

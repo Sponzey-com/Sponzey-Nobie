@@ -1,6 +1,7 @@
+import { commitFinalDelivery } from "./channel-finalizer.js";
 import { emitAssistantTextDelivery, resolveAssistantTextDeliveryOutcome, } from "./delivery.js";
 import { recordMessageLedgerEvent } from "./message-ledger.js";
-import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser } from "./recovery.js";
+import { describeAssistantTextDeliveryFailure, summarizeRawErrorActionHintForUser, summarizeRawErrorForUser, } from "./recovery.js";
 export function markRunCompleted(params) {
     const executingSummary = params.executingSummary ?? params.text ?? "응답 생성을 마쳤습니다.";
     const completedSummary = params.completedSummary ?? params.text ?? "실행을 완료했습니다.";
@@ -20,30 +21,24 @@ export function markRunCompleted(params) {
 }
 export async function completeRunWithAssistantMessage(params) {
     if (params.text) {
-        recordMessageLedgerEvent({
-            runId: params.runId,
-            sessionKey: params.sessionId,
-            channel: params.source,
-            eventKind: "final_answer_generated",
-            idempotencyKey: `final-answer:${params.runId}`,
-            status: "generated",
-            summary: "최종 응답을 생성했습니다.",
-            detail: { textLength: params.text.trim().length },
-        });
-        const deliveryReceipt = await emitAssistantTextDelivery({
-            runId: params.runId,
+        const finalDelivery = await commitFinalDelivery({
+            parentRunId: params.runId,
             sessionId: params.sessionId,
             text: params.text,
             source: params.source,
             onChunk: params.onChunk,
-            ...(params.dependencies.onDeliveryError ? { onError: params.dependencies.onDeliveryError } : {}),
+            ...(params.dependencies.onDeliveryError
+                ? { onDeliveryError: params.dependencies.onDeliveryError }
+                : {}),
             ...(params.dependencies.deliveryDependencies
-                ? { dependencies: params.dependencies.deliveryDependencies }
+                ? { deliveryDependencies: params.dependencies.deliveryDependencies }
                 : {}),
         });
-        const deliveryOutcome = resolveAssistantTextDeliveryOutcome(deliveryReceipt);
-        if (deliveryOutcome.hasDeliveryFailure) {
-            params.dependencies.appendRunEvent(params.runId, describeAssistantTextDeliveryFailure({ source: params.source, outcome: deliveryOutcome }));
+        if (finalDelivery.deliveryOutcome?.hasDeliveryFailure) {
+            params.dependencies.appendRunEvent(params.runId, describeAssistantTextDeliveryFailure({
+                source: params.source,
+                outcome: finalDelivery.deliveryOutcome,
+            }));
         }
     }
     const fallbackText = params.text || "실행을 완료했습니다.";
@@ -66,7 +61,10 @@ export async function emitStandaloneAssistantMessage(params) {
         text: params.text,
         source: params.source,
         onChunk: params.onChunk,
-        ...(params.dependencies.onDeliveryError ? { onError: params.dependencies.onDeliveryError } : {}),
+        deliveryKind: "progress",
+        ...(params.dependencies.onDeliveryError
+            ? { onError: params.dependencies.onDeliveryError }
+            : {}),
         ...(params.dependencies.deliveryDependencies
             ? { dependencies: params.dependencies.deliveryDependencies }
             : {}),
@@ -140,12 +138,24 @@ export function buildAwaitingUserMessage(params) {
         params.preview.trim() ? `현재까지 결과:\n${params.preview.trim()}` : "",
         remainingItems.length > 0 ? `남은 항목:\n- ${remainingItems.join("\n- ")}` : "",
         params.reason?.trim() ? `중단 사유: ${params.reason.trim()}` : "",
-        summarizeRawErrorForUser(params.rawMessage) ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}` : "",
-        summarizeRawErrorActionHintForUser(params.rawMessage) ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}` : "",
+        summarizeRawErrorForUser(params.rawMessage)
+            ? `오류 세부:\n${summarizeRawErrorForUser(params.rawMessage)}`
+            : "",
+        summarizeRawErrorActionHintForUser(params.rawMessage)
+            ? `권장 조치:\n${summarizeRawErrorActionHintForUser(params.rawMessage)}`
+            : "",
     ].filter(Boolean);
     return lines.join("\n\n");
 }
 function buildCancelledAfterStopDetail(params) {
-    return [params.reason, params.rawMessage, params.userMessage, params.preview, params.remainingItems?.join("\n")].filter(Boolean).join("\n");
+    return [
+        params.reason,
+        params.rawMessage,
+        params.userMessage,
+        params.preview,
+        params.remainingItems?.join("\n"),
+    ]
+        .filter(Boolean)
+        .join("\n");
 }
 //# sourceMappingURL=finalization.js.map

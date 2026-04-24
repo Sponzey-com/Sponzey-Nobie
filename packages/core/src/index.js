@@ -3,6 +3,9 @@ export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/in
 export { generateAuthToken } from "./config/auth.js";
 export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
 export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath, } from "./version.js";
+// Benchmarks
+export { SUB_AGENT_BENCHMARK_SCENARIO_IDS, buildSubAgentBenchmarkReleaseGateSummary, evaluateSubAgentBenchmarkReleaseGate, getLatestSubAgentBenchmarkRun, getSubAgentBenchmarkRun, listSubAgentBenchmarkScenarios, resetSubAgentBenchmarkRunsForTest, runAndStoreSubAgentBenchmarkSuite, runSubAgentBenchmarkSuite, } from "./benchmarks/sub-agent-benchmarks.js";
+export { DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS, SUB_AGENT_RELEASE_MODE_SEQUENCE, buildSubAgentReleaseReadinessSummary, buildSubAgentRollbackEvidence, runSubAgentRestartResumeSoak, } from "./release/sub-agent-release-gate.js";
 // Runtime manifest and diagnostics
 export { buildRuntimeManifest, getLastRuntimeManifest, refreshRuntimeManifest, } from "./runtime/manifest.js";
 export { buildRolloutSafetySnapshot, ensureRolloutSafetyTables, getFeatureFlag, listFeatureFlags, recordRolloutEvidence, recordShadowCompare, setFeatureFlagMode, shouldReadCompatibilityPath, shouldShadowWrite, shouldUseNewPath, } from "./runtime/rollout-safety.js";
@@ -10,12 +13,15 @@ export { AGENT_PROMPT_BUNDLE_VERSION, buildAgentPromptBundle, buildAgentPromptBu
 export { controlSubSession, getSubSessionInfo, killAllSubSessionsForRun, listSubSessionLogs, sanitizeSubSessionControlText, spawnSubSessionAck, } from "./orchestration/sub-session-control.js";
 export { InvalidSubSessionStatusTransitionError, ResourceLockManager, SUB_SESSION_STATUS_TRANSITIONS, SubSessionRunner, applyParallelSubSessionBudget, buildSubSessionContract, canTransitionSubSessionStatus, classifySubSessionRecovery, createDryRunSubSessionHandler, createSubSessionRunner, createTextResultReport, loadSubSessionByIdempotencyKey, planOrchestrationExecutionWaves, planSubSessionExecutionWaves, recoverInterruptedSubSessions, runParallelSubSessionGroup, transitionSubSessionStatus, } from "./orchestration/sub-session-runner.js";
 export { buildFeedbackLoopPackage, buildRedelegatedSubSessionInput, decideFeedbackLoopContinuation, validateRedelegationTarget, } from "./orchestration/feedback-loop.js";
+export { applyNestedSpawnBudget, buildNestedDelegationPlan, calculateSubSessionDepth, validateNestedCommandRequest, } from "./orchestration/nested-delegation.js";
 export { FAST_PATH_CLASSIFIER_TARGET_P95_MS, ORCHESTRATION_PLANNER_TARGET_P95_MS, createOrchestrationPlanner, classifyFastPath, buildDefaultStructuredTaskScope, buildOrchestrationPlan, } from "./orchestration/planner.js";
 export { buildOrchestrationRegistrySnapshot, clearAgentCapabilityIndexCache, createAgentRegistryService, createTeamRegistryService, } from "./orchestration/registry.js";
 export { buildAgentCapabilitySummary, buildAgentModelSummary, resolveAgentCapabilityModelSummary, } from "./orchestration/capability-model.js";
 export { ORCHESTRATION_EVENT_KINDS, buildOrchestrationMonitoringSnapshot, buildRestartResumeProjection, formatOrchestrationEventSse, installOrchestrationEventProjection, listOrchestrationEventLedger, openOrchestrationEventRawPayload, parseOrchestrationReplayCursor, recordOrchestrationEvent, resetOrchestrationEventProjectionForTest, validateOrchestrationEventInput, } from "./orchestration/event-ledger.js";
 export { DEFAULT_MODEL_RETRY_COUNT, DEFAULT_MODEL_TIMEOUT_MS, DEFAULT_PROVIDER_MODEL_CAPABILITY_MATRIX, buildModelAvailabilityDoctorSnapshot, buildModelExecutionAuditSummary, estimateModelExecutionCost, estimateTokenCount, resolveFallbackModelExecutionPolicy, resolveModelExecutionPolicy, } from "./orchestration/model-execution-policy.js";
 export { createAgentHierarchyService } from "./orchestration/hierarchy.js";
+export { createAgentTopologyService } from "./orchestration/topology-projection.js";
+export { AGENT_TEMPLATES, TEAM_TEMPLATES, clearFocusBinding, createOneClickBackgroundTask, executeWorkspaceCommand, getFocusBinding, importExternalAgentProfileDraft, instantiateAgentTemplate, instantiateTeamTemplate, lintAgentDescription, resolveFocusBinding, searchCommandPalette, setFocusBinding, } from "./orchestration/command-workspace.js";
 export { createTeamCompositionService } from "./orchestration/team-composition.js";
 export { buildTeamExecutionPlan, createTeamExecutionPlanService, } from "./orchestration/team-execution-plan.js";
 export { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshot, resolveOrchestrationModeSnapshotSync, } from "./orchestration/mode.js";
@@ -34,6 +40,8 @@ export { eventBus } from "./events/index.js";
 export { exportControlTimeline, getControlTimeline, installControlEventProjection, recordControlEvent, recordControlEventFromLedger, resetControlEventProjectionForTest, } from "./control-plane/timeline.js";
 // Message ledger and delivery finalization
 export { buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildMessageLedgerTextDeliveryKey, buildToolCallIdempotencyKey, finalizeDeliveryForRun, findDuplicateToolCall, getAllowRepeatReason, hashLedgerValue, isDedupeTargetTool, recordMessageLedgerEvent, stableStringify, } from "./runs/message-ledger.js";
+export { buildFinalDeliveryAttributions, buildNamedResultDeliveryEvent, buildNobieFinalAnswer, commitFinalDelivery, findCommittedFinalDelivery, listPendingFinalizers, recordApprovalAggregation, recordLateResultNoReply, } from "./runs/channel-finalizer.js";
+export { buildRunRuntimeInspectorProjection } from "./runs/runtime-inspector-projection.js";
 export { WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION, buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, createDryRunWebRetrievalLiveSmokeExecutor, fixtureFileNameForId, getDefaultWebRetrievalLiveSmokeScenarios, isLiveWebSmokeEnabled, loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, runWebRetrievalLiveSmokeScenarios, validateWebRetrievalLiveSmokeTrace, writeWebRetrievalSmokeArtifact, } from "./runs/web-retrieval-smoke.js";
 export { WEB_RETRIEVAL_POLICY_VERSION } from "./runs/web-retrieval-policy.js";
 export { DEFAULT_QUEUE_BUDGETS, QUEUE_NAMES, QueueBackpressureError, buildBackpressureUserMessage, buildQueueBackpressureSnapshot, enqueueBackpressureTask, recordQueueBackpressureEvent, recordRetryBudgetAttempt, resetQueueBackpressureState, resetRetryBudget, } from "./runs/queue-backpressure.js";
@@ -68,11 +76,11 @@ export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, 
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
 // Capability isolation
-export { acquireAgentCapabilityRateLimit, buildCapabilityApprovalAggregationEvent, buildCapabilityDelegationRequest, buildCapabilityResultDataExchange, buildDangerousCapabilityFixtureMatrix, createCapabilityPolicySnapshot, applyCapabilityDelegationApprovalDecision, evaluateAgentToolCapabilityPolicy, evaluateDangerousCapabilityApprovalFixture, isMcpServerAllowed, isToolAllowedBySkillMcpAllowlist, mapDangerousFixtureRiskLevel, parseMcpRegisteredToolName, persistCapabilityResultDataExchange, recordCapabilityDelegationRequest, resetAgentCapabilityRateLimitsForTest, resolveToolCapabilityRisk, toAgentCapabilityCallContext, updateCapabilityDelegationLifecycle, } from "./security/capability-isolation.js";
+export { acquireAgentCapabilityRateLimit, buildCapabilityApprovalAggregationEvent, buildCapabilityDelegationRequest, buildCapabilityResultDataExchange, buildDangerousCapabilityFixtureMatrix, createCapabilityPolicySnapshot, applyCapabilityDelegationApprovalDecision, classifyDepthScopedToolKind, evaluateAgentToolCapabilityPolicy, evaluateDepthScopedToolPolicy, evaluateDangerousCapabilityApprovalFixture, isMcpServerAllowed, isToolAllowedBySkillMcpAllowlist, mapDangerousFixtureRiskLevel, parseMcpRegisteredToolName, persistCapabilityResultDataExchange, recordCapabilityDelegationRequest, resetAgentCapabilityRateLimitsForTest, resolveToolCapabilityRisk, toAgentCapabilityCallContext, updateCapabilityDelegationLifecycle, } from "./security/capability-isolation.js";
 // Agent
 export { runAgent } from "./agent/index.js";
 export { buildTaskIntakeSystemPrompt } from "./agent/intake-prompt.js";
-export { approveLearningEvent, buildHistoryVersion, dbHistoryVersionToContract, dbLearningEventToContract, dbRestoreEventToContract, dryRunRestoreHistoryVersion, evaluateLearningPolicy, listAgentLearningEvents, listHistoryVersions, listRestoreEvents, recordHistoryVersion, recordLearningEvent, restoreHistoryVersion, } from "./agent/learning.js";
+export { approveLearningEvent, buildHistoryVersion, dbHistoryVersionToContract, dbLearningEventToContract, dbRestoreEventToContract, dryRunRestoreHistoryVersion, evaluateLearningPolicy, listAgentLearningEvents, listHistoryVersions, listLearningReviewQueue, listRestoreEvents, recordHistoryVersion, recordLearningEvent, restoreHistoryVersion, } from "./agent/learning.js";
 // Instructions
 export { discoverInstructionChain } from "./instructions/discovery.js";
 export { loadMergedInstructions } from "./instructions/merge.js";
