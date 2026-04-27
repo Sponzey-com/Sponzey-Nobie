@@ -1273,7 +1273,6 @@ export class SubSessionRunner {
       ) {
         return this.markCancelled(effectiveInput, subSession, "sub_session_cancelled")
       }
-      subSession.retryBudgetRemaining = Math.max(0, subSession.retryBudgetRemaining - 1)
       const errorReport = buildErrorReport({
         idProvider: this.idProvider,
         command: effectiveInput.command,
@@ -1282,13 +1281,31 @@ export class SubSessionRunner {
             ? "sub_session_timeout"
             : "sub_session_handler_error",
         safeMessage: asErrorMessage(error),
-        retryable: subSession.retryBudgetRemaining > 0,
+        retryable: subSession.retryBudgetRemaining > 1,
       })
       const failedModelExecution =
         lastModelExecution ??
         (subSession.modelExecutionSnapshot && "status" in subSession.modelExecutionSnapshot
           ? (subSession.modelExecutionSnapshot as ModelExecutionAuditSummary)
           : undefined)
+      if (
+        subSession.status === "completed" ||
+        subSession.status === "failed" ||
+        subSession.status === "cancelled"
+      ) {
+        await this.dependencies.appendParentEvent(
+          subSession.parentRunId,
+          `sub_session_post_terminal_error:${subSession.subSessionId}:${errorReport.reasonCode}`,
+        )
+        return {
+          subSession,
+          status: subSession.status,
+          errorReport,
+          ...(failedModelExecution ? { modelExecution: failedModelExecution } : {}),
+          replayed: false,
+        }
+      }
+      subSession.retryBudgetRemaining = Math.max(0, subSession.retryBudgetRemaining - 1)
       await this.changeStatus(subSession, "failed")
       await this.flushProgressBatch(subSession.parentRunId, "terminal_flush")
       await this.dependencies.appendParentEvent(

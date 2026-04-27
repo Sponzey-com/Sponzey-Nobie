@@ -65,7 +65,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         id: params.runId,
         sessionId: params.sessionId,
         requestGroupId: startPlan.requestGroupId,
-        lineageRootRunId: startPlan.requestGroupId,
+        lineageRootRunId: params.lineageRootRunId ?? startPlan.requestGroupId,
         ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
         ...(params.runScope ? { runScope: params.runScope } : {}),
         ...(params.handoffSummary ? { handoffSummary: params.handoffSummary } : {}),

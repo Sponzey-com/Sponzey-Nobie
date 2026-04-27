@@ -12,6 +12,7 @@ import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 export interface TelegramChunkResponder {
   sendToolStatus(toolName: string): Promise<number>
   updateToolStatus(messageId: number, toolName: string, success: boolean): Promise<void>
+  clearToolStatus?(messageId: number): Promise<void>
   sendFile(filePath: string, caption?: string | undefined): Promise<number>
   sendFinalResponse(text: string): Promise<number[]>
   sendError(message: string): Promise<number>
@@ -63,6 +64,10 @@ function buildTelegramArtifactFallbackMessage(
   return `파일 업로드가 실패해 같은 대화에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`
 }
 
+function shouldSendToolStartStatus(toolName: string): boolean {
+  return toolName !== "shell_exec"
+}
+
 export function createTelegramChunkDeliveryHandler(
   context: TelegramChunkDeliveryContext,
 ): RunChunkDeliveryHandler {
@@ -91,6 +96,7 @@ export function createTelegramChunkDeliveryHandler(
     }
 
     if (chunk.type === "tool_start") {
+      if (!shouldSendToolStartStatus(chunk.toolName)) return
       const msgId = await context.responder.sendToolStatus(chunk.toolName)
       toolMessageIds.set(chunk.toolName, msgId)
       recordIfRunPresent(msgId, "tool")
@@ -100,8 +106,16 @@ export function createTelegramChunkDeliveryHandler(
     if (chunk.type === "tool_end") {
       const msgId = toolMessageIds.get(chunk.toolName)
       if (msgId !== undefined) {
-        await context.responder.updateToolStatus(msgId, chunk.toolName, chunk.success)
+        if (chunk.success) {
+          await context.responder.clearToolStatus?.(msgId)
+        } else {
+          await context.responder.updateToolStatus(msgId, chunk.toolName, false)
+        }
         toolMessageIds.delete(chunk.toolName)
+      } else if (!chunk.success) {
+        const failureMessageId = await context.responder.sendToolStatus(chunk.toolName)
+        await context.responder.updateToolStatus(failureMessageId, chunk.toolName, false)
+        recordIfRunPresent(failureMessageId, "tool")
       }
 
       const isolatedToolResponse = decideIsolatedToolResponse(chunk)

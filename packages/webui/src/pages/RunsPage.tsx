@@ -8,6 +8,7 @@ import {
   api,
 } from "../api/client"
 import { EmptyState } from "../components/EmptyState"
+import { CollapsibleText } from "../components/runs/CollapsibleText"
 import { RunEventFeed } from "../components/runs/RunEventFeed"
 import { RunRuntimeInspectorPanel } from "../components/runs/RunRuntimeInspectorPanel"
 import { RunStatusCard } from "../components/runs/RunStatusCard"
@@ -47,17 +48,13 @@ import { useRunsStore } from "../stores/runs"
 
 function TaskMonitorBadges({
   attemptCount,
-  internalAttemptCount,
   checklistLabel,
   deliveryLabel,
-  showDiagnostics = false,
   text,
 }: {
   attemptCount: number
-  internalAttemptCount: number
   checklistLabel: string
   deliveryLabel: string
-  showDiagnostics?: boolean
   text: (ko: string, en: string) => string
 }) {
   return (
@@ -65,11 +62,6 @@ function TaskMonitorBadges({
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("실행", "Runs")} {attemptCount}
       </span>
-      {showDiagnostics && internalAttemptCount > 0 ? (
-        <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
-          {text("내부 재시도", "Internal retries")} {internalAttemptCount}
-        </span>
-      ) : null}
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("진행 단계", "Progress")} {checklistLabel}
       </span>
@@ -178,9 +170,15 @@ function AdvancedRunListMeta({
         <div>
           {text("최근", "Updated")}: {formatTime(item.updatedAt)}
         </div>
-        <div className="break-words [overflow-wrap:anywhere]">
-          {displayText(item.resultSummary || item.actionHint)}
-        </div>
+        <CollapsibleText
+          value={displayText(item.resultSummary || item.actionHint)}
+          threshold={120}
+          clampLines={2}
+          showMoreLabel={text("전체 보기", "Show more")}
+          showLessLabel={text("접기", "Show less")}
+          className="break-words [overflow-wrap:anywhere]"
+          buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+        />
       </div>
     </div>
   )
@@ -235,12 +233,24 @@ function AdvancedRunOperationalPanel({
       </div>
       <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
         <div className="font-semibold text-stone-800">{text("상태 설명", "Status note")}</div>
-        <div className="mt-1 break-words [overflow-wrap:anywhere]">
-          {displayText(item.status.summary)}
-        </div>
-        <div className="mt-2 break-words [overflow-wrap:anywhere]">
-          {displayText(item.actionHint)}
-        </div>
+        <CollapsibleText
+          value={displayText(item.status.summary)}
+          threshold={160}
+          clampLines={2}
+          showMoreLabel={text("전체 보기", "Show more")}
+          showLessLabel={text("접기", "Show less")}
+          className="mt-1 break-words [overflow-wrap:anywhere]"
+          buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+        />
+        <CollapsibleText
+          value={displayText(item.actionHint)}
+          threshold={160}
+          clampLines={2}
+          showMoreLabel={text("전체 보기", "Show more")}
+          showLessLabel={text("접기", "Show less")}
+          className="mt-2 break-words [overflow-wrap:anywhere]"
+          buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+        />
         {item.duplicateExecutionRisk ? (
           <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-amber-800">
             {text(
@@ -303,10 +313,24 @@ function AdvancedDiagnosticsSummaryPanel({
             <div className="font-semibold">
               {status.label} · {status.status}
             </div>
-            <div className="mt-1 break-words [overflow-wrap:anywhere]">
-              {displayText(status.summary)}
-            </div>
-            <div className="mt-1 opacity-80">{displayText(status.action)}</div>
+            <CollapsibleText
+              value={displayText(status.summary)}
+              threshold={140}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-[11px] font-semibold underline-offset-2 hover:underline"
+            />
+            <CollapsibleText
+              value={displayText(status.action)}
+              threshold={140}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words opacity-80 [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-[11px] font-semibold underline-offset-2 hover:underline"
+            />
           </div>
         ))}
       </div>
@@ -324,10 +348,24 @@ function AdvancedDiagnosticsSummaryPanel({
             <div className="font-semibold">
               {displayText(guide.label)} · {guide.status}
             </div>
-            <div className="mt-1 break-words [overflow-wrap:anywhere]">
-              {displayText(guide.message)}
-            </div>
-            <div className="mt-1 opacity-80">{displayText(guide.guide)}</div>
+            <CollapsibleText
+              value={displayText(guide.message)}
+              threshold={140}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-[11px] font-semibold underline-offset-2 hover:underline"
+            />
+            <CollapsibleText
+              value={displayText(guide.guide)}
+              threshold={140}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words opacity-80 [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-[11px] font-semibold underline-offset-2 hover:underline"
+            />
           </div>
         ))}
       </div>
@@ -417,61 +455,111 @@ function TaskDiagnosticsPanel({
           <div className="font-semibold text-stone-800">
             {text("프롬프트 출처", "Prompt sources")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(promptSourceLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(promptSourceLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("응답 지연 기록", "Latency trace")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(latencyLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(latencyLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("메모리·벡터 기록", "Memory and vector trace")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(memoryLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(memoryLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("도구 실행 기록", "Tool receipt trace")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">{displayText(toolLabel)}</div>
+          <CollapsibleText
+            value={displayText(toolLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("결과 전달 기록", "Delivery receipt trace")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(deliveryTraceLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(deliveryTraceLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">{text("복구 기록", "Recovery trace")}</div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(recoveryLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(recoveryLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("대기 중인 승인", "Pending approvals")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(pendingApprovalLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(pendingApprovalLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
         <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
           <div className="font-semibold text-stone-800">
             {text("대기 중인 전달", "Pending delivery")}
           </div>
-          <div className="mt-1 break-words [overflow-wrap:anywhere]">
-            {displayText(pendingDeliveryLabel)}
-          </div>
+          <CollapsibleText
+            value={displayText(pendingDeliveryLabel)}
+            threshold={120}
+            clampLines={2}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-1 break-words [overflow-wrap:anywhere]"
+            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+          />
         </div>
       </div>
       {continuity?.lastGoodState ||
@@ -634,10 +722,15 @@ function OperationsHealthPanel({
             <div className="text-[11px] font-semibold">{healthItemLabel(item.key, text)}</div>
             <div className="mt-1 text-sm font-semibold">{statusLabel(item.status, text)}</div>
             {diagnosticMode ? (
-              <div className="mt-1 text-[11px] leading-4 opacity-80">
-                {displayText(item.reason)}
-                {item.lastAt ? ` · ${formatTime(item.lastAt)}` : ""}
-              </div>
+              <CollapsibleText
+                value={`${displayText(item.reason)}${item.lastAt ? ` · ${formatTime(item.lastAt)}` : ""}`}
+                threshold={100}
+                clampLines={2}
+                showMoreLabel={text("전체 보기", "Show more")}
+                showLessLabel={text("접기", "Show less")}
+                className="mt-1 break-words text-[11px] leading-4 opacity-80 [overflow-wrap:anywhere]"
+                buttonClassName="mt-1 inline-flex text-[11px] font-semibold underline-offset-2 hover:underline"
+              />
             ) : null}
           </div>
         ))}
@@ -662,10 +755,15 @@ function OperationsHealthPanel({
                       {statusLabel(issue.status, text)} · {issue.count}
                     </span>
                   </div>
-                  <div className="mt-1 break-words leading-5 [overflow-wrap:anywhere]">
-                    {displayText(issue.sample)}
-                    {diagnosticMode && issue.lastAt ? ` · ${formatTime(issue.lastAt)}` : ""}
-                  </div>
+                  <CollapsibleText
+                    value={`${displayText(issue.sample)}${diagnosticMode && issue.lastAt ? ` · ${formatTime(issue.lastAt)}` : ""}`}
+                    threshold={140}
+                    clampLines={2}
+                    showMoreLabel={text("전체 보기", "Show more")}
+                    showLessLabel={text("접기", "Show less")}
+                    className="mt-1 break-words leading-5 [overflow-wrap:anywhere]"
+                    buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                  />
                 </div>
               ))
             ) : (
@@ -781,9 +879,15 @@ function MemoryTracePanel({
                     {text("지연", "Latency")}: {trace.latency_ms ?? 0}ms
                   </div>
                 </div>
-                <div className="mt-2 break-words text-stone-500 [overflow-wrap:anywhere]">
-                  {displayText(trace.reason ?? "accepted")}
-                </div>
+                <CollapsibleText
+                  value={displayText(trace.reason ?? "accepted")}
+                  threshold={140}
+                  clampLines={2}
+                  showMoreLabel={text("전체 보기", "Show more")}
+                  showLessLabel={text("접기", "Show less")}
+                  className="mt-2 break-words text-stone-500 [overflow-wrap:anywhere]"
+                  buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                />
               </div>
             )
           })
@@ -881,9 +985,15 @@ function RetrievalEvidencePanel({
                   </span>
                   <span>{formatTime(event.at)}</span>
                 </div>
-                <div className="mt-1 break-words leading-5 [overflow-wrap:anywhere]">
-                  {displayText(event.summary)}
-                </div>
+                <CollapsibleText
+                  value={displayText(event.summary)}
+                  threshold={140}
+                  clampLines={2}
+                  showMoreLabel={text("전체 보기", "Show more")}
+                  showLessLabel={text("접기", "Show less")}
+                  className="mt-1 break-words leading-5 [overflow-wrap:anywhere]"
+                  buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                />
                 {sourceLabel || verdictLabel || event.duplicate ? (
                   <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-stone-500">
                     {sourceLabel ? (
@@ -1027,9 +1137,15 @@ function ChannelSmokePanel({
                 <span className="font-semibold text-stone-900">{run.status}</span>
                 <span>{formatTime(run.startedAt)}</span>
               </div>
-              <div className="mt-1 leading-5 text-stone-500">
-                {run.summary ?? text("요약 없음", "No summary")}
-              </div>
+              <CollapsibleText
+                value={run.summary ?? text("요약 없음", "No summary")}
+                threshold={140}
+                clampLines={2}
+                showMoreLabel={text("전체 보기", "Show more")}
+                showLessLabel={text("접기", "Show less")}
+                className="mt-1 break-words leading-5 text-stone-500 [overflow-wrap:anywhere]"
+                buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+              />
               <div className="mt-2 flex flex-wrap gap-2">
                 <span className="rounded-full bg-white px-2 py-1">
                   {text("통과", "Passed")} {run.counts.passed}
@@ -1106,7 +1222,6 @@ export function RunsPage() {
   const selectedTimeline = selectedCard?.timeline ?? []
   const visibleTimeline = filterTaskTimelineForMode(selectedTimeline, viewMode)
   const selectedRequestText = selectedCard?.requestText ?? selectedRun?.prompt ?? ""
-  const selectedInternalAttempts = selectedCard?.internalAttempts ?? []
   const selectedDeliveryLabel = selectedCard
     ? describeTaskDeliveryStatus(selectedCard.delivery.status, text)
     : ""
@@ -1400,10 +1515,8 @@ export function RunsPage() {
                     ) : null}
                     <TaskMonitorBadges
                       attemptCount={card.attempts.length}
-                      internalAttemptCount={card.internalAttempts.length}
                       checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
                       deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
-                      showDiagnostics={diagnosticMode}
                       text={text}
                     />
                   </div>
@@ -1493,16 +1606,6 @@ export function RunsPage() {
                           {selectedCard?.attempts.length ?? 0}
                         </div>
                       </div>
-                      {diagnosticMode ? (
-                        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
-                            {text("내부 재시도", "Internal retries")}
-                          </div>
-                          <div className="mt-2 text-sm font-medium text-stone-900">
-                            {selectedInternalAttempts.length}
-                          </div>
-                        </div>
-                      ) : null}
                       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
                           {text("결과 전달 상태", "Result delivery status")}
@@ -1512,33 +1615,6 @@ export function RunsPage() {
                         </div>
                       </div>
                     </div>
-                    {diagnosticMode && selectedInternalAttempts.length > 0 ? (
-                      <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-                        <div className="text-xs font-semibold text-stone-500">
-                          {text("내부 재시도 기록", "Internal retry history")}
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {selectedInternalAttempts.map((attempt) => (
-                            <div
-                              key={attempt.id}
-                              className="rounded-xl border border-stone-200 bg-white px-3 py-2.5"
-                            >
-                              <div className="text-sm font-medium text-stone-900">
-                                {attempt.label}
-                              </div>
-                              <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
-                                {displayText(
-                                  attempt.summary ||
-                                    attempt.prompt ||
-                                    attempt.run?.prompt ||
-                                    attempt.label,
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 }
               />
@@ -1607,7 +1683,14 @@ export function RunsPage() {
                 <div className="mb-2 text-sm font-semibold text-stone-900">
                   {text("원래 요청", "Original request")}
                 </div>
-                <p className="text-sm leading-6 text-stone-600">{selectedRequestText}</p>
+                <CollapsibleText
+                  value={displayText(selectedRequestText)}
+                  threshold={220}
+                  clampLines={4}
+                  showMoreLabel={text("전체 보기", "Show more")}
+                  showLessLabel={text("접기", "Show less")}
+                  className="break-words text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]"
+                />
               </div>
             </div>
           </div>

@@ -233,5 +233,6 @@ export declare function createTeamRegistryService(dependencies?: RegistryService
     createOrUpdate(input: TeamConfig, options?: TeamConfigPersistenceOptions): void;
     disable(teamId: string): boolean;
     archive(teamId: string): boolean;
+    delete(teamId: string): boolean;
 };
 //# sourceMappingURL=registry.d.ts.map

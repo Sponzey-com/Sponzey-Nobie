@@ -16,6 +16,10 @@ import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/emb
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import { chatWithContextPreflight } from "../../runs/context-preflight.js"
 
+function isOrchestrationMode(value: unknown): value is "single_nobie" | "orchestration" {
+  return value === "single_nobie" || value === "orchestration"
+}
+
 function buildLegacySettingsSnapshot() {
   const cfg = getConfig()
   const telegramChannel = getActiveTelegramChannel()
@@ -41,6 +45,11 @@ function buildLegacySettingsSnapshot() {
       maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
       allowedCommands: cfg.security.allowedCommands,
       allowedPaths: cfg.security.allowedPaths,
+    },
+    orchestration: {
+      mode: cfg.orchestration.mode ?? "single_nobie",
+      featureFlagEnabled: cfg.orchestration.featureFlagEnabled === true,
+      maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
     },
     search: {
       webProvider: cfg.search.web?.provider ?? "duckduckgo",
@@ -195,6 +204,19 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         }
         if (Array.isArray(sec.allowedCommands)) rawSec.allowedCommands = sec.allowedCommands
         if (Array.isArray(sec.allowedPaths)) rawSec.allowedPaths = sec.allowedPaths
+      }
+
+      if (body.orchestration && typeof body.orchestration === "object") {
+        const orchestration = body.orchestration as Record<string, unknown>
+        if (!raw.orchestration) raw.orchestration = {}
+        const rawOrchestration = raw.orchestration as Record<string, unknown>
+        if (isOrchestrationMode(orchestration.mode)) rawOrchestration.mode = orchestration.mode
+        if (typeof orchestration.featureFlagEnabled === "boolean") {
+          rawOrchestration.featureFlagEnabled = orchestration.featureFlagEnabled
+        }
+        if (typeof orchestration.maxDelegationTurns === "number") {
+          rawOrchestration.maxDelegationTurns = Math.max(0, Math.floor(orchestration.maxDelegationTurns))
+        }
       }
 
       if (body.search && typeof body.search === "object") {

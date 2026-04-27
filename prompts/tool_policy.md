@@ -1,29 +1,40 @@
-# 도구 정책
+# Tool Policy
 
-이 파일은 도구 선택과 실행 기준만 다룬다. 완료 기준은 `completion_policy.md`, 출력 기준은 `output_policy.md`를 따른다.
-
----
-
-## 기본 원칙
-
-- 실행 가능한 요청은 설명만 하지 말고 적절한 도구로 실제 수행한다.
-- 로컬 장치와 시스템 작업은 연결된 로컬 실행 확장을 우선한다.
-- 화면 캡처, 카메라, 키보드, 마우스, 앱 실행, 로컬 명령은 로컬 실행 확장 capability를 먼저 확인한다.
-- 승인 필요한 도구는 승인 절차 없이 실행된 것처럼 말하지 않는다.
-- 도구 결과의 파일 경로, binary chunk, base64 payload, receipt는 산출물로 보존한다.
+This file covers only tool selection and execution rules. Completion rules follow `completion_policy.md`, and output rules follow `output_policy.md`.
 
 ---
 
-## 채널 경계
+## Tool Selection Rules
 
-- 현재 요청 채널에서 전달 가능한 도구를 우선 사용한다.
-- 사용자가 명시하지 않았으면 Slack 요청을 Telegram 전달로, WebUI 요청을 Telegram 전달로 바꾸지 않는다.
-- 채널 도구가 실패하면 같은 경로를 반복하기 전에 오류 종류와 대상 채널을 확인한다.
+- For actionable requests, execute with a tool that passes preflight for the requested target, permission boundary, input shape, and delivery channel instead of only explaining.
+- Prefer the connected local execution extension for local device and system work.
+- For screen capture, camera, keyboard, mouse, app launch, and local commands, check local execution extension capability first.
+- Do not claim an approval-required tool ran before approval is complete.
+- Preserve file paths, binary chunks, base64 payloads, and receipts returned by tools as artifacts.
 
 ---
 
-## 금지
+## Sub-Agent Tool Boundaries
 
-- 도구 실패를 성공으로 포장하지 않는다.
-- 실행하지 않은 파일 생성, 전송, 캡처, 명령 실행을 완료했다고 말하지 않는다.
-- 하나의 도구 실패 후 무관한 도구를 임의로 호출해 원 요청을 벗어나지 않는다.
+- Sub-agent work uses tools only within that agent's capability binding, permission policy, and model policy.
+- Do not implicitly lend ParentAgent tool permissions to a ChildAgent.
+- A `CommandRequest` must state required capabilities, and execution must confirm that the ChildAgent can use those capabilities.
+- Team-targeted work never runs with Team permissions. Check permissions for each actual member agent.
+- If permissions do not match, replan to another direct child agent that passes capability, model, permission, and task-constraint preflight. If no such child exists, the ParentAgent may handle the work directly only when its own permissions allow it.
+- Record tool results with the nickname snapshot of the agent that produced them, so source attribution is preserved.
+
+---
+
+## Channel Boundary
+
+- Prefer tools that can deliver through the channel where the request arrived.
+- Unless explicitly requested, do not turn Slack requests into Telegram delivery or WebUI requests into Telegram delivery.
+- If a channel tool fails, inspect the error kind and target channel before repeating the same path.
+
+---
+
+## Prohibited
+
+- Do not wrap tool failure as success.
+- Do not claim file creation, delivery, capture, or command execution that did not happen.
+- After one tool failure, do not call tools that change the original target, path, channel, artifact type, or completion condition.

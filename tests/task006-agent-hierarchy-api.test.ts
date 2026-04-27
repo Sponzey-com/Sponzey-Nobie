@@ -396,7 +396,36 @@ describe("task006 hierarchy relationship API", () => {
     }
   })
 
-  it("uses enabled sub-agents as documented top-level fallback only when no hierarchy rows exist", async () => {
+  it("falls back to the default hierarchy depth when setup config stores maxDelegationTurns as zero", async () => {
+    writeConfig({ orchestration: { maxDelegationTurns: 0 } })
+    const app = Fastify({ logger: false })
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await createAgent(app, "agent:alpha", "Alpha")
+      await createAgent(app, "agent:beta", "Beta")
+
+      await createRelationship(app, "agent:nobie", "agent:alpha")
+      const nested = await app.inject({
+        method: "POST",
+        url: "/api/agent-relationships",
+        payload: { relationship: { parentAgentId: "agent:alpha", childAgentId: "agent:beta" } },
+      })
+      expect(nested.statusCode).toBe(200)
+
+      const topology = await app.inject({ method: "GET", url: "/api/agent-topology" })
+      expect(topology.statusCode).toBe(200)
+      expect(topology.json().validation).toEqual(
+        expect.objectContaining({
+          hierarchy: expect.objectContaining({ maxDepth: 5 }),
+        }),
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("keeps enabled sub-agents unassigned when no hierarchy rows exist", async () => {
     const app = Fastify({ logger: false })
     registerAgentRoutes(app)
     await app.ready()
@@ -406,11 +435,13 @@ describe("task006 hierarchy relationship API", () => {
 
       const fallbackTree = await app.inject({ method: "GET", url: "/api/agent-tree" })
       expect(fallbackTree.statusCode).toBe(200)
-      expect(fallbackTree.json()).toEqual(expect.objectContaining({ topLevelFallbackActive: true }))
+      expect(fallbackTree.json()).toEqual(expect.objectContaining({ topLevelFallbackActive: false }))
       expect(
         asRecords(fallbackTree.json().topLevelSubAgents).map((agent) => agent.agentId),
-      ).toEqual(["agent:alpha", "agent:beta"])
-      expect(reasonCodes(fallbackTree.json())).toContain("hierarchy_fallback_enabled_sub_agents")
+      ).toEqual([])
+      expect(reasonCodes(fallbackTree.json())).not.toContain(
+        "hierarchy_fallback_enabled_sub_agents",
+      )
 
       await createRelationship(app, "agent:nobie", "agent:alpha")
       const hierarchyTree = await app.inject({ method: "GET", url: "/api/agent-tree" })

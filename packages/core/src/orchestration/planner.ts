@@ -127,6 +127,161 @@ function hasRoutingIntent(intent: OrchestrationPlannerIntent | undefined): boole
   )
 }
 
+const DEVELOPMENT_REQUEST_PATTERN =
+  /(?:개발|구현|코드|프로젝트|앱|애플리케이션|어플|폴더|파일|차트|백테스트|시뮬레이션|투자\s*봇|만들어줘|작성해줘|implement|develop|build|create|code|project|app|application|folder|file|backtest|simulation)/iu
+
+function looksLikeDevelopmentRequest(request: string): boolean {
+  return DEVELOPMENT_REQUEST_PATTERN.test(request)
+}
+
+function normalizeTeamAlias(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s"'`.,;:!?()[\]{}<>/\\|_+=~@#$%^&*·ㆍ-]+/g, "")
+}
+
+function removeDigits(value: string): string {
+  return value.replace(/[0-9０-９]+/g, "")
+}
+
+function teamAliases(team: OrchestrationRegistrySnapshot["teams"][number]): string[] {
+  return uniqueStrings([
+    team.teamId,
+    team.displayName,
+    team.nickname,
+    team.config.normalizedNickname,
+    removeDigits(team.displayName),
+    team.nickname ? removeDigits(team.nickname) : undefined,
+  ])
+}
+
+export function resolveExplicitTeamIdFromRequest(
+  userRequest: string,
+  registry: OrchestrationRegistrySnapshot,
+): string | undefined {
+  const normalizedRequest = normalizeTeamAlias(userRequest)
+  const digitlessRequest = removeDigits(normalizedRequest)
+  const matches = registry.teams.flatMap((team) => {
+    if (team.status !== "enabled") return []
+    const aliases = teamAliases(team)
+      .map((alias) => normalizeTeamAlias(alias))
+      .filter((alias) => alias.length >= 2)
+    const matchedAlias = aliases
+      .sort((left, right) => right.length - left.length || left.localeCompare(right))
+      .find((alias) => {
+        if (normalizedRequest.includes(alias)) return true
+        const digitlessAlias = removeDigits(alias)
+        return digitlessAlias.length >= 2 && digitlessRequest.includes(digitlessAlias)
+      })
+    return matchedAlias ? [{ teamId: team.teamId, alias: matchedAlias }] : []
+  })
+  if (matches.length === 0) return undefined
+  matches.sort((left, right) => right.alias.length - left.alias.length || left.teamId.localeCompare(right.teamId))
+  return matches[0]?.teamId
+}
+
+const CAPABILITY_GROUP_TOKENS: Record<string, string[]> = {
+  development: [
+    "development",
+    "develop",
+    "developer",
+    "dev",
+    "coding",
+    "code",
+    "codebase",
+    "implementation",
+    "implement",
+    "filesystem_write",
+    "shell_execution",
+    "개발",
+    "구현",
+    "코드",
+    "프로그래밍",
+  ],
+  research: ["research", "search", "retrieval", "investigation", "browser", "web_search", "조사", "검색", "리서치"],
+  review: ["review", "verify", "verification", "test", "qa", "검토", "리뷰", "검증", "테스트"],
+  operations: ["operations", "ops", "deploy", "deployment", "release", "monitoring", "운영", "배포", "릴리즈", "모니터링"],
+}
+
+function textTokens(value: string | undefined): string[] {
+  return value
+    ?.normalize("NFKC")
+    .toLowerCase()
+    .match(/[a-z0-9가-힣_:-]+/giu) ?? []
+}
+
+function requestCapabilityGroups(userRequest: string, scopes: StructuredTaskScope[]): string[] {
+  const haystack = [
+    userRequest,
+    ...scopes.flatMap((scope) => [
+      scope.goal,
+      scope.intentType,
+      scope.actionType,
+      ...scope.constraints,
+      ...scope.reasonCodes,
+    ]),
+  ].join(" ")
+  const groups: string[] = []
+  if (looksLikeDevelopmentRequest(haystack)) groups.push("development")
+  if (/(?:조사|검색|리서치|research|search|retrieval|investigation)/iu.test(haystack))
+    groups.push("research")
+  if (/(?:검토|리뷰|검증|테스트|review|verify|verification|test|qa)/iu.test(haystack))
+    groups.push("review")
+  if (/(?:운영|배포|릴리즈|모니터링|operations|ops|deploy|deployment|release|monitoring)/iu.test(haystack))
+    groups.push("operations")
+  return uniqueStrings(groups)
+}
+
+function teamIsExecutable(team: OrchestrationRegistrySnapshot["teams"][number]): boolean {
+  const activeMemberAgentIds = team.coverage?.activeMemberAgentIds ?? team.activeMemberAgentIds ?? []
+  return (
+    team.status === "enabled" &&
+    team.health?.status !== "invalid" &&
+    team.health?.executionCandidate !== false &&
+    activeMemberAgentIds.length > 0
+  )
+}
+
+function teamCapabilityTokens(team: OrchestrationRegistrySnapshot["teams"][number]): string[] {
+  return uniqueStrings([
+    ...textTokens(team.teamId),
+    ...textTokens(team.displayName),
+    ...textTokens(team.nickname),
+    ...textTokens(team.purpose),
+    ...textTokens(team.config.normalizedNickname),
+    ...team.roleHints.flatMap(textTokens),
+    ...(team.config.requiredTeamRoles ?? []).flatMap(textTokens),
+    ...(team.config.requiredCapabilityTags ?? []).flatMap(textTokens),
+  ])
+}
+
+function resolveCapableTeamIdForRequest(
+  userRequest: string,
+  registry: OrchestrationRegistrySnapshot,
+  scopes: StructuredTaskScope[],
+): string | undefined {
+  const groups = requestCapabilityGroups(userRequest, scopes)
+  if (groups.length === 0) return undefined
+  const matches = registry.teams.flatMap((team) => {
+    if (!teamIsExecutable(team)) return []
+    const teamTokens = new Set(teamCapabilityTokens(team))
+    let score = 0
+    for (const group of groups) {
+      const groupTokens = CAPABILITY_GROUP_TOKENS[group] ?? []
+      const overlap = groupTokens.filter((token) => teamTokens.has(token)).length
+      if (overlap > 0) score += 100 + overlap
+    }
+    if (score === 0) return []
+    score += team.health?.status === "healthy" ? 10 : 0
+    score += Math.min(5, team.coverage?.activeMemberAgentIds.length ?? team.activeMemberAgentIds.length)
+    return [{ teamId: team.teamId, score }]
+  })
+  if (matches.length === 0) return undefined
+  matches.sort((left, right) => right.score - left.score || left.teamId.localeCompare(right.teamId))
+  return matches[0]?.teamId
+}
+
 function looksLikeWorkflowRequest(request: string): boolean {
   const normalized = request.toLowerCase()
   return [
@@ -192,8 +347,8 @@ export function classifyFastPath(input: FastPathClassifierInput): FastPathClassi
   }
 }
 
-function uniqueStrings(values: string[] | undefined): string[] {
-  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].sort()
+function uniqueStrings(values: Array<string | undefined> | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value?.trim() ?? "").filter(Boolean))].sort()
 }
 
 function hasAll(haystack: string[], needles: string[]): boolean {
@@ -221,14 +376,31 @@ function defaultExpectedOutput(): ExpectedOutputContract {
 }
 
 export function buildDefaultStructuredTaskScope(userRequest: string): StructuredTaskScope {
+  const developmentRequest = looksLikeDevelopmentRequest(userRequest)
   return {
     goal: userRequest.trim() || "Process the user request.",
     intentType: "user_request",
-    actionType: "general",
+    actionType: developmentRequest ? "development" : "general",
     constraints: [],
     expectedOutputs: [defaultExpectedOutput()],
-    reasonCodes: ["default_structured_scope"],
+    reasonCodes: [
+      "default_structured_scope",
+      ...(developmentRequest ? ["development_request_detected"] : []),
+    ],
   }
+}
+
+function inferredRequiredCapabilitiesForScope(scope: StructuredTaskScope): string[] {
+  const haystack = [
+    scope.goal,
+    scope.intentType,
+    scope.actionType,
+    ...scope.constraints,
+    ...scope.reasonCodes,
+  ].join(" ")
+  return looksLikeDevelopmentRequest(haystack)
+    ? ["filesystem_write", "shell_execution"]
+    : []
 }
 
 function riskAllows(agent: AgentRegistryEntry, requiredRisk: CapabilityRiskLevel): boolean {
@@ -246,7 +418,10 @@ function effectiveTeamIds(
   const fromMembership = registry.membershipEdges
     .filter((edge) => edge.status === "active" && edge.agentId === agent.agentId)
     .map((edge) => edge.teamId)
-  return uniqueStrings([...agent.teamIds, ...fromMembership])
+  const fromOwnership = registry.teams
+    .filter((team) => team.config.ownerAgentId === agent.agentId || team.config.leadAgentId === agent.agentId)
+    .map((team) => team.teamId)
+  return uniqueStrings([...agent.teamIds, ...fromMembership, ...fromOwnership])
 }
 
 function plannerParentAgentId(
@@ -685,7 +860,7 @@ export function buildOrchestrationPlan(
   const now = input.now ?? (() => Date.now())
   const idProvider = input.idProvider ?? (() => crypto.randomUUID())
   const timeoutMs = Math.max(1, input.timeoutMs ?? 120)
-  const intent = input.intent ?? {}
+  let intent = input.intent ?? {}
   const fastPathClassification = classifyFastPath({
     userRequest: input.userRequest,
     intent,
@@ -759,7 +934,22 @@ export function buildOrchestrationPlan(
     })
   }
 
+  const scopes = input.taskScopes?.length
+    ? input.taskScopes
+    : [buildDefaultStructuredTaskScope(input.userRequest)]
   const parentAgentId = plannerParentAgentId(input, registry)
+  const inferredExplicitTeamId =
+    intent.explicitTeamId || intent.explicitAgentId
+      ? undefined
+      : resolveExplicitTeamIdFromRequest(input.userRequest, registry)
+  const inferredCapabilityTeamId =
+    intent.explicitTeamId || intent.explicitAgentId || inferredExplicitTeamId
+      ? undefined
+      : resolveCapableTeamIdForRequest(input.userRequest, registry, scopes)
+  const inferredTeamTargetId = inferredExplicitTeamId ?? inferredCapabilityTeamId
+  if (inferredTeamTargetId) {
+    intent = { ...intent, explicitTeamId: inferredTeamTargetId }
+  }
   const directChildAgentIds = directChildAgentIdsFor(registry, parentAgentId)
   const candidateScores = registry.agents.map((agent) =>
     scoreCandidate(agent, registry, intent, {
@@ -784,7 +974,8 @@ export function buildOrchestrationPlan(
   ]
 
   if (intent.explicitTeamId) {
-    const team = registry.teams.find((candidate) => candidate.teamId === intent.explicitTeamId)
+    const explicitTeamId = intent.explicitTeamId
+    const team = registry.teams.find((candidate) => candidate.teamId === explicitTeamId)
     const teamHealthStatus = team?.health?.status
     const activeMemberAgentIds =
       team?.coverage?.activeMemberAgentIds ?? team?.activeMemberAgentIds ?? []
@@ -813,25 +1004,87 @@ export function buildOrchestrationPlan(
       })
     }
 
-    return nonExecutionPlan({
+    const planId = idProvider()
+    const delegatedTasks = scopes.map((scope, index) =>
+      planTask({
+        taskId: `${planId}:team:${index}`,
+        scope,
+        executionKind: "delegated_sub_agent",
+        requiredCapabilities: uniqueStrings([
+          ...(intent.requiredCapabilities ?? []),
+          ...inferredRequiredCapabilitiesForScope(scope),
+        ]),
+        resourceLockIds: [],
+        assignedTeamId: explicitTeamId,
+        reasonCodes: [
+          "explicit_team_target",
+          "team_execution_plan_planned",
+          ...(inferredExplicitTeamId ? ["inferred_team_target_from_request"] : []),
+          ...(inferredCapabilityTeamId ? ["inferred_team_target_from_capability"] : []),
+          ...(inferredTeamTargetId ? ["mandatory_delegation_candidate_available"] : []),
+          ...(teamHealthStatus ? [`team_health_${teamHealthStatus}`] : []),
+        ],
+        explanation: `${team.displayName} 팀 실행 계획으로 확장할 작업입니다.`,
+      }),
+    )
+    for (const candidate of candidateScores) {
+      if (candidate.teamIds.includes(explicitTeamId)) candidate.selected = true
+    }
+    const plannerReasonCodes = [
+      "structured_scoring",
+      "explicit_team_target",
+      "team_execution_plan_planned",
+      ...(inferredExplicitTeamId ? ["inferred_team_target_from_request"] : []),
+      ...(inferredCapabilityTeamId ? ["inferred_team_target_from_capability"] : []),
+      ...(inferredTeamTargetId ? ["mandatory_delegation_candidate_available"] : []),
+    ]
+    const plan: OrchestrationPlan = {
+      identity: buildIdentity(planId, input.parentRunId, input.parentRequestId),
+      planId,
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
-      modeSnapshot: input.modeSnapshot,
-      reasonCodes: [
-        "explicit_team_target",
-        "requires_team_expansion",
-        ...(teamHealthStatus ? [`team_health_${teamHealthStatus}`] : []),
-      ],
-      fallbackReasonCode: "requires_team_expansion",
-      now: startedAt,
-      idProvider,
-      fastPathClassification,
-      status: "requires_team_expansion",
+      directNobieTasks: [],
+      delegatedTasks,
+      dependencyEdges: [...(input.dependencyEdges ?? [])],
+      resourceLocks: input.resourceLocks ?? [],
+      parallelGroups: [],
+      approvalRequirements: [],
+      fallbackStrategy: {
+        mode: "single_nobie",
+        reasonCode: "delegate_failure_single_nobie",
+      },
+      plannerMetadata: {
+        status: "planned",
+        plannerVersion: ORCHESTRATION_PLANNER_VERSION,
+        timedOut: false,
+        latencyMs: Math.max(0, now() - startedAt),
+        targetP95Ms: ORCHESTRATION_PLANNER_TARGET_P95_MS,
+        semanticComparisonUsed: false,
+        fastPath: fastPathClassification,
+        reasonCodes: plannerReasonCodes,
+        candidateScores: candidateScores.map((candidate) => ({
+          agentId: candidate.agentId,
+          teamIds: candidate.teamIds,
+          score: candidate.score,
+          selected: candidate.selected,
+          reasonCodes: candidate.reasonCodes,
+          excludedReasonCodes: candidate.excludedReasonCodes,
+          explanation: candidate.explanation,
+        })),
+        directReasonCodes: [],
+        fallbackReasonCodes: ["delegate_failure_single_nobie"],
+      },
+      createdAt: startedAt,
+    }
+    return {
+      plan,
+      registrySnapshot: registry,
       candidateScores,
       diagnostics,
-      userMessage:
-        "명시된 팀은 직접 실행하지 않고 task011의 멤버별 TeamExecutionPlan 확장이 필요합니다.",
-    })
+      fastPathClassification,
+      timedOut: false,
+      reasonCodes: plannerReasonCodes,
+    }
   }
 
   if (intent.explicitAgentId) {
@@ -894,9 +1147,6 @@ export function buildOrchestrationPlan(
   }
 
   const planId = idProvider()
-  const scopes = input.taskScopes?.length
-    ? input.taskScopes
-    : [buildDefaultStructuredTaskScope(input.userRequest)]
   const resourceLocks = input.resourceLocks ?? []
   const delegatedTasks: OrchestrationTask[] = []
   const approvalRequirements: OrchestrationPlan["approvalRequirements"] = []
@@ -915,11 +1165,18 @@ export function buildOrchestrationPlan(
         taskId,
         scope,
         executionKind: "delegated_sub_agent",
-        requiredCapabilities: uniqueStrings(intent.requiredCapabilities),
+        requiredCapabilities: uniqueStrings([
+          ...(intent.requiredCapabilities ?? []),
+          ...inferredRequiredCapabilitiesForScope(scope),
+        ]),
         resourceLockIds: locksForTask.map((lock) => lock.lockId),
         candidate,
         ...(intent.explicitTeamId ? { assignedTeamId: intent.explicitTeamId } : {}),
-        reasonCodes: ["delegated_by_structured_score", ...candidate.reasonCodes],
+        reasonCodes: [
+          "mandatory_delegation_candidate_available",
+          "delegated_by_structured_score",
+          ...candidate.reasonCodes,
+        ],
         explanation: candidate.explanation,
       }),
     )
@@ -988,6 +1245,7 @@ export function buildOrchestrationPlan(
     fastPath: fastPathClassification,
     reasonCodes: [
       "structured_scoring",
+      "mandatory_delegation_candidate_available",
       delegatedTasks.length > 1
         ? parallelGroups.length > 0
           ? "parallel_group_planned"

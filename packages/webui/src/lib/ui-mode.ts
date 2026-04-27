@@ -76,6 +76,12 @@ const ADVANCED_NAV: UiNavItem[] = [
     capabilityKey: "settings.control",
   },
   {
+    path: "/advanced/orchestration",
+    labelKo: "오케스트레이션",
+    labelEn: "Orchestration",
+    capabilityKey: "settings.control",
+  },
+  {
     path: "/advanced/ai",
     labelKo: "AI 연결",
     labelEn: "AI Connections",

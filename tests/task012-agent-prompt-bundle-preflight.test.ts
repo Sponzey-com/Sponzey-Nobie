@@ -169,7 +169,7 @@ function team(): TeamConfig {
 function promptSource(sourceId: string, checksum = `sha256:${sourceId}`): LoadedPromptSource {
   return {
     sourceId,
-    locale: "ko",
+    locale: "en",
     path: `/repo/prompts/${sourceId}.md`,
     version: "1",
     priority: 10,

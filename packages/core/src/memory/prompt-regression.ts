@@ -295,7 +295,7 @@ export function runPromptSourceRegression(
   workDir = process.cwd(),
   options: { locales?: PromptRegressionLocale[] } = {},
 ): PromptSourceRegressionResult {
-  const locales: PromptRegressionLocale[] = options.locales?.length ? options.locales : ["ko", "en"]
+  const locales: PromptRegressionLocale[] = options.locales?.length ? options.locales : ["en"]
   const sources = loadPromptSourceRegistry(workDir)
   const localeParity = checkPromptSourceLocaleParity(workDir)
   const responsibility = validateResponsibilities(sources)

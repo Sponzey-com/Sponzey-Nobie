@@ -12,6 +12,7 @@ export interface StartRootRunParams {
     message: string;
     sessionId: string | undefined;
     requestGroupId?: string | undefined;
+    lineageRootRunId?: string | undefined;
     parentRunId?: string | undefined;
     originRunId?: string | undefined;
     originRequestGroupId?: string | undefined;

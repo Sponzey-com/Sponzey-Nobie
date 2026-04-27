@@ -102,8 +102,8 @@ describe("prompt source registry", () => {
   it("keeps required runtime sources in the assembly even when a stored state is disabled", () => {
     const root = createPromptFixture()
 
-    const assembly = loadSystemPromptSourceAssembly(root, "ko", [
-      { sourceId: "identity", locale: "ko", enabled: false },
+    const assembly = loadSystemPromptSourceAssembly(root, "en", [
+      { sourceId: "identity", locale: "en", enabled: false },
     ])
     const identity = assembly?.snapshot.sources.find((source) => source.sourceId === "identity")
 
@@ -114,8 +114,8 @@ describe("prompt source registry", () => {
   it("excludes disabled optional runtime sources from the assembly", () => {
     const root = createPromptFixture()
 
-    const assembly = loadSystemPromptSourceAssembly(root, "ko", [
-      { sourceId: "output_policy", locale: "ko", enabled: false },
+    const assembly = loadSystemPromptSourceAssembly(root, "en", [
+      { sourceId: "output_policy", locale: "en", enabled: false },
     ])
 
     expect(assembly?.snapshot.sources.map((source) => source.sourceId)).not.toContain("output_policy")
@@ -133,7 +133,7 @@ describe("prompt source registry", () => {
       severity: "error",
       code: "required_prompt_source_missing",
       sourceId: "definitions",
-      locale: "ko",
+      locale: "en",
       message: "Required prompt source 'definitions' is missing for runtime assembly.",
     })
   })
@@ -164,12 +164,12 @@ describe("prompt source registry", () => {
     expect(first.created).toContain("output_policy.md")
     expect(first.created).toContain("channel.md")
     expect(first.created).toContain("bootstrap.md")
-    expect(existsSync(join(first.promptsDir, "user.md.en"))).toBe(true)
-    expect(existsSync(join(first.promptsDir, "web_retrieval_planner.md.en"))).toBe(true)
-    expect(existsSync(join(first.promptsDir, "output_policy.md.en"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "user.md"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "web_retrieval_planner.md"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "output_policy.md"))).toBe(true)
 
     const userPromptPath = join(first.promptsDir, "user.md")
-    writeFileSync(userPromptPath, "# 사용자\n\n- 선호 이름: custom-user-edit\n", "utf-8")
+    writeFileSync(userPromptPath, "# User\n\n- Preferred name: custom-user-edit\n", "utf-8")
 
     const second = ensurePromptSourceFiles(root)
     expect(second.created).toEqual([])
@@ -194,7 +194,7 @@ describe("prompt source registry", () => {
     writeFileSync(join(root, "prompts", "identity.md"), unsafe, "utf-8")
 
     expect(detectPromptSourceSecretMarkers(unsafe)).toContain("api_key_assignment")
-    expect(loadPromptSourceRegistry(root).some((source) => source.sourceId === "identity" && source.locale === "ko")).toBe(false)
+    expect(loadPromptSourceRegistry(root).some((source) => source.sourceId === "identity" && source.locale === "en")).toBe(false)
   })
 
   it("bootstraps prompt source metadata into an empty DB without duplicate rows", () => {
@@ -206,8 +206,8 @@ describe("prompt source registry", () => {
 
     bootstrap()
     const firstCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count
-    expect(firstCount).toBe(26)
-    expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "ko")).toBe(true)
+    expect(firstCount).toBe(13)
+    expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "en")).toBe(true)
 
     bootstrap()
     const secondCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count

@@ -325,11 +325,6 @@ function validateSecurity(draft: SetupDraft): StepValidation {
     summary.push(fieldErrors.approvalTimeout)
   }
 
-  if (!Number.isFinite(draft.security.maxDelegationTurns) || draft.security.maxDelegationTurns < 0) {
-    fieldErrors.maxDelegationTurns = "자동 후속 처리 최대 횟수는 0 이상이어야 합니다."
-    summary.push(fieldErrors.maxDelegationTurns)
-  }
-
   return {
     valid: summary.length === 0,
     summary: unique(summary),

@@ -155,16 +155,6 @@ export function buildReviewReadinessBoard({
     })
   }
 
-  if (draft.security.maxDelegationTurns === 0) {
-    riskPaths.push({
-      id: "risk:delegation-unlimited",
-      tone: "warning",
-      title: t("후속 처리 무제한", "Unlimited delegation"),
-      description: t("같은 후속 작업이 길게 반복될 수 있습니다.", "The same follow-up work can repeat for a long time."),
-      stepId: "security",
-    })
-  }
-
   if (!draft.remoteAccess.authEnabled && !isLoopbackHost(draft.remoteAccess.host.trim())) {
     riskPaths.push({
       id: "risk:remote-open",
@@ -263,10 +253,8 @@ export function buildDoneRuntimeSummary({
       id: "security",
       title: t("보안 경계", "Security boundary"),
       value: draft.security.approvalMode,
-      detail: draft.security.maxDelegationTurns === 0
-        ? t("fallback와 delegation 제한을 다시 확인해야 합니다.", "Review fallback and delegation limits again.")
-        : `${draft.security.approvalTimeout}s · ${draft.security.approvalTimeoutFallback}`,
-      tone: draft.security.approvalMode === "off" || draft.security.approvalTimeoutFallback === "allow" || draft.security.maxDelegationTurns === 0 ? "warning" : "ready",
+      detail: `${draft.security.approvalTimeout}s · ${draft.security.approvalTimeoutFallback}`,
+      tone: draft.security.approvalMode === "off" || draft.security.approvalTimeoutFallback === "allow" ? "warning" : "ready",
     },
     {
       id: "storage",
@@ -370,7 +358,6 @@ function buildReviewTile(
         summary: `${draft.security.approvalMode} · ${draft.security.approvalTimeout}s`,
         details: [
           `fallback:${draft.security.approvalTimeoutFallback}`,
-          draft.security.maxDelegationTurns === 0 ? "delegation:unlimited" : `delegation:${draft.security.maxDelegationTurns}`,
         ],
         badges: [draft.security.approvalMode, draft.security.approvalTimeoutFallback],
       }

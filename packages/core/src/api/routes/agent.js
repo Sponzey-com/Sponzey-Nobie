@@ -400,6 +400,14 @@ export function registerAgentRoutes(app) {
         const team = createTeamRegistryService().get(req.params.teamId);
         return { ok: true, team, ...(team ? teamMembersResponse(team) : {}) };
     });
+    app.delete("/api/teams/:teamId", { preHandler: authMiddleware }, async (req, reply) => {
+        if (!createTeamRegistryService().delete(req.params.teamId)) {
+            return reply
+                .status(404)
+                .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" });
+        }
+        return { ok: true, teamId: req.params.teamId, deleted: true };
+    });
     app.get("/api/teams/:teamId/members", { preHandler: authMiddleware }, async (req, reply) => {
         const team = createTeamRegistryService().get(req.params.teamId);
         if (!team)

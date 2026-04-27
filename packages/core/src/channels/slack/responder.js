@@ -66,6 +66,17 @@ export class SlackResponder {
             text: `${success ? "Done" : "Failed"}: ${toolName}`,
         });
     }
+    async clearToolStatus(messageId) {
+        try {
+            await this.api("chat.delete", {
+                channel: this.channelId,
+                ts: messageId,
+            });
+        }
+        catch {
+            // Message may have been deleted or no longer editable — ignore
+        }
+    }
     async sendFinalResponse(text) {
         const messageIds = [];
         for (const part of splitSlackText(text)) {

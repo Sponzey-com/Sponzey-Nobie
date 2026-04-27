@@ -64,6 +64,7 @@ export function startRootRun(params) {
             now,
             maxDelegationTurns,
             ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+            ...(params.lineageRootRunId ? { lineageRootRunId: params.lineageRootRunId } : {}),
             ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
             ...(params.originRunId ? { originRunId: params.originRunId } : {}),
             ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
@@ -154,6 +155,9 @@ export function startRootRun(params) {
             ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
             ...(params.targetId ? { targetId: params.targetId } : {}),
             ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+            ...(params.contextMode ? { contextMode: params.contextMode } : {}),
+            ...(params.runScope ? { runScope: params.runScope } : {}),
+            ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
         });
         appendRunEvent(runId, `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang ? "required" : "not_required"}`);
         const preflightFailure = contextPlan.preflightFailure;

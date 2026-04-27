@@ -31,7 +31,7 @@ export const MIGRATION_ROLLBACK_RUNBOOK = {
         "Only after rehearsal passes, replace the operational DB and prompt files.",
         "Restart the service and confirm bootstrap, provider config loading, and memory lookup diagnostics.",
     ],
-    restoreTargets: ["state/data.db", "state/memory.db3", "prompts/*.md", "prompts/*.md.en"],
+    restoreTargets: ["state/data.db", "state/memory.db3", "prompts/*.md"],
 };
 export function buildBackupTargetInventory(options = {}) {
     const stateDir = resolve(options.stateDir ?? PATHS.stateDir);

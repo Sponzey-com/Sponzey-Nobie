@@ -248,7 +248,7 @@ export function buildReleaseRollbackRunbook() {
             "WebUI static bundle",
             "state/data.db and SQLite sidecars",
             "state/memory.db3 vector DB",
-            "prompts/*.md and prompts/*.md.en seed files",
+            "prompts/*.md seed files",
             "config file with secret re-entry as needed",
             "Yeonjang executable plus protocol/permission manifests",
         ],

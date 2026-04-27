@@ -763,11 +763,10 @@ function buildSecurityScene(
   const t = (korean: string, english: string) => pickUiText(input.language, korean, english)
   const approvalEnabled = input.draft.security.approvalMode !== "off"
   const fallbackAllows = input.draft.security.approvalTimeoutFallback === "allow"
-  const unlimitedDelegation = input.draft.security.maxDelegationTurns === 0
   const shortTimeout = input.draft.security.approvalTimeout <= 15
   const safeZoneStatus: VisualizationStatus = !approvalEnabled
     ? "warning"
-    : fallbackAllows || unlimitedDelegation
+    : fallbackAllows
       ? "warning"
       : "ready"
   const approvalGateStatus: VisualizationStatus = !approvalEnabled
@@ -782,16 +781,9 @@ function buildSecurityScene(
     : fallbackAllows || shortTimeout
       ? "warning"
       : "ready"
-  const delegationStatus: VisualizationStatus = validation.fieldErrors.maxDelegationTurns
-    ? "error"
-    : unlimitedDelegation
-      ? "warning"
-      : input.draft.security.maxDelegationTurns > 8
-        ? "draft"
-        : "ready"
   const restrictedZoneStatus: VisualizationStatus = !approvalEnabled && fallbackAllows
     ? "error"
-    : !approvalEnabled || fallbackAllows || unlimitedDelegation
+    : !approvalEnabled || fallbackAllows
       ? "warning"
       : "ready"
   const alerts = [
@@ -815,16 +807,6 @@ function buildSecurityScene(
       ),
       semanticStepIds: ["security"],
       relatedNodeIds: ["node:security:timeout_policy", "node:security:restricted_zone"],
-    }] : []),
-    ...(unlimitedDelegation ? [{
-      id: "alert:security:delegation-unlimited",
-      tone: "warning" as const,
-      message: t(
-        "자동 후속 처리가 무제한이라 같은 작업이 길게 반복될 수 있습니다.",
-        "Automatic follow-up is unlimited, so the same work can repeat for a long time.",
-      ),
-      semanticStepIds: ["security"],
-      relatedNodeIds: ["node:security:delegation_limit", "node:security:restricted_zone"],
     }] : []),
     ...(shortTimeout && approvalEnabled ? [{
       id: "alert:security:timeout-short",
@@ -898,36 +880,17 @@ function buildSecurityScene(
         inspectorId: "timeout",
       },
       {
-        id: "node:security:delegation_limit",
-        kind: "security",
-        label: t("후속 처리 제한", "Delegation limit"),
-        status: delegationStatus,
-        description: unlimitedDelegation
-          ? t("자동 후속 처리가 무제한입니다.", "Automatic follow-up is unlimited.")
-          : t(
-            "연속 후속 처리를 몇 번까지 허용할지 정합니다.",
-            "Controls how many chained follow-up turns are allowed.",
-          ),
-        badges: [
-          unlimitedDelegation ? "unlimited" : `turns:${input.draft.security.maxDelegationTurns}`,
-          approvalEnabled ? "guarded" : "unguarded",
-        ],
-        semanticStepIds: ["security"],
-        draftOwnedByStepIds: ["security"],
-        inspectorId: "delegation",
-      },
-      {
         id: "node:security:restricted_zone",
         kind: "security",
         label: t("제한 구역", "Restricted zone"),
         status: restrictedZoneStatus,
         description: t(
-          "Fallback와 delegation 설정이 쌓였을 때 실제 위험이 모이는 구간입니다.",
-          "This is where the real risk accumulates when fallback and delegation rules stack up.",
+          "승인 정책과 fallback 설정이 쌓였을 때 실제 위험이 모이는 구간입니다.",
+          "This is where the real risk accumulates when approval and fallback rules stack up.",
         ),
         badges: [
           input.draft.security.approvalMode === "off" ? "direct-run" : "approval-first",
-          unlimitedDelegation ? "unlimited" : "bounded",
+          fallbackAllows ? "fallback:allow" : "fallback:deny",
         ],
         semanticStepIds: ["security"],
         draftOwnedByStepIds: ["security"],
@@ -951,24 +914,8 @@ function buildSecurityScene(
         semanticStepIds: ["security"],
       },
       {
-        id: "edge:security:approval:delegation",
-        from: "node:security:approval_gate",
-        to: "node:security:delegation_limit",
-        kind: "depends",
-        status: delegationStatus === "error" ? "error" : delegationStatus === "warning" ? "warning" : "normal",
-        semanticStepIds: ["security"],
-      },
-      {
         id: "edge:security:timeout:restricted",
         from: "node:security:timeout_policy",
-        to: "node:security:restricted_zone",
-        kind: "flow",
-        status: restrictedZoneStatus === "error" ? "error" : restrictedZoneStatus === "warning" ? "warning" : "normal",
-        semanticStepIds: ["security"],
-      },
-      {
-        id: "edge:security:delegation:restricted",
-        from: "node:security:delegation_limit",
         to: "node:security:restricted_zone",
         kind: "flow",
         status: restrictedZoneStatus === "error" ? "error" : restrictedZoneStatus === "warning" ? "warning" : "normal",
@@ -990,12 +937,6 @@ function buildSecurityScene(
         label: t("타임아웃", "Timeout"),
         description: t("응답 대기 시간을 편집합니다.", "Edit the approval wait time."),
         fieldKeys: ["approvalTimeout"],
-      },
-      {
-        id: "delegation",
-        label: t("후속 처리", "Delegation"),
-        description: t("자동 후속 처리 제한을 편집합니다.", "Edit the automatic follow-up limit."),
-        fieldKeys: ["maxDelegationTurns"],
       },
     ],
     alerts: alerts.length > 0 ? alerts : undefined,

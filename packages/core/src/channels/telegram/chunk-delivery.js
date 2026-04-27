@@ -18,6 +18,9 @@ function buildTelegramArtifactFallbackMessage(fileName, downloadUrl, caption) {
     }
     return `파일 업로드가 실패해 같은 대화에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`;
 }
+function shouldSendToolStartStatus(toolName) {
+    return toolName !== "shell_exec";
+}
 export function createTelegramChunkDeliveryHandler(context) {
     let bufferedText = "";
     let toolOwnedResponseActive = false;
@@ -43,6 +46,8 @@ export function createTelegramChunkDeliveryHandler(context) {
             return;
         }
         if (chunk.type === "tool_start") {
+            if (!shouldSendToolStartStatus(chunk.toolName))
+                return;
             const msgId = await context.responder.sendToolStatus(chunk.toolName);
             toolMessageIds.set(chunk.toolName, msgId);
             recordIfRunPresent(msgId, "tool");
@@ -51,8 +56,18 @@ export function createTelegramChunkDeliveryHandler(context) {
         if (chunk.type === "tool_end") {
             const msgId = toolMessageIds.get(chunk.toolName);
             if (msgId !== undefined) {
-                await context.responder.updateToolStatus(msgId, chunk.toolName, chunk.success);
+                if (chunk.success) {
+                    await context.responder.clearToolStatus?.(msgId);
+                }
+                else {
+                    await context.responder.updateToolStatus(msgId, chunk.toolName, false);
+                }
                 toolMessageIds.delete(chunk.toolName);
+            }
+            else if (!chunk.success) {
+                const failureMessageId = await context.responder.sendToolStatus(chunk.toolName);
+                await context.responder.updateToolStatus(failureMessageId, chunk.toolName, false);
+                recordIfRunPresent(failureMessageId, "tool");
             }
             const isolatedToolResponse = decideIsolatedToolResponse(chunk);
             if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {

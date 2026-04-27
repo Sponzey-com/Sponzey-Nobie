@@ -7,6 +7,7 @@ import {
   selectRuntimeSubSession,
 } from "../../lib/runtime-inspector"
 import { useUiI18n } from "../../lib/ui-i18n"
+import { CollapsibleText } from "./CollapsibleText"
 
 function summaryToneClassName(tone: "stone" | "blue" | "emerald" | "amber" | "rose"): string {
   switch (tone) {
@@ -112,7 +113,7 @@ export function RunRuntimeInspectorPanel({
                 {text("직접", "Direct")}: {projection.plan.directTaskCount}
               </div>
               <div>
-                {text("위임", "Delegated")}: {projection.plan.delegatedTaskCount}
+                {text("자동 배정 작업", "Auto-assigned tasks")}: {projection.plan.delegatedTaskCount}
               </div>
               <div>
                 {text("승인 요구", "Approval requirements")}:{" "}
@@ -126,7 +127,15 @@ export function RunRuntimeInspectorPanel({
               <div className="mt-3 space-y-2">
                 {projection.plan.taskSummaries.map((task) => (
                   <div key={task.taskId} className="rounded-lg bg-white px-3 py-2">
-                    <div className="font-medium text-stone-900">{displayText(task.goal)}</div>
+                    <CollapsibleText
+                      value={displayText(task.goal)}
+                      threshold={140}
+                      clampLines={2}
+                      showMoreLabel={text("전체 보기", "Show more")}
+                      showLessLabel={text("접기", "Show less")}
+                      className="font-medium text-stone-900"
+                      buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                    />
                     <div className="mt-1 break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]">
                       {task.executionKind}
                       {task.assignedAgentId ? ` · ${task.assignedAgentId}` : ""}
@@ -216,9 +225,15 @@ export function RunRuntimeInspectorPanel({
                     {selectedSubSession.expectedOutputs.length > 0 ? (
                       selectedSubSession.expectedOutputs.map((output) => (
                         <div key={output.outputId}>
-                          <div className="font-medium text-stone-800">
-                            {displayText(output.description)}
-                          </div>
+                          <CollapsibleText
+                            value={displayText(output.description)}
+                            threshold={140}
+                            clampLines={2}
+                            showMoreLabel={text("전체 보기", "Show more")}
+                            showLessLabel={text("접기", "Show less")}
+                            className="font-medium text-stone-800"
+                            buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                          />
                           <div className="text-[11px] text-stone-500">
                             {output.kind} ·{" "}
                             {output.required ? text("필수", "required") : text("선택", "optional")}
@@ -302,12 +317,16 @@ export function RunRuntimeInspectorPanel({
                 {selectedSubSession.result?.risksOrGaps.length ? (
                   <div className="mt-2 space-y-1">
                     {selectedSubSession.result.risksOrGaps.map((item) => (
-                      <div
+                      <CollapsibleText
                         key={item}
+                        value={displayText(item)}
+                        threshold={140}
+                        clampLines={2}
+                        showMoreLabel={text("전체 보기", "Show more")}
+                        showLessLabel={text("접기", "Show less")}
                         className="break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]"
-                      >
-                        {displayText(item)}
-                      </div>
+                        buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                      />
                     ))}
                   </div>
                 ) : null}
@@ -346,9 +365,15 @@ export function RunRuntimeInspectorPanel({
                 {projection.dataExchanges.length > 0 ? (
                   projection.dataExchanges.map((exchange) => (
                     <div key={exchange.exchangeId} className="rounded-lg bg-white px-3 py-2">
-                      <div className="font-medium text-stone-900">
-                        {displayText(exchange.purpose)}
-                      </div>
+                      <CollapsibleText
+                        value={displayText(exchange.purpose)}
+                        threshold={140}
+                        clampLines={2}
+                        showMoreLabel={text("전체 보기", "Show more")}
+                        showLessLabel={text("접기", "Show less")}
+                        className="font-medium text-stone-900"
+                        buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                      />
                       <div className="mt-1 text-[11px] text-stone-500">
                         {exchange.allowedUse} · {exchange.redactionState} ·{" "}
                         {text("provenance", "provenance")} {exchange.provenanceCount}
@@ -372,9 +397,15 @@ export function RunRuntimeInspectorPanel({
                       <div className="font-medium text-stone-900">
                         {describeRuntimeApprovalState(approval.status, text)}
                       </div>
-                      <div className="mt-1 break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]">
-                        {displayText(approval.summary)}
-                      </div>
+                      <CollapsibleText
+                        value={displayText(approval.summary)}
+                        threshold={140}
+                        clampLines={2}
+                        showMoreLabel={text("전체 보기", "Show more")}
+                        showLessLabel={text("접기", "Show less")}
+                        className="mt-1 break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]"
+                        buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                      />
                     </div>
                   ))
                 ) : (
@@ -390,14 +421,22 @@ export function RunRuntimeInspectorPanel({
             <div className="font-semibold text-stone-900">
               {describeRuntimeFinalizerStatus(projection, text)}
             </div>
-            <div className="mt-1 break-words text-stone-500 [overflow-wrap:anywhere]">
-              {projection.finalizer.summary
-                ? displayText(projection.finalizer.summary)
-                : text(
-                    "최종 답변은 parent run finalizer만 사용자에게 전달합니다.",
-                    "Only the parent run finalizer delivers the final answer to the user.",
-                  )}
-            </div>
+            <CollapsibleText
+              value={
+                projection.finalizer.summary
+                  ? displayText(projection.finalizer.summary)
+                  : text(
+                      "최종 답변은 parent run finalizer만 사용자에게 전달합니다.",
+                      "Only the parent run finalizer delivers the final answer to the user.",
+                    )
+              }
+              threshold={180}
+              clampLines={3}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words text-stone-500 [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+            />
           </div>
 
           <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
@@ -419,9 +458,15 @@ export function RunRuntimeInspectorPanel({
                       ) : null}
                       <span className="text-[11px] text-stone-400">{formatTime(event.at)}</span>
                     </div>
-                    <div className="mt-1 break-words text-stone-500 [overflow-wrap:anywhere]">
-                      {displayText(event.summary)}
-                    </div>
+                    <CollapsibleText
+                      value={displayText(event.summary)}
+                      threshold={160}
+                      clampLines={2}
+                      showMoreLabel={text("전체 보기", "Show more")}
+                      showLessLabel={text("접기", "Show less")}
+                      className="mt-1 break-words text-stone-500 [overflow-wrap:anywhere]"
+                      buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                    />
                   </div>
                 ))
               ) : (

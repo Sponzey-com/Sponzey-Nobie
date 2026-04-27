@@ -211,6 +211,8 @@ function inactiveReasonFor(agentId, rootAgentId, agents, relationships) {
         return "missing_agent";
     if (agent.status !== "enabled")
         return `agent_${agent.status}`;
+    if (agentId === rootAgentId)
+        return undefined;
     const byChild = parentByChild(relationships);
     let cursor = agentId;
     const seen = new Set();
@@ -220,7 +222,7 @@ function inactiveReasonFor(agentId, rootAgentId, agents, relationships) {
         seen.add(cursor);
         const relationship = byChild.get(cursor);
         if (!relationship)
-            return undefined;
+            return cursor === agentId ? "agent_unassigned" : "ancestor_unassigned";
         const parent = agents.get(relationship.parentAgentId);
         if (!parent)
             return "missing_ancestor";
@@ -233,11 +235,14 @@ function inactiveReasonFor(agentId, rootAgentId, agents, relationships) {
 function configFromDependencies(dependencies) {
     return dependencies.getConfig?.() ?? getConfig();
 }
+function positiveIntegerOrDefault(value, fallback) {
+    return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
 export function createAgentHierarchyService(dependencies = {}) {
     const now = () => dependencies.now?.() ?? Date.now();
     const config = () => configFromDependencies(dependencies);
     const rootAgentId = () => dependencies.rootAgentId ?? config().orchestration.nobie?.agentId ?? DEFAULT_ROOT_AGENT_ID;
-    const maxDepth = () => dependencies.maxDepth ?? config().orchestration.maxDelegationTurns ?? DEFAULT_MAX_DEPTH;
+    const maxDepth = () => positiveIntegerOrDefault(dependencies.maxDepth ?? config().orchestration.maxDelegationTurns, DEFAULT_MAX_DEPTH);
     const maxChildCount = () => dependencies.maxChildCount ?? DEFAULT_MAX_CHILD_COUNT;
     const registry = () => createAgentRegistryService(dependencies);
     function agentSummaries() {
@@ -469,21 +474,6 @@ export function createAgentHierarchyService(dependencies = {}) {
         const agents = agentSummaries();
         const active = activeRelationships();
         const diagnostics = [];
-        if (active.length === 0) {
-            diagnostics.push({
-                reasonCode: "hierarchy_fallback_enabled_sub_agents",
-                severity: "info",
-                message: "No hierarchy rows exist; enabled sub-agents are projected as Nobie top-level candidates.",
-                parentAgentId: rootAgentId(),
-            });
-            return {
-                agents: [...agents.values()]
-                    .filter((agent) => agent.agentType === "sub_agent" && agent.status === "enabled")
-                    .sort((left, right) => left.agentId.localeCompare(right.agentId)),
-                fallbackActive: true,
-                diagnostics,
-            };
-        }
         return {
             agents: active
                 .filter((relationship) => relationship.parentAgentId === rootAgentId())
@@ -502,31 +492,18 @@ export function createAgentHierarchyService(dependencies = {}) {
         const byChild = parentByChild(active);
         const topLevel = topLevelSubAgents();
         const topLevelIds = new Set(topLevel.agents.map((agent) => agent.agentId));
-        const projectionEdges = active.length > 0
-            ? active.map((relationship) => ({
-                edgeId: relationship.edgeId,
-                edgeType: "parent_child",
-                fromNodeId: nodeIdForAgent(relationship.parentAgentId),
-                toNodeId: nodeIdForAgent(relationship.childAgentId),
-                label: "parent child",
-                metadata: {
-                    source: "hierarchy",
-                    status: relationship.status,
-                    sortOrder: relationship.sortOrder,
-                },
-            }))
-            : topLevel.agents.map((agent, index) => ({
-                edgeId: `fallback:${resolvedRootAgentId}->${agent.agentId}`,
-                edgeType: "parent_child",
-                fromNodeId: nodeIdForAgent(resolvedRootAgentId),
-                toNodeId: nodeIdForAgent(agent.agentId),
-                label: "fallback top-level",
-                metadata: {
-                    source: "fallback",
-                    status: "active",
-                    sortOrder: index,
-                },
-            }));
+        const projectionEdges = active.map((relationship) => ({
+            edgeId: relationship.edgeId,
+            edgeType: "parent_child",
+            fromNodeId: nodeIdForAgent(relationship.parentAgentId),
+            toNodeId: nodeIdForAgent(relationship.childAgentId),
+            label: "parent child",
+            metadata: {
+                source: "hierarchy",
+                status: relationship.status,
+                sortOrder: relationship.sortOrder,
+            },
+        }));
         const projectionAgentIds = new Set([resolvedRootAgentId]);
         for (const agent of agents.values())
             projectionAgentIds.add(agent.agentId);

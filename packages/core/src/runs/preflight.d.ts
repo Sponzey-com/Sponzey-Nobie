@@ -1,5 +1,6 @@
 import type { AIProvider } from "../ai/index.js";
 import type { TaskExecutionSemantics } from "../agent/intake.js";
+import type { AgentContextMode } from "../agent/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { FinalizationSource } from "./finalization.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
@@ -37,6 +38,9 @@ export interface StartPreflightInput {
     executionSemantics?: TaskExecutionSemantics | undefined;
     targetId?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
+    contextMode?: AgentContextMode | undefined;
+    runScope?: "root" | "child" | "analysis" | undefined;
+    skipIntake?: boolean | undefined;
 }
 export declare function resolveStartPreflightFailure(input: StartPreflightInput): StartPreflightFailure | null;
 export declare function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan;

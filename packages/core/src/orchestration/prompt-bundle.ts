@@ -99,7 +99,7 @@ export function buildAgentPromptBundle(
   input: AgentPromptBundleBuildInput,
 ): AgentPromptBundleBuildResult {
   const now = input.now?.() ?? Date.now()
-  const locale = input.locale ?? "ko"
+  const locale = input.locale ?? "en"
   const promptSources = input.promptSources ?? loadSafePromptSources(input.workDir ?? process.cwd())
   const linkedSources = promptSources
     .filter((source) => source.locale === locale && LINKED_PROMPT_SOURCE_IDS.has(source.sourceId))
@@ -765,12 +765,28 @@ function buildBundleTeamContext(
   teams: TeamConfig[],
 ): AgentPromptBundle["teamContext"] {
   return teams
-    .filter((team) => team.memberAgentIds.includes(agent.agentId))
-    .map((team) => ({
-      teamId: team.teamId,
-      displayName: team.displayName,
-      ...(team.roleHints[0] ? { roleHint: team.roleHints[0] } : {}),
-    }))
+    .filter((team) =>
+      team.memberAgentIds.includes(agent.agentId) ||
+      team.memberships?.some((membership) => membership.agentId === agent.agentId) ||
+      team.ownerAgentId === agent.agentId ||
+      team.leadAgentId === agent.agentId,
+    )
+    .map((team) => {
+      const membershipRole = team.memberships?.find(
+        (membership) => membership.agentId === agent.agentId,
+      )?.primaryRole
+      const roleHint =
+        team.ownerAgentId === agent.agentId
+          ? "owner"
+          : team.leadAgentId === agent.agentId
+            ? "lead"
+            : membershipRole ?? team.roleHints[0]
+      return {
+        teamId: team.teamId,
+        displayName: team.displayName,
+        ...(roleHint ? { roleHint } : {}),
+      }
+    })
     .sort((a, b) => a.teamId.localeCompare(b.teamId))
 }
 

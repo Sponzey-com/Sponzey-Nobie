@@ -215,6 +215,29 @@ function roleProviders(
   }
 }
 
+function markCoverageProvidedByOwnerLead(
+  coverage: TeamCoverageDimension,
+  ownerAgentId: string,
+  leadAgentId: string | undefined,
+): TeamCoverageDimension {
+  if (leadAgentId !== ownerAgentId || !coverage.required.includes("lead")) return coverage
+  const leadProviders = uniqueStrings([...(coverage.providers.lead ?? []), ownerAgentId]).sort(
+    (left, right) => left.localeCompare(right),
+  )
+  const covered = uniqueStrings([...coverage.covered, "lead"]).sort((left, right) =>
+    left.localeCompare(right),
+  )
+  return {
+    ...coverage,
+    covered,
+    missing: coverage.required.filter((role) => !covered.includes(role)),
+    providers: {
+      ...coverage.providers,
+      lead: leadProviders,
+    },
+  }
+}
+
 function capabilityProviders(
   members: TeamCompositionMemberCoverage[],
   required: string[],
@@ -360,12 +383,7 @@ export function createTeamCompositionService(
     const directChildren = service
       .directChildren(ownerAgentId)
       .map((child) => child.relationship.childAgentId)
-    if (directChildren.length > 0) return new Set(directChildren)
-    const topLevel = service.topLevelSubAgents()
-    if (ownerAgentId === service.rootAgentId && topLevel.fallbackActive) {
-      return new Set(topLevel.agents.map((agent) => agent.agentId))
-    }
-    return new Set()
+    return new Set(directChildren)
   }
 
   function evaluateTeam(
@@ -581,9 +599,10 @@ export function createTeamCompositionService(
     const activeMembers = memberCoverages.filter((member) => member.active)
     const fallbackMembers = memberCoverages.filter((member) => member.fallbackCandidate)
     const executableMembers = [...activeMembers, ...fallbackMembers]
-    const roleCoverage = roleProviders(
-      executableMembers,
-      uniqueStrings(team.requiredTeamRoles ?? []),
+    const roleCoverage = markCoverageProvidedByOwnerLead(
+      roleProviders(executableMembers, uniqueStrings(team.requiredTeamRoles ?? [])),
+      ownerAgentId,
+      team.leadAgentId,
     )
     const capabilityCoverage = capabilityProviders(
       executableMembers,
@@ -599,7 +618,11 @@ export function createTeamCompositionService(
         ownerAgentId,
       })
     }
-    if (team.leadAgentId && !activeMembers.some((member) => member.agentId === team.leadAgentId)) {
+    if (
+      team.leadAgentId &&
+      team.leadAgentId !== ownerAgentId &&
+      !activeMembers.some((member) => member.agentId === team.leadAgentId)
+    ) {
       diagnostics.push({
         reasonCode: "lead_not_active_member",
         severity: "invalid",

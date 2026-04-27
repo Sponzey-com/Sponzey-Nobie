@@ -47,12 +47,6 @@ function agentNodeId(agentId) {
 function teamNodeId(teamId) {
     return `team:${teamId}`;
 }
-function roleNodeId(teamId, agentId, primaryRole) {
-    return `team-role:${teamId}:${agentId}:${slug(primaryRole)}`;
-}
-function leadNodeId(teamId, agentId) {
-    return `team-lead:${teamId}:${agentId}`;
-}
 function emptyCoverageDimension() {
     return {
         required: [],
@@ -135,12 +129,15 @@ function agentTopologyNode(input) {
     if (blockedReason)
         badges.push(blockedReason);
     const id = input.node.nodeId;
+    const status = blockedReason === "agent_unassigned" || blockedReason === "ancestor_unassigned"
+        ? "unassigned"
+        : input.node.status;
     return {
         id,
         kind,
         entityId: input.node.entityId,
         label: redactedText(input.node.label, input.node.entityId),
-        ...(input.node.status ? { status: String(input.node.status) } : {}),
+        ...(status ? { status: String(status) } : {}),
         position: nodePosition(id, defaultAgentPosition(input.node, input.index), input.layout),
         badges,
         data: {
@@ -389,55 +386,6 @@ function teamTopologyNode(input) {
         diagnostics: input.diagnostics,
     };
 }
-function roleBadgeNode(input) {
-    const id = roleNodeId(input.teamId, input.member.agentId, input.member.primaryRole);
-    const blocked = input.member.reasonCodes.length > 0;
-    return {
-        id,
-        kind: "team_role",
-        entityId: `${input.teamId}:${input.member.agentId}:${input.member.primaryRole}`,
-        label: input.member.teamRoles.length > 1
-            ? input.member.teamRoles.slice(0, 3).join(" / ")
-            : input.member.primaryRole,
-        status: input.member.executionState,
-        position: nodePosition(id, { x: 360, y: input.yOffset + input.index * 74 }, input.layout),
-        badges: ["TeamRole", input.member.executionState, ...(blocked ? ["invalid"] : [])],
-        data: {
-            teamId: input.teamId,
-            agentId: input.member.agentId,
-            primaryRole: input.member.primaryRole,
-            directChild: input.member.directChild,
-            active: input.member.active,
-        },
-        diagnostics: input.member.reasonCodes.map((reasonCode) => ({
-            reasonCode,
-            severity: reasonCode === "owner_direct_child_required" ? "warning" : "info",
-            message: `${input.member.agentId} role ${input.member.primaryRole} has ${reasonCode}.`,
-            teamId: input.teamId,
-            agentId: input.member.agentId,
-        })),
-    };
-}
-function leadBadgeNode(input) {
-    const id = leadNodeId(input.team.teamId, input.leadAgentId);
-    return {
-        id,
-        kind: "team_lead",
-        entityId: `${input.team.teamId}:${input.leadAgentId}`,
-        label: "Team Lead",
-        status: input.team.health?.status ?? "unknown",
-        position: nodePosition(id, { x: 650, y: input.yOffset + input.index * 172 }, input.layout),
-        badges: ["TeamLead", input.team.health?.status ?? "unknown"],
-        data: {
-            teamId: input.team.teamId,
-            agentId: input.leadAgentId,
-            healthStatus: input.team.health?.status ?? "unknown",
-        },
-        diagnostics: (input.team.health?.diagnostics ?? [])
-            .filter((diagnostic) => diagnostic.agentId === input.leadAgentId)
-            .map(registryDiagnostic),
-    };
-}
 function membershipEdgeStyle(member) {
     if (member.reasonCodes.includes("owner_direct_child_required"))
         return "membership_reference";
@@ -450,9 +398,27 @@ function membershipEdgeStyle(member) {
 function teamMembershipEdges(input) {
     const teamId = input.team.teamId;
     const source = teamNodeId(teamId);
+    const ownerAgentId = input.teamInspector.ownerAgentId;
+    const leadAgentId = ownerAgentId;
     const edges = [];
+    edges.push({
+        id: `membership:${agentNodeId(leadAgentId)}->${teamId}:lead`,
+        kind: "team_membership",
+        source: agentNodeId(leadAgentId),
+        target: source,
+        label: "lead",
+        valid: true,
+        style: "lead",
+        data: {
+            teamId,
+            agentId: leadAgentId,
+            ownerAgentId,
+            active: true,
+            role: "lead",
+        },
+        diagnostics: [],
+    });
     for (const member of input.teamInspector.members) {
-        const roleId = roleNodeId(teamId, member.agentId, member.primaryRole);
         const agentId = agentNodeId(member.agentId);
         const diagnostics = member.reasonCodes.map((reasonCode) => ({
             reasonCode,
@@ -465,10 +431,10 @@ function teamMembershipEdges(input) {
         }));
         const style = membershipEdgeStyle(member);
         edges.push({
-            id: `membership:${teamId}->${roleId}`,
+            id: `membership:${teamId}->${agentId}:${slug(member.primaryRole)}`,
             kind: "team_membership",
             source,
-            target: roleId,
+            target: agentId,
             label: member.primaryRole,
             valid: diagnostics.every((diagnostic) => diagnostic.severity !== "invalid"),
             style,
@@ -481,56 +447,6 @@ function teamMembershipEdges(input) {
                 role: member.primaryRole,
             },
             diagnostics,
-        });
-        edges.push({
-            id: `membership:${roleId}->${agentId}`,
-            kind: "team_membership",
-            source: roleId,
-            target: agentId,
-            label: "member",
-            valid: diagnostics.every((diagnostic) => diagnostic.severity !== "invalid"),
-            style,
-            data: {
-                teamId,
-                agentId: member.agentId,
-                executionState: member.executionState,
-                directChild: member.directChild,
-                active: member.active,
-            },
-            diagnostics,
-        });
-    }
-    if (input.team.config.leadAgentId) {
-        const leadId = leadNodeId(teamId, input.team.config.leadAgentId);
-        edges.push({
-            id: `lead:${teamId}->${leadId}`,
-            kind: "team_membership",
-            source,
-            target: leadId,
-            label: "lead",
-            valid: input.team.health?.status !== "invalid",
-            style: "lead",
-            data: {
-                teamId,
-                agentId: input.team.config.leadAgentId,
-                role: "lead",
-            },
-            diagnostics: input.teamInspector.diagnostics.filter((diagnostic) => diagnostic.agentId === input.team.config.leadAgentId),
-        });
-        edges.push({
-            id: `lead:${leadId}->${agentNodeId(input.team.config.leadAgentId)}`,
-            kind: "team_membership",
-            source: leadId,
-            target: agentNodeId(input.team.config.leadAgentId),
-            label: "lead agent",
-            valid: input.team.health?.status !== "invalid",
-            style: "lead",
-            data: {
-                teamId,
-                agentId: input.team.config.leadAgentId,
-                role: "lead",
-            },
-            diagnostics: input.teamInspector.diagnostics.filter((diagnostic) => diagnostic.agentId === input.team.config.leadAgentId),
         });
     }
     return edges;
@@ -586,7 +502,6 @@ export function createAgentTopologyService(dependencies = {}) {
         }));
         const maxAgentY = agentNodes.reduce((max, node) => Math.max(max, node.position.y), agentNodes.length > 0 ? 80 : 0);
         const teamYOffset = maxAgentY + 190;
-        const roleYOffset = teamYOffset;
         const inspectors = {
             agents: {},
             teams: {},
@@ -600,9 +515,8 @@ export function createAgentTopologyService(dependencies = {}) {
             });
         }
         const teamNodes = [];
-        const roleNodes = [];
-        const leadNodes = [];
         const membershipEdges = [];
+        const coveredHierarchyEdges = new Set();
         snapshot.teams.forEach((team, teamIndex) => {
             const teamInspector = buildTeamInspector({
                 team,
@@ -619,27 +533,22 @@ export function createAgentTopologyService(dependencies = {}) {
                 layout,
                 diagnostics: diagnosticsByTeamId.get(team.teamId) ?? [],
             }));
-            teamInspector.members.forEach((member, memberIndex) => {
-                roleNodes.push(roleBadgeNode({
-                    teamId: team.teamId,
-                    member,
-                    index: teamIndex * Math.max(1, teamInspector.members.length) + memberIndex,
-                    yOffset: roleYOffset,
-                    layout,
-                }));
-            });
-            if (team.config.leadAgentId) {
-                leadNodes.push(leadBadgeNode({
-                    team,
-                    leadAgentId: team.config.leadAgentId,
-                    index: teamIndex,
-                    yOffset: teamYOffset,
-                    layout,
-                }));
+            for (const agentId of teamInspector.activeMemberAgentIds) {
+                coveredHierarchyEdges.add(`${teamInspector.ownerAgentId}->${agentId}`);
             }
             membershipEdges.push(...teamMembershipEdges({ team, teamInspector }));
         });
-        const hierarchyEdges = tree.edges.map((edge) => ({
+        const hierarchyEdges = tree.edges
+            .filter((edge) => {
+            const sourceAgentId = edge.fromNodeId.startsWith("agent:")
+                ? edge.fromNodeId.slice("agent:".length)
+                : "";
+            const targetAgentId = edge.toNodeId.startsWith("agent:")
+                ? edge.toNodeId.slice("agent:".length)
+                : "";
+            return !coveredHierarchyEdges.has(`${sourceAgentId}->${targetAgentId}`);
+        })
+            .map((edge) => ({
             id: edge.edgeId,
             kind: "parent_child",
             source: edge.fromNodeId,
@@ -659,7 +568,7 @@ export function createAgentTopologyService(dependencies = {}) {
             schemaVersion: 1,
             generatedAt: tree.generatedAt,
             rootAgentId: tree.rootAgentId,
-            nodes: [...agentNodes, ...teamNodes, ...roleNodes, ...leadNodes],
+            nodes: [...agentNodes, ...teamNodes],
             edges: [...hierarchyEdges, ...membershipEdges],
             inspectors,
             layout,

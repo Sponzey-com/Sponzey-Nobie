@@ -307,6 +307,42 @@ describe("buildTaskModels", () => {
     })
   })
 
+  it("folds sub-agent child runs with separate request groups back into the parent task card", () => {
+    const tasks = buildTaskModels([
+      makeRun({
+        id: "run-root",
+        requestGroupId: "group-root",
+        lineageRootRunId: "group-root",
+        runScope: "root",
+        prompt: "개발팀에게 투자 봇 구현을 맡겨줘",
+        status: "running",
+        summary: "서브 에이전트에게 작업을 위임하고 있습니다.",
+        createdAt: 1,
+        updatedAt: 2,
+      }),
+      makeRun({
+        id: "run-child",
+        requestGroupId: "run-root:sub-session-1",
+        lineageRootRunId: "run-root:sub-session-1",
+        runScope: "child",
+        parentRunId: "run-root",
+        handoffSummary: "투자 봇 구현 범위를 맡아 실제 파일 작업을 수행한다.",
+        prompt: "# Delegated task\nGoal: 투자 봇 구현 범위를 맡아 실제 파일 작업을 수행한다.",
+        status: "running",
+        summary: "서브 에이전트가 구현 중입니다.",
+        createdAt: 3,
+        updatedAt: 4,
+      }),
+    ])
+
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0]?.id).toBe("group-root")
+    expect(tasks[0]?.requestText).toBe("개발팀에게 투자 봇 구현을 맡겨줘")
+    expect(tasks[0]?.runIds).toEqual(["run-root", "run-child"])
+    expect(tasks[0]?.attempts.map((attempt) => attempt.id)).toEqual(["run-root", "run-child"])
+    expect(tasks[0]?.status).toBe("running")
+  })
+
   it("derives artifact metadata for deliveries backed by local state artifacts", () => {
     const artifactPath = `${PATHS.stateDir}/artifacts/screens/screenshot.png`
     const task = buildTaskModels([

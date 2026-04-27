@@ -1613,6 +1613,26 @@ export default function App() {
             }
           />
           <Route
+            path="/advanced/orchestration"
+            element={
+              <AdvancedOnly>
+                <LazyPage>
+                  <SettingsPage />
+                </LazyPage>
+              </AdvancedOnly>
+            }
+          />
+          <Route
+            path="/advanced/orchestration/*"
+            element={
+              <AdvancedOnly>
+                <LazyPage>
+                  <SettingsPage />
+                </LazyPage>
+              </AdvancedOnly>
+            }
+          />
+          <Route
             path="/advanced/memory"
             element={
               <AdvancedOnly>

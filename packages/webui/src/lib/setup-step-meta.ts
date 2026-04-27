@@ -100,7 +100,7 @@ export function createSetupSteps(
       false,
       [
         t("파일 실행이나 도구 사용 전에 얼마나 자주 확인받을지 정합니다.", "Set how often Nobie should ask before using tools or files."),
-        t("자동 후속 처리 횟수 같은 기본 안전값을 확인합니다.", "Review safety defaults like the auto follow-up limit."),
+        t("승인 타임아웃과 기본 동작을 확인합니다.", "Review approval timeouts and default behavior."),
         t("처음에는 기본값을 유지해도 됩니다.", "Keeping the defaults is fine at first."),
       ],
       hasSecurityDefaults,

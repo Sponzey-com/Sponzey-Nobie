@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
+  getDb,
   upsertAgentConfig,
   upsertAgentRelationship,
   upsertSkillCatalogEntry,
@@ -15,6 +16,7 @@ import {
   CONTRACT_SCHEMA_VERSION,
   type MemoryPolicy,
   type ModelProfile,
+  type OrchestrationPlan,
   type PermissionProfile,
   type RuntimeIdentity,
   type SkillMcpAllowlist,
@@ -26,6 +28,12 @@ import {
   buildOrchestrationRegistrySnapshot,
   clearAgentCapabilityIndexCache,
 } from "../packages/core/src/orchestration/registry.ts"
+import { dispatchDelegatedSubAgentTasks } from "../packages/core/src/runs/orchestration-dispatch.ts"
+import type { StartRootRunParams } from "../packages/core/src/runs/start.ts"
+import {
+  createRootRun,
+  updateRunStatus,
+} from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
 const previousStateDir = process.env.NOBIE_STATE_DIR
@@ -259,7 +267,7 @@ describe("task009 registry snapshot and capability index", () => {
     expect(first.capabilityIndex?.metrics.targetP95Ms).toBe(100)
   })
 
-  it("keeps disabled and archived agents out of delegated candidates with exclusion diagnostics", () => {
+  it("keeps unassigned disabled and archived agents out of delegated candidates", () => {
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta", { status: "disabled" }), {
       source: "manual",
@@ -273,14 +281,10 @@ describe("task009 registry snapshot and capability index", () => {
     const snapshot = buildSnapshot()
 
     expect(snapshot.agents.map((agent) => agent.agentId)).toEqual(["agent:alpha", "agent:beta"])
-    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"]).toEqual([
-      "agent:alpha",
-    ])
-    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"]).toEqual([
-      { agentId: "agent:beta", reasonCodes: ["agent_disabled"] },
-    ])
-    expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
-      expect.arrayContaining(["candidate_excluded", "agent_disabled"]),
+    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"] ?? []).toEqual([])
+    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"] ?? []).toEqual([])
+    expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "candidate_excluded",
     )
   })
 
@@ -300,6 +304,337 @@ describe("task009 registry snapshot and capability index", () => {
       "agent:beta",
     ])
     expect(snapshot.capabilityIndex?.topLevelCandidateAgentIds).not.toContain("agent:beta")
+  })
+
+  it("inherits the runtime model profile for legacy sub-agents without model settings", () => {
+    upsertAgentConfig(
+      subAgent("agent:alpha", {
+        modelProfile: {
+          providerId: "provider:unknown",
+          modelId: "model:unknown",
+        },
+      }),
+      { source: "manual", now },
+    )
+    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+
+    const snapshot = buildOrchestrationRegistrySnapshot({
+      getConfig: () => ({
+        ...emptyRegistryConfig(),
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-5.4-mini",
+          },
+        },
+      }),
+      now: () => now,
+    })
+    const alpha = snapshot.agents.find((agent) => agent.agentId === "agent:alpha")
+
+    expect(alpha?.config.modelProfile).toMatchObject({
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+      retryCount: 0,
+      timeoutMs: 30_000,
+    })
+    expect(alpha?.modelSummary.availability).toBe("available")
+    expect(snapshot.capabilityIndex?.topLevelCandidateAgentIds).toContain("agent:alpha")
+    expect(
+      snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"]?.flatMap(
+        (item) => item.reasonCodes,
+      ) ?? [],
+    ).not.toContain("model_unavailable")
+  })
+
+  it("dispatches delegated plan tasks as persisted sub-sessions and child agent runs", async () => {
+    upsertSkillCatalogEntry(
+      {
+        skillId: "skill:research",
+        displayName: "Research",
+        risk: "safe",
+        toolNames: ["web_search"],
+      },
+      { now },
+    )
+    upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
+    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    getDb()
+      .prepare(
+        `INSERT INTO sessions (id, source, source_id, created_at, updated_at, summary)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("session:parent", "webui", "test", now, now, "dispatch test")
+    createRootRun({
+      id: "run:parent",
+      sessionId: "session:parent",
+      requestGroupId: "request-group:parent",
+      prompt: "투자 봇을 구현해줘.",
+      source: "webui",
+      orchestrationMode: "orchestration",
+    })
+    const plan: OrchestrationPlan = {
+      identity: {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        entityType: "session",
+        entityId: "plan:dispatch",
+        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        idempotencyKey: "plan:dispatch",
+        parent: {
+          parentRunId: "run:parent",
+          parentSessionId: "session:parent",
+          parentRequestId: "request:parent",
+        },
+      },
+      planId: "plan:dispatch",
+      parentRunId: "run:parent",
+      parentRequestId: "request:parent",
+      directNobieTasks: [],
+      delegatedTasks: [
+        {
+          taskId: "task:implement",
+          executionKind: "delegated_sub_agent",
+          scope: {
+            goal: "투자 봇 구현 범위를 맡아 실제 파일 작업을 수행한다.",
+            intentType: "execute_now",
+            actionType: "implement_code",
+            constraints: ["부모 요청 범위 안에서 처리한다."],
+            expectedOutputs: [
+              {
+                outputId: "implementation_summary",
+                kind: "text",
+                description: "구현 결과 요약",
+                required: true,
+                acceptance: {
+                  requiredEvidenceKinds: ["child_run"],
+                  artifactRequired: false,
+                  reasonCodes: ["child_run_completed"],
+                },
+              },
+            ],
+            reasonCodes: ["delegation_required"],
+          },
+          assignedAgentId: "agent:alpha",
+          requiredCapabilities: ["research"],
+          resourceLockIds: [],
+        },
+      ],
+      dependencyEdges: [],
+      resourceLocks: [],
+      parallelGroups: [],
+      approvalRequirements: [],
+      fallbackStrategy: {
+        mode: "single_nobie",
+        reasonCode: "delegation_planned",
+      },
+      createdAt: now,
+    }
+    const childRunParams: StartRootRunParams[] = []
+    const result = await dispatchDelegatedSubAgentTasks({
+      plan,
+      parentRunId: "run:parent",
+      parentSessionId: "session:parent",
+      parentRequestGroupId: "request-group:parent",
+      source: "webui",
+      message: "투자 봇을 구현해줘.",
+      workDir: process.cwd(),
+      controller: new AbortController(),
+    }, {
+      startSubAgentRun: (params) => {
+        childRunParams.push(params)
+        const child = createRootRun({
+          id: "run:child",
+          sessionId: params.sessionId ?? "session:parent",
+          ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+          ...(params.lineageRootRunId ? { lineageRootRunId: params.lineageRootRunId } : {}),
+          ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+          runScope: "child",
+          prompt: params.message,
+          source: params.source,
+          ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
+          ...(params.targetId ? { targetId: params.targetId } : {}),
+          ...(params.targetLabel ? { targetLabel: params.targetLabel } : {}),
+          contextMode: "handoff",
+        })
+        const completed = updateRunStatus(child.id, "completed", "alpha completed", false)
+        return {
+          runId: child.id,
+          sessionId: child.sessionId,
+          status: "started",
+          finished: Promise.resolve(completed ?? child),
+        }
+      },
+      now: () => now,
+    })
+
+    const stored = getDb()
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM run_subsessions")
+      .get()
+
+    expect(result).toMatchObject({ attempted: 1, completed: 1, failed: 0, skipped: 0 })
+    expect(stored?.count).toBe(1)
+    expect(childRunParams[0]).toMatchObject({
+      parentRunId: "run:parent",
+      lineageRootRunId: "request-group:parent",
+      runScope: "child",
+      skipIntake: true,
+      targetId: "agent:alpha",
+      targetLabel: "alpha",
+      model: "gpt-5.4",
+      providerId: "openai",
+    })
+  })
+
+  it("expands team-assigned tasks into team execution plan child runs", async () => {
+    upsertSkillCatalogEntry(
+      {
+        skillId: "skill:research",
+        displayName: "Research",
+        risk: "safe",
+        toolNames: ["web_search"],
+      },
+      { now },
+    )
+    upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
+    upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
+    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha", 0), { now })
+    upsertAgentRelationship(relationship("agent:nobie", "agent:beta", 1), { now })
+    upsertTeamConfig(
+      teamConfig({
+        teamId: "team:delivery",
+        leadAgentId: "agent:alpha",
+        memberAgentIds: ["agent:alpha", "agent:beta"],
+        roleHints: ["lead", "member"],
+        memberships: [
+          membership("team:delivery", "agent:alpha", ["lead"], 0),
+          membership("team:delivery", "agent:beta", ["member"], 1),
+        ],
+      }),
+      { source: "manual", now },
+    )
+    getDb()
+      .prepare(
+        `INSERT INTO sessions (id, source, source_id, created_at, updated_at, summary)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("session:team-parent", "telegram", "test", now, now, "team dispatch test")
+    createRootRun({
+      id: "run:team-parent",
+      sessionId: "session:team-parent",
+      requestGroupId: "request-group:team-parent",
+      prompt: "개발팀에게 구현을 맡긴다.",
+      source: "telegram",
+      orchestrationMode: "orchestration",
+    })
+
+    const plan: OrchestrationPlan = {
+      identity: {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        entityType: "session",
+        entityId: "plan:team",
+        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        idempotencyKey: "plan:team",
+        parent: { parentRunId: "run:team-parent", parentRequestId: "request:team-parent" },
+      },
+      planId: "plan:team",
+      parentRunId: "run:team-parent",
+      parentRequestId: "request:team-parent",
+      directNobieTasks: [],
+      delegatedTasks: [
+        {
+          taskId: "plan:team:task:0",
+          executionKind: "delegated_sub_agent",
+          scope: {
+            goal: "개발팀에게 구현을 맡긴다.",
+            intentType: "user_request",
+            actionType: "development",
+            constraints: [],
+            expectedOutputs: [
+              {
+                outputId: "implementation_summary",
+                kind: "text",
+                description: "구현 결과 요약",
+                required: true,
+                acceptance: {
+                  requiredEvidenceKinds: ["child_run"],
+                  artifactRequired: false,
+                  reasonCodes: ["child_run_completed"],
+                },
+              },
+            ],
+            reasonCodes: ["explicit_team_target"],
+          },
+          assignedTeamId: "team:delivery",
+          requiredCapabilities: ["filesystem_write"],
+          resourceLockIds: [],
+        },
+      ],
+      dependencyEdges: [],
+      resourceLocks: [],
+      parallelGroups: [],
+      approvalRequirements: [],
+      fallbackStrategy: {
+        mode: "single_nobie",
+        reasonCode: "delegation_planned",
+      },
+      createdAt: now,
+    }
+    const childRunParams: StartRootRunParams[] = []
+    const result = await dispatchDelegatedSubAgentTasks({
+      plan,
+      parentRunId: "run:team-parent",
+      parentSessionId: "session:team-parent",
+      parentRequestGroupId: "request-group:team-parent",
+      source: "telegram",
+      message: "개발팀에게 구현을 맡긴다.",
+      workDir: process.cwd(),
+      controller: new AbortController(),
+    }, {
+      startSubAgentRun: (params) => {
+        childRunParams.push(params)
+        const child = createRootRun({
+          id: `run:child:${childRunParams.length}`,
+          sessionId: params.sessionId ?? "session:team-parent",
+          ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+          ...(params.lineageRootRunId ? { lineageRootRunId: params.lineageRootRunId } : {}),
+          ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+          runScope: "child",
+          prompt: params.message,
+          source: params.source,
+          ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
+          ...(params.targetId ? { targetId: params.targetId } : {}),
+          ...(params.targetLabel ? { targetLabel: params.targetLabel } : {}),
+          contextMode: "handoff",
+        })
+        const completed = updateRunStatus(
+          child.id,
+          "completed",
+          `${params.targetId} completed`,
+          false,
+        )
+        return {
+          runId: child.id,
+          sessionId: child.sessionId,
+          status: "started",
+          finished: Promise.resolve(completed ?? child),
+        }
+      },
+      now: () => now,
+    })
+
+    const teamPlans = getDb()
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM team_execution_plans")
+      .get()
+
+    expect(result.completed).toBeGreaterThanOrEqual(2)
+    expect(result.failed).toBe(0)
+    expect(teamPlans?.count).toBe(1)
+    expect(childRunParams.map((params) => params.targetId)).toEqual(
+      expect.arrayContaining(["agent:alpha", "agent:beta"]),
+    )
+    expect(childRunParams.every((params) => params.runScope === "child")).toBe(true)
+    expect(childRunParams.every((params) => params.skipIntake === true)).toBe(true)
+    expect(childRunParams.every((params) => params.lineageRootRunId === "request-group:team-parent")).toBe(true)
   })
 
   it("recalculates team coverage conservatively with capability and model summaries", () => {

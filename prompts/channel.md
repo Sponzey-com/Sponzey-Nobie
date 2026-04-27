@@ -1,29 +1,39 @@
-# 채널 정책
+# Channel Policy
 
-이 파일은 요청 채널과 결과 전달 경계만 다룬다.
-
----
-
-## 기본 경계
-
-- 현재 요청이 들어온 채널을 기본 응답 및 결과물 전달 채널로 사용한다.
-- WebUI, Telegram, Slack은 서로 다른 session, thread, delivery 경계를 가진다.
-- 사용자가 명시하지 않았으면 다른 채널로 결과물을 보내지 않는다.
-- 채널 표시명만 보고 사용자나 목적지를 추정하지 않는다.
+This file covers only request-channel and result-delivery boundaries.
 
 ---
 
-## 승인과 스레드
+## Default Boundary
 
-- 승인 요청은 가능한 한 원 요청 채널과 원 요청 thread 안에서 처리한다.
-- thread가 있는 채널에서는 진행, 승인, 결과 전달을 같은 thread에 유지한다.
-- 승인 응답을 받지 못했으면 `Aborted by user`로 단정하지 않는다.
-- 승인 대기 상태와 사용자 거부 상태를 분리한다.
+- Use the channel where the current request arrived as the default reply and artifact-delivery channel.
+- WebUI, Telegram, and Slack have separate session, thread, and delivery boundaries.
+- Do not send artifacts to another channel unless the user explicitly requested it.
+- Do not infer the user or destination from channel display names alone.
 
 ---
 
-## 전달 실패
+## Approval And Threads
 
-- 채널 전송이 실패하면 같은 전송 경로를 반복하기 전에 원인을 분류한다.
-- 결과물 전달 실패는 실행 실패와 분리해 보고한다.
-- 대체 채널 전송은 사용자가 명시했거나 기존 설정으로 확인된 경우에만 한다.
+- Keep approval requests in the original request channel and thread when the channel id and thread id exist and the delivery tool supports threaded replies.
+- In threaded channels, keep progress, approval, and result delivery in the same thread.
+- If no approval response has been received, do not assume `Aborted by user`.
+- Separate pending approval from explicit user denial.
+
+---
+
+## Sub-Agent Progress And Delivery
+
+- Sub-agent progress events keep the original request channel and thread boundary.
+- Progress events must include the execution-time nickname snapshot. If no nickname snapshot exists, use the display-name snapshot. Do not show only an internal agent id.
+- A ChildAgent does not complete the user channel with a final answer directly. Its result returns to the ParentAgent, and the final owner performs delivery.
+- Team execution progress is displayed by actual member or TeamLead nickname, not as if the Team itself executed.
+- Even when the user names an agent or team associated with another channel, do not change the delivery channel unless the user explicitly requested it.
+
+---
+
+## Delivery Failure
+
+- If channel delivery fails, classify the cause before repeating the same delivery path.
+- Report artifact delivery failure separately from execution failure.
+- Use an alternate channel only when the user explicitly requested it or trusted settings provide an explicit alternate destination for this request type. Trusted settings are explicit config values, database registry records, authenticated channel metadata, and explicit user profile fields.

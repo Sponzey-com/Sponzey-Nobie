@@ -427,6 +427,30 @@ export function findChannelMessageRef(params) {
        LIMIT 1`)
         .get(params.source, params.externalChatId, params.externalMessageId);
 }
+export function findLatestChannelMessageRefForThread(params) {
+    if (params.externalThreadId !== undefined) {
+        return getDb()
+            .prepare(`SELECT *
+         FROM channel_message_refs
+         WHERE source = ?
+           AND external_chat_id = ?
+           AND external_thread_id = ?
+           AND role IN ('assistant', 'tool')
+         ORDER BY created_at DESC
+         LIMIT 1`)
+            .get(params.source, params.externalChatId, params.externalThreadId);
+    }
+    return getDb()
+        .prepare(`SELECT *
+       FROM channel_message_refs
+       WHERE source = ?
+         AND external_chat_id = ?
+         AND external_thread_id IS NULL
+         AND role IN ('assistant', 'tool')
+       ORDER BY created_at DESC
+       LIMIT 1`)
+        .get(params.source, params.externalChatId);
+}
 export function insertChannelSmokeRun(input) {
     const id = input.id ?? crypto.randomUUID();
     const startedAt = input.startedAt ?? Date.now();
@@ -1155,6 +1179,24 @@ export function getTeamConfig(teamId) {
     return getDb()
         .prepare("SELECT * FROM team_configs WHERE team_id = ?")
         .get(teamId);
+}
+export function deleteTeamConfig(teamId) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "team.config.delete");
+    if (!getTeamConfig(teamId))
+        return false;
+    const tx = db.transaction(() => {
+        if (tableExists(db, "team_execution_plans")) {
+            db.prepare("DELETE FROM team_execution_plans WHERE team_id = ?").run(teamId);
+        }
+        db.prepare("DELETE FROM agent_team_memberships WHERE team_id = ?").run(teamId);
+        if (tableExists(db, "nickname_namespaces")) {
+            db.prepare("DELETE FROM nickname_namespaces WHERE entity_type = ? AND entity_id = ?").run("team", teamId);
+        }
+        const result = db.prepare("DELETE FROM team_configs WHERE team_id = ?").run(teamId);
+        return result.changes > 0;
+    });
+    return tx();
 }
 export function listTeamConfigs(filters = {}) {
     const where = [];

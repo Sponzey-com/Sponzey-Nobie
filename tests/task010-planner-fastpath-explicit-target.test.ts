@@ -424,7 +424,7 @@ describe("task010 planner fast path and explicit targets", () => {
     ).toContain("not_explicit_target")
   })
 
-  it("keeps explicit team targets as non-execution plans until team expansion", () => {
+  it("plans explicit team targets for runtime team expansion", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
@@ -442,9 +442,45 @@ describe("task010 planner fast path and explicit targets", () => {
     })
 
     expect(result.plan.directNobieTasks).toHaveLength(0)
-    expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.plannerMetadata?.status).toBe("requires_team_expansion")
-    expect(result.reasonCodes).toContain("requires_team_expansion")
+    expect(result.plan.delegatedTasks).toHaveLength(1)
+    expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBe("team:research")
+    expect(result.plan.plannerMetadata?.status).toBe("planned")
+    expect(result.reasonCodes).toContain("team_execution_plan_planned")
+    expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
+  })
+
+  it("infers a team target from a natural-language team name", () => {
+    seedSkill()
+    upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
+    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertTeamConfig(
+      {
+        ...teamConfig(),
+        teamId: "team:dev",
+        displayName: "개발 1팀",
+        nickname: "개발팀",
+        memberships: [membership("team:dev", "agent:alpha", ["lead"], 0)],
+        memberAgentIds: ["agent:alpha"],
+      },
+      { source: "manual", now },
+    )
+
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:dev-team",
+      parentRequestId: "request:dev-team",
+      userRequest: "이 내용으로 개발팀에게 개발 시켜줘",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registrySnapshot(),
+      now: () => now,
+      idProvider: () => "plan:dev-team",
+    })
+
+    expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBe("team:dev")
+    expect(result.plan.delegatedTasks[0]?.requiredCapabilities).toEqual([
+      "filesystem_write",
+      "shell_execution",
+    ])
+    expect(result.reasonCodes).toContain("inferred_team_target_from_request")
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
 

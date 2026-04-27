@@ -596,6 +596,19 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     },
   )
 
+  app.delete<{ Params: { teamId: string } }>(
+    "/api/teams/:teamId",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      if (!createTeamRegistryService().delete(req.params.teamId)) {
+        return reply
+          .status(404)
+          .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" })
+      }
+      return { ok: true, teamId: req.params.teamId, deleted: true }
+    },
+  )
+
   app.get<{ Params: { teamId: string } }>(
     "/api/teams/:teamId/members",
     { preHandler: authMiddleware },

@@ -98,6 +98,28 @@ describe("start preflight", () => {
     expect(failure?.userMessage).toContain("socket closed")
   })
 
+  it("does not require channel delivery for internal handoff child runs", () => {
+    getTelegramRuntimeStatusMock.mockReturnValue({
+      isRunning: false,
+      lastStartedAt: 1,
+      lastStoppedAt: 2,
+      lastError: "bot offline",
+      lastErrorAt: 2,
+    })
+
+    const failure = resolveStartPreflightFailure({
+      source: "telegram",
+      message: "internal delegated task",
+      providerId: "openai",
+      model: "gpt-5",
+      contextMode: "handoff",
+      runScope: "child",
+      skipIntake: true,
+    })
+
+    expect(failure).toBeNull()
+  })
+
   it("fails Yeonjang-bound requests when no extension snapshot is connected", () => {
     const failure = resolveStartPreflightFailure({
       source: "webui",

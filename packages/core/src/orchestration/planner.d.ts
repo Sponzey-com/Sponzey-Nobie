@@ -82,6 +82,7 @@ export interface OrchestrationPlanBuildResult {
     reasonCodes: string[];
 }
 export declare function classifyFastPath(input: FastPathClassifierInput): FastPathClassificationResult;
+export declare function resolveExplicitTeamIdFromRequest(userRequest: string, registry: OrchestrationRegistrySnapshot): string | undefined;
 export declare function buildDefaultStructuredTaskScope(userRequest: string): StructuredTaskScope;
 export declare function buildOrchestrationPlan(input: OrchestrationPlannerInput): OrchestrationPlanBuildResult;
 export declare function createOrchestrationPlanner(): {

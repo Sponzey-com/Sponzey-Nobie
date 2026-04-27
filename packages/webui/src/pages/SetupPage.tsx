@@ -1043,7 +1043,6 @@ export function SetupPage() {
           value={activeDraft.security}
           errors={shouldShowValidation ? {
             approvalTimeout: currentValidation.fieldErrors.approvalTimeout,
-            maxDelegationTurns: currentValidation.fieldErrors.maxDelegationTurns,
           } : undefined}
           onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
         />
@@ -1712,7 +1711,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="안전 경계를 조정합니다"
-              description="승인 게이트, 타임아웃 fallback, 자동 후속 처리 제한이 어디서 위험 구역으로 이어지는지 경계 지도로 보여줍니다."
+              description="승인 게이트와 타임아웃 fallback이 어디서 위험 구역으로 이어지는지 경계 지도로 보여줍니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1721,23 +1720,20 @@ export function SetupPage() {
               <StatCard label="승인 모드" value={activeDraft.security.approvalMode} compact />
               <StatCard label="타임아웃" value={`${activeDraft.security.approvalTimeout}s`} compact />
               <StatCard label="기본 동작" value={activeDraft.security.approvalTimeoutFallback} compact />
-              <StatCard label="후속 제한" value={activeDraft.security.maxDelegationTurns === 0 ? "unlimited" : String(activeDraft.security.maxDelegationTurns)} compact />
             </div>
-            {(activeDraft.security.approvalMode === "off" || activeDraft.security.approvalTimeoutFallback === "allow" || activeDraft.security.maxDelegationTurns === 0) ? (
+            {(activeDraft.security.approvalMode === "off" || activeDraft.security.approvalTimeoutFallback === "allow") ? (
               <RuntimeNotice
                 tone={activeDraft.security.approvalMode === "off" && activeDraft.security.approvalTimeoutFallback === "allow" ? "error" : "info"}
                 title="위험 조합 감지"
                 message={activeDraft.security.approvalMode === "off" && activeDraft.security.approvalTimeoutFallback === "allow"
                   ? "승인이 꺼진 상태에서 timeout fallback도 allow로 열려 있습니다. 고위험 작업이 직접 실행될 수 있습니다."
-                  : activeDraft.security.maxDelegationTurns === 0
-                    ? "자동 후속 처리가 무제한이라 같은 작업이 길게 반복될 수 있습니다."
-                    : "현재 설정은 일부 작업을 빠르게 통과시키므로 boundary map의 경고 구역을 같이 확인해야 합니다."}
+                  : "현재 설정은 일부 작업을 빠르게 통과시키므로 boundary map의 경고 구역을 같이 확인해야 합니다."}
               />
             ) : (
               <RuntimeNotice
                 tone="info"
                 title="안전 기본값"
-                message="승인 게이트, deny fallback, 제한된 후속 처리 횟수가 함께 유지되면 boundary map의 안전 구역이 기본 경로가 됩니다."
+                message="승인 게이트와 deny fallback이 함께 유지되면 boundary map의 안전 구역이 기본 경로가 됩니다."
               />
             )}
             <div className="rounded-3xl border border-stone-200 bg-white p-6">
@@ -1745,7 +1741,6 @@ export function SetupPage() {
               <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
                 <ChecklistItem text="승인 게이트가 꺼지면 중앙 boundary와 제한 구역이 동시에 경고로 바뀝니다." />
                 <ChecklistItem text="timeout fallback은 승인 정책과 별도이며, allow로 바뀌면 위험 구역 alert가 즉시 추가됩니다." />
-                <ChecklistItem text="자동 후속 처리 제한은 무제한 대신 bounded 상태를 유지하는 쪽이 기본 경계 설계와 맞습니다." />
               </div>
             </div>
           </div>
@@ -1763,7 +1758,6 @@ export function SetupPage() {
               onChange={(patch) => patchDraft("security", { ...activeDraft.security, ...patch })}
               errors={shouldShowValidation ? {
                 approvalTimeout: currentValidation.fieldErrors.approvalTimeout,
-                maxDelegationTurns: currentValidation.fieldErrors.maxDelegationTurns,
               } : undefined}
             />
           </div>
@@ -2835,7 +2829,7 @@ function SecuritySetupInspector({
   language: UiLanguage
   selectedNodeLabel?: string
   value: SetupDraft["security"]
-  errors?: Partial<Record<"approvalTimeout" | "maxDelegationTurns", string>>
+  errors?: Partial<Record<"approvalTimeout", string>>
   onChange: (patch: Partial<SetupDraft["security"]>) => void
 }) {
   return (

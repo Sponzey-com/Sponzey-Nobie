@@ -56,6 +56,7 @@ export declare function prepareStartLaunch(params: {
     now: number;
     maxDelegationTurns: number;
     requestGroupId?: string | undefined;
+    lineageRootRunId?: string | undefined;
     parentRunId?: string | undefined;
     originRunId?: string | undefined;
     originRequestGroupId?: string | undefined;

@@ -1,4 +1,9 @@
 import type { SlackConfig } from "../../config/types.js";
+export declare function findSlackReplyTaskRef(params: {
+    channelId: string;
+    messageTs: string;
+    threadTs: string;
+}): import("../../db/index.js").DbChannelMessageRef | undefined;
 export declare class SlackChannel {
     private config;
     private socket;

@@ -16,6 +16,10 @@ import {
   type TeamConfig,
   type TeamMembership,
 } from "../packages/core/src/index.ts"
+import {
+  buildTopologyAgentCreatePayload,
+  buildTopologyTeamCreatePayload,
+} from "../packages/webui/src/lib/topology.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -148,19 +152,19 @@ function teamConfig(): TeamConfig {
     status: "enabled",
     purpose: "Validate topology overlays without raw memory.",
     ownerAgentId: "agent:alpha",
-    leadAgentId: "agent:beta",
+    leadAgentId: "agent:alpha",
     memberCountMin: 1,
     memberCountMax: 4,
-    requiredTeamRoles: ["lead", "reviewer"],
+    requiredTeamRoles: ["member", "reviewer"],
     requiredCapabilityTags: ["research"],
     resultPolicy: "lead_synthesis",
     conflictPolicy: "lead_decides",
     memberships: [
-      membership("team:topology", "agent:beta", ["lead"], 0),
+      membership("team:topology", "agent:beta", ["member"], 0),
       membership("team:topology", "agent:gamma", ["reviewer"], 1),
     ],
     memberAgentIds: ["agent:beta", "agent:gamma"],
-    roleHints: ["lead", "reviewer"],
+    roleHints: ["member", "reviewer"],
     profileVersion: 1,
     createdAt: now,
     updatedAt: now,
@@ -249,15 +253,25 @@ describe("task025 topology projection", () => {
           expect.objectContaining({ kind: "nobie" }),
           expect.objectContaining({ kind: "sub_agent", entityId: "agent:alpha" }),
           expect.objectContaining({ kind: "team", entityId: "team:topology" }),
-          expect.objectContaining({ kind: "team_role" }),
-          expect.objectContaining({ kind: "team_lead" }),
         ]),
+      )
+      expect(nodes.some((node) => node.kind === "team_role" || node.kind === "team_lead")).toBe(
+        false,
       )
       expect(edges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ kind: "parent_child", style: "hierarchy" }),
-          expect.objectContaining({ kind: "team_membership", style: "membership" }),
+          expect.objectContaining({ kind: "team_membership", style: "lead" }),
           expect.objectContaining({ kind: "team_membership", style: "membership_reference" }),
+        ]),
+      )
+      expect(edges).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "parent_child",
+            source: "agent:agent:alpha",
+            target: "agent:agent:beta",
+          }),
         ]),
       )
 
@@ -331,9 +345,9 @@ describe("task025 topology projection", () => {
         url: "/api/teams/team:topology/members",
         payload: {
           memberAgentIds: ["agent:beta", "agent:gamma"],
-          roleHints: ["lead", "reviewer"],
+          roleHints: ["member", "reviewer"],
           memberships: [
-            membership("team:topology", "agent:beta", ["lead"], 0),
+            membership("team:topology", "agent:beta", ["member"], 0),
             membership("team:topology", "agent:gamma", ["reviewer"], 1),
           ],
         },
@@ -341,6 +355,82 @@ describe("task025 topology projection", () => {
       expect(save.statusCode).toBe(400)
       expect(save.json()).toEqual(
         expect.objectContaining({ reasonCode: "owner_direct_child_required" }),
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("accepts topology editor create and archive payloads", async () => {
+    const app = Fastify({ logger: false })
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await seedTopology(app)
+      const agentPayload = buildTopologyAgentCreatePayload({
+        kind: "agent",
+        name: "Delta",
+        detail: "reviewer",
+        now,
+      })
+      const teamPayload = buildTopologyTeamCreatePayload({
+        kind: "team",
+        name: "Delta Review",
+        detail: "Review delegated outputs.",
+        parentAgentId: "agent:alpha",
+        leadAgentId: "agent:alpha",
+        memberAgentIds: ["agent:beta"],
+        now,
+      })
+
+      const createdAgent = await app.inject({
+        method: "POST",
+        url: "/api/agents",
+        payload: { agent: agentPayload.agent },
+      })
+      expect(createdAgent.statusCode).toBe(200)
+      const createdTeam = await app.inject({
+        method: "POST",
+        url: "/api/teams",
+        payload: { team: teamPayload.team },
+      })
+      expect(createdTeam.statusCode).toBe(200)
+
+      const topology = await app.inject({ method: "GET", url: "/api/agent-topology" })
+      expect(topology.statusCode).toBe(200)
+      expect(asRecords(topology.json().nodes)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "sub_agent", entityId: "agent:delta" }),
+          expect.objectContaining({ kind: "team", entityId: "team:delta-review" }),
+        ]),
+      )
+      expect(asRecords(topology.json().edges)).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "parent_child", target: "agent:agent:delta" }),
+        ]),
+      )
+
+      const archivedAgent = await app.inject({
+        method: "POST",
+        url: "/api/agents/agent%3Adelta/archive",
+      })
+      const archivedTeam = await app.inject({
+        method: "POST",
+        url: "/api/teams/team%3Adelta-review/archive",
+      })
+      expect(archivedAgent.statusCode).toBe(200)
+      expect(archivedTeam.statusCode).toBe(200)
+
+      const deletedTeam = await app.inject({
+        method: "DELETE",
+        url: "/api/teams/team%3Adelta-review",
+      })
+      expect(deletedTeam.statusCode).toBe(200)
+      const deletedTopology = await app.inject({ method: "GET", url: "/api/agent-topology" })
+      expect(asRecords(deletedTopology.json().nodes)).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "team", entityId: "team:delta-review" }),
+        ]),
       )
     } finally {
       await app.close()

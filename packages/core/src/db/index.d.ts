@@ -779,6 +779,11 @@ export declare function findChannelMessageRef(params: {
     externalMessageId: string;
     externalThreadId?: string;
 }): DbChannelMessageRef | undefined;
+export declare function findLatestChannelMessageRefForThread(params: {
+    source: string;
+    externalChatId: string;
+    externalThreadId?: string;
+}): DbChannelMessageRef | undefined;
 export declare function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string;
 export declare function updateChannelSmokeRun(id: string, fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>): void;
 export declare function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string;
@@ -899,6 +904,7 @@ export declare function listAgentConfigs(filters?: {
 export declare function disableAgentConfig(agentId: string, now?: number): boolean;
 export declare function upsertTeamConfig(input: TeamConfig, options?: TeamConfigPersistenceOptions): void;
 export declare function getTeamConfig(teamId: string): DbTeamConfig | undefined;
+export declare function deleteTeamConfig(teamId: string): boolean;
 export declare function listTeamConfigs(filters?: {
     enabledOnly?: boolean;
     includeArchived?: boolean;

@@ -135,6 +135,116 @@ describe("slack chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 
+  it("does not create successful shell_exec status messages", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-shell-success",
+      getRunId: () => "run-slack-shell-success",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "shell_exec",
+      params: { command: "pwd" },
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "shell_exec",
+      success: true,
+      output: "ok",
+    })
+
+    expect(responder.sendToolStatus).not.toHaveBeenCalled()
+    expect(responder.updateToolStatus).not.toHaveBeenCalled()
+    expect(responder.clearToolStatus).not.toHaveBeenCalled()
+  })
+
+  it("clears successful non-shell tool status messages instead of leaving done messages", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue("tool-ts"),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-tool-success",
+      getRunId: () => "run-slack-tool-success",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "screen_capture",
+      params: {},
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "screen_capture",
+      success: true,
+      output: "captured",
+    })
+
+    expect(responder.sendToolStatus).toHaveBeenCalledWith("screen_capture")
+    expect(responder.clearToolStatus).toHaveBeenCalledWith("tool-ts")
+    expect(responder.updateToolStatus).not.toHaveBeenCalled()
+  })
+
+  it("keeps failed shell_exec status visible", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue("failed-tool-ts"),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const recordOutgoingMessageRef = vi.fn()
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-shell-failure",
+      getRunId: () => "run-slack-shell-failure",
+      recordOutgoingMessageRef,
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "shell_exec",
+      params: { command: "missing" },
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "shell_exec",
+      success: false,
+      output: "command not found",
+    })
+
+    expect(responder.sendToolStatus).toHaveBeenCalledWith("shell_exec")
+    expect(responder.updateToolStatus).toHaveBeenCalledWith("failed-tool-ts", "shell_exec", false)
+    expect(responder.clearToolStatus).not.toHaveBeenCalled()
+    expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
+  })
+
   it("suppresses later AI text after artifact delivery succeeds", async () => {
     const order: string[] = []
     const responder = {

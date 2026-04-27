@@ -248,6 +248,15 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
     notes: "Agent hierarchy and team membership topology editor.",
   },
   {
+    path: "/advanced/orchestration",
+    mode: "advanced",
+    component: "SettingsPage",
+    apiCalls: ["/api/settings", "/api/status"],
+    status: "kept",
+    replacementPath: null,
+    notes: "Sub-agent orchestration runtime mode and feature flag settings.",
+  },
+  {
     path: "/advanced/memory",
     mode: "advanced",
     component: "SettingsPage",
@@ -402,6 +411,7 @@ export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode
     normalized.startsWith("/advanced/ai") ||
     normalized.startsWith("/advanced/channels") ||
     normalized.startsWith("/advanced/extensions") ||
+    normalized.startsWith("/advanced/orchestration") ||
     normalized.startsWith("/advanced/memory") ||
     normalized.startsWith("/advanced/tools") ||
     normalized.startsWith("/advanced/release") ||

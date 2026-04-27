@@ -1,5 +1,6 @@
 import type { RunStep } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
+import { CollapsibleText } from "./CollapsibleText"
 
 function dotClass(status: RunStep["status"]) {
   switch (status) {
@@ -30,7 +31,15 @@ export function RunStepTimeline({ steps }: { steps: RunStep[] }) {
           <div className="pb-3">
             <div className="text-xs font-semibold text-stone-500">{text(`단계 ${step.index}`, `STEP ${step.index}`)}</div>
             <div className="text-sm font-semibold text-stone-900">{displayText(step.title)}</div>
-            <div className="mt-1 text-sm leading-6 text-stone-600">{displayText(step.summary || text("대기 중", "Waiting"))}</div>
+            <CollapsibleText
+              value={displayText(step.summary || text("대기 중", "Waiting"))}
+              threshold={160}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-xs font-semibold text-stone-600 underline-offset-2 hover:underline"
+            />
           </div>
         </div>
       ))}

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { getConfig } from "../config/index.js";
 import { validateAgentConfig, validateTeamConfig, } from "../contracts/sub-agent-orchestration.js";
-import { disableAgentConfig, getAgentConfig, getDb, getTeamConfig, listAgentConfigs, listAgentRelationships, listAgentTeamMemberships, listTeamConfigs, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
+import { deleteTeamConfig, disableAgentConfig, getAgentConfig, getDb, getTeamConfig, listAgentConfigs, listAgentRelationships, listAgentTeamMemberships, listTeamConfigs, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
 import { resolveAgentCapabilityModelSummary, } from "./capability-model.js";
 import { normalizeLegacyAgentConfigRow, normalizeLegacyTeamConfigRow, } from "./config-normalization.js";
 const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
@@ -158,6 +158,8 @@ function directChildBlockedReasons(agent, rootAgentId, agentsById, active) {
     const reasons = [];
     if (agent.status !== "enabled")
         reasons.push(`agent_${agent.status}`);
+    if (agent.agentId === rootAgentId)
+        return uniqueStrings(reasons);
     const parentByChild = new Map(active.map((relationship) => [relationship.childAgentId, relationship]));
     let cursor = agent.agentId;
     const seen = new Set();
@@ -168,8 +170,10 @@ function directChildBlockedReasons(agent, rootAgentId, agentsById, active) {
         }
         seen.add(cursor);
         const relationship = parentByChild.get(cursor);
-        if (!relationship)
+        if (!relationship) {
+            reasons.push(cursor === agent.agentId ? "agent_unassigned" : "ancestor_unassigned");
             break;
+        }
         const parent = agentsById.get(relationship.parentAgentId);
         if (relationship.parentAgentId !== rootAgentId && !parent)
             reasons.push("missing_ancestor");
@@ -210,23 +214,10 @@ function buildHierarchySnapshot(input) {
             });
         }
     };
-    if (active.length === 0) {
-        for (const agent of [...input.agentsById.values()].sort((a, b) => a.agentId.localeCompare(b.agentId))) {
-            appendDirectChild(input.rootAgentId, agent.agentId, `fallback:${input.rootAgentId}->${agent.agentId}`, "fallback");
-        }
-        diagnostics.push({
-            code: "hierarchy_fallback_enabled_sub_agents",
-            severity: "info",
-            message: "No hierarchy rows exist; registry projects configured sub-agents under Nobie for candidate diagnostics.",
-            parentAgentId: input.rootAgentId,
-        });
-    }
-    else {
-        for (const relationship of active.sort((left, right) => left.parentAgentId.localeCompare(right.parentAgentId) ||
-            left.sortOrder - right.sortOrder ||
-            left.edgeId.localeCompare(right.edgeId))) {
-            appendDirectChild(relationship.parentAgentId, relationship.childAgentId, relationship.edgeId, relationship.status);
-        }
+    for (const relationship of active.sort((left, right) => left.parentAgentId.localeCompare(right.parentAgentId) ||
+        left.sortOrder - right.sortOrder ||
+        left.edgeId.localeCompare(right.edgeId))) {
+        appendDirectChild(relationship.parentAgentId, relationship.childAgentId, relationship.edgeId, relationship.status);
     }
     const directChildrenRecord = {};
     for (const [parentAgentId, childIds] of directChildrenByParent.entries()) {
@@ -238,7 +229,7 @@ function buildHierarchySnapshot(input) {
     });
     return {
         rootAgentId: input.rootAgentId,
-        fallbackActive: active.length === 0,
+        fallbackActive: false,
         directChildrenByParent: directChildrenRecord,
         topLevelSubAgentIds,
         directChildren: directChildren.sort((left, right) => left.parentAgentId.localeCompare(right.parentAgentId) ||
@@ -292,6 +283,21 @@ function coverageDimension(members, required, providerValues) {
         covered,
         missing: required.filter((item) => !covered.includes(item)),
         providers,
+    };
+}
+function markCoverageProvidedByOwnerLead(coverage, ownerAgentId, leadAgentId) {
+    if (leadAgentId !== ownerAgentId || !coverage.required.includes("lead"))
+        return coverage;
+    const leadProviders = sortedUniqueStrings([...(coverage.providers.lead ?? []), ownerAgentId]);
+    const covered = sortedUniqueStrings([...coverage.covered, "lead"]);
+    return {
+        ...coverage,
+        covered,
+        missing: coverage.required.filter((item) => !covered.includes(item)),
+        providers: {
+            ...coverage.providers,
+            lead: leadProviders,
+        },
     };
 }
 function capabilityIdsForAgent(agent) {
@@ -496,10 +502,10 @@ function buildTeamCoverageSnapshot(input) {
     const activeMembers = members.filter((member) => member.active);
     const requiredRoles = sortedUniqueStrings(input.team.config.requiredTeamRoles ?? []);
     const requiredCapabilities = sortedUniqueStrings(input.team.config.requiredCapabilityTags ?? []);
-    const roleCoverage = coverageDimension(activeMembers, requiredRoles, (member) => [
+    const roleCoverage = markCoverageProvidedByOwnerLead(coverageDimension(activeMembers, requiredRoles, (member) => [
         member.primaryRole,
         ...member.teamRoles,
-    ]);
+    ]), ownerAgentId, input.team.config.leadAgentId);
     const capabilityCoverage = coverageDimension(activeMembers, requiredCapabilities, (member) => member.capabilityIds);
     const roleTagOnlyMembers = members.filter((member) => {
         const agent = input.agentsById.get(member.agentId);
@@ -520,6 +526,7 @@ function buildTeamCoverageSnapshot(input) {
         });
     }
     if (input.team.config.leadAgentId &&
+        input.team.config.leadAgentId !== ownerAgentId &&
         !activeMembers.some((member) => member.agentId === input.team.config.leadAgentId)) {
         diagnostics.push({
             code: "lead_not_active_member",
@@ -983,6 +990,9 @@ export function createTeamRegistryService(dependencies = {}) {
                 return false;
             upsertTeamConfig({ ...current, status: "archived", updatedAt: now() }, { source: "manual", now: now() });
             return true;
+        },
+        delete(teamId) {
+            return deleteTeamConfig(teamId);
         },
     };
 }

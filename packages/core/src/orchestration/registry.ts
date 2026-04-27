@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
-import { type OrchestrationConfig, getConfig } from "../config/index.js"
+import { type NobieConfig, type OrchestrationConfig, getConfig } from "../config/index.js"
 import {
   type AgentConfig,
   type AgentRelationship,
   type CapabilityPolicy,
   type CapabilityRiskLevel,
+  type ModelProfile,
   type PermissionProfile,
   type SubAgentConfig,
   type TeamConfig,
@@ -17,6 +18,7 @@ import {
   type DbAgentConfig,
   type DbTeamConfig,
   type TeamConfigPersistenceOptions,
+  deleteTeamConfig,
   disableAgentConfig,
   getAgentConfig,
   getDb,
@@ -37,6 +39,10 @@ import {
   normalizeLegacyAgentConfigRow,
   normalizeLegacyTeamConfigRow,
 } from "./config-normalization.js"
+import {
+  DEFAULT_MODEL_RETRY_COUNT,
+  DEFAULT_MODEL_TIMEOUT_MS,
+} from "./model-execution-policy.js"
 
 export interface AgentRuntimeLoadSnapshot {
   activeSubSessions: number
@@ -263,7 +269,7 @@ export interface OrchestrationRegistrySnapshot {
 }
 
 export interface RegistryServiceDependencies {
-  getConfig?: () => Pick<{ orchestration: OrchestrationConfig }, "orchestration">
+  getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>
   now?: () => number
   failureWindowMs?: number
 }
@@ -328,6 +334,41 @@ function rootAgentIdFromConfig(config: OrchestrationConfig): string {
   return config.nobie?.agentId ?? DEFAULT_ROOT_AGENT_ID
 }
 
+function runtimeConfigModelProfile(config: Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>): ModelProfile | undefined {
+  const connection = config.ai?.connection ?? getConfig().ai.connection
+  const rawProviderId = connection.provider?.trim()
+  const modelId = connection.model?.trim()
+  if (!rawProviderId || !modelId) return undefined
+  const providerId = rawProviderId === "llama" ? "custom" : rawProviderId
+  return {
+    providerId,
+    modelId,
+    timeoutMs: DEFAULT_MODEL_TIMEOUT_MS,
+    retryCount: DEFAULT_MODEL_RETRY_COUNT,
+  }
+}
+
+function modelProfileNeedsRuntimeDefault(modelProfile: ModelProfile | undefined): boolean {
+  if (!modelProfile) return true
+  return (
+    !modelProfile.providerId?.trim() ||
+    !modelProfile.modelId?.trim() ||
+    modelProfile.providerId === "provider:unknown" ||
+    modelProfile.modelId === "model:unknown"
+  )
+}
+
+function withRuntimeModelProfile(
+  config: SubAgentConfig,
+  runtimeModelProfile: ModelProfile | undefined,
+): SubAgentConfig {
+  if (!runtimeModelProfile || !modelProfileNeedsRuntimeDefault(config.modelProfile)) return config
+  return {
+    ...config,
+    modelProfile: { ...runtimeModelProfile },
+  }
+}
+
 function tableFingerprint(tableName: string): RegistryInvalidationTableFingerprint {
   try {
     const row = getDb()
@@ -348,7 +389,10 @@ function tableFingerprint(tableName: string): RegistryInvalidationTableFingerpri
   }
 }
 
-function buildInvalidationSnapshot(config: OrchestrationConfig): RegistryInvalidationSnapshot {
+function buildInvalidationSnapshot(
+  config: OrchestrationConfig,
+  runtimeModelProfile?: ModelProfile,
+): RegistryInvalidationSnapshot {
   const tables = {
     agent_configs: tableFingerprint("agent_configs"),
     team_configs: tableFingerprint("team_configs"),
@@ -364,6 +408,7 @@ function buildInvalidationSnapshot(config: OrchestrationConfig): RegistryInvalid
       nobie: config.nobie,
       subAgents: config.subAgents ?? [],
       teams: config.teams ?? [],
+      runtimeModelProfile,
     }),
   )
   const cacheKey = sha256(stableStringify({ configHash, tables }))
@@ -453,6 +498,7 @@ function directChildBlockedReasons(
   if (!agent) return ["missing_agent"]
   const reasons: string[] = []
   if (agent.status !== "enabled") reasons.push(`agent_${agent.status}`)
+  if (agent.agentId === rootAgentId) return uniqueStrings(reasons)
   const parentByChild = new Map(
     active.map((relationship) => [relationship.childAgentId, relationship]),
   )
@@ -465,7 +511,10 @@ function directChildBlockedReasons(
     }
     seen.add(cursor)
     const relationship = parentByChild.get(cursor)
-    if (!relationship) break
+    if (!relationship) {
+      reasons.push(cursor === agent.agentId ? "agent_unassigned" : "ancestor_unassigned")
+      break
+    }
     const parent = agentsById.get(relationship.parentAgentId)
     if (relationship.parentAgentId !== rootAgentId && !parent) reasons.push("missing_ancestor")
     if (parent && relationship.parentAgentId !== rootAgentId && parent.status !== "enabled") {
@@ -521,38 +570,18 @@ function buildHierarchySnapshot(input: {
     }
   }
 
-  if (active.length === 0) {
-    for (const agent of [...input.agentsById.values()].sort((a, b) =>
-      a.agentId.localeCompare(b.agentId),
-    )) {
-      appendDirectChild(
-        input.rootAgentId,
-        agent.agentId,
-        `fallback:${input.rootAgentId}->${agent.agentId}`,
-        "fallback",
-      )
-    }
-    diagnostics.push({
-      code: "hierarchy_fallback_enabled_sub_agents",
-      severity: "info",
-      message:
-        "No hierarchy rows exist; registry projects configured sub-agents under Nobie for candidate diagnostics.",
-      parentAgentId: input.rootAgentId,
-    })
-  } else {
-    for (const relationship of active.sort(
-      (left, right) =>
-        left.parentAgentId.localeCompare(right.parentAgentId) ||
-        left.sortOrder - right.sortOrder ||
-        left.edgeId.localeCompare(right.edgeId),
-    )) {
-      appendDirectChild(
-        relationship.parentAgentId,
-        relationship.childAgentId,
-        relationship.edgeId,
-        relationship.status,
-      )
-    }
+  for (const relationship of active.sort(
+    (left, right) =>
+      left.parentAgentId.localeCompare(right.parentAgentId) ||
+      left.sortOrder - right.sortOrder ||
+      left.edgeId.localeCompare(right.edgeId),
+  )) {
+    appendDirectChild(
+      relationship.parentAgentId,
+      relationship.childAgentId,
+      relationship.edgeId,
+      relationship.status,
+    )
   }
 
   const directChildrenRecord: Record<string, string[]> = {}
@@ -566,7 +595,7 @@ function buildHierarchySnapshot(input: {
 
   return {
     rootAgentId: input.rootAgentId,
-    fallbackActive: active.length === 0,
+    fallbackActive: false,
     directChildrenByParent: directChildrenRecord,
     topLevelSubAgentIds,
     directChildren: directChildren.sort(
@@ -635,6 +664,25 @@ function coverageDimension(
     covered,
     missing: required.filter((item) => !covered.includes(item)),
     providers,
+  }
+}
+
+function markCoverageProvidedByOwnerLead(
+  coverage: RegistryCoverageDimensionSnapshot,
+  ownerAgentId: string,
+  leadAgentId: string | undefined,
+): RegistryCoverageDimensionSnapshot {
+  if (leadAgentId !== ownerAgentId || !coverage.required.includes("lead")) return coverage
+  const leadProviders = sortedUniqueStrings([...(coverage.providers.lead ?? []), ownerAgentId])
+  const covered = sortedUniqueStrings([...coverage.covered, "lead"])
+  return {
+    ...coverage,
+    covered,
+    missing: coverage.required.filter((item) => !covered.includes(item)),
+    providers: {
+      ...coverage.providers,
+      lead: leadProviders,
+    },
   }
 }
 
@@ -874,10 +922,14 @@ function buildTeamCoverageSnapshot(input: {
   const activeMembers = members.filter((member) => member.active)
   const requiredRoles = sortedUniqueStrings(input.team.config.requiredTeamRoles ?? [])
   const requiredCapabilities = sortedUniqueStrings(input.team.config.requiredCapabilityTags ?? [])
-  const roleCoverage = coverageDimension(activeMembers, requiredRoles, (member) => [
-    member.primaryRole,
-    ...member.teamRoles,
-  ])
+  const roleCoverage = markCoverageProvidedByOwnerLead(
+    coverageDimension(activeMembers, requiredRoles, (member) => [
+      member.primaryRole,
+      ...member.teamRoles,
+    ]),
+    ownerAgentId,
+    input.team.config.leadAgentId,
+  )
   const capabilityCoverage = coverageDimension(
     activeMembers,
     requiredCapabilities,
@@ -910,6 +962,7 @@ function buildTeamCoverageSnapshot(input: {
   }
   if (
     input.team.config.leadAgentId &&
+    input.team.config.leadAgentId !== ownerAgentId &&
     !activeMembers.some((member) => member.agentId === input.team.config.leadAgentId)
   ) {
     diagnostics.push({
@@ -1149,7 +1202,8 @@ function buildOrchestrationRegistrySnapshotUnsafe(input: {
   const agentsById = new Map<string, AgentRegistryEntry>()
   const teamsById = new Map<string, TeamConfig & { source: TeamRegistryEntry["source"] }>()
   const rootAgentId = rootAgentIdFromConfig(cfg.orchestration)
-  const invalidation = buildInvalidationSnapshot(cfg.orchestration)
+  const inheritedModelProfile = runtimeConfigModelProfile(cfg)
+  const invalidation = buildInvalidationSnapshot(cfg.orchestration, inheritedModelProfile)
   const archivedAgentIds = new Set(
     listAgentConfigs({ includeArchived: true, agentType: "sub_agent" })
       .filter((row) => row.status === "archived")
@@ -1163,7 +1217,8 @@ function buildOrchestrationRegistrySnapshotUnsafe(input: {
 
   for (const agent of cfg.orchestration.subAgents ?? []) {
     if (archivedAgentIds.has(agent.agentId)) continue
-    agentsById.set(agent.agentId, agentEntry(agent, "config", now, failureWindowMs))
+    const runtimeAgent = withRuntimeModelProfile(agent, inheritedModelProfile)
+    agentsById.set(runtimeAgent.agentId, agentEntry(runtimeAgent, "config", now, failureWindowMs))
   }
 
   for (const row of listAgentConfigs({ includeArchived: false, agentType: "sub_agent" })) {
@@ -1178,7 +1233,8 @@ function buildOrchestrationRegistrySnapshotUnsafe(input: {
       })
       continue
     }
-    agentsById.set(subAgent.agentId, agentEntry(subAgent, "db", now, failureWindowMs))
+    const runtimeAgent = withRuntimeModelProfile(subAgent, inheritedModelProfile)
+    agentsById.set(runtimeAgent.agentId, agentEntry(runtimeAgent, "db", now, failureWindowMs))
   }
 
   for (const team of cfg.orchestration.teams ?? []) {
@@ -1428,6 +1484,9 @@ export function createTeamRegistryService(dependencies: RegistryServiceDependenc
         { source: "manual", now: now() },
       )
       return true
+    },
+    delete(teamId: string): boolean {
+      return deleteTeamConfig(teamId)
     },
   }
 }

@@ -184,7 +184,7 @@ const taskScope: StructuredTaskScope = {
 function promptSource(sourceId: string, usageScope: LoadedPromptSource["usageScope"] = "runtime"): LoadedPromptSource {
   return {
     sourceId,
-    locale: "ko",
+    locale: "en",
     path: `/repo/prompts/${sourceId}.md`,
     version: "1",
     priority: sourceId === "definitions" ? 10 : 40,
@@ -268,12 +268,12 @@ describe("task005 agent prompt bundle", () => {
     expect(result.bundle.sourceProvenance.map((item) => item.sourceId)).toEqual(expect.arrayContaining([
       "profile:sub_agent:agent:researcher",
       "team:team:research",
-      "prompt:identity:ko",
-      "prompt:soul:ko",
-      "prompt:planner:ko",
-      "prompt:bootstrap:ko",
+      "prompt:identity:en",
+      "prompt:soul:en",
+      "prompt:planner:en",
+      "prompt:bootstrap:en",
     ]))
-    expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:ko" && fragment.status === "inactive")).toBe(true)
+    expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en" && fragment.status === "inactive")).toBe(true)
   })
 
   it("renders capability policy when legacy allowlists omit disabledToolNames", () => {

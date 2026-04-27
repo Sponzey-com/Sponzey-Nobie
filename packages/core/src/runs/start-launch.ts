@@ -100,6 +100,7 @@ export async function prepareStartLaunch(
     now: number
     maxDelegationTurns: number
     requestGroupId?: string | undefined
+    lineageRootRunId?: string | undefined
     parentRunId?: string | undefined
     originRunId?: string | undefined
     originRequestGroupId?: string | undefined
@@ -159,7 +160,7 @@ export async function prepareStartLaunch(
     id: params.runId,
     sessionId: params.sessionId,
     requestGroupId: startPlan.requestGroupId,
-    lineageRootRunId: startPlan.requestGroupId,
+    lineageRootRunId: params.lineageRootRunId ?? startPlan.requestGroupId,
     ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
     ...(params.runScope ? { runScope: params.runScope } : {}),
     ...(params.handoffSummary ? { handoffSummary: params.handoffSummary } : {}),

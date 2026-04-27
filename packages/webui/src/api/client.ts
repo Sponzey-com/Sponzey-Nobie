@@ -1104,7 +1104,7 @@ export const api = {
       `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
-  promptSourcesDryRun: (workDir?: string, locale: "ko" | "en" = "ko") =>
+  promptSourcesDryRun: (workDir?: string, locale: "ko" | "en" = "en") =>
     request<{ workDir: string; locale: "ko" | "en"; dryRun: PromptSourceDryRunResult }>(
       `/api/prompt-sources/dry-run?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
@@ -1222,6 +1222,57 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ relationship }),
     }),
+
+  deleteAgentRelationship: (edgeId: string) =>
+    request<{ ok: boolean; relationship: unknown }>(
+      `/api/agent-relationships/${encodeURIComponent(edgeId)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      },
+    ),
+
+  createTopologyAgent: (agent: unknown) =>
+    request<{ ok: boolean; agent: unknown }>("/api/agents", {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    }),
+
+  updateTopologyAgent: (agentId: string, agent: unknown) =>
+    request<{ ok: boolean; agent: unknown }>(`/api/agents/${encodeURIComponent(agentId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ agent }),
+    }),
+
+  archiveTopologyAgent: (agentId: string) =>
+    request<{ ok: boolean; agent: unknown }>(`/api/agents/${encodeURIComponent(agentId)}/archive`, {
+      method: "POST",
+    }),
+
+  createTopologyTeam: (team: unknown) =>
+    request<{ ok: boolean; team: unknown }>("/api/teams", {
+      method: "POST",
+      body: JSON.stringify({ team }),
+    }),
+
+  updateTopologyTeam: (teamId: string, team: unknown) =>
+    request<{ ok: boolean; team: unknown }>(`/api/teams/${encodeURIComponent(teamId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ team }),
+    }),
+
+  archiveTopologyTeam: (teamId: string) =>
+    request<{ ok: boolean; team: unknown }>(`/api/teams/${encodeURIComponent(teamId)}/archive`, {
+      method: "POST",
+    }),
+
+  deleteTopologyTeam: (teamId: string) =>
+    request<{ ok: boolean; teamId: string; deleted: boolean }>(
+      `/api/teams/${encodeURIComponent(teamId)}`,
+      {
+        method: "DELETE",
+      },
+    ),
 
   saveAgentTopologyLayout: (layout: unknown) =>
     request<{ ok: boolean; layout: AgentTopologyResponse["layout"] }>("/api/agent-tree/layout", {

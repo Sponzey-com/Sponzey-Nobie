@@ -14,6 +14,9 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
 import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/embedding.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { chatWithContextPreflight } from "../../runs/context-preflight.js";
+function isOrchestrationMode(value) {
+    return value === "single_nobie" || value === "orchestration";
+}
 function buildLegacySettingsSnapshot() {
     const cfg = getConfig();
     const telegramChannel = getActiveTelegramChannel();
@@ -39,6 +42,11 @@ function buildLegacySettingsSnapshot() {
             maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
             allowedCommands: cfg.security.allowedCommands,
             allowedPaths: cfg.security.allowedPaths,
+        },
+        orchestration: {
+            mode: cfg.orchestration.mode ?? "single_nobie",
+            featureFlagEnabled: cfg.orchestration.featureFlagEnabled === true,
+            maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
         },
         search: {
             webProvider: cfg.search.web?.provider ?? "duckduckgo",
@@ -185,6 +193,20 @@ export function registerSettingsRoute(app) {
                 rawSec.allowedCommands = sec.allowedCommands;
             if (Array.isArray(sec.allowedPaths))
                 rawSec.allowedPaths = sec.allowedPaths;
+        }
+        if (body.orchestration && typeof body.orchestration === "object") {
+            const orchestration = body.orchestration;
+            if (!raw.orchestration)
+                raw.orchestration = {};
+            const rawOrchestration = raw.orchestration;
+            if (isOrchestrationMode(orchestration.mode))
+                rawOrchestration.mode = orchestration.mode;
+            if (typeof orchestration.featureFlagEnabled === "boolean") {
+                rawOrchestration.featureFlagEnabled = orchestration.featureFlagEnabled;
+            }
+            if (typeof orchestration.maxDelegationTurns === "number") {
+                rawOrchestration.maxDelegationTurns = Math.max(0, Math.floor(orchestration.maxDelegationTurns));
+            }
         }
         if (body.search && typeof body.search === "object") {
             const s = body.search;

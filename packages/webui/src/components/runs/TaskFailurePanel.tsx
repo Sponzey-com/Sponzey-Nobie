@@ -1,4 +1,5 @@
 import type { TaskMonitorFailure } from "../../lib/task-monitor"
+import { CollapsibleText } from "./CollapsibleText"
 
 export function TaskFailurePanel({
   failure,
@@ -22,18 +23,28 @@ export function TaskFailurePanel({
           {displayText(failure.sourceAttemptLabel || failure.status)}
         </span>
       </div>
-      <div className="mt-3 break-words text-sm leading-6 text-red-900 [overflow-wrap:anywhere]">
-        {displayText(failure.summary)}
-      </div>
+      <CollapsibleText
+        value={displayText(failure.summary)}
+        threshold={180}
+        clampLines={3}
+        showMoreLabel={text("전체 보기", "Show more")}
+        showLessLabel={text("접기", "Show less")}
+        className="mt-3 break-words text-sm leading-6 text-red-900 [overflow-wrap:anywhere]"
+        buttonClassName="mt-1 inline-flex text-xs font-semibold text-red-700 underline-offset-2 hover:underline"
+      />
       {failure.detailLines.length > 0 ? (
         <div className="mt-3 space-y-2">
           {failure.detailLines.map((detail, index) => (
-            <div
+            <CollapsibleText
               key={`${failure.title}:${index}`}
+              value={displayText(detail)}
+              threshold={160}
+              clampLines={3}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
               className="rounded-xl border border-red-100 bg-white/80 px-3 py-2 text-sm leading-6 text-red-800 break-words [overflow-wrap:anywhere]"
-            >
-              {displayText(detail)}
-            </div>
+              buttonClassName="mt-1 inline-flex text-xs font-semibold text-red-700 underline-offset-2 hover:underline"
+            />
           ))}
         </div>
       ) : null}

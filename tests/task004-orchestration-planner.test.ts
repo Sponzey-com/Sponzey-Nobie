@@ -418,7 +418,7 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.plan.fallbackStrategy.reasonCode).toBe("explicit_agent_target_unavailable")
   })
 
-  it("marks an explicit team target as requiring team expansion before execution", () => {
+  it("plans explicit team targets as team execution tasks", () => {
     const member = subAgent({ agentId: "agent:team-member", teamIds: ["team:research"] })
     const outsider = subAgent({ agentId: "agent:outsider" })
     const result = buildOrchestrationPlan({
@@ -435,14 +435,63 @@ describe("task004 orchestration registry and planner", () => {
       idProvider: () => "plan:team",
     })
 
-    expect(result.plan.delegatedTasks).toHaveLength(0)
+    expect(result.plan.delegatedTasks).toHaveLength(1)
+    expect(result.plan.delegatedTasks[0]).toMatchObject({
+      assignedTeamId: "team:research",
+      executionKind: "delegated_sub_agent",
+    })
     expect(result.plan.directNobieTasks).toHaveLength(0)
-    expect(result.plan.plannerMetadata?.status).toBe("requires_team_expansion")
-    expect(result.plan.fallbackStrategy.reasonCode).toBe("requires_team_expansion")
+    expect(result.plan.plannerMetadata?.status).toBe("planned")
+    expect(result.plan.plannerMetadata?.reasonCodes).toContain("team_execution_plan_planned")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("delegate_failure_single_nobie")
     expect(
       result.candidateScores.find((candidate) => candidate.agentId === "agent:outsider")
         ?.excludedReasonCodes,
     ).toContain("not_explicit_target")
+  })
+
+  it("infers a capable team from request capability and delegates instead of direct Nobie handling", () => {
+    const developer = subAgent({
+      agentId: "agent:developer",
+      displayName: "Developer",
+      teamIds: ["team:development"],
+      specialtyTags: ["development", "coding"],
+    })
+    const research = subAgent({
+      agentId: "agent:researcher",
+      displayName: "Researcher",
+      specialtyTags: ["research"],
+    })
+    const developmentTeam = {
+      ...team("team:development", ["agent:developer"]),
+      displayName: "개발 1팀",
+      nickname: "개발팀",
+      purpose: "코드 구현과 프로젝트 개발",
+      roleHints: ["developer"],
+      requiredCapabilityTags: ["development", "coding", "filesystem_write", "shell_execution"],
+    }
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:4b",
+      parentRequestId: "request:4b",
+      userRequest: "투자 봇 프로젝트를 구현해줘",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registry([developer, research], [developmentTeam]),
+      now: () => now,
+      idProvider: () => "plan:inferred-team",
+    })
+
+    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.plan.delegatedTasks).toHaveLength(1)
+    expect(result.plan.delegatedTasks[0]).toMatchObject({
+      assignedTeamId: "team:development",
+      executionKind: "delegated_sub_agent",
+    })
+    expect(result.plan.delegatedTasks[0]?.planningTrace.reasonCodes).toContain(
+      "inferred_team_target_from_capability",
+    )
+    expect(result.plan.plannerMetadata?.reasonCodes).toContain(
+      "mandatory_delegation_candidate_available",
+    )
   })
 
   it("marks approval required when permission profile threshold requires it", () => {

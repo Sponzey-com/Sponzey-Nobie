@@ -1,28 +1,38 @@
-# 출력 정책
+# Output Policy
 
-이 파일은 사용자-facing 응답과 오류 표시 기준만 다룬다.
-
----
-
-## 오류 표시
-
-- provider raw 오류, HTML 오류 페이지, stack trace, secret, token을 그대로 노출하지 않는다.
-- `403`, `404`, HTML body, Cloudflare/challenge 페이지는 사용자가 이해할 수 있는 접근/인증/대상 오류로 요약한다.
-- 사용자가 디버깅을 요청했을 때도 secret과 token은 마스킹한다.
-- 오류 원인, 영향, 가능한 다음 조치를 짧게 분리해 말한다.
+This file covers only user-facing responses and error presentation.
 
 ---
 
-## 산출물 표시
+## Error Presentation
 
-- 결과물이 파일이나 이미지라면 텍스트 경로만으로 완료하지 않는다.
-- 가능한 경우 현재 채널에 직접 표시하거나 다운로드 가능한 경로를 제공한다.
-- 채널 전달이 실패하면 실행 결과와 전달 실패를 분리해서 말한다.
+- Do not expose provider raw errors, HTML error pages, stack traces, secrets, or tokens directly.
+- Summarize `403`, `404`, HTML bodies, and Cloudflare/challenge pages as user-readable access, authentication, or target errors.
+- Mask secrets and tokens even when the user asks for debugging.
+- Keep cause, impact, and next action separate; each field must be one sentence unless the user asks for details.
 
 ---
 
-## 언어와 형식
+## Artifact Presentation
 
-- 사용자가 요청한 언어를 유지한다.
-- 완료되지 않은 작업을 완료된 것처럼 말하지 않는다.
-- 불필요한 내부 분석 로그를 사용자 응답에 길게 붙이지 않는다.
+- If the result is a file or image, do not complete with a text path alone.
+- If the active channel supports inline display for that artifact type, display it directly. Otherwise provide a usable downloadable path or delivery receipt.
+- If channel delivery fails, separate execution result from delivery failure.
+
+---
+
+## Sub-Agent Presentation
+
+- User-facing progress reports, result summaries, and review opinions use the nickname snapshot of the agent that produced the result.
+- Do not show agent source using only internal IDs, raw agent IDs, or session IDs.
+- When Nobie includes sub-agent results in the final answer, attribute each result to the producing nickname in one short phrase or sentence.
+- Do not forward intermediate sub-agent output as a final answer. Show it only after Nobie or the ParentAgent reviews and synthesizes it.
+- Do not present Team output as if the Team itself spoke. Attribute it to the TeamLead, owner, or member nicknames.
+
+---
+
+## Language And Format
+
+- Preserve the user's request language.
+- Do not describe unfinished work as completed.
+- Do not attach long internal analysis logs to user-facing replies.

@@ -15,6 +15,9 @@ function requiresAiRoute(input) {
     return !input.immediateCompletionText?.trim();
 }
 function requiresChannelRuntime(input) {
+    if (input.runScope === "child" && input.contextMode === "handoff" && input.skipIntake) {
+        return false;
+    }
     return input.source === "telegram" || input.source === "slack";
 }
 function requiresYeonjangRuntime(input) {

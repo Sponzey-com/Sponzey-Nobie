@@ -4,12 +4,37 @@ import { cancelRootRun, getRootRun } from "../../runs/store.js";
 import { startIngressRun } from "../../runs/ingress.js";
 import { createInboundMessageRecord } from "../../runs/request-isolation.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
-import { findChannelMessageRef, insertChannelMessageRef } from "../../db/index.js";
+import { findChannelMessageRef, findLatestChannelMessageRefForThread, insertChannelMessageRef } from "../../db/index.js";
 import { createSlackChunkDeliveryHandler } from "./chunk-delivery.js";
 import { clearActiveSlackConversationForSession, handleSlackApprovalAction, handleSlackApprovalMessage, registerSlackApprovalHandler, setActiveSlackConversationForSession } from "./approval-handler.js";
 import { SlackResponder } from "./responder.js";
 import { getOrCreateSlackSession, resolveSlackSessionKey } from "./session.js";
 const log = createLogger("channel:slack");
+export function findSlackReplyTaskRef(params) {
+    const exactMessageRef = findChannelMessageRef({
+        source: "slack",
+        externalChatId: params.channelId,
+        externalMessageId: params.messageTs,
+        externalThreadId: params.threadTs,
+    });
+    if (exactMessageRef)
+        return exactMessageRef;
+    if (params.threadTs === params.messageTs)
+        return undefined;
+    const threadRootRef = findChannelMessageRef({
+        source: "slack",
+        externalChatId: params.channelId,
+        externalMessageId: params.threadTs,
+        externalThreadId: params.threadTs,
+    });
+    if (threadRootRef)
+        return threadRootRef;
+    return findLatestChannelMessageRefForThread({
+        source: "slack",
+        externalChatId: params.channelId,
+        externalThreadId: params.threadTs,
+    });
+}
 export class SlackChannel {
     config;
     socket = null;
@@ -194,12 +219,7 @@ export class SlackChannel {
         setActiveSlackConversationForSession(sessionId, channelId, userId, threadTs);
         const responder = new SlackResponder(this.config, channelId, threadTs);
         let startedRunId = "";
-        const repliedTaskRef = findChannelMessageRef({
-            source: "slack",
-            externalChatId: channelId,
-            externalMessageId: messageTs,
-            externalThreadId: threadTs,
-        });
+        const repliedTaskRef = findSlackReplyTaskRef({ channelId, messageTs, threadTs });
         try {
             if (repliedTaskRef) {
                 const cancelled = cancelRootRun(repliedTaskRef.root_run_id);

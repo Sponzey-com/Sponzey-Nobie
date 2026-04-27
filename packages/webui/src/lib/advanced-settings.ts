@@ -1,6 +1,14 @@
 import { pickUiText, type UiLanguage } from "../stores/uiLanguage"
 
-export type AdvancedSettingsTabId = "ai" | "channels" | "yeonjang" | "memory" | "schedules" | "tool_permissions" | "release"
+export type AdvancedSettingsTabId =
+  | "ai"
+  | "orchestration"
+  | "channels"
+  | "yeonjang"
+  | "memory"
+  | "schedules"
+  | "tool_permissions"
+  | "release"
 
 export interface AdvancedSettingsTabDefinition {
   id: AdvancedSettingsTabId
@@ -12,6 +20,7 @@ export interface AdvancedSettingsTabDefinition {
 
 export const ADVANCED_SETTINGS_TAB_ORDER: AdvancedSettingsTabId[] = [
   "ai",
+  "orchestration",
   "channels",
   "yeonjang",
   "memory",
@@ -29,6 +38,13 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
       description: t("단일 AI provider, endpoint, 기본 모델, 인증 상태를 관리합니다.", "Manage the single AI provider, endpoint, default model, and credential state."),
       capabilityKey: "ai.backends",
       savesDraft: true,
+    },
+    {
+      id: "orchestration",
+      label: t("오케스트레이션", "Orchestration"),
+      description: t("마스터 노비와 서브 에이전트 실행 모드를 설정합니다.", "Configure master Nobie and sub-agent execution mode."),
+      capabilityKey: "settings.control",
+      savesDraft: false,
     },
     {
       id: "channels",
@@ -86,6 +102,7 @@ export function hasMultipleAiConnectionCreationTab(tabs: AdvancedSettingsTabDefi
 export function resolveAdvancedSettingsTabFromPath(pathname: string): AdvancedSettingsTabId {
   const normalized = pathname.toLowerCase()
   if (normalized.startsWith("/advanced/channels")) return "channels"
+  if (normalized.startsWith("/advanced/orchestration")) return "orchestration"
   if (normalized.startsWith("/advanced/extensions")) return "yeonjang"
   if (normalized.startsWith("/advanced/memory")) return "memory"
   if (normalized.startsWith("/advanced/tools")) return "tool_permissions"
@@ -98,6 +115,8 @@ export function resolveAdvancedSettingsPath(tabId: AdvancedSettingsTabId): strin
   switch (tabId) {
     case "channels":
       return "/advanced/channels"
+    case "orchestration":
+      return "/advanced/orchestration"
     case "yeonjang":
       return "/advanced/extensions"
     case "memory":
