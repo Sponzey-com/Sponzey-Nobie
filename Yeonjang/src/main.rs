@@ -3,6 +3,7 @@
 mod automation;
 mod features;
 mod gui;
+mod icon;
 mod mqtt;
 mod node;
 mod platform;
@@ -11,6 +12,7 @@ mod settings;
 
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 
@@ -39,6 +41,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(output_path) = parse_flag_value(&args, "--write-icon") {
+        icon::write_bundle_icon_png(Path::new(&output_path))?;
+        return Ok(());
+    }
+
     if args.iter().any(|arg| arg == "--stdio") {
         run_stdio()?;
         return Ok(());
@@ -50,7 +57,7 @@ fn main() -> Result<()> {
     }
 
     eprintln!(
-        "Usage: nobie-yeonjang [--gui | --stdio | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
+        "Usage: nobie-yeonjang [--gui | --stdio | --write-icon <path> | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
     );
     std::process::exit(2);
 }

@@ -1898,36 +1898,13 @@ fn sanitize_token(value: &str) -> String {
 }
 
 fn build_tray_icon() -> Result<TrayIconImage> {
-    let (rgba, width, height) = build_icon_rgba();
+    let (rgba, width, height) = crate::icon::build_icon_rgba()?;
     TrayIconImage::from_rgba(rgba, width, height).map_err(|error| anyhow!(error.to_string()))
 }
 
 fn build_window_icon() -> Result<window::Icon> {
-    let (rgba, width, height) = build_icon_rgba();
+    let (rgba, width, height) = crate::icon::build_icon_rgba()?;
     window::icon::from_rgba(rgba, width, height).map_err(|error| anyhow!(error.to_string()))
-}
-
-fn build_icon_rgba() -> (Vec<u8>, u32, u32) {
-    let width = 32;
-    let height = 32;
-    let mut rgba = Vec::with_capacity(width * height * 4);
-
-    for y in 0..height {
-        for x in 0..width {
-            let edge = x < 3 || y < 3 || x >= width - 3 || y >= height - 3;
-            let diagonal = (x as i32 - y as i32).abs() <= 2;
-            let (r, g, b, a) = if edge {
-                (32, 36, 46, 255)
-            } else if diagonal {
-                (207, 90, 43, 255)
-            } else {
-                (244, 237, 226, 255)
-            };
-            rgba.extend_from_slice(&[r, g, b, a]);
-        }
-    }
-
-    (rgba, width as u32, height as u32)
 }
 
 fn load_ui_font() -> Option<(String, Vec<u8>)> {

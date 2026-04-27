@@ -10,6 +10,8 @@
     <string>Yeonjang</string>
     <key>CFBundleIdentifier</key>
     <string>com.sponzey.nobie.yeonjang</string>
+    <key>CFBundleIconFile</key>
+    <string>YeonjangIcon.png</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
