@@ -7,20 +7,21 @@ const MEMORY_FILENAMES = ["NOBIE.md", "WIZBY.md", "HOWIE.md"];
 const PROMPTS_DIRNAME = "prompts";
 const PROMPT_ASSEMBLY_POLICY_VERSION = 1;
 const PROMPT_SOURCE_DEFINITIONS = [
-    { sourceId: "definitions", filenames: { ko: "definitions.md", en: "definitions.md.en" }, priority: 10, required: true, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "identity", filenames: { ko: "identity.md", en: "identity.md.en" }, priority: 20, required: true, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "user", filenames: { ko: "user.md", en: "user.md.en" }, priority: 30, required: true, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "soul", filenames: { ko: "soul.md", en: "soul.md.en" }, priority: 40, required: true, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "planner", filenames: { ko: "planner.md", en: "planner.md.en" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "memory_policy", filenames: { ko: "memory_policy.md", en: "memory_policy.md.en" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "tool_policy", filenames: { ko: "tool_policy.md", en: "tool_policy.md.en" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.md", en: "web_retrieval_planner.md.en" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
-    { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.md", en: "recovery_policy.md.en" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "completion_policy", filenames: { ko: "completion_policy.md", en: "completion_policy.md.en" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "output_policy", filenames: { ko: "output_policy.md", en: "output_policy.md.en" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "channel", filenames: { ko: "channel.md", en: "channel.md.en" }, priority: 110, required: false, usageScope: "runtime", defaultRuntime: true },
-    { sourceId: "bootstrap", filenames: { ko: "bootstrap.md", en: "bootstrap.md.en" }, priority: 120, required: true, usageScope: "first_run", defaultRuntime: false },
+    { sourceId: "definitions", filenames: { ko: "definitions.ko.md", en: "definitions.md" }, priority: 10, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "identity", filenames: { ko: "identity.ko.md", en: "identity.md" }, priority: 20, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "user", filenames: { ko: "user.ko.md", en: "user.md" }, priority: 30, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "soul", filenames: { ko: "soul.ko.md", en: "soul.md" }, priority: 40, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "planner", filenames: { ko: "planner.ko.md", en: "planner.md" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "memory_policy", filenames: { ko: "memory_policy.ko.md", en: "memory_policy.md" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "tool_policy", filenames: { ko: "tool_policy.ko.md", en: "tool_policy.md" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.ko.md", en: "web_retrieval_planner.md" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
+    { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.ko.md", en: "recovery_policy.md" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "completion_policy", filenames: { ko: "completion_policy.ko.md", en: "completion_policy.md" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "output_policy", filenames: { ko: "output_policy.ko.md", en: "output_policy.md" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "channel", filenames: { ko: "channel.ko.md", en: "channel.md" }, priority: 110, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "bootstrap", filenames: { ko: "bootstrap.ko.md", en: "bootstrap.md" }, priority: 120, required: true, usageScope: "first_run", defaultRuntime: false },
 ];
+const DEFAULT_PROMPT_SOURCE_SEED_LOCALES = ["en"];
 export const REQUIRED_RUNTIME_PROMPT_SOURCE_IDS = PROMPT_SOURCE_DEFINITIONS
     .filter((definition) => definition.required && definition.defaultRuntime)
     .map((definition) => definition.sourceId);
@@ -560,7 +561,7 @@ export function ensurePromptSourceFiles(workDir) {
         const defaults = DEFAULT_PROMPT_SOURCE_CONTENT[definition.sourceId];
         if (!defaults)
             continue;
-        for (const locale of ["ko", "en"]) {
+        for (const locale of DEFAULT_PROMPT_SOURCE_SEED_LOCALES) {
             const filename = definition.filenames[locale];
             const target = join(promptsDir, filename);
             if (existsSync(target)) {
@@ -703,7 +704,7 @@ function buildPromptRegistrySignature(sources) {
     ].join(":"))
         .join("|");
 }
-export function loadSystemPromptSourceAssembly(workDir, locale = "ko", states = []) {
+export function loadSystemPromptSourceAssembly(workDir, locale = "en", states = []) {
     const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states);
     const runtimeSources = selectRuntimePromptSources(registry, locale);
     if (runtimeSources.length === 0)
@@ -735,7 +736,7 @@ export function loadSystemPromptSourceAssembly(workDir, locale = "ko", states = 
     promptAssemblyCache.set(cacheKey, assembly);
     return assembly;
 }
-export function loadFirstRunPromptSourceAssembly(workDir, locale = "ko", states = []) {
+export function loadFirstRunPromptSourceAssembly(workDir, locale = "en", states = []) {
     const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states);
     const firstRunSources = selectPromptSourcesByUsageScope(registry, locale, "first_run");
     if (firstRunSources.length === 0)
@@ -960,7 +961,7 @@ export function rollbackPromptSourceBackup(input) {
         previousChecksum: checksumContent(normalizePromptSourceComparableContent(previousContent)),
     };
 }
-export function dryRunPromptSourceAssembly(workDir, locale = "ko", states = []) {
+export function dryRunPromptSourceAssembly(workDir, locale = "en", states = []) {
     const assembly = loadSystemPromptSourceAssembly(workDir, locale, states);
     const sources = assembly?.sources ?? [];
     return {
@@ -993,8 +994,6 @@ export function checkPromptSourceLocaleParity(workDir) {
         const enPath = join(promptsDir, definition.filenames.en);
         const hasKo = existsSync(koPath);
         const hasEn = existsSync(enPath);
-        if (!hasKo)
-            issues.push({ sourceId: definition.sourceId, code: "missing_locale", locale: "ko", message: `${definition.sourceId} is missing Korean source` });
         if (!hasEn)
             issues.push({ sourceId: definition.sourceId, code: "missing_locale", locale: "en", message: `${definition.sourceId} is missing English source` });
         if (!hasKo || !hasEn)

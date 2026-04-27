@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
+import { CollapsibleText } from "./CollapsibleText"
 import { RunTargetBadge } from "./RunTargetBadge"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
 
@@ -69,18 +70,19 @@ export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: {
       <div className="space-y-4">
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
           <div className="text-xs font-semibold text-stone-500">{text("현재 상황", "Current situation")}</div>
-          <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
-            {displayText(run.summary)}
-          </div>
+          <CollapsibleText
+            value={displayText(run.summary)}
+            threshold={220}
+            clampLines={4}
+            showMoreLabel={text("전체 보기", "Show more")}
+            showLessLabel={text("접기", "Show less")}
+            className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]"
+          />
         </div>
 
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
           <div className="text-xs font-semibold text-stone-500">{text("진행 정보", "Run details")}</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <InfoRow
-              label={text("후속 시도 한도", "Follow-up limit")}
-              value={`${run.delegationTurnCount} / ${run.maxDelegationTurns === 0 ? text("무제한", "Unlimited") : run.maxDelegationTurns}`}
-            />
             <InfoRow
               label={text("참조 범위", "Context range")}
               value={toContextModeText(run.contextMode, language)}
@@ -107,9 +109,14 @@ export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: {
         {diagnosticMode ? (
           <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
             <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
-            <div className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]">
-              {displayText(describeDiagnosticReason(run))}
-            </div>
+            <CollapsibleText
+              value={displayText(describeDiagnosticReason(run))}
+              threshold={220}
+              clampLines={4}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-2 break-words text-sm leading-7 text-stone-800 [overflow-wrap:anywhere]"
+            />
           </div>
         ) : null}
 
@@ -118,7 +125,15 @@ export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: {
           <div className="mt-3 space-y-2 text-sm text-stone-700">
             {run.recentEvents.length > 0 ? run.recentEvents.slice(-5).reverse().map((event) => (
               <div key={event.id} className="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2.5">
-                <div className="min-w-0 flex-1 break-words leading-6 [overflow-wrap:anywhere]">{displayText(event.label)}</div>
+                <CollapsibleText
+                  value={displayText(event.label)}
+                  threshold={160}
+                  clampLines={2}
+                  showMoreLabel={text("전체 보기", "Show more")}
+                  showLessLabel={text("접기", "Show less")}
+                  className="min-w-0 flex-1 break-words leading-6 [overflow-wrap:anywhere]"
+                  buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
+                />
                 <div className="shrink-0 text-xs text-stone-500">{formatTime(event.at)}</div>
               </div>
             )) : <div className="rounded-xl border border-dashed border-stone-200 bg-white px-3 py-3 text-sm text-stone-500">{text("기록이 없습니다.", "No records yet.")}</div>}

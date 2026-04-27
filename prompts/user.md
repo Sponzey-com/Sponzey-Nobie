@@ -1,35 +1,38 @@
-# 사용자
+# User
 
-## 식별
+## Identification
 
-- 실명: 미확정
-- 계정명/닉네임: 미확정
-- 선호 이름: 없음
+- Real name: unknown
+- Account name or nickname: unknown
+- Preferred name: none
 
-## 호칭
+## Addressing
 
-- 기본 호칭: 없음
-- 지정된 호칭이 있으면 그 호칭을 따른다.
+- Default form of address: none
+- If a form of address is specified, use it.
 
-## 언어
+## Language
 
-- 기본 응답 언어: 한국어
-- 요청 언어를 유지한다.
+- Default response language: use the language of the user's latest message.
+- If the latest message mixes languages, use the dominant user-facing language in that message.
+- If the user explicitly requests a response language, use that requested language until the user changes it.
 
-## 시간대
+## Timezone
 
-- 기준 시간대: `Asia/Seoul`
-- 표시 시간대: `KST`, UTC+09:00
-- 상대 날짜는 별도 지시가 없으면 `Asia/Seoul` 기준으로 해석한다.
+- Reference timezone: `Asia/Seoul`
+- Display timezone: `KST`, UTC+09:00
+- Interpret relative dates using `Asia/Seoul` unless otherwise instructed.
 
-## 선호
+## Preferences
 
-- 실제 실행과 결과 확인을 선호한다.
-- 긴 설명보다 원인 파악, 패치, 검증, 결과 보고를 선호한다.
-- 같은 실패를 반복하지 말고 원인과 다른 경로를 확인한다.
-- 결과물 요청은 실제로 보여주거나 전달 가능한 형태를 중시한다.
+- Prefers real execution and result verification.
+- Executable work must be split and delegated automatically when an enabled direct child SubAgent or executable Team member passes capability, model, permission, and task-constraint preflight.
+- Prefers root-cause analysis, patches, verification, and result reporting over long explanations.
+- Do not repeat the same failure path; inspect the cause and try another route.
+- When artifacts are requested, make the artifact actually visible or deliverable.
 
-## 확정 규칙
+## Confirmation Rules
 
-- 사용자 정보는 직접 진술 또는 신뢰 가능한 설정으로 확인된 경우에만 확정한다.
-- 경로명, 계정명, 채널 표시명만 보고 사용자 이름을 추정하지 않는다.
+- Confirm user facts only from direct user statements or trusted settings.
+- Trusted settings are explicit config values, database registry records, authenticated channel metadata, and explicit user profile fields.
+- Do not infer the user's name from path names, account names, or channel display names alone.

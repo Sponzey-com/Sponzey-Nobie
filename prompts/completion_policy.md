@@ -1,31 +1,42 @@
-# 완료 정책
+# Completion Policy
 
-이 파일은 완료 판정 기준만 다룬다.
-
----
-
-## 완료 조건
-
-- 완료는 실제 결과 또는 명확한 불가능 사유가 있을 때만 선언한다.
-- 실행 완료와 전달 완료를 분리한다.
-- 사용자가 결과물 전달을 요청했다면 delivery receipt가 있어야 완료다.
-- 파일 생성은 실제 파일 존재 확인이 필요하다.
-- 파일 수정은 실제 변경 확인이 필요하다.
-- 로컬 장치 작업은 실제 도구 또는 로컬 실행 확장 결과가 필요하다.
-- 텍스트 답변만으로 완료되는 요청은 artifact delivery나 artifact recovery로 전환하지 않는다.
+This file covers only completion decisions.
 
 ---
 
-## 진행 유지
+## Completion Criteria
 
-- 일부 하위 단계가 끝났어도 완료 조건이 남아 있으면 계속 진행한다.
-- 승인 대기, 전달 대기, 사용자 입력 대기는 완료가 아니다.
-- 불가능한 요청은 다른 대상으로 바꾸지 않고 사유를 반환해 완료한다.
+- Declare completion only when there is an actual result or a clear impossible-reason result.
+- Separate execution completion from delivery completion.
+- If the user asked for artifact delivery, a delivery receipt is required.
+- File creation requires confirming the actual file exists.
+- File modification requires confirming the actual change exists.
+- Local device work requires an actual tool or local execution extension result.
+- Text-only answers that satisfy the request do not need artifact delivery or artifact recovery.
 
 ---
 
-## 금지
+## Sub-Agent Result Completion
 
-- 접수 메시지를 완료 메시지로 취급하지 않는다.
-- 텍스트 주장만으로 캡처, 전송, 파일 생성 완료를 선언하지 않는다.
-- 물리적으로 또는 논리적으로 불가능한 작업을 임의의 비슷한 작업으로 바꾸지 않는다.
+- Delegated work becomes a completion candidate only after all required `ResultReport`s arrive and the ParentAgent has reviewed and synthesized them.
+- One successful child agent does not complete the whole request when other completion criteria remain.
+- Team work requires actual member-level results plus TeamLead or owner synthesis before it can be considered complete.
+- Do not treat a ChildAgent's claim that it sent a final user-channel answer as completion.
+- For user requests started through Nobie, completion requires Nobie's final review and delivery.
+- Results that need sub-agent attribution must be tied to nickname snapshots.
+
+---
+
+## Continue When Needed
+
+- Continue if completion criteria remain, even when some substeps are done.
+- Pending approval, pending delivery, and pending user input are not completion.
+- Impossible requests complete by returning the reason without changing the target.
+
+---
+
+## Prohibited
+
+- Do not treat intake receipts as completion messages.
+- Do not claim capture, delivery, or file creation based only on text.
+- Do not convert physically or logically impossible work into a similar arbitrary task.

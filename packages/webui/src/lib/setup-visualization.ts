@@ -372,13 +372,6 @@ function mapFieldValidationTargets(
           clusterIds: [],
         }
       }
-      if (fieldKey === "maxDelegationTurns") {
-        return {
-          nodeIds: ["node:security:delegation_limit", "node:security:restricted_zone"],
-          edgeIds: ["edge:security:approval:delegation", "edge:security:delegation:restricted"],
-          clusterIds: [],
-        }
-      }
       break
     case "channels":
       if (fieldKey === "telegramEnabled") {

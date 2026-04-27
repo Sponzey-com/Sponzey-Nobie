@@ -82,10 +82,10 @@ export function SetupVisualizationCanvas({
                       : scene.id === "scene:mcp"
                         ? t("MCP 서버를 transport cluster로 나누고, 준비된 외부 도구 수를 capability map으로 보여줍니다.", "Groups MCP servers by transport cluster and shows external tool readiness as a capability map.")
                         : scene.id === "scene:skills"
-                          ? t("Skill을 source cluster로 나누고, 어떤 항목이 즉시 사용 가능하거나 검증이 필요한지 보여줍니다.", "Groups skills by source cluster and shows which entries are ready or still need verification.")
-                          : scene.id === "scene:security"
-                            ? t("승인 게이트, 타임아웃, 후속 처리 제한이 어디서 위험 구역으로 이어지는지 경계 지도로 보여줍니다.", "Shows how the approval gate, timeout, and delegation limit flow into the restricted zone.")
-                            : scene.id === "scene:channels"
+                        ? t("Skill을 source cluster로 나누고, 어떤 항목이 즉시 사용 가능하거나 검증이 필요한지 보여줍니다.", "Groups skills by source cluster and shows which entries are ready or still need verification.")
+                        : scene.id === "scene:security"
+                          ? t("승인 게이트와 타임아웃이 어디서 위험 구역으로 이어지는지 경계 지도로 보여줍니다.", "Shows how the approval gate and timeout flow into the restricted zone.")
+                          : scene.id === "scene:channels"
                               ? t("WebUI를 기본 채널로 두고 Telegram과 Slack의 policy/runtime 상태를 네트워크 맵으로 보여줍니다.", "Uses WebUI as the root channel and shows Telegram and Slack policy/runtime state as a network map.")
                               : scene.id === "scene:remote_access"
                                 ? t("Host/port, auth boundary, MQTT bridge, external client zone을 하나의 연결 구조로 묶어 보여줍니다.", "Shows host/port, auth boundary, MQTT bridge, and the external client zone as one connection structure.")
@@ -557,7 +557,6 @@ function SecuritySceneLayout({
   const safeZone = nodeMap.get("node:security:safe_zone")
   const approvalGate = nodeMap.get("node:security:approval_gate")
   const timeoutPolicy = nodeMap.get("node:security:timeout_policy")
-  const delegationLimit = nodeMap.get("node:security:delegation_limit")
   const restrictedZone = nodeMap.get("node:security:restricted_zone")
 
   return (
@@ -573,19 +572,16 @@ function SecuritySceneLayout({
         {approvalGate ? (
           <VisualizationNodeCard node={approvalGate} language={language} selected={approvalGate.id === selectedNodeId} onSelect={onSelectNode} large />
         ) : null}
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4">
           {timeoutPolicy ? (
             <VisualizationNodeCard node={timeoutPolicy} language={language} selected={timeoutPolicy.id === selectedNodeId} onSelect={onSelectNode} />
           ) : null}
-          {delegationLimit ? (
-            <VisualizationNodeCard node={delegationLimit} language={language} selected={delegationLimit.id === selectedNodeId} onSelect={onSelectNode} />
-          ) : null}
         </div>
-        <ConnectorLabel text={t("Timeout fallback와 delegation limit이 같이 바뀌면 제한 구역 위험도가 함께 달라집니다.", "Changing timeout fallback and the delegation limit shifts the restricted-zone risk together.")} />
+        <ConnectorLabel text={t("Timeout fallback이 바뀌면 제한 구역 위험도가 함께 달라집니다.", "Changing timeout fallback shifts the restricted-zone risk with it.")} />
       </div>
 
       <div className="space-y-4">
-        <ConnectorLabel text={t("승인이 꺼지거나 allow fallback, unlimited delegation이 겹치면 이 구역이 즉시 경고 상태가 됩니다.", "If approvals are off or allow fallback or unlimited delegation stack up, this zone turns risky immediately.")} />
+        <ConnectorLabel text={t("승인이 꺼지거나 allow fallback이 설정되면 이 구역이 즉시 경고 상태가 됩니다.", "If approvals are off or allow fallback is set, this zone turns risky immediately.")} />
         {restrictedZone ? (
           <VisualizationNodeCard node={restrictedZone} language={language} selected={restrictedZone.id === selectedNodeId} onSelect={onSelectNode} large />
         ) : null}

@@ -17,6 +17,7 @@ export interface McpServerStatus {
     command?: string;
     url?: string;
     error?: string;
+    agentSessionCount?: number;
     tools: McpToolStatus[];
 }
 export interface McpSummary {
@@ -37,6 +38,16 @@ declare class McpRegistry {
     closeAll(): Promise<void>;
     private loadServer;
     private registerTools;
+    private agentSessionKey;
+    private getAgentClient;
+    private callAgentScopedTool;
+    getAgentSessionSnapshot(): Array<{
+        serverName: string;
+        sessionKey: string;
+        agentId: string;
+        bindingId?: string;
+        secretScopeId: string;
+    }>;
     private unregisterTools;
 }
 export declare const mcpRegistry: McpRegistry;

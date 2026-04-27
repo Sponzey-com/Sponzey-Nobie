@@ -1,13 +1,18 @@
 import type { AgentChunk } from "../../agent/index.js"
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
-import { deliverArtifactOnce, type ChunkDeliveryReceipt, type RunChunkDeliveryHandler } from "../../runs/delivery.js"
-import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
+import {
+  type ChunkDeliveryReceipt,
+  type RunChunkDeliveryHandler,
+  deliverArtifactOnce,
+} from "../../runs/delivery.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js"
+import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 
 export interface SlackChunkResponder {
   sendToolStatus(toolName: string): Promise<string>
   updateToolStatus(messageId: string, toolName: string, success: boolean): Promise<void>
+  clearToolStatus?(messageId: string): Promise<void>
   sendFile(filePath: string, caption?: string): Promise<string>
   sendFinalResponse(text: string): Promise<string[]>
   sendError(message: string): Promise<string>
@@ -37,18 +42,28 @@ export interface SlackChunkDeliveryContext {
 function isArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryResultDetails {
   if (!value || typeof value !== "object") return false
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
-  return candidate.kind === "artifact_delivery"
-    && candidate.channel === "slack"
-    && typeof candidate.filePath === "string"
-    && typeof candidate.size === "number"
+  return (
+    candidate.kind === "artifact_delivery" &&
+    candidate.channel === "slack" &&
+    typeof candidate.filePath === "string" &&
+    typeof candidate.size === "number"
+  )
 }
 
-function buildSlackArtifactFallbackMessage(fileName: string, downloadUrl?: string, caption?: string): string {
+function buildSlackArtifactFallbackMessage(
+  fileName: string,
+  downloadUrl?: string,
+  caption?: string,
+): string {
   const title = caption?.trim() || fileName
   if (!downloadUrl) {
     return `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`
   }
   return `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`
+}
+
+function shouldSendToolStartStatus(toolName: string): boolean {
+  return toolName !== "shell_exec"
 }
 
 export function createSlackChunkDeliveryHandler(
@@ -71,7 +86,7 @@ export function createSlackChunkDeliveryHandler(
     })
   }
 
-  return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | void> => {
+  return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | undefined> => {
     if (chunk.type === "text") {
       if (toolOwnedResponseActive) return
       bufferedText += chunk.delta
@@ -79,6 +94,7 @@ export function createSlackChunkDeliveryHandler(
     }
 
     if (chunk.type === "tool_start") {
+      if (!shouldSendToolStartStatus(chunk.toolName)) return
       const messageId = await context.responder.sendToolStatus(chunk.toolName)
       toolMessageIds.set(chunk.toolName, messageId)
       recordIfRunPresent(messageId, "tool")
@@ -88,8 +104,16 @@ export function createSlackChunkDeliveryHandler(
     if (chunk.type === "tool_end") {
       const toolMessageId = toolMessageIds.get(chunk.toolName)
       if (toolMessageId) {
-        await context.responder.updateToolStatus(toolMessageId, chunk.toolName, chunk.success)
+        if (chunk.success) {
+          await context.responder.clearToolStatus?.(toolMessageId)
+        } else {
+          await context.responder.updateToolStatus(toolMessageId, chunk.toolName, false)
+        }
         toolMessageIds.delete(chunk.toolName)
+      } else if (!chunk.success) {
+        const failureMessageId = await context.responder.sendToolStatus(chunk.toolName)
+        await context.responder.updateToolStatus(failureMessageId, chunk.toolName, false)
+        recordIfRunPresent(failureMessageId, "tool")
       }
 
       const isolatedToolResponse = decideIsolatedToolResponse(chunk)
@@ -104,15 +128,20 @@ export function createSlackChunkDeliveryHandler(
           ...(details.mimeType ? { mimeType: details.mimeType } : {}),
           task: async () => {
             try {
-              const sentMessageId = await context.responder.sendFile(details.filePath, details.caption)
+              const sentMessageId = await context.responder.sendFile(
+                details.filePath,
+                details.caption,
+              )
               recordIfRunPresent(sentMessageId, "assistant")
               return {
-                artifactDeliveries: [{
-                  toolName: chunk.toolName,
-                  channel: "slack" as const,
-                  filePath: details.filePath,
-                  ...(details.caption ? { caption: details.caption } : {}),
-                }],
+                artifactDeliveries: [
+                  {
+                    toolName: chunk.toolName,
+                    channel: "slack" as const,
+                    filePath: details.filePath,
+                    ...(details.caption ? { caption: details.caption } : {}),
+                  },
+                ],
               }
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
@@ -132,24 +161,30 @@ export function createSlackChunkDeliveryHandler(
                 recordIfRunPresent(fallbackMessageId, "assistant")
               }
               return {
-                textDeliveries: [{
-                  channel: "slack" as const,
-                  text: fallbackText,
-                }],
-                ...(artifact.ok && artifact.url ? {
-                  artifactDeliveries: [{
-                    toolName: chunk.toolName,
+                textDeliveries: [
+                  {
                     channel: "slack" as const,
-                    filePath: details.filePath,
-                    url: artifact.url,
-                    ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
-                    ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
-                    previewable: artifact.previewable,
-                    mimeType: artifact.mimeType,
-                    sizeBytes: details.size,
-                    ...(details.caption ? { caption: details.caption } : {}),
-                  }],
-                } : {}),
+                    text: fallbackText,
+                  },
+                ],
+                ...(artifact.ok && artifact.url
+                  ? {
+                      artifactDeliveries: [
+                        {
+                          toolName: chunk.toolName,
+                          channel: "slack" as const,
+                          filePath: details.filePath,
+                          url: artifact.url,
+                          ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
+                          ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
+                          previewable: artifact.previewable,
+                          mimeType: artifact.mimeType,
+                          sizeBytes: details.size,
+                          ...(details.caption ? { caption: details.caption } : {}),
+                        },
+                      ],
+                    }
+                  : {}),
               }
             }
           },
@@ -177,14 +212,16 @@ export function createSlackChunkDeliveryHandler(
       }
       bufferedText = ""
       return {
-        textDeliveries: [{
-          channel: "slack",
-          text: deliveredText,
-          ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
-          ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
-          ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
-          ...(context.agentId ? { agentId: context.agentId } : {}),
-        }],
+        textDeliveries: [
+          {
+            channel: "slack",
+            text: deliveredText,
+            ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+            ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+            ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),
+            ...(context.agentId ? { agentId: context.agentId } : {}),
+          },
+        ],
       }
     }
 

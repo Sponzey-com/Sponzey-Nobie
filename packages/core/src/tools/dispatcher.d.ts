@@ -1,5 +1,16 @@
 import type { ApprovalDecision, ApprovalKind } from "../events/index.js";
 import type { AnyTool, ToolContext, ToolResult } from "./types.js";
+export interface AgentScopedToolDispatchInput {
+    toolName: string;
+    params: Record<string, unknown>;
+    ctx: ToolContext & {
+        agentId: string;
+        capabilityPolicy: NonNullable<ToolContext["capabilityPolicy"]>;
+        auditId: string;
+    };
+    capabilityBindingId: string;
+    resultSharing: "data_exchange" | "result_report_artifact";
+}
 export declare class ToolDispatcher {
     private tools;
     private runApprovalScopes;
@@ -17,6 +28,7 @@ export declare class ToolDispatcher {
         includeIsolated?: boolean;
     }): AnyTool[];
     get(name: string): AnyTool | undefined;
+    dispatchAgentScoped(input: AgentScopedToolDispatchInput): Promise<ToolResult>;
     isToolAvailableForSource(tool: AnyTool, source: ToolContext["source"]): boolean;
     dispatch(name: string, params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
     private getInteractionGuidance;

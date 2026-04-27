@@ -1,7 +1,7 @@
-import { getMemoryWritebackCandidate, insertAuditLog, listMemoryWritebackCandidates, updateMemoryWritebackCandidate, } from "../db/index.js";
 import { createHash } from "node:crypto";
+import { getMemoryWritebackCandidate, insertAuditLog, listMemoryWritebackCandidates, updateMemoryWritebackCandidate, } from "../db/index.js";
+import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag, } from "../security/trust-boundary.js";
 import { storeMemoryDocument } from "./store.js";
-import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag } from "../security/trust-boundary.js";
 const EXPLICIT_MEMORY_PATTERNS = [
     /(?:기억해|기억\s*해|기억해줘|기억\s*해줘|메모해|메모\s*해|저장해|저장\s*해|잊지\s*마)/u,
     /\b(?:remember|memorize|keep in mind|save this|note that|don't forget)\b/i,
@@ -27,7 +27,11 @@ const EPHEMERAL_TOOL_NAMES = new Set([
     "telegram_send_file",
 ]);
 function normalizedContent(value) {
-    return value.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return value
+        .replace(/\r/g, "")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 }
 function buildReviewDedupeKey(params) {
     return createHash("sha256")
@@ -58,18 +62,19 @@ function readStringArrayMetadata(metadata, key) {
         : [];
 }
 function readTrustTagMetadata(metadata) {
-    const value = metadata?.["sourceTrust"];
-    return typeof value === "string" && [
-        "trusted",
-        "user_input",
-        "channel_input",
-        "web_content",
-        "file_content",
-        "tool_result",
-        "mcp_result",
-        "yeonjang_result",
-        "diagnostic",
-    ].includes(value)
+    const value = metadata?.sourceTrust;
+    return typeof value === "string" &&
+        [
+            "trusted",
+            "user_input",
+            "channel_input",
+            "web_content",
+            "file_content",
+            "tool_result",
+            "mcp_result",
+            "yeonjang_result",
+            "diagnostic",
+        ].includes(value)
         ? value
         : undefined;
 }
@@ -78,7 +83,10 @@ function resolveWritebackSourceTrust(params) {
         return "tool_result";
     if (params.kind === "failure")
         return "diagnostic";
-    if (params.source === "webui" || params.source === "cli" || params.source === "telegram" || params.source === "slack") {
+    if (params.source === "webui" ||
+        params.source === "cli" ||
+        params.source === "telegram" ||
+        params.source === "slack") {
         return sourceToTrustTag(params.source);
     }
     return "trusted";
@@ -145,16 +153,23 @@ export function inspectMemoryWritebackSafety(input) {
 export function prepareMemoryWritebackQueueInput(candidate) {
     const safety = inspectMemoryWritebackSafety(candidate);
     const sourceTrust = readTrustTagMetadata(candidate.metadata);
-    const untrustedInjectionBlocked = sourceTrust !== undefined && isUntrustedTag(sourceTrust) && containsPromptInjectionDirective(safety.content);
+    const untrustedInjectionBlocked = sourceTrust !== undefined &&
+        isUntrustedTag(sourceTrust) &&
+        containsPromptInjectionDirective(safety.content);
     const reviewDedupeKey = buildReviewDedupeKey({
         scope: candidate.scope,
         sourceType: candidate.sourceType,
         content: safety.content,
     });
-    const previouslyDiscarded = listMemoryWritebackCandidates({ status: "discarded", limit: 500 }).some((row) => {
+    const previouslyDiscarded = listMemoryWritebackCandidates({
+        status: "discarded",
+        limit: 500,
+    }).some((row) => {
         const metadata = parseMetadata(row.metadata_json);
-        return metadata["reviewDedupeKey"] === reviewDedupeKey
-            || (row.scope === candidate.scope && row.source_type === candidate.sourceType && normalizedContent(row.content) === normalizedContent(safety.content));
+        return (metadata.reviewDedupeKey === reviewDedupeKey ||
+            (row.scope === candidate.scope &&
+                row.source_type === candidate.sourceType &&
+                normalizedContent(row.content) === normalizedContent(safety.content)));
     });
     const blockReasons = [
         ...safety.blockReasons,
@@ -172,16 +187,18 @@ export function prepareMemoryWritebackQueueInput(candidate) {
         ...candidate,
         content: safety.content,
         metadata,
-        ...(blockReasons.length ? { status: "discarded", lastError: `blocked: ${blockReasons.join(", ")}` } : {}),
+        ...(blockReasons.length
+            ? { status: "discarded", lastError: `blocked: ${blockReasons.join(", ")}` }
+            : {}),
     };
 }
 export function isExplicitMemoryRequest(content) {
     const normalized = normalizedContent(content);
-    return normalized.length > 0 && EXPLICIT_MEMORY_PATTERNS.some((pattern) => pattern.test(normalized));
+    return (normalized.length > 0 && EXPLICIT_MEMORY_PATTERNS.some((pattern) => pattern.test(normalized)));
 }
 export function isFlashFeedback(content) {
     const normalized = normalizedContent(content);
-    return normalized.length > 0 && FLASH_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized));
+    return (normalized.length > 0 && FLASH_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized)));
 }
 export function stripExplicitMemoryDirective(content) {
     return normalizedContent(content)
@@ -201,7 +218,8 @@ export function shouldPromoteFlashFeedback(params) {
     if (repeatCount >= 2)
         return true;
     const content = normalizedContent(params.content);
-    return /(?:항상|앞으로\s*항상|반드시|always|from now on|never)/iu.test(content) && isFlashFeedback(content);
+    return (/(?:항상|앞으로\s*항상|반드시|always|from now on|never)/iu.test(content) &&
+        isFlashFeedback(content));
 }
 export function buildRunWritebackCandidates(params) {
     const content = normalizedContent(params.content);
@@ -265,7 +283,8 @@ export function buildRunWritebackCandidates(params) {
     if (params.kind === "success") {
         if (!params.sessionId || isEphemeralToolOutput(params))
             return [];
-        return [{
+        return [
+            {
                 scope: "session",
                 ownerId: params.sessionId,
                 sourceType: "success",
@@ -274,31 +293,36 @@ export function buildRunWritebackCandidates(params) {
                     ...commonMetadata,
                     durableFact: false,
                 },
-            }];
+            },
+        ];
     }
     if (params.kind === "failure") {
-        return [{
+        return [
+            {
                 scope: "diagnostic",
                 ownerId: params.requestGroupId ?? params.runId ?? params.sessionId ?? "diagnostic",
-                sourceType: String(params.metadata?.["title"] ?? "failure"),
+                sourceType: String(params.metadata?.title ?? "failure"),
                 content,
                 metadata: {
                     ...commonMetadata,
                     durableFact: false,
                 },
-            }];
+            },
+        ];
     }
     if (params.kind === "tool_result") {
         if (isEphemeralToolOutput(params))
             return [];
         return params.requestGroupId
-            ? [{
+            ? [
+                {
                     scope: "task",
                     ownerId: params.requestGroupId,
                     sourceType: "tool_result",
                     content,
                     metadata: commonMetadata,
-                }]
+                },
+            ]
             : [];
     }
     if (params.kind === "flash_feedback") {
@@ -343,8 +367,17 @@ function toReviewItem(row) {
     const metadata = parseMetadata(row.metadata_json);
     const safetyReasons = readStringArrayMetadata(metadata, "safetyBlockReasons");
     const safety = safetyReasons.length
-        ? { content: row.content, blockReasons: safetyReasons, masked: metadata["safetyMasked"] === true, blocked: true }
-        : inspectMemoryWritebackSafety({ scope: row.scope, sourceType: row.source_type, content: row.content });
+        ? {
+            content: row.content,
+            blockReasons: safetyReasons,
+            masked: metadata.safetyMasked === true,
+            blocked: true,
+        }
+        : inspectMemoryWritebackSafety({
+            scope: row.scope,
+            sourceType: row.source_type,
+            content: row.content,
+        });
     const repeatExamples = readStringArrayMetadata(metadata, "repeatExamples");
     const sourceChannel = readStringMetadata(metadata, "source");
     const sessionId = readStringMetadata(metadata, "sessionId");
@@ -375,9 +408,12 @@ export function listMemoryWritebackReviewItems(input = {}) {
     return listMemoryWritebackCandidates(input).map(toReviewItem);
 }
 export function buildLearningWritebackCandidate(input) {
-    const confidence = input.item.confidence === "high" ? 0.9
-        : input.item.confidence === "medium" ? 0.75
-            : input.item.confidence === "low" ? 0.55
+    const confidence = input.item.confidence === "high"
+        ? 0.9
+        : input.item.confidence === "medium"
+            ? 0.75
+            : input.item.confidence === "low"
+                ? 0.55
                 : 0.65;
     return {
         agentId: input.agentId,
@@ -403,10 +439,20 @@ function resolveSessionOwner(row, metadata) {
         return row.owner_id;
     return readStringMetadata(metadata, "sessionId");
 }
+function resolveLongTermReviewOwner(row, metadata) {
+    const ownerScoped = metadata.memoryIsolation === "owner_scoped_writeback" ||
+        metadata.crossOwnerWriteback === true ||
+        typeof metadata.targetOwnerId === "string";
+    return ownerScoped ? row.owner_id : "global";
+}
 function mergeReviewMetadata(params) {
-    const reviewDedupeKey = typeof params.metadata["reviewDedupeKey"] === "string"
-        ? params.metadata["reviewDedupeKey"]
-        : buildReviewDedupeKey({ scope: params.row.scope, sourceType: params.row.source_type, content: params.safety.content });
+    const reviewDedupeKey = typeof params.metadata.reviewDedupeKey === "string"
+        ? params.metadata.reviewDedupeKey
+        : buildReviewDedupeKey({
+            scope: params.row.scope,
+            sourceType: params.row.source_type,
+            content: params.safety.content,
+        });
     return {
         ...params.metadata,
         reviewDedupeKey,
@@ -416,7 +462,9 @@ function mergeReviewMetadata(params) {
         ...(params.documentId ? { approvedDocumentId: params.documentId } : {}),
         ...(params.edited ? { edited: true } : {}),
         ...(params.safety.masked ? { safetyMasked: true } : {}),
-        ...(params.safety.blockReasons.length ? { safetyBlockReasons: params.safety.blockReasons, reviewBlocked: true } : {}),
+        ...(params.safety.blockReasons.length
+            ? { safetyBlockReasons: params.safety.blockReasons, reviewBlocked: true }
+            : {}),
         sourceQueueId: params.row.id,
         sourceRunId: params.row.run_id,
     };
@@ -461,20 +509,37 @@ export async function reviewMemoryWritebackCandidate(params) {
         throw new Error("edited content is required for approve_edited");
     }
     const proposedText = editedContent || row.content;
-    const safety = inspectMemoryWritebackSafety({ scope: row.scope, sourceType: row.source_type, content: proposedText });
+    const safety = inspectMemoryWritebackSafety({
+        scope: row.scope,
+        sourceType: row.source_type,
+        content: proposedText,
+    });
     const shouldBlockLongTerm = safety.blocked || row.scope === "diagnostic" || isDiagnosticSource(row.source_type);
     if (params.action === "discard") {
         const updated = updateMemoryWritebackCandidate({
             id: row.id,
             status: "discarded",
             content: safety.content,
-            metadata: mergeReviewMetadata({ row, action: params.action, metadata, safety, reviewerId: params.reviewerId, edited: Boolean(editedContent) }),
+            metadata: mergeReviewMetadata({
+                row,
+                action: params.action,
+                metadata,
+                safety,
+                reviewerId: params.reviewerId,
+                edited: Boolean(editedContent),
+            }),
             lastError: null,
         }) ?? row;
-        recordMemoryWritebackReviewAudit({ row: updated, action: params.action, result: "success", reviewerId: params.reviewerId });
+        recordMemoryWritebackReviewAudit({
+            row: updated,
+            action: params.action,
+            result: "success",
+            reviewerId: params.reviewerId,
+        });
         return { ok: true, candidate: toReviewItem(updated), action: params.action };
     }
-    if ((params.action === "approve_long_term" || params.action === "approve_edited") && shouldBlockLongTerm) {
+    if ((params.action === "approve_long_term" || params.action === "approve_edited") &&
+        shouldBlockLongTerm) {
         const reason = safety.blockReasons.length
             ? `blocked: ${safety.blockReasons.join(", ")}`
             : "diagnostic candidates cannot be promoted to long-term memory";
@@ -482,14 +547,29 @@ export async function reviewMemoryWritebackCandidate(params) {
             id: row.id,
             status: "discarded",
             content: safety.content,
-            metadata: mergeReviewMetadata({ row, action: params.action, metadata, safety, reviewerId: params.reviewerId, edited: Boolean(editedContent) }),
+            metadata: mergeReviewMetadata({
+                row,
+                action: params.action,
+                metadata,
+                safety,
+                reviewerId: params.reviewerId,
+                edited: Boolean(editedContent),
+            }),
             lastError: reason,
         }) ?? row;
-        recordMemoryWritebackReviewAudit({ row: updated, action: params.action, result: "blocked", reviewerId: params.reviewerId, reason });
+        recordMemoryWritebackReviewAudit({
+            row: updated,
+            action: params.action,
+            result: "blocked",
+            reviewerId: params.reviewerId,
+            reason,
+        });
         return { ok: false, candidate: toReviewItem(updated), action: params.action, reason };
     }
     const targetScope = params.action === "keep_session" ? "session" : "long-term";
-    const ownerId = targetScope === "session" ? resolveSessionOwner(row, metadata) : "global";
+    const ownerId = targetScope === "session"
+        ? resolveSessionOwner(row, metadata)
+        : resolveLongTermReviewOwner(row, metadata);
     if (!ownerId)
         throw new Error("session owner is required for session-only memory");
     const result = await storeMemoryDocument({
@@ -530,7 +610,13 @@ export async function reviewMemoryWritebackCandidate(params) {
         }),
         lastError: null,
     }) ?? row;
-    recordMemoryWritebackReviewAudit({ row: updated, action: params.action, result: "success", reviewerId: params.reviewerId, documentId: result.documentId });
+    recordMemoryWritebackReviewAudit({
+        row: updated,
+        action: params.action,
+        result: "success",
+        reviewerId: params.reviewerId,
+        documentId: result.documentId,
+    });
     return {
         ok: true,
         candidate: toReviewItem(updated),

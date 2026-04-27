@@ -17,7 +17,7 @@ interface RunsState {
   refresh: () => Promise<void>
   refreshOperations: () => Promise<void>
   selectRun: (runId: string) => void
-  createRun: (message: string, sessionId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
+  createRun: (message: string, sessionId?: string, focusThreadId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
   cancelRun: (runId: string) => Promise<void>
   deleteRunHistory: (runId: string) => Promise<{ deletedRunCount: number }>
   clearHistoricalRunHistory: () => Promise<{ deletedRunCount: number }>
@@ -145,8 +145,8 @@ export const useRunsStore = create<RunsState>((set, get) => {
       await refreshOperationsSnapshot()
     },
     selectRun: (runId) => set({ selectedRunId: runId }),
-    createRun: async (message, sessionId) => {
-      const response = await api.createRun(message, sessionId)
+    createRun: async (message, sessionId, focusThreadId) => {
+      const response = await api.createRun(message, sessionId, focusThreadId)
       set({ selectedRunId: response.runId })
       void get().refresh()
       return response

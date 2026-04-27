@@ -3,6 +3,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { listAuditEvents } from "../packages/core/src/api/routes/audit.ts"
+import {
+  type ApprovalAggregateContext,
+  appendApprovalAggregateItem,
+  buildApprovalAggregateText,
+  resolveApprovalAggregate,
+} from "../packages/core/src/channels/approval-aggregation.ts"
+import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.ts"
 import type { SubSessionContract } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
@@ -13,28 +20,24 @@ import type {
   RuntimeIdentity,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb, insertSession, listMessageLedgerEvents } from "../packages/core/src/db/index.js"
-import {
-  appendApprovalAggregateItem,
-  buildApprovalAggregateText,
-  resolveApprovalAggregate,
-  type ApprovalAggregateContext,
-} from "../packages/core/src/channels/approval-aggregation.ts"
-import { emitAssistantTextDelivery } from "../packages/core/src/runs/delivery.ts"
-import { recordMessageLedgerEvent, type MessageLedgerEventInput } from "../packages/core/src/runs/message-ledger.ts"
-import { buildActiveRunProjection } from "../packages/core/src/runs/active-run-projection.ts"
-import { createRootRun } from "../packages/core/src/runs/store.ts"
-import type { RootRun } from "../packages/core/src/runs/types.ts"
-import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
 import { createSubSessionProgressAggregator } from "../packages/core/src/orchestration/sub-session-progress-aggregation.ts"
 import {
-  SubSessionRunner,
-  createTextResultReport,
   type RunSubSessionInput,
+  SubSessionRunner,
   type SubSessionRuntimeDependencies,
+  createTextResultReport,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { buildActiveRunProjection } from "../packages/core/src/runs/active-run-projection.ts"
+import { emitAssistantTextDelivery } from "../packages/core/src/runs/delivery.ts"
+import {
+  type MessageLedgerEventInput,
+  recordMessageLedgerEvent,
+} from "../packages/core/src/runs/message-ledger.ts"
+import { createRootRun } from "../packages/core/src/runs/store.ts"
+import type { RootRun } from "../packages/core/src/runs/types.ts"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env.NOBIE_STATE_DIR
+const previousConfig = process.env.NOBIE_CONFIG
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
@@ -42,24 +45,28 @@ function useTempConfig(): void {
   const stateDir = mkdtempSync(join(tmpdir(), "nobie-task013-channel-delivery-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  writeFileSync(
+    configPath,
+    `{
     ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
     webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
     security: { approvalMode: "off" },
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  }`,
+    "utf-8",
+  )
+  process.env.NOBIE_STATE_DIR = stateDir
+  process.env.NOBIE_CONFIG = configPath
   reloadConfig()
 }
 
 function restoreEnv(): void {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
+  else process.env.NOBIE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
+  else process.env.NOBIE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -126,6 +133,16 @@ const expectedOutput: ExpectedOutputContract = {
   },
 }
 
+const modelProfile = {
+  providerId: "openai",
+  modelId: "gpt-5.4-mini",
+  effort: "low",
+  maxOutputTokens: 512,
+  timeoutMs: 1000,
+  retryCount: 0,
+  costBudget: 1,
+}
+
 function runtimeIdentity(entityId: string): RuntimeIdentity {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -170,6 +187,7 @@ function runInputForProgress(subSessionId: string): RunSubSessionInput {
     teamContext: [],
     memoryPolicy: {},
     capabilityPolicy: {},
+    modelProfileSnapshot: modelProfile,
     taskScope: command.taskScope,
     safetyRules: [],
     sourceProvenance: [],
@@ -195,24 +213,28 @@ describe("task013 channel delivery and approval observability", () => {
   it("aggregates sub-session progress by time window and keeps the latest item per sub-session", () => {
     const aggregator = createSubSessionProgressAggregator({ now: () => 10_000, windowMs: 3_000 })
 
-    expect(aggregator.push({
-      parentRunId: "run-progress",
-      subSessionId: "sub-a",
-      agentId: "agent-a",
-      agentDisplayName: "Alpha",
-      status: "running",
-      summary: "first draft",
-      at: 1_000,
-    })).toBeUndefined()
-    expect(aggregator.push({
-      parentRunId: "run-progress",
-      subSessionId: "sub-a",
-      agentId: "agent-a",
-      agentDisplayName: "Alpha",
-      status: "running",
-      summary: "second draft",
-      at: 2_000,
-    })).toBeUndefined()
+    expect(
+      aggregator.push({
+        parentRunId: "run-progress",
+        subSessionId: "sub-a",
+        agentId: "agent-a",
+        agentDisplayName: "Alpha",
+        status: "running",
+        summary: "first draft",
+        at: 1_000,
+      }),
+    ).toBeUndefined()
+    expect(
+      aggregator.push({
+        parentRunId: "run-progress",
+        subSessionId: "sub-a",
+        agentId: "agent-a",
+        agentDisplayName: "Alpha",
+        status: "running",
+        summary: "second draft",
+        at: 2_000,
+      }),
+    ).toBeUndefined()
     const batch = aggregator.push({
       parentRunId: "run-progress",
       subSessionId: "sub-b",
@@ -244,9 +266,14 @@ describe("task013 channel delivery and approval observability", () => {
         time += 1_000
         return time
       },
-      idProvider: () => `id-${time += 1}`,
+      idProvider: () => {
+        time += 1
+        return `id-${time}`
+      },
       loadSubSessionByIdempotencyKey: (idempotencyKey) =>
-        [...sessions.values()].find((session) => session.identity.idempotencyKey === idempotencyKey),
+        [...sessions.values()].find(
+          (session) => session.identity.idempotencyKey === idempotencyKey,
+        ),
       persistSubSession: (session) => {
         sessions.set(session.subSessionId, structuredClone(session))
         return true
@@ -266,17 +293,33 @@ describe("task013 channel delivery and approval observability", () => {
       deliverResultToUser: vi.fn(),
     }
     const runner = new SubSessionRunner(dependencies)
-    const result = await runner.runSubSession(runInputForProgress("sub-progress"), async (input, controls) => {
-      await controls.emitProgress("step one")
-      await controls.emitProgress("step two")
-      return createTextResultReport({ command: input.command, text: "sub result" })
-    })
+    const result = await runner.runSubSession(
+      runInputForProgress("sub-progress"),
+      async (input, controls) => {
+        await controls.emitProgress("step one")
+        await controls.emitProgress("step two")
+        return createTextResultReport({ command: input.command, text: "sub result" })
+      },
+    )
 
     expect(result.status).toBe("completed")
     expect(dependencies.deliverResultToUser).not.toHaveBeenCalled()
-    expect(parentEvents.some((event) => event.startsWith("sub_session_progress_summary:"))).toBe(true)
-    expect(ledgerEvents.some((event) => event.eventKind === "sub_session_progress_summarized" && event.deliveryKind === "progress")).toBe(true)
-    expect(ledgerEvents.some((event) => event.eventKind === "sub_session_result_suppressed" && event.status === "suppressed")).toBe(true)
+    expect(parentEvents.some((event) => event.startsWith("sub_session_progress_summary:"))).toBe(
+      true,
+    )
+    expect(
+      ledgerEvents.some(
+        (event) =>
+          event.eventKind === "sub_session_progress_summarized" &&
+          event.deliveryKind === "progress",
+      ),
+    ).toBe(true)
+    expect(
+      ledgerEvents.some(
+        (event) =>
+          event.eventKind === "sub_session_result_suppressed" && event.status === "suppressed",
+      ),
+    ).toBe(true)
   })
 
   it("carries progress delivery metadata through channel chunk receipts", async () => {
@@ -340,7 +383,11 @@ describe("task013 channel delivery and approval observability", () => {
     expect(firstChunk).toHaveBeenCalledTimes(2)
     expect(secondChunk).not.toHaveBeenCalled()
     expect(events.filter((event) => event.event_kind === "text_delivered")).toHaveLength(1)
-    expect(events.some((event) => event.event_kind === "text_delivery_suppressed" && event.status === "suppressed")).toBe(true)
+    expect(
+      events.some(
+        (event) => event.event_kind === "text_delivery_suppressed" && event.status === "suppressed",
+      ),
+    ).toBe(true)
   })
 
   it("suppresses duplicate final text after a channel worker handler is recreated", async () => {
@@ -393,9 +440,11 @@ describe("task013 channel delivery and approval observability", () => {
 
     expect(firstResponder.sendFinalResponse).toHaveBeenCalledTimes(1)
     expect(restartedResponder.sendFinalResponse).not.toHaveBeenCalled()
-    expect(listMessageLedgerEvents({ requestGroupId: run.requestGroupId }).some((event) =>
-      event.event_kind === "text_delivery_suppressed" && event.status === "suppressed"
-    )).toBe(true)
+    expect(
+      listMessageLedgerEvents({ requestGroupId: run.requestGroupId }).some(
+        (event) => event.event_kind === "text_delivery_suppressed" && event.status === "suppressed",
+      ),
+    ).toBe(true)
   })
 
   it("aggregates multiple approval items and resolves them with one decision", () => {
@@ -403,30 +452,38 @@ describe("task013 channel delivery and approval observability", () => {
     const secondResolve = vi.fn()
     let context: ApprovalAggregateContext | undefined
 
-    context = appendApprovalAggregateItem(context, {
-      approvalId: "approval-1",
-      runId: "run-approval",
-      parentRunId: "run-parent",
-      subSessionId: "sub-1",
-      agentId: "agent-a",
-      toolName: "screen_capture",
-      kind: "approval",
-      riskSummary: "screen access",
-      paramsPreview: "{}",
-      resolve: firstResolve,
-    }, "user-1").context
-    context = appendApprovalAggregateItem(context, {
-      approvalId: "approval-2",
-      runId: "run-approval",
-      parentRunId: "run-parent",
-      subSessionId: "sub-2",
-      agentId: "agent-b",
-      toolName: "web_fetch",
-      kind: "approval",
-      riskSummary: "external network",
-      paramsPreview: "{\"url\":\"https://example.test\"}",
-      resolve: secondResolve,
-    }, "user-1").context
+    context = appendApprovalAggregateItem(
+      context,
+      {
+        approvalId: "approval-1",
+        runId: "run-approval",
+        parentRunId: "run-parent",
+        subSessionId: "sub-1",
+        agentId: "agent-a",
+        toolName: "screen_capture",
+        kind: "approval",
+        riskSummary: "screen access",
+        paramsPreview: "{}",
+        resolve: firstResolve,
+      },
+      "user-1",
+    ).context
+    context = appendApprovalAggregateItem(
+      context,
+      {
+        approvalId: "approval-2",
+        runId: "run-approval",
+        parentRunId: "run-parent",
+        subSessionId: "sub-2",
+        agentId: "agent-b",
+        toolName: "web_fetch",
+        kind: "approval",
+        riskSummary: "external network",
+        paramsPreview: '{"url":"https://example.test"}',
+        resolve: secondResolve,
+      },
+      "user-1",
+    ).context
 
     const text = buildApprovalAggregateText({ context, channel: "slack" })
     const resolved = resolveApprovalAggregate(context, "allow_once", "user")
@@ -480,14 +537,20 @@ describe("task013 channel delivery and approval observability", () => {
       status: "delivered",
       summary: "sub-session progress",
     })
-    const auditEvents = listAuditEvents({ subSessionId: "sub-session-audit", agentId: "agent-audit", teamId: "team-audit" }).items
+    const auditEvents = listAuditEvents({
+      subSessionId: "sub-session-audit",
+      agentId: "agent-audit",
+      teamId: "team-audit",
+    }).items
 
     expect(projection.orchestrationMode).toBe("orchestration")
-    expect(projection.subSessions?.[0]).toEqual(expect.objectContaining({
-      subSessionId: "sub-session-1",
-      agentId: "agent-weather",
-      status: "running",
-    }))
+    expect(projection.subSessions?.[0]).toEqual(
+      expect.objectContaining({
+        subSessionId: "sub-session-1",
+        agentId: "agent-weather",
+        status: "running",
+      }),
+    )
     expect(auditEvents.some((event) => event.summary === "sub-session progress")).toBe(true)
   })
 })

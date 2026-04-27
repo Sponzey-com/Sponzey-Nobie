@@ -1,12 +1,28 @@
 import { type JsonObject } from "../contracts/index.js";
-import { type DbAgentDataExchange, type MemoryScope } from "../db/index.js";
 import type { DataExchangePackage, DataExchangeRetentionPolicy, MemoryPolicy, OwnerScope } from "../contracts/sub-agent-orchestration.js";
+import { type DbAgentDataExchange, type MemoryScope } from "../db/index.js";
+import type { PromptBundleContextMemoryRef } from "../runs/context-preflight.js";
 import { type DetailedMemorySearchResult, type StoreMemoryDocumentParams } from "./store.js";
 import { type MemoryWritebackCandidate, type PreparedMemoryWritebackCandidate } from "./writeback.js";
-import type { PromptBundleContextMemoryRef } from "../runs/context-preflight.js";
 export type MemoryVisibility = MemoryPolicy["visibility"];
 export type MemoryAccessMode = "owner_direct" | "recipient_via_exchange";
-export type DataExchangeValidationIssueCode = "source_owner_missing" | "recipient_owner_missing" | "purpose_missing" | "redaction_state_missing" | "provenance_refs_missing" | "payload_missing" | "data_exchange_expired" | "data_exchange_blocked" | "data_exchange_wrong_recipient" | "data_exchange_wrong_source" | "data_exchange_use_not_allowed";
+export type MemoryOwnerScopeKind = "nobie" | "agent" | "run" | "system" | "team_projection";
+export type ParentMemoryWritebackPolicy = "allow" | "review" | "deny";
+export interface RunMemoryOwnerScope {
+    ownerType: "run";
+    ownerId: string;
+}
+export type MemoryOwnerScope = OwnerScope | RunMemoryOwnerScope;
+export interface MemoryOwnerScopePolicy {
+    owner: MemoryOwnerScope;
+    ownerScopeKey: string;
+    storageOwnerId: string;
+    kind: MemoryOwnerScopeKind;
+    directReadAllowed: boolean;
+    writeAllowed: boolean;
+    reasonCode?: "team_projection_read_only" | "memory_owner_scope_missing";
+}
+export type DataExchangeValidationIssueCode = "source_owner_missing" | "recipient_owner_missing" | "source_nickname_missing" | "recipient_nickname_missing" | "purpose_missing" | "allowed_use_missing" | "retention_policy_missing" | "redaction_state_missing" | "provenance_refs_missing" | "provenance_refs_unrecognized" | "payload_missing" | "data_exchange_expired" | "data_exchange_blocked" | "data_exchange_wrong_recipient" | "data_exchange_wrong_source" | "data_exchange_use_not_allowed";
 export interface DataExchangeValidationIssue {
     code: DataExchangeValidationIssueCode;
     path: string;
@@ -15,6 +31,37 @@ export interface DataExchangeValidationIssue {
 export interface DataExchangeValidationResult {
     ok: boolean;
     issues: DataExchangeValidationIssue[];
+}
+export type DataExchangeRedactionCategory = "secret_token_key_password_env" | "raw_html_script_style" | "stack_trace_log_dump" | "contact_identity_payment_pii" | "private_memory_excerpt" | "external_artifact_preview";
+export type DataExchangeProvenanceKind = "source_result" | "memory" | "artifact" | "tool_call" | "data_exchange" | "run" | "opaque" | "unknown";
+export interface DataExchangeRedactionInspection {
+    redacted: boolean;
+    categories: DataExchangeRedactionCategory[];
+}
+export interface DataExchangeSanitizedView {
+    exchangeId: string;
+    sourceOwner: OwnerScope;
+    recipientOwner: OwnerScope;
+    sourceNicknameSnapshot: string;
+    recipientNicknameSnapshot: string;
+    purpose: string;
+    allowedUse: DataExchangePackage["allowedUse"];
+    retentionPolicy: DataExchangeRetentionPolicy;
+    redactionState: DataExchangePackage["redactionState"];
+    provenanceRefs: string[];
+    provenanceKinds: DataExchangeProvenanceKind[];
+    payloadSummary: string;
+    redactionCategories: DataExchangeRedactionCategory[];
+    expiresAt?: number | null;
+    createdAt: number;
+    isExpired: boolean;
+}
+export interface DataExchangeAdminRawView {
+    ok: boolean;
+    reasonCode?: "admin_raw_access_denied" | "admin_raw_access_reason_required";
+    exchange?: DataExchangePackage;
+    redactionCategories: DataExchangeRedactionCategory[];
+    auditEventId?: string | null;
 }
 export interface StoreOwnerScopedMemoryParams extends Omit<StoreMemoryDocumentParams, "scope" | "ownerId" | "metadata"> {
     owner: OwnerScope;
@@ -27,6 +74,8 @@ export interface StoreOwnerScopedMemoryParams extends Omit<StoreMemoryDocumentPa
 export interface CreateDataExchangePackageInput {
     sourceOwner: OwnerScope;
     recipientOwner: OwnerScope;
+    sourceNicknameSnapshot?: string;
+    recipientNicknameSnapshot?: string;
     purpose: string;
     allowedUse: DataExchangePackage["allowedUse"];
     retentionPolicy: DataExchangeRetentionPolicy;
@@ -66,10 +115,21 @@ export interface OwnerScopedMemorySearchParams {
         includeFlashFeedback?: boolean;
     };
 }
+export interface PreparePolicyControlledMemoryWritebackInput {
+    candidate: MemoryWritebackCandidate;
+    memoryPolicy: MemoryPolicy;
+    actorOwner?: OwnerScope;
+    targetOwner?: OwnerScope;
+    parentOwner?: OwnerScope;
+    parentMemoryWritebackPolicy?: ParentMemoryWritebackPolicy;
+}
 export declare class MemoryIsolationError extends Error {
     readonly reasonCode: string;
     constructor(reasonCode: string, message: string);
 }
+export declare function memoryOwnerScopeKey(owner: MemoryOwnerScope): string;
+export declare function resolveMemoryOwnerScopePolicy(owner: MemoryOwnerScope): MemoryOwnerScopePolicy;
+export declare function inspectDataExchangePayloadRisk(payload: JsonObject): DataExchangeRedactionInspection;
 export declare function validateDataExchangePackage(input: DataExchangePackage, options?: {
     now?: number;
 }): DataExchangeValidationResult;
@@ -79,9 +139,25 @@ export declare function persistDataExchangePackage(input: DataExchangePackage, o
     auditId?: string | null;
 }): boolean;
 export declare function dbAgentDataExchangeToPackage(row: DbAgentDataExchange): DataExchangePackage;
+export declare function buildDataExchangeSanitizedView(input: DataExchangePackage, options?: {
+    now?: number;
+}): DataExchangeSanitizedView;
+export declare function buildDataExchangeAdminRawView(input: DataExchangePackage, options: {
+    adminAccessGranted: boolean;
+    reason?: string;
+    requester?: string;
+    now?: number;
+    recordAudit?: boolean;
+}): DataExchangeAdminRawView;
 export declare function listActiveDataExchangePackagesForRecipient(recipientOwner: OwnerScope, options?: {
     now?: number;
     allowedUse?: DataExchangePackage["allowedUse"];
+    limit?: number;
+}): DataExchangePackage[];
+export declare function listActiveDataExchangePackagesForSource(sourceOwner: OwnerScope, options?: {
+    now?: number;
+    recipientOwner?: OwnerScope;
+    includeExpired?: boolean;
     limit?: number;
 }): DataExchangePackage[];
 export declare function getDataExchangePackage(exchangeId: string, options?: {
@@ -116,4 +192,5 @@ export declare function prepareAgentMemoryWritebackQueueInput(input: {
     candidate: MemoryWritebackCandidate;
     memoryPolicy: MemoryPolicy;
 }): PreparedMemoryWritebackCandidate;
+export declare function preparePolicyControlledMemoryWritebackQueueInput(input: PreparePolicyControlledMemoryWritebackInput): PreparedMemoryWritebackCandidate;
 //# sourceMappingURL=isolation.d.ts.map

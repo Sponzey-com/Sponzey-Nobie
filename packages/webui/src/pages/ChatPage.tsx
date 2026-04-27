@@ -84,7 +84,7 @@ export function ChatPage() {
     setInput("")
     addUserMessage(messageText)
     try {
-      const response = await createRun(messageText, sessionId ?? undefined)
+      const response = await createRun(messageText, sessionId ?? undefined, sessionId ?? "default")
       setSessionId(response.sessionId)
       if (response.receipt?.trim()) {
         addAssistantMessage(response.receipt.trim())

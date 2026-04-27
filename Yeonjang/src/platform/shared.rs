@@ -24,7 +24,9 @@ pub fn collect_system_info(platform: PlatformKind) -> SystemSnapshot {
 
     SystemSnapshot {
         node: "nobie-yeonjang".to_string(),
-        version: option_env!("YEONJANG_GIT_DESCRIBE").unwrap_or(env!("CARGO_PKG_VERSION")).to_string(),
+        version: option_env!("YEONJANG_GIT_DESCRIBE")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_string(),
         platform,
         os: env::consts::OS.to_string(),
         arch: env::consts::ARCH.to_string(),

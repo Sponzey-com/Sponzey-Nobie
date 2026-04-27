@@ -1,6 +1,6 @@
 import { type JsonObject } from "../contracts/index.js";
+import type { CapabilityDelegationRequest, CapabilityPolicy, CapabilityRiskLevel, DataExchangePackage, DepthScopedToolKind, DepthScopedToolPolicy, OwnerScope, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 import type { RiskLevel, ToolContext } from "../tools/types.js";
-import type { CapabilityDelegationRequest, CapabilityPolicy, CapabilityRiskLevel, DataExchangePackage, OwnerScope, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 export declare const CAPABILITY_RISK_ORDER: Record<CapabilityRiskLevel, number>;
 export interface McpRegisteredToolRef {
     registeredName: string;
@@ -10,6 +10,8 @@ export interface McpRegisteredToolRef {
 export interface AgentCapabilityCallContext {
     agentId: string;
     sessionId: string;
+    bindingId?: string;
+    clientSessionId?: string;
     permissionProfile: PermissionProfile;
     skillMcpAllowlist: SkillMcpAllowlist;
     secretScopeId: string;
@@ -26,13 +28,44 @@ export interface AgentCapabilityPolicyDecision {
     reasonCode: string;
     userMessage?: string;
     agentId?: string;
+    bindingId?: string;
     permissionProfileId?: string;
     secretScopeId?: string;
+    parentSecretFallback?: boolean;
     rateLimitKey?: string;
     rateLimit?: CapabilityPolicy["rateLimit"];
     mcpTool?: McpRegisteredToolRef;
     diagnostic: Record<string, unknown>;
 }
+export interface DepthScopedToolPolicyDecision {
+    allowed: boolean;
+    toolName: string;
+    toolKind: DepthScopedToolKind;
+    depth: number;
+    reasonCode: "depth_scoped_tool_allowed" | "depth_scoped_tool_denied";
+    limit?: number;
+}
+export type DangerousCapabilityFixtureRiskLevel = "low" | "medium" | "high" | "critical";
+export type CapabilityApprovalActor = "parent_agent" | "user" | "admin";
+export type CapabilityApprovalDenialReason = "permission_denied" | "risk_ceiling_exceeded" | "timeout" | "revoked";
+export interface DangerousCapabilityApprovalFixture {
+    riskLevel: DangerousCapabilityFixtureRiskLevel;
+    capabilityRisk: CapabilityRiskLevel;
+    approvalActor: CapabilityApprovalActor;
+    approvalTimeoutMs: number;
+    denialReason?: CapabilityApprovalDenialReason;
+    expectedStatus: "approved" | "denied" | "expired";
+    reasonCode: string;
+}
+export interface CapabilityDelegationLifecycleResult {
+    ok: boolean;
+    delegationId: string;
+    previousStatus?: CapabilityDelegationRequest["status"];
+    status: CapabilityDelegationRequest["status"];
+    reasonCode: string;
+    auditEventId?: string | null;
+}
+export type CapabilityApprovalDecision = "approve" | "deny" | "expire" | "fail";
 export interface CapabilityPolicySnapshot {
     snapshotId: string;
     sourceProfileId: string;
@@ -62,6 +95,12 @@ export interface AgentCapabilityRateLimitLease {
 export declare function normalizeSkillMcpAllowlist(input: Partial<SkillMcpAllowlist> | null | undefined): SkillMcpAllowlist;
 export declare function parseMcpRegisteredToolName(toolName: string): McpRegisteredToolRef | null;
 export declare function resolveToolCapabilityRisk(toolName: string, fallback?: RiskLevel | CapabilityRiskLevel): CapabilityRiskLevel;
+export declare function classifyDepthScopedToolKind(toolName: string): DepthScopedToolKind;
+export declare function evaluateDepthScopedToolPolicy(input: {
+    toolName: string;
+    depth?: number;
+    policy?: DepthScopedToolPolicy;
+}): DepthScopedToolPolicyDecision;
 export declare function isToolAllowedBySkillMcpAllowlist(input: {
     toolName: string;
     allowlist: SkillMcpAllowlist;
@@ -107,6 +146,25 @@ export declare function recordCapabilityDelegationRequest(delegation: Capability
     auditId?: string | null;
     now?: number;
 }): boolean;
+export declare function updateCapabilityDelegationLifecycle(input: {
+    delegationId: string;
+    status: CapabilityDelegationRequest["status"];
+    resultPackageId?: string | null;
+    approvalId?: string | null;
+    reasonCode?: string;
+    auditId?: string | null;
+    now?: number;
+}): CapabilityDelegationLifecycleResult;
+export declare function applyCapabilityDelegationApprovalDecision(input: {
+    delegationId: string;
+    decision: CapabilityApprovalDecision;
+    approvalId?: string;
+    denialReason?: CapabilityApprovalDenialReason;
+    parentRunId?: string;
+    subSessionId?: string;
+    auditId?: string | null;
+    now?: number;
+}): CapabilityDelegationLifecycleResult;
 export declare function buildCapabilityResultDataExchange(input: {
     delegation: CapabilityDelegationRequest;
     payload: JsonObject;
@@ -128,4 +186,12 @@ export declare function buildCapabilityApprovalAggregationEvent(input: {
     auditId?: string;
     now?: number;
 }): CapabilityApprovalAggregationEvent;
+export declare function mapDangerousFixtureRiskLevel(riskLevel: DangerousCapabilityFixtureRiskLevel): CapabilityRiskLevel;
+export declare function buildDangerousCapabilityFixtureMatrix(): DangerousCapabilityApprovalFixture[];
+export declare function evaluateDangerousCapabilityApprovalFixture(input: {
+    riskLevel: DangerousCapabilityFixtureRiskLevel;
+    approvalActor: CapabilityApprovalActor;
+    approvalTimeoutMs?: number;
+    denialReason?: CapabilityApprovalDenialReason;
+}): DangerousCapabilityApprovalFixture;
 //# sourceMappingURL=capability-isolation.d.ts.map

@@ -7,9 +7,25 @@ export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system"
 export interface NobieEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
   "gateway.started": { host: string; port: number }
-  "channel.connected": { channel: "webui" | "telegram" | "slack" | "mqtt"; sessionId?: string | null; detail?: Record<string, unknown> }
-  "yeonjang.heartbeat": { extensionId: string; state?: string | null; message?: string | null; lastSeenAt: number; methodCount?: number; capabilityHash?: string | null }
-  "doctor.checked": { reportId: string; mode: "quick" | "full"; overallStatus: "ok" | "warning" | "blocked" | "unknown"; runtimeManifestId: string }
+  "channel.connected": {
+    channel: "webui" | "telegram" | "slack" | "mqtt"
+    sessionId?: string | null
+    detail?: Record<string, unknown>
+  }
+  "yeonjang.heartbeat": {
+    extensionId: string
+    state?: string | null
+    message?: string | null
+    lastSeenAt: number
+    methodCount?: number
+    capabilityHash?: string | null
+  }
+  "doctor.checked": {
+    reportId: string
+    mode: "quick" | "full"
+    overallStatus: "ok" | "warning" | "blocked" | "unknown"
+    runtimeManifestId: string
+  }
   "control.event": {
     id: string
     at: number
@@ -22,6 +38,30 @@ export interface NobieEvents {
     severity: "debug" | "info" | "warning" | "error"
     summary: string
     detail?: Record<string, unknown>
+  }
+  "orchestration.event": {
+    sequence: number
+    cursor: string
+    id: string
+    createdAt: number
+    emittedAt: number
+    eventKind: string
+    runId: string | null
+    parentRunId: string | null
+    requestGroupId: string | null
+    subSessionId: string | null
+    agentId: string | null
+    teamId: string | null
+    exchangeId: string | null
+    approvalId: string | null
+    correlationId: string
+    dedupeKey: string | null
+    source: string
+    severity: "debug" | "info" | "warning" | "error"
+    summary: string
+    payload: Record<string, unknown>
+    payloadRawRef: string | null
+    producerTask: string | null
   }
   "agent.start": { sessionId: string; runId: string }
   "agent.stream": { sessionId: string; runId: string; delta: string }
@@ -49,7 +89,13 @@ export interface NobieEvents {
   "run.failed": { run: RootRun }
   "run.cancel.requested": { runId: string }
   "run.cancelled": { run: RootRun }
-  "tool.before": { sessionId: string; runId: string; requestGroupId?: string; toolName: string; params: unknown }
+  "tool.before": {
+    sessionId: string
+    runId: string
+    requestGroupId?: string
+    toolName: string
+    params: unknown
+  }
   "tool.after": {
     sessionId: string
     runId: string
@@ -149,15 +195,13 @@ type Listener<T> = (payload: T) => void | Promise<void>
 class TypedEventBus {
   private listeners = new Map<string, Set<Listener<unknown>>>()
 
-  on<K extends keyof NobieEvents>(
-    event: K,
-    listener: Listener<NobieEvents[K]>,
-  ): () => void {
+  on<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void {
     const key = event as string
-    if (!this.listeners.has(key)) {
-      this.listeners.set(key, new Set())
+    let set = this.listeners.get(key)
+    if (!set) {
+      set = new Set()
+      this.listeners.set(key, set)
     }
-    const set = this.listeners.get(key)!
     set.add(listener as Listener<unknown>)
     return () => set.delete(listener as Listener<unknown>)
   }
@@ -173,10 +217,7 @@ class TypedEventBus {
     }
   }
 
-  once<K extends keyof NobieEvents>(
-    event: K,
-    listener: Listener<NobieEvents[K]>,
-  ): () => void {
+  once<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void {
     const unsub = this.on(event, (payload) => {
       unsub()
       return listener(payload)

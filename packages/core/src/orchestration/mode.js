@@ -22,26 +22,43 @@ function dbSubAgentSnapshot(agent) {
         source: "db",
     };
 }
-function mergeRegistryAgents(dbAgents, configAgents) {
+function dbDelegationEnabled(agent) {
+    try {
+        const parsed = JSON.parse(agent.config_json);
+        return parsed.delegation?.enabled !== false;
+    }
+    catch {
+        return true;
+    }
+}
+function mergeRegistryCandidates(dbAgents, configAgents) {
     const merged = new Map();
     for (const agent of configAgents)
-        merged.set(agent.agentId, agent);
+        merged.set(agent.snapshot.agentId, agent);
     for (const agent of dbAgents)
-        merged.set(agent.agentId, agent);
-    return [...merged.values()].sort((a, b) => a.agentId.localeCompare(b.agentId));
+        merged.set(agent.snapshot.agentId, agent);
+    return [...merged.values()].sort((a, b) => a.snapshot.agentId.localeCompare(b.snapshot.agentId));
 }
 function defaultRegistryLoad(config) {
-    const dbAgents = listAgentConfigs({ enabledOnly: true, agentType: "sub_agent" }).map(dbSubAgentSnapshot);
+    const dbAgents = listAgentConfigs({ includeArchived: false, agentType: "sub_agent" }).map((agent) => ({
+        snapshot: dbSubAgentSnapshot(agent),
+        active: agent.status === "enabled" && dbDelegationEnabled(agent),
+    }));
+    const dbAgentIds = new Set(dbAgents.map((agent) => agent.snapshot.agentId));
     const configAgents = (config.subAgents ?? [])
-        .filter((agent) => agent.status === "enabled" && agent.delegation.enabled)
-        .map(configSubAgentSnapshot);
-    const activeSubAgents = mergeRegistryAgents(dbAgents, configAgents);
-    const configSubAgentCount = config.subAgents?.length ?? 0;
-    const configDisabledCount = (config.subAgents ?? []).filter((agent) => agent.status !== "enabled" || !agent.delegation.enabled).length;
+        .filter((agent) => !dbAgentIds.has(agent.agentId))
+        .map((agent) => ({
+        snapshot: configSubAgentSnapshot(agent),
+        active: agent.status === "enabled" && agent.delegation.enabled,
+    }));
+    const candidates = mergeRegistryCandidates(dbAgents, configAgents);
+    const activeSubAgents = candidates
+        .filter((agent) => agent.active)
+        .map((agent) => agent.snapshot);
     return {
         activeSubAgents,
-        totalSubAgentCount: Math.max(configSubAgentCount, activeSubAgents.length),
-        disabledSubAgentCount: configDisabledCount,
+        totalSubAgentCount: candidates.length,
+        disabledSubAgentCount: candidates.length - activeSubAgents.length,
     };
 }
 function buildSnapshot(input) {

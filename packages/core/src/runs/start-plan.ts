@@ -7,6 +7,7 @@ import {
   runCandidateProviders,
 } from "../candidates/index.js"
 import { buildOrchestrationPlan } from "../orchestration/planner.js"
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import {
   resolveOrchestrationModeSnapshot,
   type OrchestrationModeSnapshot,
@@ -126,6 +127,7 @@ export async function buildStartPlan(
     model?: string | undefined
     targetId?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
   },
   dependencies: StartPlanDependencies,
 ): Promise<StartPlan> {
@@ -162,6 +164,7 @@ export async function buildStartPlan(
     parentRequestId: params.runId,
     userRequest: params.message,
     modeSnapshot: orchestrationRegistrySnapshot,
+    ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
   }).plan
   latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
     name: "orchestration_planning_latency_ms",

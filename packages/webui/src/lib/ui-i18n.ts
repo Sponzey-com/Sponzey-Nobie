@@ -75,8 +75,14 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /(\S+) 화면 준비 확인 요청/g, replace: (_m, tool) => `${tool} screen confirmation requested` },
   { pattern: /(\S+) 승인 시간 초과/g, replace: (_m, tool) => `${tool} approval timed out` },
   { pattern: /(\S+) 실행 거부/g, replace: (_m, tool) => `${tool} execution denied` },
-  { pattern: /후속 처리\s+(\d+)\/(무제한|\d+)/g, replace: (_m, used, total) => `Follow-up ${used}/${total === "무제한" ? "Unlimited" : total}` },
-  { pattern: /중간 절단 복구 재시도\s+(\d+)\/(무제한|\d+)/g, replace: (_m, used, total) => `Truncated output recovery retry ${used}/${total === "무제한" ? "Unlimited" : total}` },
+  { pattern: /자동 후속 처리/g, replace: "Automatic follow-up" },
+  { pattern: /자동 처리 한도 도달/g, replace: "Automatic processing limit reached" },
+  { pattern: /자동 복구 한도/g, replace: "Automatic recovery limit" },
+  { pattern: /실행 복구 처리/g, replace: "Execution recovery" },
+  { pattern: /AI 복구 처리/g, replace: "AI recovery" },
+  { pattern: /작업 세션 복구 처리/g, replace: "Worker session recovery" },
+  { pattern: /중간 절단 복구 처리/g, replace: "Truncated output recovery" },
+  { pattern: /파일 검증 복구 처리/g, replace: "File verification recovery" },
   { pattern: /Telegram 정보는 저장되었습니다\. 런타임 시작 상태는 채널 상세에서 확인할 수 있습니다\./g, replace: "Telegram details are saved. Check the channel details for runtime status." },
   { pattern: /아직 업데이트 확인을 실행하지 않았습니다\./g, replace: "Update check has not been run yet." },
   { pattern: /봇 토큰이 설정되지 않았습니다\./g, replace: "Bot token is not configured." },
@@ -119,9 +125,26 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /고급 메모리와 시맨틱 검색 제어면은 이후 단계에서 연결합니다\./g, replace: "Advanced memory and semantic search controls will be added later." },
 ]
 
+const USER_HIDDEN_OPERATIONAL_COUNTER_REPLACEMENTS: Replacement[] = [
+  { pattern: /후속 처리\s+\d+\/(무제한|\d+)/g, replace: "자동 후속 처리" },
+  { pattern: /후속 시도\s+\d+\/(무제한|\d+)/g, replace: "자동 후속 처리" },
+  { pattern: /([^\n.]*?복구)\s*재시도\s+\d+\/(무제한|\d+)/g, replace: (_match, prefix) => `${prefix.trim()} 처리` },
+  { pattern: /복구 재시도 한도\(\d+회\)/g, replace: "자동 복구 한도" },
+  { pattern: /자동 재시도 한도/g, replace: "자동 복구 한도" },
+  { pattern: /최대 자동 후속 처리 횟수 초과/g, replace: "자동 처리 한도 도달" },
+]
+
+export function sanitizeOperationalCounterText(text: string): string {
+  return USER_HIDDEN_OPERATIONAL_COUNTER_REPLACEMENTS.reduce(
+    (acc, entry) => acc.replace(entry.pattern, entry.replace as never),
+    text,
+  )
+}
+
 export function translateDisplayText(language: UiLanguage, text: string): string {
-  if (language === "ko") return text
-  return EN_DISPLAY_REPLACEMENTS.reduce((acc, entry) => acc.replace(entry.pattern, entry.replace as never), text)
+  const sanitized = sanitizeOperationalCounterText(text)
+  if (language === "ko") return sanitized
+  return EN_DISPLAY_REPLACEMENTS.reduce((acc, entry) => acc.replace(entry.pattern, entry.replace as never), sanitized)
 }
 
 export function useUiI18n() {

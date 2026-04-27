@@ -130,12 +130,12 @@ describe("task010 configuration, migration, backup", () => {
     ensurePromptSourceFiles(targetRoot)
 
     const editedUserPrompt = join(sourceRoot, "prompts", "user.md")
-    writeFileSync(editedUserPrompt, "# 사용자\n\n- 선호 이름: custom-edit\n", "utf-8")
-    const missingPrompt = join(sourceRoot, "prompts", "identity.md.en")
+    writeFileSync(editedUserPrompt, "# User\n\n- Preferred name: custom-edit\n", "utf-8")
+    const missingPrompt = join(sourceRoot, "prompts", "identity.md")
     unlinkSync(missingPrompt)
 
     const recovery = recoverPromptSources(sourceRoot)
-    expect(recovery.created).toContain("identity.md.en")
+    expect(recovery.created).toContain("identity.md")
     expect(readFileSync(editedUserPrompt, "utf-8")).toContain("custom-edit")
 
     const exported = exportPromptSources(sourceRoot)
@@ -143,9 +143,9 @@ describe("task010 configuration, migration, backup", () => {
 
     rmSync(join(targetRoot, "prompts", "channel.md"), { force: true })
     const imported = importPromptSources({ workDir: targetRoot, exportPath: exported.exportPath, overwrite: false })
-    expect(imported.imported).toContain("channel:ko")
-    expect(imported.skipped).toContain("user:ko")
-    expect(loadPromptSourceRegistry(targetRoot).some((source) => source.sourceId === "channel" && source.locale === "ko")).toBe(true)
+    expect(imported.imported).toContain("channel:en")
+    expect(imported.skipped).toContain("user:en")
+    expect(loadPromptSourceRegistry(targetRoot).some((source) => source.sourceId === "channel" && source.locale === "en")).toBe(true)
   })
 
   it("reports the current migrated DB as up to date", () => {

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const startIngressRunMock = vi.fn()
 const sendReceiptMock = vi.fn(async () => "slack-message-1")
+const findChannelMessageRefMock = vi.fn((..._args: unknown[]): unknown => null)
+const findLatestChannelMessageRefForThreadMock = vi.fn((..._args: unknown[]): unknown => null)
 
 vi.mock("../packages/core/src/runs/ingress.js", () => ({
   startIngressRun: (...args: unknown[]) => startIngressRunMock(...args),
@@ -38,7 +40,8 @@ vi.mock("../packages/core/src/channels/slack/responder.js", () => ({
 }))
 
 vi.mock("../packages/core/src/db/index.js", () => ({
-  findChannelMessageRef: vi.fn(() => null),
+  findChannelMessageRef: (...args: unknown[]) => findChannelMessageRefMock(...args),
+  findLatestChannelMessageRefForThread: (...args: unknown[]) => findLatestChannelMessageRefForThreadMock(...args),
   insertChannelMessageRef: vi.fn(),
 }))
 
@@ -65,6 +68,8 @@ describe("slack channel", () => {
         text: "요청을 접수했습니다. 분석을 시작합니다.",
       },
     })
+    findChannelMessageRefMock.mockReset().mockReturnValue(null)
+    findLatestChannelMessageRefForThreadMock.mockReset().mockReturnValue(null)
   })
 
   it("deduplicates the same inbound Slack message delivered as app_mention and message", async () => {
@@ -114,5 +119,65 @@ describe("slack channel", () => {
 
     expect(startIngressRunMock).toHaveBeenCalledTimes(1)
     expect(sendReceiptMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("continues a request group when a user comments in a Slack thread under a Nobie response", async () => {
+    findLatestChannelMessageRefForThreadMock.mockReturnValue({
+      id: "ref-thread-final",
+      source: "slack",
+      session_id: "session-slack-1",
+      root_run_id: "run-thread-root",
+      request_group_id: "request-group-thread",
+      external_chat_id: "C_ALLOWED",
+      external_thread_id: "1712570000.100000",
+      external_message_id: "1712570000.300000",
+      role: "assistant",
+      created_at: 1712570000300,
+    })
+
+    const channel = new SlackChannel({
+      enabled: true,
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      allowedUserIds: ["U_ALLOWED"],
+      allowedChannelIds: ["C_ALLOWED"],
+    }) as unknown as {
+      socket: { send: ReturnType<typeof vi.fn> }
+      handleSocketMessage: (raw: string) => Promise<void>
+    }
+
+    channel.socket = {
+      send: vi.fn(),
+    }
+
+    await channel.handleSocketMessage(JSON.stringify({
+      envelope_id: "env-thread-comment",
+      payload: {
+        event: {
+          type: "message",
+          user: "U_ALLOWED",
+          channel: "C_ALLOWED",
+          text: "이전 답변 기준으로 이어서 진행해줘",
+          ts: "1712570000.400000",
+          thread_ts: "1712570000.100000",
+        },
+      },
+    }))
+
+    expect(findChannelMessageRefMock).toHaveBeenCalledWith({
+      source: "slack",
+      externalChatId: "C_ALLOWED",
+      externalMessageId: "1712570000.400000",
+      externalThreadId: "1712570000.100000",
+    })
+    expect(findLatestChannelMessageRefForThreadMock).toHaveBeenCalledWith({
+      source: "slack",
+      externalChatId: "C_ALLOWED",
+      externalThreadId: "1712570000.100000",
+    })
+    expect(startIngressRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      requestGroupId: "request-group-thread",
+      forceRequestGroupReuse: true,
+    }))
   })
 })

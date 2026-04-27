@@ -187,7 +187,7 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.checklist.completedCount).toBe(1)
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
       "기본 실행 · 사용자 요청",
-      "기본 실행 · 후속 시도",
+      "기본 실행 · 자동 보강",
     ])
   })
 
@@ -245,7 +245,7 @@ describe("webui task monitor helper", () => {
 
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
       "기본 실행 · 사용자 요청",
-      "후속 실행 · 후속 시도",
+      "서브 에이전트 · 자동 보강",
     ])
     expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })

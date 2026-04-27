@@ -107,6 +107,17 @@ export class SlackResponder {
     })
   }
 
+  async clearToolStatus(messageId: string): Promise<void> {
+    try {
+      await this.api("chat.delete", {
+        channel: this.channelId,
+        ts: messageId,
+      })
+    } catch {
+      // Message may have been deleted or no longer editable — ignore
+    }
+  }
+
   async sendFinalResponse(text: string): Promise<string[]> {
     const messageIds: string[] = []
     for (const part of splitSlackText(text)) {

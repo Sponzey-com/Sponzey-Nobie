@@ -1,6 +1,6 @@
-import { type MemoryScope, type MemoryWritebackStatus } from "../db/index.js";
 import type { JsonObject } from "../contracts/index.js";
 import type { AgentEntityType, LearningEvent, OwnerScope } from "../contracts/sub-agent-orchestration.js";
+import { type MemoryScope, type MemoryWritebackStatus } from "../db/index.js";
 export type RunWritebackKind = "instruction" | "success" | "failure" | "tool_result" | "flash_feedback";
 export interface MemoryWritebackCandidate {
     scope: MemoryScope;

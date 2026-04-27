@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest"
-import { resolve, dirname } from "node:path"
+import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { afterEach, describe, expect, it } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import type { CapabilityPolicy } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { McpStdioClient } from "../packages/core/src/mcp/client.ts"
 import { mcpRegistry } from "../packages/core/src/mcp/registry.ts"
 import { toolDispatcher } from "../packages/core/src/tools/index.ts"
-import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixture = resolve(__dirname, "fixtures/fake-mcp-server.mjs")
@@ -53,16 +54,44 @@ describe("MCP stdio client", () => {
     const tool = toolDispatcher.get("mcp__fake__echo")
     expect(tool).toBeDefined()
 
-    const result = await tool!.execute(
+    const capabilityPolicy: CapabilityPolicy = {
+      permissionProfile: {
+        profileId: "profile:mcp-test",
+        riskCeiling: "dangerous",
+        approvalRequiredFrom: "dangerous",
+        allowExternalNetwork: true,
+        allowFilesystemWrite: false,
+        allowShellExecution: false,
+        allowScreenControl: false,
+        allowedPaths: [],
+      },
+      skillMcpAllowlist: {
+        enabledSkillIds: [],
+        enabledMcpServerIds: ["fake"],
+        enabledToolNames: ["mcp__fake__echo", "echo"],
+        disabledToolNames: [],
+        secretScopeId: "secret:mcp-test",
+      },
+      rateLimit: { maxConcurrentCalls: 1 },
+    }
+    const result = await toolDispatcher.dispatch(
+      "mcp__fake__echo",
       { text: "from registry" },
       {
         sessionId: "test-session",
         runId: "test-run",
+        requestGroupId: "test-group",
         workDir: process.cwd(),
         userMessage: "test",
+        source: "cli",
         allowWebAccess: false,
         onProgress: () => {},
         signal: new AbortController().signal,
+        agentId: "agent:mcp-test",
+        agentType: "sub_agent",
+        capabilityPolicy,
+        secretScopeId: "secret:mcp-test",
+        auditId: "audit:mcp-test",
       },
     )
 

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { recordArtifactMetadata } from "../artifacts/lifecycle.js";
-import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertDiagnosticEvent, insertMessage, upsertTaskContinuity } from "../db/index.js";
+import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertDiagnosticEvent, insertMessage, upsertTaskContinuity, } from "../db/index.js";
 import { eventBus } from "../events/index.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
 import { buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildLedgerTextDeliveryKey, findMessageLedgerEventByIdempotencyKey, messageLedgerEventSucceeded, recordMessageLedgerEvent, } from "./message-ledger.js";
@@ -43,7 +43,9 @@ export async function deliverArtifactOnce(params) {
     if (!params.force && completedArtifactDeliveryKeys.has(key))
         return undefined;
     const run = getRootRun(runId);
-    if (!params.force && run && hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
+    if (!params.force &&
+        run &&
+        hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
         rememberCompletedArtifactDelivery(key);
         return undefined;
     }
@@ -53,7 +55,8 @@ export async function deliverArtifactOnce(params) {
             `${params.channel}:${params.filePath}`,
             `${params.channel}:${displayHomePath(params.filePath)}`,
         ];
-        if (continuity?.lastDeliveryReceipt && deliveryReceipts.includes(continuity.lastDeliveryReceipt)) {
+        if (continuity?.lastDeliveryReceipt &&
+            deliveryReceipts.includes(continuity.lastDeliveryReceipt)) {
             rememberCompletedArtifactDelivery(key);
             return undefined;
         }
@@ -63,7 +66,8 @@ export async function deliverArtifactOnce(params) {
         await active.catch(() => undefined);
         return undefined;
     }
-    const delivery = params.task()
+    const delivery = params
+        .task()
         .then((result) => {
         if (result !== undefined) {
             rememberCompletedArtifactDelivery(key);
@@ -254,6 +258,33 @@ export async function emitAssistantTextDelivery(params) {
     const deliveryKind = params.deliveryKind ?? "final";
     const deliveryKey = buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized);
     const idempotencyKey = `text-delivery:${params.runId}:${params.source}:${deliveryKey}`;
+    if (deliveryKind === "final" && params.subSessionId) {
+        recordMessageLedgerEvent({
+            runId: params.runId,
+            ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+            subSessionId: params.subSessionId,
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+            sessionKey: params.sessionId,
+            channel: params.source,
+            eventKind: "text_delivery_suppressed",
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey: `${idempotencyKey}:child-direct-blocked`,
+            status: "suppressed",
+            summary: "child sub-session final delivery was blocked; parent finalizer must deliver.",
+            detail: {
+                reasonCode: "child_direct_final_delivery_blocked",
+                textLength: normalized.length,
+                ...(params.speaker ? { speaker: params.speaker } : {}),
+                ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
+            },
+        });
+        return {
+            persisted: false,
+            textDelivered: false,
+            doneDelivered: false,
+        };
+    }
     if (!params.force && deliveryKind === "final") {
         const previousDelivery = findMessageLedgerEventByIdempotencyKey(idempotencyKey);
         if (messageLedgerEventSucceeded(previousDelivery)) {
@@ -274,6 +305,8 @@ export async function emitAssistantTextDelivery(params) {
                     duplicateLedgerEventId: previousDelivery?.id ?? null,
                     duplicateCreatedAt: previousDelivery?.created_at ?? null,
                     textLength: normalized.length,
+                    ...(params.speaker ? { speaker: params.speaker } : {}),
+                    ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
                 },
             });
             return {
@@ -347,6 +380,8 @@ export async function emitAssistantTextDelivery(params) {
             textDelivered: receipt.textDelivered,
             doneDelivered: receipt.doneDelivered,
             textLength: normalized.length,
+            ...(params.speaker ? { speaker: params.speaker } : {}),
+            ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
         },
     });
     return receipt;
@@ -381,12 +416,12 @@ export async function deliverChunk(params) {
         return undefined;
     const recoveryKey = buildChunkDeliveryRecoveryKey(params.runId, params.chunk);
     try {
-        return (await enqueueBackpressureTask({
+        return ((await enqueueBackpressureTask({
             queueName: "delivery",
             runId: params.runId,
             recoveryKey,
             task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
-        })) ?? undefined;
+        })) ?? undefined);
     }
     catch (error) {
         const rawMessage = error instanceof Error ? error.message : String(error);
@@ -440,9 +475,9 @@ export async function deliverTrackedChunk(params) {
 }
 export function applyChunkDeliveryReceipt(params) {
     for (const delivery of params.receipt?.artifactDeliveries ?? []) {
-        const alreadyRecorded = params.successfulFileDeliveries.some((existing) => existing.channel === delivery.channel
-            && existing.filePath === delivery.filePath
-            && existing.toolName === delivery.toolName);
+        const alreadyRecorded = params.successfulFileDeliveries.some((existing) => existing.channel === delivery.channel &&
+            existing.filePath === delivery.filePath &&
+            existing.toolName === delivery.toolName);
         if (alreadyRecorded)
             continue;
         params.successfulFileDeliveries.push(delivery);
@@ -481,14 +516,34 @@ export function applyChunkDeliveryReceipt(params) {
         });
     }
     for (const delivery of params.receipt?.textDeliveries ?? []) {
-        const alreadyRecorded = params.successfulTextDeliveries.some((existing) => existing.channel === delivery.channel
-            && existing.text === delivery.text
-            && JSON.stringify(existing.messageIds ?? []) === JSON.stringify(delivery.messageIds ?? []));
+        if ((delivery.deliveryKind ?? "final") === "final" && delivery.subSessionId) {
+            recordMessageLedgerEvent({
+                runId: params.runId,
+                ...(delivery.parentRunId ? { parentRunId: delivery.parentRunId } : {}),
+                subSessionId: delivery.subSessionId,
+                ...(delivery.agentId ? { agentId: delivery.agentId } : {}),
+                channel: delivery.channel,
+                eventKind: "text_delivery_suppressed",
+                deliveryKind: "final",
+                deliveryKey: buildLedgerTextDeliveryKey(delivery.channel, JSON.stringify(delivery.messageIds ?? []), delivery.text),
+                idempotencyKey: `chunk-text-blocked:${params.runId}:${delivery.subSessionId}:${delivery.channel}:${JSON.stringify(delivery.messageIds ?? [])}`,
+                status: "suppressed",
+                summary: "child sub-session chunk final delivery was blocked; parent finalizer must deliver.",
+                detail: {
+                    reasonCode: "child_direct_final_delivery_blocked",
+                    textLength: delivery.text.length,
+                },
+            });
+            continue;
+        }
+        const alreadyRecorded = params.successfulTextDeliveries.some((existing) => existing.channel === delivery.channel &&
+            existing.text === delivery.text &&
+            JSON.stringify(existing.messageIds ?? []) === JSON.stringify(delivery.messageIds ?? []));
         if (alreadyRecorded)
             continue;
         params.successfulTextDeliveries.push(delivery);
         if (delivery.channel === "telegram") {
-            params.appendEvent(params.runId, `텔레그램 텍스트 전달 완료`);
+            params.appendEvent(params.runId, "텔레그램 텍스트 전달 완료");
         }
         else if (delivery.channel === "webui") {
             params.appendEvent(params.runId, "WebUI 텍스트 전달 완료");

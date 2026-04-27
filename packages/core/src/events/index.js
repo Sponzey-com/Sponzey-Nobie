@@ -2,10 +2,11 @@ class TypedEventBus {
     listeners = new Map();
     on(event, listener) {
         const key = event;
-        if (!this.listeners.has(key)) {
-            this.listeners.set(key, new Set());
+        let set = this.listeners.get(key);
+        if (!set) {
+            set = new Set();
+            this.listeners.set(key, set);
         }
-        const set = this.listeners.get(key);
         set.add(listener);
         return () => set.delete(listener);
     }

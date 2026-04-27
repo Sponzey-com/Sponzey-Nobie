@@ -17,6 +17,7 @@ fn git_output(args: &[&str]) -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-changed=../resource/nobie-1-128.png");
 
     let git_commit =
         git_output(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());

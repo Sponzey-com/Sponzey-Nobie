@@ -1,30 +1,43 @@
-# 복구 정책
+# Recovery Policy
 
-이 파일은 실패 분석과 재시도 기준만 다룬다.
-
----
-
-## 실패 분류
-
-- 같은 도구를 같은 입력으로 반복하기 전에 원인을 분류한다.
-- recovery key는 `tool + target + normalized error kind + action`으로 만든다.
-- 같은 recovery key의 실패가 반복되면 자동 반복을 멈추고 다른 경로만 시도한다.
-- 권한, 경로, 대상, 채널, 입력 형식, 실행 순서, capability를 우선 점검한다.
+This file covers only failure analysis and retry rules.
 
 ---
 
-## 복구 실행
+## Failure Classification
 
-- 수정 가능한 입력 오류는 한 번 수정해서 재시도할 수 있다.
-- 권한 승인 대기 상태는 실패가 아니라 `pending approval`로 다룬다.
-- 결과물 전달 실패는 실행 실패와 분리해 `pending delivery`로 다룬다.
-- 같은 전달 실패 경로를 반복하지 않는다.
-- 대안이 없으면 raw 오류 대신 사용자에게 이해 가능한 실패 사유를 반환한다.
+- Classify the cause before repeating the same tool with the same input.
+- Build recovery keys from `tool + target + normalized error kind + action`.
+- If the same recovery key fails after the one allowed retry, stop automatic repetition and try only a different path.
+- Check permission, path, target, channel, input format, execution order, and capability first.
+- The same recovery key may be retried at most once after a concrete input, permission, path, order, or target fix.
+- If that retry fails, mark the recovery key exhausted and do not invoke it again during the same request lineage.
 
 ---
 
-## 금지
+## Recovery Execution
 
-- 실패 로그를 그대로 길게 복사해 사용자에게 보내지 않는다.
-- 재시작, 재설치, 수동 실행을 근거 없이 먼저 요구하지 않는다.
-- 이미 성공한 하위 작업을 실패 복구 과정에서 다시 수행하지 않는다.
+- Correct fixable input errors and retry once under the same recovery key.
+- Treat approval waiting as `pending approval`, not failure.
+- Separate artifact delivery failure from execution failure and treat it as `pending delivery`.
+- Do not repeat the same delivery failure path.
+- If no alternative remains, return a user-readable failure reason instead of a raw error.
+
+---
+
+## Sub-Agent Recovery
+
+- Classify child-agent failure by sub-session, `CommandRequest`, capability, data package, and result criteria.
+- Do not rerun child-agent work that already succeeded while recovering a later failure.
+- If a ChildAgent result is insufficient, describe only the missing items in a `FeedbackRequest`.
+- If failure came from missing permission or capability, do not call the same ChildAgent again for the same `CommandRequest`. Evaluate another direct child candidate or whether the ParentAgent can handle the work directly.
+- If failure came from a hierarchy violation, do not bypass through a grandchild or another tree. Ask the current direct child to replan, or close with an impossible reason.
+- Team member failure is separate from Team failure. Report member-level status and choose fallback members only within the owner's direct members.
+
+---
+
+## Prohibited
+
+- Do not paste long raw failure logs to the user.
+- Do not ask for restart, reinstall, or manual execution without a concrete reason.
+- Do not redo substeps that already succeeded while recovering a later failure.

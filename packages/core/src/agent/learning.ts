@@ -6,6 +6,7 @@ import {
   insertLearningEvent,
   insertProfileHistoryVersion,
   insertProfileRestoreEvent,
+  listLearningEventsByApprovalState,
   listLearningEvents,
   listProfileHistoryVersions,
   listProfileRestoreEvents,
@@ -28,10 +29,12 @@ import type {
   RuntimeIdentity,
   TeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import { recordOrchestrationEvent } from "../orchestration/event-ledger.js"
 
 export type LearningRiskLevel = "low" | "medium" | "high"
 export type LearningPolicyReasonCode =
   | "auto_apply_self_memory_high_confidence"
+  | "pending_missing_evidence"
   | "pending_medium_confidence"
   | "pending_non_memory_target"
   | "pending_locked_setting_conflict"
@@ -46,6 +49,7 @@ export interface LearningPolicyInput {
   before: JsonObject
   after: JsonObject
   confidence: number
+  evidenceRefs?: string[]
   risk?: LearningRiskLevel
   lockedFields?: string[]
 }
@@ -67,6 +71,7 @@ export interface LearningEventServiceInput extends LearningPolicyInput {
   beforeSummary: string
   afterSummary: string
   evidenceRefs: string[]
+  sourceRunId?: string
   sourceSessionId?: string
   sourceSubSessionId?: string
   parentRunId?: string
@@ -85,6 +90,11 @@ export interface LearningEventServiceResult {
   inserted: boolean
   history?: HistoryVersion
   memoryDocumentId?: string
+}
+
+export interface LearningReviewQueueQuery {
+  agentId?: string
+  limit?: number
 }
 
 export interface HistoryVersionInput {
@@ -124,6 +134,10 @@ export interface RestoreHistoryVersionInput {
   restoreEventId?: string
   idempotencyKey?: string
   auditCorrelationId?: string
+  parentRunId?: string
+  parentSessionId?: string
+  parentSubSessionId?: string
+  parentRequestId?: string
   apply?: boolean
   now?: () => number
 }
@@ -144,7 +158,11 @@ export interface ApproveLearningEventInput {
 
 export interface ApproveLearningEventResult {
   ok: boolean
-  reasonCode: "approved" | "learning_event_not_found" | "learning_event_not_pending" | "learning_event_missing_diff"
+  reasonCode:
+    | "approved"
+    | "learning_event_not_found"
+    | "learning_event_not_pending"
+    | "learning_event_missing_diff"
   event?: LearningEvent
   history?: HistoryVersion
   historyInserted: boolean
@@ -181,15 +199,27 @@ function normalizedKeys(value: JsonObject): Set<string> {
   return result
 }
 
-function containsPermissionOrCapabilityExpansion(input: { before: JsonObject; after: JsonObject }): boolean {
+function containsPermissionOrCapabilityExpansion(input: {
+  before: JsonObject
+  after: JsonObject
+}): boolean {
   const sensitiveKeys = new Set([
     "capabilitypolicy",
+    "capabilitybinding",
+    "agentcapabilitybinding",
+    "capabilitycatalog",
     "permissionprofile",
     "skillmcpallowlist",
+    "catalogid",
+    "bindingid",
+    "skillbinding",
+    "mcpserverbinding",
     "enabledskillids",
     "enabledmcpserverids",
     "enabledtoolnames",
     "secretscopeid",
+    "secretscopes",
+    "secretaccess",
     "allowexternalnetwork",
     "allowfilesystemwrite",
     "allowshellexecution",
@@ -201,8 +231,10 @@ function containsPermissionOrCapabilityExpansion(input: { before: JsonObject; af
   const afterKeys = normalizedKeys(input.after)
   if ([...afterKeys].some((key) => sensitiveKeys.has(key))) return true
 
-  const beforeRisk = typeof input.before["riskCeiling"] === "string" ? input.before["riskCeiling"] : undefined
-  const afterRisk = typeof input.after["riskCeiling"] === "string" ? input.after["riskCeiling"] : undefined
+  const beforeRisk =
+    typeof input.before["riskCeiling"] === "string" ? input.before["riskCeiling"] : undefined
+  const afterRisk =
+    typeof input.after["riskCeiling"] === "string" ? input.after["riskCeiling"] : undefined
   if (beforeRisk && afterRisk && beforeRisk !== afterRisk) return true
 
   return false
@@ -212,7 +244,13 @@ function lockedFieldConflict(input: { after: JsonObject; lockedFields?: string[]
   const locked = new Set((input.lockedFields ?? []).map((item) => item.trim()).filter(Boolean))
   if (locked.size === 0) return false
   const afterKeys = normalizedKeys(input.after)
-  return [...locked].some((field) => afterKeys.has(field.toLowerCase()) || hasOwn(input.after, field))
+  return [...locked].some(
+    (field) => afterKeys.has(field.toLowerCase()) || hasOwn(input.after, field),
+  )
+}
+
+function hasEvidenceRefs(evidenceRefs: string[] | undefined): boolean {
+  return (evidenceRefs ?? []).some((ref) => ref.trim().length > 0)
 }
 
 function redactString(value: string): { value: string; changed: boolean } {
@@ -222,11 +260,14 @@ function redactString(value: string): { value: string; changed: boolean } {
       changed = true
       return "[redacted-api-key]"
     })
-    .replace(/\b(?:api[_-]?key|token|secret|authorization)\b\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}["']?/giu, (match) => {
-      changed = true
-      const key = match.split(/[:=]/u)[0]?.trim() || "secret"
-      return `${key}: [redacted]`
-    })
+    .replace(
+      /\b(?:api[_-]?key|token|secret|authorization)\b\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}["']?/giu,
+      (match) => {
+        changed = true
+        const key = match.split(/[:=]/u)[0]?.trim() || "secret"
+        return `${key}: [redacted]`
+      },
+    )
     .replace(/\/Users\/[^/\s)]+\/[^\s)]+/g, () => {
       changed = true
       return "/Users/<user>/..."
@@ -255,7 +296,7 @@ function sanitizeJsonValue(value: JsonValue | undefined): JsonValue | undefined 
 function sanitizeJsonObject(value: JsonObject): JsonObject {
   const sanitized = sanitizeJsonValue(value)
   return sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)
-    ? sanitized as JsonObject
+    ? (sanitized as JsonObject)
     : {}
 }
 
@@ -268,7 +309,7 @@ function parseJsonObject(value: string | null | undefined): JsonObject {
   try {
     const parsed = JSON.parse(value) as unknown
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as JsonObject
+      ? (parsed as JsonObject)
       : {}
   } catch {
     return {}
@@ -314,7 +355,10 @@ function buildIdentity(input: {
   }
 }
 
-function nextHistoryVersion(targetEntityType: HistoryVersion["targetEntityType"], targetEntityId: string): number {
+function nextHistoryVersion(
+  targetEntityType: HistoryVersion["targetEntityType"],
+  targetEntityId: string,
+): number {
   const versions = listProfileHistoryVersions(targetEntityType, targetEntityId)
   return versions.reduce((max, row) => Math.max(max, row.version), 0) + 1
 }
@@ -386,6 +430,19 @@ export function evaluateLearningPolicy(input: LearningPolicyInput): LearningPoli
     }
   }
 
+  if (!hasEvidenceRefs(input.evidenceRefs)) {
+    return {
+      approvalState: "pending_review",
+      reasonCode: "pending_missing_evidence",
+      autoApply: false,
+      requiresReview: true,
+      blocked: false,
+      confidence,
+      risk,
+      issues: ["evidence_refs_required_for_auto_apply"],
+    }
+  }
+
   if (confidence < 0.85) {
     return {
       approvalState: "pending_review",
@@ -450,11 +507,104 @@ export function buildHistoryVersion(input: HistoryVersionInput): HistoryVersion 
   }
 }
 
-export function recordHistoryVersion(input: HistoryVersion, options: { auditId?: string | null } = {}): boolean {
+export function recordHistoryVersion(
+  input: HistoryVersion,
+  options: { auditId?: string | null } = {},
+): boolean {
   return insertProfileHistoryVersion(input, options)
 }
 
-export async function recordLearningEvent(input: LearningEventServiceInput): Promise<LearningEventServiceResult> {
+function emitLearningRecorded(input: {
+  event: LearningEvent
+  policy: LearningPolicyDecision
+  history?: HistoryVersion
+  inserted: boolean
+  createdAt: number
+}): void {
+  if (!input.inserted) return
+  recordOrchestrationEvent({
+    eventKind: "learning_recorded",
+    runId: input.event.sourceRunId ?? input.event.identity.parent?.parentRunId ?? null,
+    requestGroupId: input.event.identity.parent?.parentRequestId ?? null,
+    subSessionId:
+      input.event.sourceSubSessionId ?? input.event.identity.parent?.parentSubSessionId ?? null,
+    agentId: input.event.agentId,
+    correlationId: input.event.identity.auditCorrelationId ?? input.event.learningEventId,
+    dedupeKey: `learning_recorded:${input.event.learningEventId}:${input.event.approvalState}`,
+    source: "learning-event-service",
+    severity: input.policy.blocked ? "warning" : "info",
+    summary: `Learning recorded for ${input.event.agentId}: ${input.event.learningTarget}`,
+    payload: {
+      learningEventId: input.event.learningEventId,
+      agentId: input.event.agentId,
+      agentType: input.event.agentType,
+      learningTarget: input.event.learningTarget,
+      evidenceRefs: input.event.evidenceRefs,
+      confidence: input.event.confidence,
+      approvalState: input.event.approvalState,
+      policyReasonCode: input.event.policyReasonCode,
+      autoApply: input.policy.autoApply,
+      requiresReview: input.policy.requiresReview,
+      blocked: input.policy.blocked,
+      ...(input.history
+        ? {
+            historyVersionId: input.history.historyVersionId,
+            historyVersion: input.history.version,
+            targetEntityType: input.history.targetEntityType,
+            targetEntityId: input.history.targetEntityId,
+          }
+        : {}),
+    },
+    producerTask: "task028",
+    createdAt: input.createdAt,
+    emittedAt: input.createdAt,
+  })
+}
+
+function emitHistoryRestored(input: {
+  event: RestoreEvent
+  inserted: boolean
+  applied: boolean
+  ok: boolean
+  conflictCodes: string[]
+  createdAt: number
+}): void {
+  if (!input.inserted) return
+  recordOrchestrationEvent({
+    eventKind: "history_restored",
+    runId: input.event.identity.parent?.parentRunId ?? null,
+    requestGroupId: input.event.identity.parent?.parentRequestId ?? null,
+    subSessionId: input.event.identity.parent?.parentSubSessionId ?? null,
+    agentId:
+      input.event.targetEntityType === "agent" || input.event.targetEntityType === "memory"
+        ? input.event.targetEntityId
+        : null,
+    teamId: input.event.targetEntityType === "team" ? input.event.targetEntityId : null,
+    correlationId: input.event.identity.auditCorrelationId ?? input.event.restoreEventId,
+    dedupeKey: `history_restored:${input.event.restoreEventId}`,
+    source: "learning-event-service",
+    severity: input.ok ? "info" : "warning",
+    summary: `History restore ${input.event.dryRun ? "dry-run" : "event"} for ${input.event.targetEntityType}:${input.event.targetEntityId}`,
+    payload: {
+      restoreEventId: input.event.restoreEventId,
+      targetEntityType: input.event.targetEntityType,
+      targetEntityId: input.event.targetEntityId,
+      restoredHistoryVersionId: input.event.restoredHistoryVersionId,
+      dryRun: input.event.dryRun,
+      applied: input.applied,
+      ok: input.ok,
+      effectSummary: input.event.effectSummary,
+      conflictCodes: input.conflictCodes,
+    },
+    producerTask: "task028",
+    createdAt: input.createdAt,
+    emittedAt: input.createdAt,
+  })
+}
+
+export async function recordLearningEvent(
+  input: LearningEventServiceInput,
+): Promise<LearningEventServiceResult> {
   const policy = evaluateLearningPolicy(input)
   const createdAt = input.now?.() ?? Date.now()
   const learningEventId = input.learningEventId ?? `learning:${randomUUID()}`
@@ -473,6 +623,7 @@ export async function recordLearningEvent(input: LearningEventServiceInput): Pro
     learningEventId,
     agentId: input.agentId,
     agentType: input.agentType,
+    ...(input.sourceRunId ? { sourceRunId: input.sourceRunId } : {}),
     ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
     ...(input.sourceSubSessionId ? { sourceSubSessionId: input.sourceSubSessionId } : {}),
     learningTarget: input.learningTarget,
@@ -533,6 +684,14 @@ export async function recordLearningEvent(input: LearningEventServiceInput): Pro
     memoryDocumentId = stored.documentId
   }
 
+  emitLearningRecorded({
+    event,
+    policy,
+    inserted,
+    createdAt,
+    ...(history ? { history } : {}),
+  })
+
   return {
     event,
     policy,
@@ -551,15 +710,23 @@ export function dbLearningEventToContract(row: DbLearningEvent): LearningEvent {
     identity: parsed["identity"] as unknown as RuntimeIdentity,
     learningEventId: row.learning_event_id,
     agentId: row.agent_id,
-    ...(typeof parsed["agentType"] === "string" ? { agentType: parsed["agentType"] as AgentEntityType } : {}),
-    ...(typeof parsed["sourceSessionId"] === "string" ? { sourceSessionId: parsed["sourceSessionId"] } : {}),
-    ...(typeof parsed["sourceSubSessionId"] === "string" ? { sourceSubSessionId: parsed["sourceSubSessionId"] } : {}),
+    ...(typeof parsed["agentType"] === "string"
+      ? { agentType: parsed["agentType"] as AgentEntityType }
+      : {}),
+    ...(typeof parsed["sourceRunId"] === "string" ? { sourceRunId: parsed["sourceRunId"] } : {}),
+    ...(typeof parsed["sourceSessionId"] === "string"
+      ? { sourceSessionId: parsed["sourceSessionId"] }
+      : {}),
+    ...(typeof parsed["sourceSubSessionId"] === "string"
+      ? { sourceSubSessionId: parsed["sourceSubSessionId"] }
+      : {}),
     learningTarget: row.learning_target,
     ...(hasAfter
       ? {
-          before: parsedBefore && typeof parsedBefore === "object" && !Array.isArray(parsedBefore)
-            ? parsedBefore as JsonObject
-            : {},
+          before:
+            parsedBefore && typeof parsedBefore === "object" && !Array.isArray(parsedBefore)
+              ? (parsedBefore as JsonObject)
+              : {},
           after: parsedAfter as JsonObject,
         }
       : {}),
@@ -568,18 +735,26 @@ export function dbLearningEventToContract(row: DbLearningEvent): LearningEvent {
     evidenceRefs: parseStringArray(row.evidence_refs_json),
     confidence: row.confidence,
     approvalState: row.approval_state,
-    ...(typeof parsed["policyReasonCode"] === "string" ? { policyReasonCode: parsed["policyReasonCode"] } : {}),
+    ...(typeof parsed["policyReasonCode"] === "string"
+      ? { policyReasonCode: parsed["policyReasonCode"] }
+      : {}),
   }
 }
 
-function targetEntityTypeForLearningTarget(target: LearningEvent["learningTarget"]): HistoryVersion["targetEntityType"] {
+function targetEntityTypeForLearningTarget(
+  target: LearningEvent["learningTarget"],
+): HistoryVersion["targetEntityType"] {
   if (target === "team_profile") return "team"
   if (target === "memory") return "memory"
   return "agent"
 }
 
-export async function approveLearningEvent(input: ApproveLearningEventInput): Promise<ApproveLearningEventResult> {
-  const event = listAgentLearningEvents(input.agentId).find((item) => item.learningEventId === input.learningEventId)
+export async function approveLearningEvent(
+  input: ApproveLearningEventInput,
+): Promise<ApproveLearningEventResult> {
+  const event = listAgentLearningEvents(input.agentId).find(
+    (item) => item.learningEventId === input.learningEventId,
+  )
   if (!event) {
     return { ok: false, reasonCode: "learning_event_not_found", historyInserted: false }
   }
@@ -685,7 +860,10 @@ export function dbRestoreEventToContract(row: DbProfileRestoreEvent): RestoreEve
   }
 }
 
-function currentPayloadFor(targetEntityType: RestoreEvent["targetEntityType"], targetEntityId: string): JsonObject | undefined {
+function currentPayloadFor(
+  targetEntityType: RestoreEvent["targetEntityType"],
+  targetEntityId: string,
+): JsonObject | undefined {
   if (targetEntityType === "agent") {
     const row = getAgentConfig(targetEntityId)
     return row ? parseJsonObject(row.config_json) : undefined
@@ -697,7 +875,11 @@ function currentPayloadFor(targetEntityType: RestoreEvent["targetEntityType"], t
   return undefined
 }
 
-function findHistoryVersion(targetEntityType: RestoreEvent["targetEntityType"], targetEntityId: string, historyVersionId: string): HistoryVersion | undefined {
+function findHistoryVersion(
+  targetEntityType: RestoreEvent["targetEntityType"],
+  targetEntityId: string,
+  historyVersionId: string,
+): HistoryVersion | undefined {
   return listProfileHistoryVersions(targetEntityType, targetEntityId)
     .map(dbHistoryVersionToContract)
     .find((history) => history.historyVersionId === historyVersionId)
@@ -705,7 +887,9 @@ function findHistoryVersion(targetEntityType: RestoreEvent["targetEntityType"], 
 
 function changedKeys(before: JsonObject, after: JsonObject): string[] {
   const keys = new Set([...Object.keys(before), ...Object.keys(after)])
-  return [...keys].filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])).sort()
+  return [...keys]
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+    .sort()
 }
 
 export function dryRunRestoreHistoryVersion(input: {
@@ -713,7 +897,11 @@ export function dryRunRestoreHistoryVersion(input: {
   targetEntityId: string
   restoredHistoryVersionId: string
 }): RestoreDryRunResult {
-  const history = findHistoryVersion(input.targetEntityType, input.targetEntityId, input.restoredHistoryVersionId)
+  const history = findHistoryVersion(
+    input.targetEntityType,
+    input.targetEntityId,
+    input.restoredHistoryVersionId,
+  )
   if (!history) {
     return {
       ok: false,
@@ -741,18 +929,31 @@ export function dryRunRestoreHistoryVersion(input: {
     restoredHistoryVersionId: input.restoredHistoryVersionId,
     restorePayload,
     ...(currentPayload ? { currentPayload } : {}),
-    effectSummary: keys.length > 0
-      ? keys.map((key) => `restore ${input.targetEntityType}:${input.targetEntityId} field ${key}`)
-      : [`restore ${input.targetEntityType}:${input.targetEntityId} has no visible field diff`],
+    effectSummary:
+      keys.length > 0
+        ? keys.map(
+            (key) => `restore ${input.targetEntityType}:${input.targetEntityId} field ${key}`,
+          )
+        : [`restore ${input.targetEntityType}:${input.targetEntityId} has no visible field diff`],
     conflictCodes,
   }
 }
 
-function applyRestorePayload(input: RestoreHistoryVersionInput, payload: JsonObject, now: number): boolean {
+function applyRestorePayload(
+  input: RestoreHistoryVersionInput,
+  payload: JsonObject,
+  now: number,
+): boolean {
   if (!input.apply || input.dryRun) return false
   if (input.targetEntityType === "agent") {
     const config = payload as unknown as AgentConfig
-    if (!config || typeof config !== "object" || !("agentId" in config) || config.agentId !== input.targetEntityId) return false
+    if (
+      !config ||
+      typeof config !== "object" ||
+      !("agentId" in config) ||
+      config.agentId !== input.targetEntityId
+    )
+      return false
     upsertAgentConfig({ ...config, updatedAt: now } as AgentConfig, {
       source: "system",
       auditId: input.auditCorrelationId ?? null,
@@ -763,7 +964,13 @@ function applyRestorePayload(input: RestoreHistoryVersionInput, payload: JsonObj
   }
   if (input.targetEntityType === "team") {
     const config = payload as unknown as TeamConfig
-    if (!config || typeof config !== "object" || !("teamId" in config) || config.teamId !== input.targetEntityId) return false
+    if (
+      !config ||
+      typeof config !== "object" ||
+      !("teamId" in config) ||
+      config.teamId !== input.targetEntityId
+    )
+      return false
     upsertTeamConfig({ ...config, updatedAt: now } as TeamConfig, {
       source: "system",
       auditId: input.auditCorrelationId ?? null,
@@ -775,7 +982,9 @@ function applyRestorePayload(input: RestoreHistoryVersionInput, payload: JsonObj
   return false
 }
 
-export function restoreHistoryVersion(input: RestoreHistoryVersionInput): RestoreHistoryVersionResult {
+export function restoreHistoryVersion(
+  input: RestoreHistoryVersionInput,
+): RestoreHistoryVersionResult {
   const createdAt = input.now?.() ?? Date.now()
   const dryRun = dryRunRestoreHistoryVersion(input)
   const restoreEventId = input.restoreEventId ?? `restore:${randomUUID()}`
@@ -786,6 +995,10 @@ export function restoreHistoryVersion(input: RestoreHistoryVersionInput): Restor
       owner: input.owner,
       idempotencyKey: input.idempotencyKey ?? `restore:${restoreEventId}`,
       ...(input.auditCorrelationId ? { auditCorrelationId: input.auditCorrelationId } : {}),
+      ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+      ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
+      ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+      ...(input.parentRequestId ? { parentRequestId: input.parentRequestId } : {}),
     }),
     restoreEventId,
     targetEntityType: input.targetEntityType,
@@ -799,6 +1012,14 @@ export function restoreHistoryVersion(input: RestoreHistoryVersionInput): Restor
     ...(input.auditCorrelationId ? { auditId: input.auditCorrelationId } : {}),
   })
   const applied = dryRun.ok ? applyRestorePayload(input, dryRun.restorePayload, createdAt) : false
+  emitHistoryRestored({
+    event,
+    inserted,
+    applied,
+    ok: dryRun.ok,
+    conflictCodes: dryRun.conflictCodes,
+    createdAt,
+  })
   return {
     ...dryRun,
     event,
@@ -811,10 +1032,22 @@ export function listAgentLearningEvents(agentId: string): LearningEvent[] {
   return listLearningEvents(agentId).map(dbLearningEventToContract)
 }
 
-export function listHistoryVersions(targetEntityType: HistoryVersion["targetEntityType"], targetEntityId: string): HistoryVersion[] {
-  return listProfileHistoryVersions(targetEntityType, targetEntityId).map(dbHistoryVersionToContract)
+export function listLearningReviewQueue(query: LearningReviewQueueQuery = {}): LearningEvent[] {
+  return listLearningEventsByApprovalState("pending_review", query).map(dbLearningEventToContract)
 }
 
-export function listRestoreEvents(targetEntityType: RestoreEvent["targetEntityType"], targetEntityId: string): RestoreEvent[] {
+export function listHistoryVersions(
+  targetEntityType: HistoryVersion["targetEntityType"],
+  targetEntityId: string,
+): HistoryVersion[] {
+  return listProfileHistoryVersions(targetEntityType, targetEntityId).map(
+    dbHistoryVersionToContract,
+  )
+}
+
+export function listRestoreEvents(
+  targetEntityType: RestoreEvent["targetEntityType"],
+  targetEntityId: string,
+): RestoreEvent[] {
   return listProfileRestoreEvents(targetEntityType, targetEntityId).map(dbRestoreEventToContract)
 }

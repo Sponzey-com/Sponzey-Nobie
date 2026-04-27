@@ -30,6 +30,14 @@ export class TelegramResponder {
     }
   }
 
+  async clearToolStatus(messageId: number): Promise<void> {
+    try {
+      await this.bot.api.deleteMessage(this.chatId, messageId)
+    } catch {
+      // Message may have been deleted or too old — ignore
+    }
+  }
+
   async sendFinalResponse(text: string): Promise<number[]> {
     return sendTelegramTextParts({
       api: this.bot.api,

@@ -1,9 +1,14 @@
-import { detectAvailableProvider, getDefaultModel, getProvider, type AIProvider } from "../ai/index.js"
+import {
+  type AIProvider,
+  detectAvailableProvider,
+  getDefaultModel,
+  getProvider,
+} from "../ai/index.js"
 import type { Message } from "../ai/types.js"
-import { createLogger } from "../logger/index.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
-import { buildUserProfilePromptContext } from "./profile-context.js"
+import { createLogger } from "../logger/index.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
+import { buildUserProfilePromptContext } from "./profile-context.js"
 export {
   buildFeedbackRequest,
   collectResultReviewIssues,
@@ -13,10 +18,12 @@ export {
   reviewSubAgentResult,
 } from "./sub-agent-result-review.js"
 export type {
+  SubAgentResultParentIntegrationStatus,
   SubAgentResultReview,
   SubAgentResultReviewInput,
   SubAgentResultReviewIssue,
   SubAgentResultReviewIssueCode,
+  SubAgentResultReviewVerdict,
   SubAgentRetryClass,
   SubSessionCompletionIntegrationDecision,
 } from "./sub-agent-result-review.js"
@@ -154,7 +161,9 @@ export function parseCompletionReviewResult(raw: string): CompletionReviewResult
         ? { userMessage: parsed.user_message.trim() }
         : {}),
       remainingItems: Array.isArray(parsed.remaining_items)
-        ? parsed.remaining_items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        ? parsed.remaining_items.filter(
+            (item): item is string => typeof item === "string" && item.trim().length > 0,
+          )
         : [],
     }
   } catch {

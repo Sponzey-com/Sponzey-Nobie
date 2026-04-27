@@ -203,7 +203,7 @@ function validateImpactScenarios(workDir, locales) {
     return results;
 }
 export function runPromptSourceRegression(workDir = process.cwd(), options = {}) {
-    const locales = options.locales?.length ? options.locales : ["ko", "en"];
+    const locales = options.locales?.length ? options.locales : ["en"];
     const sources = loadPromptSourceRegistry(workDir);
     const localeParity = checkPromptSourceLocaleParity(workDir);
     const responsibility = validateResponsibilities(sources);

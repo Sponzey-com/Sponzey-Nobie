@@ -1,4 +1,5 @@
 import type { TaskMonitorChecklist, TaskMonitorChecklistItem, TaskMonitorChecklistItemStatus } from "../../lib/task-monitor"
+import { CollapsibleText } from "./CollapsibleText"
 
 function describeChecklistMarker(status: TaskMonitorChecklistItemStatus): string {
   switch (status) {
@@ -69,9 +70,15 @@ function ChecklistRow({
             <span className="text-sm font-medium text-stone-900">{item.label}</span>
           </div>
           {item.summary ? (
-            <div className="mt-2 break-words pl-9 text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]">
-              {displayText(item.summary)}
-            </div>
+            <CollapsibleText
+              value={displayText(item.summary)}
+              threshold={160}
+              clampLines={2}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-2 break-words pl-9 text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]"
+              buttonClassName="mt-1 inline-flex text-xs font-semibold text-stone-600 underline-offset-2 hover:underline"
+            />
           ) : null}
         </div>
         <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${resolveChecklistTone(item.status)}`}>

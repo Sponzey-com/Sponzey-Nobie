@@ -4,6 +4,7 @@ import { getSlackRuntimeStatus } from "../channels/slack/runtime.js"
 import { getTelegramRuntimeStatus } from "../channels/telegram/runtime.js"
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
+import type { AgentContextMode } from "../agent/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { FinalizationSource } from "./finalization.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -56,6 +57,9 @@ export interface StartPreflightInput {
   executionSemantics?: TaskExecutionSemantics | undefined
   targetId?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
+  contextMode?: AgentContextMode | undefined
+  runScope?: "root" | "child" | "analysis" | undefined
+  skipIntake?: boolean | undefined
 }
 
 const YEONJANG_APPROVAL_TOOL_PATTERN =
@@ -77,6 +81,9 @@ function requiresAiRoute(input: StartPreflightInput): boolean {
 }
 
 function requiresChannelRuntime(input: StartPreflightInput): boolean {
+  if (input.runScope === "child" && input.contextMode === "handoff" && input.skipIntake) {
+    return false
+  }
   return input.source === "telegram" || input.source === "slack"
 }
 

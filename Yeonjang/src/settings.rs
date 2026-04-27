@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UiLanguage {
-    #[default]
     Ko,
+    #[default]
     En,
 }
 
@@ -60,7 +60,7 @@ impl Default for YeonjangSettings {
     fn default() -> Self {
         let node_id = "yeonjang-main".to_string();
         let mut settings = Self {
-            ui_language: UiLanguage::Ko,
+            ui_language: UiLanguage::En,
             node_id,
             display_name: "Yeonjang".to_string(),
             connection: BrokerConnectionSettings::default(),

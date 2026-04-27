@@ -204,18 +204,14 @@ describe("task006 security and channel visualization", () => {
       status: "disabled",
       badges: expect.arrayContaining(["off", "timeout:12s"]),
     }))
-    expect(scene.nodes.find((node) => node.id === "node:security:delegation_limit")).toEqual(expect.objectContaining({
-      status: "warning",
-      badges: expect.arrayContaining(["unlimited", "unguarded"]),
-    }))
+    expect(scene.nodes.find((node) => node.id === "node:security:delegation_limit")).toBeUndefined()
     expect(scene.nodes.find((node) => node.id === "node:security:restricted_zone")).toEqual(expect.objectContaining({
       status: "error",
-      badges: expect.arrayContaining(["direct-run", "unlimited"]),
+      badges: expect.arrayContaining(["direct-run", "fallback:allow"]),
     }))
     expect(scene.alerts?.map((alert) => alert.message)).toEqual(expect.arrayContaining([
       "승인 요청이 꺼져 있어 고위험 작업이 바로 실행될 수 있습니다.",
       "타임아웃 후 기본 동작이 허용으로 설정되어 있어 승인 응답이 없어도 작업이 계속될 수 있습니다.",
-      "자동 후속 처리가 무제한이라 같은 작업이 길게 반복될 수 있습니다.",
     ]))
 
     const canvas = SetupVisualizationCanvas({

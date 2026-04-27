@@ -4,6 +4,7 @@ export interface SubSessionProgressAggregationItem {
     subSessionId: string;
     agentId?: string;
     agentDisplayName?: string;
+    agentNickname?: string;
     status: SubSessionStatus;
     summary: string;
     at: number;

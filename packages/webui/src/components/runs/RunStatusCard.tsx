@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { CancelRunButton } from "./CancelRunButton"
+import { CollapsibleText } from "./CollapsibleText"
 import { RunTargetBadge } from "./RunTargetBadge"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
 
@@ -76,8 +77,14 @@ export function RunStatusCard({
               {toRunStatusText(run.status, language)}
             </span>
           </div>
-          <div className="mt-2 break-words text-xs leading-5 text-stone-600 [overflow-wrap:anywhere]">
-            {text("현재 상태:", "Current status:")} {displayText(run.summary)}
+          <div className="mt-2 text-xs leading-5 text-stone-600">
+            <span className="font-semibold text-stone-700">{text("현재 상태:", "Current status:")}</span>{" "}
+            <CollapsibleText
+              value={displayText(run.summary)}
+              showMoreLabel={text("전체 보기", "Show more")}
+              showLessLabel={text("접기", "Show less")}
+              className="mt-1 break-words [overflow-wrap:anywhere]"
+            />
           </div>
         </div>
       </div>
@@ -91,9 +98,6 @@ export function RunStatusCard({
         ) : null}
         <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
           {text("참조", "Context")} {toContextModeText(run.contextMode, language)}
-        </span>
-        <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-          {text("후속 시도", "Follow-up")} {run.delegationTurnCount}/{run.maxDelegationTurns === 0 ? text("무제한", "Unlimited") : run.maxDelegationTurns}
         </span>
       </div>
 

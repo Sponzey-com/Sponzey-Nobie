@@ -104,7 +104,7 @@ function describeAttemptLabel(attempt: TaskAttemptModel, text: TextFn): string {
     case "primary":
       return text("사용자 요청", "User request")
     case "followup":
-      return text("후속 시도", "Follow-up attempt")
+      return text("자동 보강", "Automatic follow-up")
     case "intake_bridge":
       return text("요청 정리 및 대상 선택", "Request triage and target selection")
     case "scheduled_execution":
@@ -114,9 +114,9 @@ function describeAttemptLabel(attempt: TaskAttemptModel, text: TextFn): string {
     case "verification":
       return text("결과 검증", "Result verification")
     case "filesystem_retry":
-      return text("실제 파일·폴더 작업 재시도", "Retry real file or folder work")
+      return text("실제 파일·폴더 작업 보강", "Real file or folder work follow-up")
     case "truncated_recovery":
-      return text("중간 절단 복구 재시도", "Retry truncated output recovery")
+      return text("중간 절단 복구", "Truncated output recovery")
   }
 }
 
@@ -179,7 +179,7 @@ function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMo
 function describeRunScopeLabel(attempt: TaskMonitorAttempt, text: TextFn): string {
   switch (attempt.run?.runScope) {
     case "child":
-      return text("후속 실행", "Follow-up run")
+      return text("서브 에이전트", "Sub-agent")
     case "analysis":
       return text("분석", "Analysis")
     default:

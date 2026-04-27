@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getCapabilityDelegation } from "../packages/core/src/db/index.ts"
 import {
+  type CapabilityPolicy,
+  type McpServerStatus,
+  type OwnerScope,
+  type PermissionProfile,
+  type SkillMcpAllowlist,
+  type ToolContext,
+  acquireAgentCapabilityRateLimit,
   buildCapabilityApprovalAggregationEvent,
   buildCapabilityDelegationRequest,
   buildCapabilityResultDataExchange,
@@ -14,13 +21,6 @@ import {
   persistCapabilityResultDataExchange,
   recordCapabilityDelegationRequest,
   resetAgentCapabilityRateLimitsForTest,
-  acquireAgentCapabilityRateLimit,
-  type CapabilityPolicy,
-  type McpServerStatus,
-  type OwnerScope,
-  type PermissionProfile,
-  type SkillMcpAllowlist,
-  type ToolContext,
 } from "../packages/core/src/index.ts"
 import { buildMcpToolCallPayload } from "../packages/core/src/mcp/client.ts"
 import { filterMcpStatusesForAgentAllowlist } from "../packages/core/src/mcp/registry.ts"
@@ -99,7 +99,10 @@ function capabilityPolicy(overrides: Partial<CapabilityPolicy> = {}): Capability
   }
 }
 
-function toolContext(policy: CapabilityPolicy = capabilityPolicy(), overrides: Partial<ToolContext> = {}): ToolContext {
+function toolContext(
+  policy: CapabilityPolicy = capabilityPolicy(),
+  overrides: Partial<ToolContext> = {},
+): ToolContext {
   const base: ToolContext = {
     sessionId: "session:task009",
     runId: "run:task009",
@@ -114,7 +117,9 @@ function toolContext(policy: CapabilityPolicy = capabilityPolicy(), overrides: P
     agentType: "sub_agent",
     capabilityPolicy: policy,
     auditId: "audit:task009",
-    ...(policy.skillMcpAllowlist.secretScopeId ? { secretScopeId: policy.skillMcpAllowlist.secretScopeId } : {}),
+    ...(policy.skillMcpAllowlist.secretScopeId
+      ? { secretScopeId: policy.skillMcpAllowlist.secretScopeId }
+      : {}),
   }
   return { ...base, ...overrides }
 }
@@ -148,10 +153,15 @@ describe("task009 capability isolation", () => {
     const denied = evaluateAgentToolCapabilityPolicy({
       toolName: "file_write",
       riskLevel: "safe",
-      ctx: toolContext(capabilityPolicy({
-        permissionProfile: permissionProfile({ riskCeiling: "moderate", allowFilesystemWrite: false }),
-        skillMcpAllowlist: allowlist({ enabledToolNames: ["file_write"] }),
-      })),
+      ctx: toolContext(
+        capabilityPolicy({
+          permissionProfile: permissionProfile({
+            riskCeiling: "moderate",
+            allowFilesystemWrite: false,
+          }),
+          skillMcpAllowlist: allowlist({ enabledToolNames: ["file_write"] }),
+        }),
+      ),
     })
     expect(denied.allowed).toBe(false)
     expect(denied.reasonCode).toBe("risk_exceeds_profile")
@@ -253,17 +263,21 @@ describe("task009 capability isolation", () => {
 
   it("passes mandatory agent metadata into MCP tool call payloads", () => {
     const policy = capabilityPolicy()
-    const payload = buildMcpToolCallPayload("search", { q: "nobie" }, {
-      agentId: "agent:researcher",
-      sessionId: "session:task009",
-      permissionProfile: policy.permissionProfile,
-      skillMcpAllowlist: policy.skillMcpAllowlist,
-      secretScopeId: "secret:agent:researcher",
-      auditId: "audit:task009",
-      runId: "run:task009",
-      requestGroupId: "group:task009",
-      capabilityDelegationId: "delegation:task009",
-    })
+    const payload = buildMcpToolCallPayload(
+      "search",
+      { q: "nobie" },
+      {
+        agentId: "agent:researcher",
+        sessionId: "session:task009",
+        permissionProfile: policy.permissionProfile,
+        skillMcpAllowlist: policy.skillMcpAllowlist,
+        secretScopeId: "secret:agent:researcher",
+        auditId: "audit:task009",
+        runId: "run:task009",
+        requestGroupId: "group:task009",
+        capabilityDelegationId: "delegation:task009",
+      },
+    )
 
     expect(payload._meta?.nobie).toMatchObject({
       agent_id: "agent:researcher",
@@ -345,9 +359,11 @@ describe("task009 capability isolation", () => {
     const decision = evaluateAgentToolCapabilityPolicy({
       toolName: "mcp__browser__search",
       riskLevel: "moderate",
-      ctx: toolContext(capabilityPolicy({
-        permissionProfile: permissionProfile({ approvalRequiredFrom: "moderate" }),
-      })),
+      ctx: toolContext(
+        capabilityPolicy({
+          permissionProfile: permissionProfile({ approvalRequiredFrom: "moderate" }),
+        }),
+      ),
     })
     expect(decision.approvalRequired).toBe(true)
     const event = buildCapabilityApprovalAggregationEvent({

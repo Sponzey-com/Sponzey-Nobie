@@ -1,7 +1,14 @@
 import crypto from "node:crypto";
-import { getDb, getMessageLedgerEventByIdempotencyKey, insertDiagnosticEvent, insertMessageLedgerEvent, listMessageLedgerEvents, } from "../db/index.js";
 import { recordControlEventFromLedger } from "../control-plane/timeline.js";
-const DEDUPE_TOOL_NAMES = new Set(["web_search", "web_fetch", "screen_capture", "telegram_send_file", "slack_send_file"]);
+import { getDb, getMessageLedgerEventByIdempotencyKey, insertDiagnosticEvent, insertMessageLedgerEvent, listMessageLedgerEvents, } from "../db/index.js";
+import { buildWebRetrievalPolicyDecision } from "./web-retrieval-policy.js";
+const DEDUPE_TOOL_NAMES = new Set([
+    "web_search",
+    "web_fetch",
+    "screen_capture",
+    "telegram_send_file",
+    "slack_send_file",
+]);
 const SECRET_KEY_PATTERN = /(?:api[_-]?key|token|secret|password|credential|authorization|cookie|raw[_-]?(?:body|response))/i;
 function resolveRunLedgerContext(runId) {
     if (!runId)
@@ -146,12 +153,36 @@ export function getAllowRepeatReason(params) {
 }
 export function buildToolCallIdempotencyKey(input) {
     const owner = input.requestGroupId ?? input.runId ?? "unknown-run";
-    const hash = hashLedgerValue({ toolName: input.toolName, params: canonicalToolParams(input.params) });
+    const hash = hashLedgerValue({
+        toolName: input.toolName,
+        params: canonicalToolParams(input.params),
+    });
     return `tool:${owner}:${input.toolName}:${hash}`;
 }
 export function findDuplicateToolCall(input) {
     const baseKey = buildToolCallIdempotencyKey(input);
-    return getMessageLedgerEventByIdempotencyKey(`${baseKey}:result`) ?? getMessageLedgerEventByIdempotencyKey(`${baseKey}:started`);
+    const webRetrievalPolicy = buildWebRetrievalPolicyDecision({
+        toolName: input.toolName,
+        params: input.params,
+    });
+    const keys = [
+        baseKey,
+        ...(webRetrievalPolicy
+            ? [
+                buildToolCallIdempotencyKey({
+                    ...input,
+                    params: webRetrievalPolicy.canonicalParams,
+                }),
+            ]
+            : []),
+    ];
+    for (const key of [...new Set(keys)]) {
+        const duplicate = getMessageLedgerEventByIdempotencyKey(`${key}:result`) ??
+            getMessageLedgerEventByIdempotencyKey(`${key}:started`);
+        if (duplicate)
+            return duplicate;
+    }
+    return undefined;
 }
 function eventSucceeded(event) {
     return event.status === "sent" || event.status === "delivered" || event.status === "succeeded";
@@ -160,15 +191,22 @@ export function messageLedgerEventSucceeded(event) {
     return Boolean(event && eventSucceeded(event));
 }
 function eventFailed(event) {
-    return event.status === "failed" || event.status === "suppressed" || event.event_kind.endsWith("_failed") || event.event_kind === "recovery_stop_generated";
+    return (event.status === "failed" ||
+        event.status === "suppressed" ||
+        event.event_kind.endsWith("_failed") ||
+        event.event_kind === "recovery_stop_generated");
 }
 export function finalizeDeliveryForRun(params) {
-    if (params.requestedStatus !== "failed" && params.requestedStatus !== "cancelled" && params.requestedStatus !== "interrupted") {
+    if (params.requestedStatus !== "failed" &&
+        params.requestedStatus !== "cancelled" &&
+        params.requestedStatus !== "interrupted") {
         return { shouldProtectDeliveredAnswer: false, outcome: "unchanged" };
     }
     const resolved = resolveRunLedgerContext(params.runId);
     const events = listMessageLedgerEvents({
-        ...(resolved?.requestGroupId ? { requestGroupId: resolved.requestGroupId } : { runId: params.runId }),
+        ...(resolved?.requestGroupId
+            ? { requestGroupId: resolved.requestGroupId }
+            : { runId: params.runId }),
         limit: 1000,
     });
     const hasDeliveredAnswer = events.some((event) => event.event_kind === "text_delivered" && eventSucceeded(event));

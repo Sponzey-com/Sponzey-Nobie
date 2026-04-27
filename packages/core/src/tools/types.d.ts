@@ -1,4 +1,4 @@
-import type { AgentEntityType, CapabilityPolicy, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
+import type { AgentEntityType, CapabilityPolicy, DepthScopedToolPolicy, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 export type RiskLevel = "safe" | "moderate" | "dangerous";
 export interface ToolContext {
     sessionId: string;
@@ -16,9 +16,16 @@ export interface ToolContext {
     permissionProfile?: PermissionProfile;
     skillMcpAllowlist?: SkillMcpAllowlist;
     capabilityRateLimit?: CapabilityPolicy["rateLimit"];
+    delegationDepth?: number;
+    depthScopedToolPolicy?: DepthScopedToolPolicy;
+    capabilityBindingId?: string;
     secretScopeId?: string;
+    parentSecretScopeId?: string;
+    allowParentSecretFallback?: boolean;
+    fallbackSecretScopeAllowlist?: string[];
     auditId?: string;
     capabilityDelegationId?: string;
+    capabilityResultSharing?: "data_exchange" | "result_report_artifact";
 }
 export interface ArtifactDeliveryResultDetails {
     kind: "artifact_delivery";

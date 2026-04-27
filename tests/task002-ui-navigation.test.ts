@@ -15,6 +15,8 @@ describe("task002 UI navigation policy", () => {
     expect(getUiNavigation("advanced", false).map((item) => item.path)).toEqual([
       "/advanced/chat",
       "/advanced/runs",
+      "/advanced/topology",
+      "/advanced/orchestration",
       "/advanced/ai",
       "/advanced/channels",
       "/advanced/extensions",

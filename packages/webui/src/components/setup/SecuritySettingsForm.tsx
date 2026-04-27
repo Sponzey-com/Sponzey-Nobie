@@ -8,7 +8,7 @@ export function SecuritySettingsForm({
 }: {
   value: SetupSecurityDraft
   onChange: (patch: Partial<SetupSecurityDraft>) => void
-  errors?: Partial<Record<"approvalTimeout" | "maxDelegationTurns", string>>
+  errors?: Partial<Record<"approvalTimeout", string>>
 }) {
   const { text } = useUiI18n()
 
@@ -48,24 +48,6 @@ export function SecuritySettingsForm({
           <option value="deny">{text("거부", "Deny")}</option>
           <option value="allow">{text("허용", "Allow")}</option>
         </select>
-      </div>
-      <div>
-        <label className="mb-1 block text-sm font-medium text-stone-700">{text("자동 후속 처리 최대 횟수 *", "Maximum Automatic Follow-up Count *")}</label>
-        <input
-          type="number"
-          min={0}
-          max={20}
-          className="input"
-          value={value.maxDelegationTurns}
-          onChange={(event) => onChange({ maxDelegationTurns: Number(event.target.value) })}
-        />
-        {errors?.maxDelegationTurns ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.maxDelegationTurns}</p> : null}
-        <div className="mt-2 text-xs leading-5 text-stone-500">
-          {text("`0`이면 제한 없이 계속 진행합니다. `1` 이상이면 지정한 횟수만큼만 자동 후속 처리를 수행합니다.", "`0` means no limit. `1` or higher runs automatic follow-up only that many times.")}
-        </div>
-        <div className="mt-1 text-xs leading-5 text-amber-700">
-          {text("주의: 무제한으로 두면 같은 후속 작업이 길게 반복될 수 있고, 모델 호출 비용과 실행 시간이 크게 늘어날 수 있습니다.", "Warning: unlimited mode can repeat the same follow-up work for a long time and increase model cost and runtime significantly.")}
-        </div>
       </div>
     </div>
   )

@@ -2,17 +2,25 @@ import crypto from "node:crypto"
 import { homedir } from "node:os"
 import { basename } from "node:path"
 import type { AgentChunk } from "../agent/index.js"
-import { recordArtifactMetadata, type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js"
-import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertDiagnosticEvent, insertMessage, upsertTaskContinuity } from "../db/index.js"
+import { type ArtifactRetentionPolicy, recordArtifactMetadata } from "../artifacts/lifecycle.js"
+import type { NicknameSnapshot } from "../contracts/sub-agent-orchestration.js"
+import {
+  getTaskContinuity,
+  hasArtifactReceipt,
+  insertArtifactReceipt,
+  insertDiagnosticEvent,
+  insertMessage,
+  upsertTaskContinuity,
+} from "../db/index.js"
 import { eventBus } from "../events/index.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
 import {
+  type MessageLedgerDeliveryKind,
   buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey,
   buildTextDeliveryKey as buildLedgerTextDeliveryKey,
   findMessageLedgerEventByIdempotencyKey,
   messageLedgerEventSucceeded,
   recordMessageLedgerEvent,
-  type MessageLedgerDeliveryKind,
 } from "./message-ledger.js"
 import { enqueueBackpressureTask, recordRetryBudgetAttempt } from "./queue-backpressure.js"
 import { getRootRun } from "./store.js"
@@ -58,7 +66,9 @@ export interface DeliveryOutcome {
 }
 
 export type RunChunkDeliveryHandler =
-  | ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | void> | ChunkDeliveryReceipt | void)
+  | ((
+      chunk: AgentChunk,
+    ) => Promise<ChunkDeliveryReceipt | undefined> | ChunkDeliveryReceipt | undefined)
   | undefined
 
 export type DeliverySource = "webui" | "cli" | "telegram" | "slack"
@@ -131,7 +141,9 @@ function rememberCompletedArtifactDelivery(key: string): void {
   if (oldestKey) completedArtifactDeliveryKeys.delete(oldestKey)
 }
 
-export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<T>): Promise<T | undefined> {
+export async function deliverArtifactOnce<T>(
+  params: ArtifactDeliveryOnceParams<T>,
+): Promise<T | undefined> {
   const runId = params.runId?.trim()
   if (!runId) return params.task()
 
@@ -143,7 +155,11 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
   if (!params.force && completedArtifactDeliveryKeys.has(key)) return undefined
 
   const run = getRootRun(runId)
-  if (!params.force && run && hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
+  if (
+    !params.force &&
+    run &&
+    hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })
+  ) {
     rememberCompletedArtifactDelivery(key)
     return undefined
   }
@@ -153,7 +169,10 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
       `${params.channel}:${params.filePath}`,
       `${params.channel}:${displayHomePath(params.filePath)}`,
     ]
-    if (continuity?.lastDeliveryReceipt && deliveryReceipts.includes(continuity.lastDeliveryReceipt)) {
+    if (
+      continuity?.lastDeliveryReceipt &&
+      deliveryReceipts.includes(continuity.lastDeliveryReceipt)
+    ) {
       rememberCompletedArtifactDelivery(key)
       return undefined
     }
@@ -165,7 +184,8 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
     return undefined
   }
 
-  const delivery = params.task()
+  const delivery = params
+    .task()
     .then((result) => {
       if (result !== undefined) {
         rememberCompletedArtifactDelivery(key)
@@ -224,7 +244,11 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
           requestGroupId: run?.requestGroupId ?? runId,
           channel: params.channel,
           eventKind: "artifact_delivered",
-          deliveryKey: buildLedgerArtifactDeliveryKey(params.channel, params.channelTarget, params.filePath),
+          deliveryKey: buildLedgerArtifactDeliveryKey(
+            params.channel,
+            params.channelTarget,
+            params.filePath,
+          ),
           idempotencyKey: `artifact-delivered:${key}`,
           status: "delivered",
           summary: `${params.channel} artifact delivered: ${displayHomePath(params.filePath)}`,
@@ -246,7 +270,11 @@ export async function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<
         requestGroupId: run?.requestGroupId ?? runId,
         channel: params.channel,
         eventKind: "artifact_delivery_failed",
-        deliveryKey: buildLedgerArtifactDeliveryKey(params.channel, params.channelTarget, params.filePath),
+        deliveryKey: buildLedgerArtifactDeliveryKey(
+          params.channel,
+          params.channelTarget,
+          params.filePath,
+        ),
         idempotencyKey: `artifact-failed:${key}:${Date.now()}`,
         status: "failed",
         summary: `${params.channel} artifact delivery failed: ${displayHomePath(params.filePath)}`,
@@ -278,12 +306,15 @@ export function displayHomePath(value: string): string {
   return value.startsWith(home) ? value.replace(home, "~") : value
 }
 
-function rememberDeliveryContinuity(runId: string, receipt: {
-  lastToolReceipt?: string
-  lastDeliveryReceipt?: string
-  pendingDelivery?: string[]
-  status?: string
-}): void {
+function rememberDeliveryContinuity(
+  runId: string,
+  receipt: {
+    lastToolReceipt?: string
+    lastDeliveryReceipt?: string
+    pendingDelivery?: string[]
+    status?: string
+  },
+): void {
   try {
     const run = getRootRun(runId)
     if (!run) return
@@ -306,21 +337,26 @@ export function buildSuccessfulDeliverySummary(deliveries: SuccessfulFileDeliver
   if (deliveries.length === 0) return "파일 전달 완료"
   const last = deliveries[deliveries.length - 1]
   if (!last) return "파일 전달 완료"
-  const channelLabel = last.channel === "telegram"
-    ? "텔레그램"
-    : last.channel === "webui"
-      ? "WebUI"
-      : last.channel === "slack"
-        ? "Slack"
-      : "채널"
+  const channelLabel =
+    last.channel === "telegram"
+      ? "텔레그램"
+      : last.channel === "webui"
+        ? "WebUI"
+        : last.channel === "slack"
+          ? "Slack"
+          : "채널"
   return `${channelLabel} 파일 전달 완료: ${describeArtifactForUser(last)}`
 }
 
-export function describeArtifactForUser(delivery: Pick<SuccessfulFileDelivery, "filePath" | "url">): string {
+export function describeArtifactForUser(
+  delivery: Pick<SuccessfulFileDelivery, "filePath" | "url">,
+): string {
   return delivery.url?.trim() || basename(delivery.filePath)
 }
 
-export async function resendArtifact<T>(params: Omit<ArtifactDeliveryOnceParams<T>, "force">): Promise<T | undefined> {
+export async function resendArtifact<T>(
+  params: Omit<ArtifactDeliveryOnceParams<T>, "force">,
+): Promise<T | undefined> {
   return deliverArtifactOnce({
     ...params,
     force: true,
@@ -350,7 +386,8 @@ export function resolveDeliveryOutcome(params: {
     textDeliverySatisfied: hasSuccessfulTextDelivery,
     deliverySatisfied,
     ...(deliverySummary ? { deliverySummary } : {}),
-    requiresDirectArtifactRecovery: params.wantsDirectArtifactDelivery && !hasSuccessfulArtifactDelivery,
+    requiresDirectArtifactRecovery:
+      params.wantsDirectArtifactDelivery && !hasSuccessfulArtifactDelivery,
   }
 }
 
@@ -366,6 +403,8 @@ export async function emitAssistantTextDelivery(params: {
   parentRunId?: string
   subSessionId?: string
   agentId?: string
+  speaker?: NicknameSnapshot
+  sourceAttributions?: unknown[]
   force?: boolean
   onError?: (message: string) => void
   dependencies?: Partial<AssistantTextDeliveryDependencies>
@@ -385,6 +424,34 @@ export async function emitAssistantTextDelivery(params: {
   const deliveryKind = params.deliveryKind ?? "final"
   const deliveryKey = buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized)
   const idempotencyKey = `text-delivery:${params.runId}:${params.source}:${deliveryKey}`
+
+  if (deliveryKind === "final" && params.subSessionId) {
+    recordMessageLedgerEvent({
+      runId: params.runId,
+      ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+      subSessionId: params.subSessionId,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      sessionKey: params.sessionId,
+      channel: params.source,
+      eventKind: "text_delivery_suppressed",
+      deliveryKind,
+      deliveryKey,
+      idempotencyKey: `${idempotencyKey}:child-direct-blocked`,
+      status: "suppressed",
+      summary: "child sub-session final delivery was blocked; parent finalizer must deliver.",
+      detail: {
+        reasonCode: "child_direct_final_delivery_blocked",
+        textLength: normalized.length,
+        ...(params.speaker ? { speaker: params.speaker } : {}),
+        ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
+      },
+    })
+    return {
+      persisted: false,
+      textDelivered: false,
+      doneDelivered: false,
+    }
+  }
 
   if (!params.force && deliveryKind === "final") {
     const previousDelivery = findMessageLedgerEventByIdempotencyKey(idempotencyKey)
@@ -406,6 +473,8 @@ export async function emitAssistantTextDelivery(params: {
           duplicateLedgerEventId: previousDelivery?.id ?? null,
           duplicateCreatedAt: previousDelivery?.created_at ?? null,
           textLength: normalized.length,
+          ...(params.speaker ? { speaker: params.speaker } : {}),
+          ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
         },
       })
       return {
@@ -483,6 +552,8 @@ export async function emitAssistantTextDelivery(params: {
       textDelivered: receipt.textDelivered,
       doneDelivered: receipt.doneDelivered,
       textLength: normalized.length,
+      ...(params.speaker ? { speaker: params.speaker } : {}),
+      ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
     },
   })
 
@@ -529,12 +600,14 @@ export async function deliverChunk(params: {
   if (!params.onChunk) return undefined
   const recoveryKey = buildChunkDeliveryRecoveryKey(params.runId, params.chunk)
   try {
-    return (await enqueueBackpressureTask({
-      queueName: "delivery",
-      runId: params.runId,
-      recoveryKey,
-      task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
-    })) ?? undefined
+    return (
+      (await enqueueBackpressureTask({
+        queueName: "delivery",
+        runId: params.runId,
+        recoveryKey,
+        task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
+      })) ?? undefined
+    )
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error)
     const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`)
@@ -604,16 +677,20 @@ export function applyChunkDeliveryReceipt(params: {
   appendEvent: (runId: string, label: string) => void
 }): void {
   for (const delivery of params.receipt?.artifactDeliveries ?? []) {
-    const alreadyRecorded = params.successfulFileDeliveries.some((existing) =>
-      existing.channel === delivery.channel
-      && existing.filePath === delivery.filePath
-      && existing.toolName === delivery.toolName,
+    const alreadyRecorded = params.successfulFileDeliveries.some(
+      (existing) =>
+        existing.channel === delivery.channel &&
+        existing.filePath === delivery.filePath &&
+        existing.toolName === delivery.toolName,
     )
     if (alreadyRecorded) continue
 
     params.successfulFileDeliveries.push(delivery)
     if (delivery.channel === "telegram") {
-      params.appendEvent(params.runId, `텔레그램 파일 전달 완료: ${describeArtifactForUser(delivery)}`)
+      params.appendEvent(
+        params.runId,
+        `텔레그램 파일 전달 완료: ${describeArtifactForUser(delivery)}`,
+      )
     } else if (delivery.channel === "slack") {
       params.appendEvent(params.runId, `Slack 파일 전달 완료: ${describeArtifactForUser(delivery)}`)
     } else {
@@ -629,7 +706,11 @@ export function applyChunkDeliveryReceipt(params: {
       runId: params.runId,
       channel: delivery.channel,
       eventKind: "artifact_delivered",
-      deliveryKey: buildLedgerArtifactDeliveryKey(delivery.channel, delivery.url ?? delivery.downloadUrl ?? delivery.previewUrl, delivery.filePath),
+      deliveryKey: buildLedgerArtifactDeliveryKey(
+        delivery.channel,
+        delivery.url ?? delivery.downloadUrl ?? delivery.previewUrl,
+        delivery.filePath,
+      ),
       idempotencyKey: `chunk-artifact:${params.runId}:${delivery.channel}:${delivery.toolName}:${delivery.filePath}`,
       status: "delivered",
       summary: `${delivery.channel} artifact delivered: ${describeArtifactForUser(delivery)}`,
@@ -646,16 +727,42 @@ export function applyChunkDeliveryReceipt(params: {
   }
 
   for (const delivery of params.receipt?.textDeliveries ?? []) {
-    const alreadyRecorded = params.successfulTextDeliveries.some((existing) =>
-      existing.channel === delivery.channel
-      && existing.text === delivery.text
-      && JSON.stringify(existing.messageIds ?? []) === JSON.stringify(delivery.messageIds ?? []),
+    if ((delivery.deliveryKind ?? "final") === "final" && delivery.subSessionId) {
+      recordMessageLedgerEvent({
+        runId: params.runId,
+        ...(delivery.parentRunId ? { parentRunId: delivery.parentRunId } : {}),
+        subSessionId: delivery.subSessionId,
+        ...(delivery.agentId ? { agentId: delivery.agentId } : {}),
+        channel: delivery.channel,
+        eventKind: "text_delivery_suppressed",
+        deliveryKind: "final",
+        deliveryKey: buildLedgerTextDeliveryKey(
+          delivery.channel,
+          JSON.stringify(delivery.messageIds ?? []),
+          delivery.text,
+        ),
+        idempotencyKey: `chunk-text-blocked:${params.runId}:${delivery.subSessionId}:${delivery.channel}:${JSON.stringify(delivery.messageIds ?? [])}`,
+        status: "suppressed",
+        summary:
+          "child sub-session chunk final delivery was blocked; parent finalizer must deliver.",
+        detail: {
+          reasonCode: "child_direct_final_delivery_blocked",
+          textLength: delivery.text.length,
+        },
+      })
+      continue
+    }
+    const alreadyRecorded = params.successfulTextDeliveries.some(
+      (existing) =>
+        existing.channel === delivery.channel &&
+        existing.text === delivery.text &&
+        JSON.stringify(existing.messageIds ?? []) === JSON.stringify(delivery.messageIds ?? []),
     )
     if (alreadyRecorded) continue
 
     params.successfulTextDeliveries.push(delivery)
     if (delivery.channel === "telegram") {
-      params.appendEvent(params.runId, `텔레그램 텍스트 전달 완료`)
+      params.appendEvent(params.runId, "텔레그램 텍스트 전달 완료")
     } else if (delivery.channel === "webui") {
       params.appendEvent(params.runId, "WebUI 텍스트 전달 완료")
     } else if (delivery.channel === "slack") {
@@ -676,7 +783,11 @@ export function applyChunkDeliveryReceipt(params: {
       channel: delivery.channel,
       eventKind: "text_delivered",
       deliveryKind: delivery.deliveryKind ?? "final",
-      deliveryKey: buildLedgerTextDeliveryKey(delivery.channel, JSON.stringify(delivery.messageIds ?? []), delivery.text),
+      deliveryKey: buildLedgerTextDeliveryKey(
+        delivery.channel,
+        JSON.stringify(delivery.messageIds ?? []),
+        delivery.text,
+      ),
       idempotencyKey: `chunk-text:${params.runId}:${delivery.channel}:${JSON.stringify(delivery.messageIds ?? [])}`,
       status: "delivered",
       summary: `${delivery.channel} text delivered`,

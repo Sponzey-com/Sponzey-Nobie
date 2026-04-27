@@ -15,8 +15,8 @@ import {
 } from "../packages/core/src/release/package.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env.NOBIE_STATE_DIR
+const previousConfig = process.env.NOBIE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -52,18 +52,18 @@ function createReleaseFixture(): string {
 beforeEach(() => {
   closeDb()
   const stateDir = makeTempDir("nobie-task012-state-")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env.NOBIE_STATE_DIR = stateDir
+  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
+  else process.env.NOBIE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
+  else process.env.NOBIE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -87,32 +87,72 @@ describe("task012 release package", () => {
     expect(manifest.releaseVersion).toBe("v1.2.3-test")
     expect(manifest.gitTag).toBe("v1.2.3-test")
     expect(manifest.requiredMissing).toEqual([])
-    expect(manifest.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "gateway:cli", status: "present", checksum: expect.any(String) }),
-      expect.objectContaining({ id: "webui:static", status: "present", checksum: expect.any(String) }),
-      expect.objectContaining({ id: "db:migrations", status: "present", checksum: expect.any(String) }),
-      expect.objectContaining({ id: "yeonjang:protocol", status: "present", checksum: expect.any(String) }),
-      expect.objectContaining({ id: "runbook:release", status: "present", checksum: expect.any(String) }),
-      expect.objectContaining({ id: "admin:diagnostic-bundle", status: "missing_optional" }),
-    ]))
-    expect(manifest.artifacts.some((artifact) => artifact.kind === "prompt_seed" && artifact.status === "present")).toBe(true)
-    expect(manifest.featureFlags.some((flag) => flag.featureKey === "sub_agent_orchestration")).toBe(true)
+    expect(manifest.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "gateway:cli",
+          status: "present",
+          checksum: expect.any(String),
+        }),
+        expect.objectContaining({
+          id: "webui:static",
+          status: "present",
+          checksum: expect.any(String),
+        }),
+        expect.objectContaining({
+          id: "db:migrations",
+          status: "present",
+          checksum: expect.any(String),
+        }),
+        expect.objectContaining({
+          id: "yeonjang:protocol",
+          status: "present",
+          checksum: expect.any(String),
+        }),
+        expect.objectContaining({
+          id: "runbook:release",
+          status: "present",
+          checksum: expect.any(String),
+        }),
+        expect.objectContaining({ id: "admin:diagnostic-bundle", status: "missing_optional" }),
+      ]),
+    )
+    expect(
+      manifest.artifacts.some(
+        (artifact) => artifact.kind === "prompt_seed" && artifact.status === "present",
+      ),
+    ).toBe(true)
+    expect(
+      manifest.featureFlags.some((flag) => flag.featureKey === "sub_agent_orchestration"),
+    ).toBe(true)
     expect(manifest.performanceEvidence.kind).toBe("nobie.release.performance")
-    expect(manifest.releaseNotes.featureFlagDefaults.join("\n")).toContain("sub_agent_orchestration")
+    expect(manifest.benchmarkEvidence.kind).toBe("nobie.benchmarks.release_gate")
+    expect(manifest.benchmarkEvidence.gateStatus).toBe("passed")
+    expect(manifest.subAgentReleaseGate.kind).toBe("nobie.sub_agent.release_readiness")
+    expect(manifest.subAgentReleaseGate.gateStatus).toBe("passed")
+    expect(manifest.releaseNotes.featureFlagDefaults.join("\n")).toContain(
+      "sub_agent_orchestration",
+    )
     expect(manifest.pipeline.order).toContain("backup-rehearsal")
     expect(manifest.pipeline.order).toContain("channel-smoke-dry-run")
-    expect(manifest.updatePreflight.checks.map((check) => check.id)).toEqual(expect.arrayContaining([
-      "node-22",
-      "command:pnpm",
-      "command:cargo",
-      "os-supported",
-      "write-permission",
-      "prompt-seed",
-      "yeonjang-protocol",
-      "db-backup-required",
-    ]))
-    expect(manifest.rollback.restoreTargets).toEqual(expect.arrayContaining([expect.stringContaining("DB")]))
-    expect(manifest.cleanInstallChecklist.some((item) => item.id === "db-migration" && item.required)).toBe(true)
+    expect(manifest.updatePreflight.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining([
+        "node-22",
+        "command:pnpm",
+        "command:cargo",
+        "os-supported",
+        "write-permission",
+        "prompt-seed",
+        "yeonjang-protocol",
+        "db-backup-required",
+      ]),
+    )
+    expect(manifest.rollback.restoreTargets).toEqual(
+      expect.arrayContaining([expect.stringContaining("DB")]),
+    )
+    expect(
+      manifest.cleanInstallChecklist.some((item) => item.id === "db-migration" && item.required),
+    ).toBe(true)
   })
 
   it("writes release manifest, checksum file, and copied payload", () => {
@@ -130,16 +170,24 @@ describe("task012 release package", () => {
 
     expect(existsSync(result.manifestPath)).toBe(true)
     expect(existsSync(result.checksumPath)).toBe(true)
-    expect(existsSync(join(outputDir, "payload", "gateway", "packages", "cli", "dist", "index.js"))).toBe(true)
+    expect(
+      existsSync(join(outputDir, "payload", "gateway", "packages", "cli", "dist", "index.js")),
+    ).toBe(true)
     expect(existsSync(join(outputDir, "payload", "webui", "dist", "index.html"))).toBe(true)
-    expect(readFileSync(result.checksumPath, "utf-8")).toContain("gateway/packages/cli/dist/index.js")
+    expect(readFileSync(result.checksumPath, "utf-8")).toContain(
+      "gateway/packages/cli/dist/index.js",
+    )
     expect(result.copiedArtifacts.length).toBeGreaterThan(5)
   })
 
   it("keeps release pipeline and rollback runbook explicit", () => {
     const pipeline = buildReleasePipelinePlan({ targetPlatforms: ["macos", "windows", "linux"] })
     const runbook = buildReleaseRollbackRunbook()
-    const preflight = buildReleaseUpdatePreflightReport({ rootDir: createReleaseFixture(), targetPlatforms: ["macos"], promptSourceCount: 2 })
+    const preflight = buildReleaseUpdatePreflightReport({
+      rootDir: createReleaseFixture(),
+      targetPlatforms: ["macos"],
+      promptSourceCount: 2,
+    })
 
     expect(pipeline.steps.map((step) => step.id)).toEqual([
       "environment-preflight",
@@ -147,7 +195,12 @@ describe("task012 release package", () => {
       "typecheck",
       "unit-tests",
       "orchestration-release-gate",
+      "memory-isolation-release-gate",
+      "capability-isolation-release-gate",
+      "model-execution-release-gate",
       "performance-release-gate",
+      "sub-agent-benchmark-release-gate",
+      "sub-agent-release-readiness-gate",
       "web-retrieval-fixture-regression",
       "ui-mode-release-gate",
       "backup-rehearsal",
@@ -166,16 +219,37 @@ describe("task012 release package", () => {
     expect(runbook.restoreTargets.join("\n")).toContain("prompt")
     expect(runbook.restoreTargets.join("\n")).toContain("Yeonjang")
     expect(runbook.retryForbiddenWhen.length).toBeGreaterThan(0)
-    expect(preflight.checks.find((check) => check.id === "db-backup-required")).toMatchObject({ ok: false, required: false })
+    expect(preflight.checks.find((check) => check.id === "db-backup-required")).toMatchObject({
+      ok: false,
+      required: false,
+    })
   })
 
   it("runs release script in dry-run mode and writes manifest evidence", () => {
     const outputDir = makeTempDir("nobie-task012-script-output-")
-    const stdout = execFileSync("node", ["scripts/release-package.mjs", "--dry-run", "--json", "--no-copy", "--output-dir", outputDir, "--platform", "macos"], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-    })
-    const parsed = JSON.parse(stdout) as { dryRun: boolean; manifestPath: string; checksumPath: string; manifest: { kind: string; pipeline: { order: string[] } } }
+    const stdout = execFileSync(
+      "node",
+      [
+        "scripts/release-package.mjs",
+        "--dry-run",
+        "--json",
+        "--no-copy",
+        "--output-dir",
+        outputDir,
+        "--platform",
+        "macos",
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+      },
+    )
+    const parsed = JSON.parse(stdout) as {
+      dryRun: boolean
+      manifestPath: string
+      checksumPath: string
+      manifest: { kind: string; pipeline: { order: string[] } }
+    }
 
     expect(parsed.dryRun).toBe(true)
     expect(parsed.manifest.kind).toBe("nobie.release.package")

@@ -1,12 +1,12 @@
-import type { FastifyInstance } from "fastify"
 import type { WebSocket } from "@fastify/websocket"
+import type { FastifyInstance } from "fastify"
 import { eventBus } from "../../events/index.js"
 import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/index.js"
 import { createLogger } from "../../logger/index.js"
 import { recordLatencyMetric } from "../../observability/latency.js"
+import { listRunsForActiveRequestGroups } from "../../runs/store.js"
 import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js"
 import { authMiddleware } from "../middleware/auth.js"
-import { listRunsForActiveRequestGroups } from "../../runs/store.js"
 
 const log = createLogger("api:ws")
 
@@ -28,7 +28,7 @@ function broadcast(data: unknown): void {
 function stampBroadcastPayload(data: unknown): unknown {
   if (!data || typeof data !== "object" || Array.isArray(data)) return data
   const record = data as Record<string, unknown>
-  if (typeof record["emittedAt"] === "number") return data
+  if (typeof record.emittedAt === "number") return data
   return {
     ...record,
     emittedAt: Date.now(),
@@ -42,6 +42,7 @@ function setupEventForwarding(): void {
   eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }))
   eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }))
   eventBus.on("control.event", (e) => broadcast({ type: "control.event", ...e }))
+  eventBus.on("orchestration.event", (e) => broadcast({ type: "orchestration.event", ...e }))
   eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }))
   eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }))
   eventBus.on("run.step.started", (e) => broadcast({ type: "run.step.started", ...e }))
@@ -54,11 +55,25 @@ function setupEventForwarding(): void {
   eventBus.on("run.cancelled", (e) => broadcast({ type: "run.cancelled", ...e }))
   eventBus.on("tool.before", (e) => broadcast({ type: "tool.before", ...e }))
   eventBus.on("tool.after", (e) => broadcast({ type: "tool.after", ...e }))
-  eventBus.on("approval.request", ({ approvalId, runId, toolName, params, kind, guidance, expiresAt, resolve }) => {
-    registerApprovalFromWs(runId, resolve, approvalId)
-    log.info(`approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`)
-    broadcast({ type: "approval.request", approvalId, runId, toolName, params, kind, guidance, expiresAt })
-  })
+  eventBus.on(
+    "approval.request",
+    ({ approvalId, runId, toolName, params, kind, guidance, expiresAt, resolve }) => {
+      registerApprovalFromWs(runId, resolve, approvalId)
+      log.info(
+        `approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`,
+      )
+      broadcast({
+        type: "approval.request",
+        approvalId,
+        runId,
+        toolName,
+        params,
+        kind,
+        guidance,
+        expiresAt,
+      })
+    },
+  )
   eventBus.on("approval.resolved", (e) => {
     pendingApprovals.delete(e.runId)
     if (e.approvalId) pendingApprovals.delete(e.approvalId)
@@ -73,7 +88,10 @@ function setupEventForwarding(): void {
 }
 
 // Map of runId → approval resolve fn (for WebSocket-based approval)
-const pendingApprovals = new Map<string, (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void>()
+const pendingApprovals = new Map<
+  string,
+  (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
+>()
 
 export function registerApprovalFromWs(
   runId: string,
@@ -114,9 +132,10 @@ export function resolveWebUiApprovalResponse(msg: WebUiApprovalResponseMessage):
       : msg.decision === "allow_once"
         ? "allow_once"
         : "deny"
-  const resolve = typeof msg.approvalId === "string"
-    ? pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId)
-    : pendingApprovals.get(msg.runId)
+  const resolve =
+    typeof msg.approvalId === "string"
+      ? (pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId))
+      : pendingApprovals.get(msg.runId)
   if (resolve) {
     resolve(decision, "user")
     pendingApprovals.delete(msg.runId)
@@ -151,7 +170,11 @@ export function resolveWebUiLiveUpdateAck(
   msg: WebUiLiveUpdateAckMessage,
   now: () => number = () => Date.now(),
 ): boolean {
-  if (msg.type !== "ui.live_update_ack" || typeof msg.emittedAt !== "number" || !Number.isFinite(msg.emittedAt)) {
+  if (
+    msg.type !== "ui.live_update_ack" ||
+    typeof msg.emittedAt !== "number" ||
+    !Number.isFinite(msg.emittedAt)
+  ) {
     return false
   }
 
@@ -179,11 +202,13 @@ export function registerWsRoute(app: FastifyInstance): void {
   app.get("/ws", { websocket: true, preHandler: authMiddleware }, (socket) => {
     clients.add(socket)
     log.info(`WebSocket client connected (total: ${clients.size})`)
-    socket.send(JSON.stringify({
-      type: "ws.init",
-      runs: listRunsForActiveRequestGroups(200, 400),
-      pendingInteractions: listPendingInteractions(),
-    }))
+    socket.send(
+      JSON.stringify({
+        type: "ws.init",
+        runs: listRunsForActiveRequestGroups(200, 400),
+        pendingInteractions: listPendingInteractions(),
+      }),
+    )
 
     socket.on("message", (raw: Buffer | string) => {
       try {
@@ -201,7 +226,9 @@ export function registerWsRoute(app: FastifyInstance): void {
         }
         resolveWebUiApprovalResponse(msg)
         resolveWebUiLiveUpdateAck(msg)
-      } catch { /* ignore malformed messages */ }
+      } catch {
+        /* ignore malformed messages */
+      }
     })
 
     socket.on("close", () => {

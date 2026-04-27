@@ -6,6 +6,7 @@ import type { RootRun, TaskProfile } from "./types.js";
 import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import { buildStartPlan, type StartPlan } from "./start-plan.js";
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
 import { applyStartInitialization } from "./start-initialization.js";
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups, createRootRun } from "./store.js";
 interface StartLaunchDependencies {
@@ -22,6 +23,7 @@ interface StartLaunchDependencies {
         taskProfile: TaskProfile;
         targetId?: string;
         workerRuntime?: WorkerRuntimeTarget;
+        orchestrationPlannerIntent?: OrchestrationPlannerIntent;
     }) => string | undefined;
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile;
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
@@ -54,6 +56,7 @@ export declare function prepareStartLaunch(params: {
     now: number;
     maxDelegationTurns: number;
     requestGroupId?: string | undefined;
+    lineageRootRunId?: string | undefined;
     parentRunId?: string | undefined;
     originRunId?: string | undefined;
     originRequestGroupId?: string | undefined;
@@ -66,6 +69,7 @@ export declare function prepareStartLaunch(params: {
     targetLabel?: string | undefined;
     model?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
     inboundMessage?: InboundMessageRecord | undefined;
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean;
 }, dependencies?: StartLaunchDependencies): Promise<PreparedStartLaunch>;

@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse } from "../api/client"
+import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse, type StatusResponse } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
@@ -44,8 +44,37 @@ interface OperationsDiagnosticsSnapshot {
   nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
 }
 
+type OrchestrationMode = "single_nobie" | "orchestration"
+
+interface OrchestrationSettingsDraft {
+  mode: OrchestrationMode
+  featureFlagEnabled: boolean
+}
+
+const DEFAULT_ORCHESTRATION_SETTINGS: OrchestrationSettingsDraft = {
+  mode: "single_nobie",
+  featureFlagEnabled: false,
+}
+
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {}
+}
+
+function normalizeOrchestrationSettings(settings: Record<string, unknown>): OrchestrationSettingsDraft {
+  const legacy = readRecord(settings.legacy)
+  const orchestration = readRecord(settings.orchestration ?? legacy.orchestration)
+  const rawMode = orchestration.mode
+
+  return {
+    mode: rawMode === "orchestration" ? "orchestration" : "single_nobie",
+    featureFlagEnabled: orchestration.featureFlagEnabled === true,
+  }
+}
+
+function sameOrchestrationSettings(left: OrchestrationSettingsDraft | null, right: OrchestrationSettingsDraft | null): boolean {
+  return Boolean(left && right)
+    && left.mode === right.mode
+    && left.featureFlagEnabled === right.featureFlagEnabled
 }
 
 function normalizeOperationsDiagnostics(settings: Record<string, unknown>, schedulerHealth: {
@@ -104,6 +133,13 @@ export function SettingsPage() {
   const [operationsDiagnostics, setOperationsDiagnostics] = useState<OperationsDiagnosticsSnapshot | null>(null)
   const [operationsDiagnosticsLoading, setOperationsDiagnosticsLoading] = useState(false)
   const [operationsDiagnosticsError, setOperationsDiagnosticsError] = useState("")
+  const [orchestrationDraft, setOrchestrationDraft] = useState<OrchestrationSettingsDraft | null>(null)
+  const [orchestrationSaved, setOrchestrationSaved] = useState<OrchestrationSettingsDraft | null>(null)
+  const [orchestrationRuntime, setOrchestrationRuntime] = useState<StatusResponse["orchestration"] | null>(null)
+  const [orchestrationLoading, setOrchestrationLoading] = useState(false)
+  const [orchestrationSaving, setOrchestrationSaving] = useState(false)
+  const [orchestrationError, setOrchestrationError] = useState("")
+  const [orchestrationMessage, setOrchestrationMessage] = useState("")
   const [configOperationsSnapshot, setConfigOperationsSnapshot] = useState<ConfigurationOperationsSnapshot | null>(null)
   const [configOperationsLoading, setConfigOperationsLoading] = useState(false)
   const [configOperationsError, setConfigOperationsError] = useState("")
@@ -170,6 +206,23 @@ export function SettingsPage() {
     }
   }, [])
 
+  const loadOrchestrationSettings = useCallback(async () => {
+    setOrchestrationLoading(true)
+    try {
+      const [settings, status] = await Promise.all([api.settings(), api.status()])
+      const normalized = normalizeOrchestrationSettings(settings)
+      setOrchestrationDraft(normalized)
+      setOrchestrationSaved(normalized)
+      setOrchestrationRuntime(status.orchestration ?? null)
+      setOrchestrationError("")
+      setOrchestrationMessage("")
+    } catch (error) {
+      setOrchestrationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setOrchestrationLoading(false)
+    }
+  }, [])
+
   const loadConfigOperations = useCallback(async () => {
     setConfigOperationsLoading(true)
     try {
@@ -228,6 +281,11 @@ export function SettingsPage() {
     }
     if (tab === "release") void loadConfigOperations()
   }, [tab, editorVersion, loadConfigOperations, loadMemoryQuality, loadMemoryWritebackReview, loadOperationsDiagnostics])
+
+  useEffect(() => {
+    if (tab !== "orchestration") return
+    void loadOrchestrationSettings()
+  }, [tab, editorVersion, loadOrchestrationSettings])
 
   const handleConfigAction = useCallback(async (action: "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport") => {
     setConfigOperationsLoading(true)
@@ -292,6 +350,28 @@ export function SettingsPage() {
     }
   }, [dbImportPath, promptImportPath])
 
+  const handleOrchestrationSave = useCallback(async () => {
+    if (!orchestrationDraft) return
+    setOrchestrationSaving(true)
+    setOrchestrationError("")
+    setOrchestrationMessage("")
+    try {
+      await api.saveSettings({
+        orchestration: {
+          mode: orchestrationDraft.mode,
+          featureFlagEnabled: orchestrationDraft.featureFlagEnabled,
+        },
+      })
+      await loadOrchestrationSettings()
+      void useCapabilitiesStore.getState().refresh()
+      setOrchestrationMessage(text("오케스트레이션 설정을 저장했습니다.", "Orchestration settings saved."))
+    } catch (error) {
+      setOrchestrationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setOrchestrationSaving(false)
+    }
+  }, [loadOrchestrationSettings, orchestrationDraft, text])
+
   const handleMemoryReviewAction = useCallback(async (candidateId: string, action: MemoryWritebackReviewAction) => {
     setMemoryReviewActionId(candidateId)
     try {
@@ -311,6 +391,7 @@ export function SettingsPage() {
 
   const activeDraft = localDraft ?? draft
   const isDirty = useMemo(() => JSON.stringify(activeDraft) !== JSON.stringify(draft), [activeDraft, draft])
+  const orchestrationDirty = Boolean(orchestrationDraft && orchestrationSaved) && !sameOrchestrationSettings(orchestrationDraft, orchestrationSaved)
   const channelsDirty = useMemo(
     () => JSON.stringify(activeDraft.channels) !== JSON.stringify(draft.channels),
     [activeDraft.channels, draft.channels],
@@ -490,6 +571,34 @@ export function SettingsPage() {
           </div>
         )
 
+      case "orchestration":
+        return (
+          <div className="space-y-4">
+            <CompactSection
+              title={text("서브 에이전트 실행 모드", "Sub-agent execution mode")}
+              description={text("마스터 노비가 단독으로 처리할지, 토폴로지의 서브 에이전트로 작업을 위임할지 정합니다.", "Choose whether master Nobie runs alone or delegates work to sub-agents from the topology.")}
+            >
+              <OrchestrationSettingsPanel
+                value={orchestrationDraft}
+                runtime={orchestrationRuntime}
+                loading={orchestrationLoading}
+                saving={orchestrationSaving}
+                dirty={orchestrationDirty}
+                error={orchestrationError}
+                message={orchestrationMessage}
+                onChange={(patch) => setOrchestrationDraft((current) => ({ ...(current ?? DEFAULT_ORCHESTRATION_SETTINGS), ...patch }))}
+                onSave={() => void handleOrchestrationSave()}
+                onCancel={() => {
+                  setOrchestrationDraft(orchestrationSaved)
+                  setOrchestrationError("")
+                  setOrchestrationMessage("")
+                }}
+                onRefresh={() => void loadOrchestrationSettings()}
+              />
+            </CompactSection>
+          </div>
+        )
+
       case "channels":
         return (
           <div key={`channels-${editorVersion}`} className="space-y-4">
@@ -606,7 +715,7 @@ export function SettingsPage() {
           <div key={`tool-permissions-${editorVersion}`} className="space-y-4">
             <CompactSection
               title={text("승인과 보안", "Approvals and security")}
-              description={text("승인 정책과 자동 후속 처리 제한을 같은 성격으로 묶었습니다.", "Approval policy and automatic follow-up limits are grouped by purpose.")}
+              description={text("승인 정책과 외부 도구 실행 경계를 관리합니다.", "Manage approval policy and external tool execution boundaries.")}
             >
               <SecuritySettingsForm
                 value={activeDraft.security}
@@ -803,6 +912,147 @@ function CompactSection({
         {description ? <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div> : null}
       </div>
       <div className="space-y-3">{children}</div>
+    </div>
+  )
+}
+
+function OrchestrationSettingsPanel({
+  value,
+  runtime,
+  loading,
+  saving,
+  dirty,
+  error,
+  message,
+  onChange,
+  onSave,
+  onCancel,
+  onRefresh,
+}: {
+  value: OrchestrationSettingsDraft | null
+  runtime: StatusResponse["orchestration"] | null
+  loading: boolean
+  saving: boolean
+  dirty: boolean
+  error: string
+  message: string
+  onChange: (patch: Partial<OrchestrationSettingsDraft>) => void
+  onSave: () => void
+  onCancel: () => void
+  onRefresh: () => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const draft = value ?? DEFAULT_ORCHESTRATION_SETTINGS
+  const canSave = Boolean(value) && dirty && !loading && !saving
+  const runtimeTone = runtime?.mode === "orchestration"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : runtime?.status === "degraded"
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : "border-stone-200 bg-white text-stone-700"
+  const requestedButBlocked = draft.mode === "orchestration" && !draft.featureFlagEnabled
+
+  return (
+    <div className="space-y-4 rounded-xl border border-stone-200 bg-white p-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className={`rounded-2xl border px-4 py-3 ${runtimeTone}`}>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">{text("현재 모드", "Current mode")}</div>
+          <div className="mt-2 text-sm font-semibold">{runtime?.mode ?? "-"}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("요청 모드", "Requested")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.requestedMode ?? draft.mode}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("활성 에이전트", "Active agents")}</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.activeSubAgentCount ?? 0}</div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">Feature flag</div>
+          <div className="mt-2 text-sm font-semibold text-stone-900">{draft.featureFlagEnabled ? "on" : "off"}</div>
+        </div>
+      </div>
+
+      {runtime?.reason ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-800">
+          {displayText(runtime.reason)}
+        </div>
+      ) : null}
+      {requestedButBlocked ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          {text("오케스트레이션 모드를 선택했지만 feature flag가 꺼져 있으면 단일 노비로 동작합니다.", "Orchestration mode falls back to single Nobie while the feature flag is off.")}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+          {displayText(error)}
+        </div>
+      ) : null}
+      {message ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
+          {message}
+        </div>
+      ) : null}
+      <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+        {text("위임 작업 수와 대상 에이전트는 요청 내용, 토폴로지, 에이전트 역할을 기준으로 자동 결정됩니다.", "Delegated task count and target agents are decided automatically from the request, topology, and agent roles.")}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("실행 모드", "Execution mode")}</label>
+          <select
+            className="input"
+            value={draft.mode}
+            disabled={loading || saving}
+            onChange={(event) => onChange({ mode: event.target.value as OrchestrationMode })}
+          >
+            <option value="single_nobie">{text("단일 노비", "Single Nobie")}</option>
+            <option value="orchestration">{text("서브 에이전트 사용", "Use sub-agents")}</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-stone-700">Feature flag</label>
+          <button
+            type="button"
+            disabled={loading || saving}
+            onClick={() => onChange({ featureFlagEnabled: !draft.featureFlagEnabled })}
+            className={`flex h-11 w-full items-center justify-between rounded-xl border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${draft.featureFlagEnabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-stone-200 bg-stone-50 text-stone-600"}`}
+          >
+            <span>{draft.featureFlagEnabled ? "enabled" : "disabled"}</span>
+            <span className={`h-5 w-9 rounded-full p-0.5 ${draft.featureFlagEnabled ? "bg-emerald-500" : "bg-stone-300"}`}>
+              <span className={`block h-4 w-4 rounded-full bg-white transition ${draft.featureFlagEnabled ? "translate-x-4" : ""}`} />
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 pt-4">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading || saving}
+          className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? text("불러오는 중...", "Loading...") : text("새로고침", "Refresh")}
+        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={!dirty || loading || saving}
+            className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {text("취소", "Cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!canSave}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${dirty ? "bg-stone-900 text-white" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}
+          >
+            {saving ? text("저장 중...", "Saving...") : dirty ? text("저장", "Save") : text("저장됨", "Saved")}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

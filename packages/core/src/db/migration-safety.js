@@ -6,12 +6,31 @@ const REQUIRED_TABLES = [
     "rollout_evidence",
     "root_runs",
     "audit_logs",
+    "agent_configs",
+    "team_configs",
+    "agent_team_memberships",
+    "nickname_namespaces",
+    "agent_relationships",
+    "run_subsessions",
+    "agent_data_exchanges",
+    "capability_delegations",
+    "learning_events",
+    "profile_history_versions",
+    "profile_restore_events",
+    "team_execution_plans",
+    "orchestration_events",
 ];
 const REQUIRED_INDEXES = [
     "idx_migration_locks_status",
     "idx_runtime_feature_flags_mode",
     "idx_rollout_shadow_compares_feature",
     "idx_rollout_evidence_feature",
+    "idx_nickname_namespaces_entity",
+    "idx_agent_relationships_parent",
+    "idx_run_subsessions_parent_sub_session",
+    "idx_team_execution_plans_parent_run",
+    "idx_orchestration_events_run",
+    "idx_orchestration_events_cursor",
 ];
 export const MIGRATION_ROLLBACK_RUNBOOK_REF = "migration-rollback-runbook";
 export function ensureMigrationSafetyTables(db) {
@@ -37,16 +56,20 @@ export function ensureMigrationSafetyTables(db) {
 }
 export function getActiveMigrationLock(db) {
     ensureMigrationSafetyTables(db);
-    return db.prepare(`SELECT * FROM migration_locks
+    return (db
+        .prepare(`SELECT * FROM migration_locks
      WHERE status = 'active'
      ORDER BY updated_at DESC
-     LIMIT 1`).get() ?? null;
+     LIMIT 1`)
+        .get() ?? null);
 }
 export function getLatestMigrationLock(db) {
     ensureMigrationSafetyTables(db);
-    return db.prepare(`SELECT * FROM migration_locks
+    return (db
+        .prepare(`SELECT * FROM migration_locks
      ORDER BY updated_at DESC
-     LIMIT 1`).get() ?? null;
+     LIMIT 1`)
+        .get() ?? null);
 }
 export function beginMigrationLock(db, input) {
     ensureMigrationSafetyTables(db);
@@ -58,7 +81,10 @@ export function beginMigrationLock(db, input) {
      (id, status, locked_by, phase, started_at, updated_at, released_at,
       backup_snapshot_id, pending_versions_json, verify_report_json, error_message, rollback_runbook_ref)
      VALUES (?, 'active', ?, 'lock', ?, ?, NULL, ?, ?, NULL, NULL, ?)`).run(input.id, input.lockedBy ?? `pid:${process.pid}`, now, now, input.backupSnapshotId ?? null, JSON.stringify(input.pendingVersions), MIGRATION_ROLLBACK_RUNBOOK_REF);
-    return getActiveMigrationLock(db);
+    const active = getActiveMigrationLock(db);
+    if (!active)
+        throw new Error("migration lock was not created");
+    return active;
 }
 export function updateMigrationLockPhase(db, lockId, phase, now = Date.now()) {
     ensureMigrationSafetyTables(db);
@@ -79,19 +105,29 @@ export function failMigrationLock(db, input) {
      WHERE id = ?`).run(now, input.error, input.verifyReport ? JSON.stringify(input.verifyReport) : null, input.lockId);
 }
 function objectExists(db, type, name) {
-    const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = ? AND name = ?`).get(type, name);
+    const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = ? AND name = ?")
+        .get(type, name);
     return Boolean(row);
 }
 function latestSchemaVersion(db) {
     if (!objectExists(db, "table", "schema_migrations"))
         return 0;
-    return db.prepare(`SELECT MAX(version) AS version FROM schema_migrations`).get()?.version ?? 0;
+    return (db
+        .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+        .get()?.version ?? 0);
 }
 export function verifyMigrationState(db) {
     ensureMigrationSafetyTables(db);
-    const requiredTables = REQUIRED_TABLES.map((name) => ({ name, ok: objectExists(db, "table", name) }));
-    const requiredIndexes = REQUIRED_INDEXES.map((name) => ({ name, ok: objectExists(db, "index", name) }));
-    const integrityRow = db.prepare(`PRAGMA integrity_check`).get();
+    const requiredTables = REQUIRED_TABLES.map((name) => ({
+        name,
+        ok: objectExists(db, "table", name),
+    }));
+    const requiredIndexes = REQUIRED_INDEXES.map((name) => ({
+        name,
+        ok: objectExists(db, "index", name),
+    }));
+    const integrityRow = db.prepare("PRAGMA integrity_check").get();
     const integrityCheck = integrityRow?.integrity_check ?? "unknown";
     const missingTables = requiredTables.filter((item) => !item.ok).map((item) => item.name);
     const missingIndexes = requiredIndexes.filter((item) => !item.ok).map((item) => item.name);
@@ -122,7 +158,8 @@ export function assertMigrationWriteAllowed(db, operation) {
     const guard = checkMigrationWriteGuard(db, operation);
     if (!guard.ok) {
         const error = new Error(`${guard.userMessage} (${operation})`);
-        error.code = "MIGRATION_LOCK_ACTIVE";
+        error.code =
+            "MIGRATION_LOCK_ACTIVE";
         error.lockId = guard.lock?.id;
         throw error;
     }

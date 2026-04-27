@@ -139,6 +139,7 @@ describe("telegram chunk delivery helper", () => {
     const responder = {
       sendToolStatus: vi.fn().mockResolvedValue(404),
       updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
       sendFile: vi.fn(),
       sendFinalResponse: vi.fn(),
       sendError: vi.fn().mockResolvedValue(505),
@@ -166,6 +167,113 @@ describe("telegram chunk delivery helper", () => {
     expect(responder.sendToolStatus).toHaveBeenCalledWith("screen_capture")
     expect(responder.sendError).toHaveBeenCalledWith("failure")
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not create successful shell_exec status messages", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-shell-success",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "shell_exec",
+      params: { command: "pwd" },
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "shell_exec",
+      success: true,
+      output: "ok",
+    })
+
+    expect(responder.sendToolStatus).not.toHaveBeenCalled()
+    expect(responder.updateToolStatus).not.toHaveBeenCalled()
+    expect(responder.clearToolStatus).not.toHaveBeenCalled()
+  })
+
+  it("clears successful non-shell tool status messages instead of leaving done messages", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue(606),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-tool-success",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "screen_capture",
+      params: {},
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "screen_capture",
+      success: true,
+      output: "captured",
+    })
+
+    expect(responder.sendToolStatus).toHaveBeenCalledWith("screen_capture")
+    expect(responder.clearToolStatus).toHaveBeenCalledWith(606)
+    expect(responder.updateToolStatus).not.toHaveBeenCalled()
+  })
+
+  it("keeps failed shell_exec status visible", async () => {
+    const responder = {
+      sendToolStatus: vi.fn().mockResolvedValue(707),
+      updateToolStatus: vi.fn(),
+      clearToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const recordOutgoingMessageRef = vi.fn()
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-shell-failure",
+      recordOutgoingMessageRef,
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_start",
+      toolName: "shell_exec",
+      params: { command: "missing" },
+    })
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "shell_exec",
+      success: false,
+      output: "command not found",
+    })
+
+    expect(responder.sendToolStatus).toHaveBeenCalledWith("shell_exec")
+    expect(responder.updateToolStatus).toHaveBeenCalledWith(707, "shell_exec", false)
+    expect(responder.clearToolStatus).not.toHaveBeenCalled()
+    expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 
   it("delivers artifact first and suppresses later AI text for tool-owned responses", async () => {

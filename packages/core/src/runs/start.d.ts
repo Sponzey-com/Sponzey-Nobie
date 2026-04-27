@@ -5,12 +5,14 @@ import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
 export interface StartRootRunParams {
     runId?: string | undefined;
     targetRunId?: string | undefined;
     message: string;
     sessionId: string | undefined;
     requestGroupId?: string | undefined;
+    lineageRootRunId?: string | undefined;
     parentRunId?: string | undefined;
     originRunId?: string | undefined;
     originRequestGroupId?: string | undefined;
@@ -22,6 +24,7 @@ export interface StartRootRunParams {
     targetId?: string | undefined;
     targetLabel?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
+    orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
     workDir?: string | undefined;
     source: "webui" | "cli" | "telegram" | "slack";
     skipIntake?: boolean | undefined;

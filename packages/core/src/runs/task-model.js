@@ -98,6 +98,13 @@ function computeTaskSummary(groupRuns) {
     return latestRun?.summary?.trim() || latestRun?.prompt?.trim() || "";
 }
 function computeTaskRequest(groupRuns) {
+    const rootUserFacingRun = [...groupRuns]
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .find((run) => (run.runScope === "root" || !run.parentRunId) &&
+        run.prompt.trim().length > 0 &&
+        !isInternalRunPrompt(run.prompt));
+    if (rootUserFacingRun?.prompt.trim())
+        return rootUserFacingRun.prompt.trim();
     const latestUserFacingRun = [...groupRuns]
         .sort((a, b) => b.createdAt - a.createdAt)
         .find((run) => run.prompt.trim().length > 0 && !isInternalRunPrompt(run.prompt));
@@ -105,6 +112,18 @@ function computeTaskRequest(groupRuns) {
         return latestUserFacingRun.prompt.trim();
     const anchorRun = [...groupRuns].sort((a, b) => a.createdAt - b.createdAt)[0];
     return anchorRun?.prompt?.trim() || "";
+}
+function resolveTaskGroupKey(run, runsById) {
+    let current = run;
+    const visited = new Set();
+    while (current.parentRunId && !visited.has(current.id)) {
+        visited.add(current.id);
+        const parent = runsById.get(current.parentRunId);
+        if (!parent)
+            break;
+        current = parent;
+    }
+    return current.lineageRootRunId || current.requestGroupId || current.id;
 }
 function detectDeliveryChannel(label) {
     // nobie-critical-decision-audit: task-model.delivery_channel_label
@@ -639,9 +658,10 @@ function buildTaskChecklist(params) {
 }
 export function buildTaskModels(runs, continuitySnapshots = []) {
     const grouped = new Map();
+    const runsById = new Map(runs.map((run) => [run.id, run]));
     const continuityByLineage = new Map(continuitySnapshots.map((snapshot) => [snapshot.lineageRootRunId, snapshot]));
     for (const run of runs) {
-        const key = run.lineageRootRunId || run.requestGroupId || run.id;
+        const key = resolveTaskGroupKey(run, runsById);
         const existing = grouped.get(key);
         if (existing)
             existing.push(run);

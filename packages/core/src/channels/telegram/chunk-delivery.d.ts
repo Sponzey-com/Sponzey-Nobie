@@ -3,6 +3,7 @@ import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js";
 export interface TelegramChunkResponder {
     sendToolStatus(toolName: string): Promise<number>;
     updateToolStatus(messageId: number, toolName: string, success: boolean): Promise<void>;
+    clearToolStatus?(messageId: number): Promise<void>;
     sendFile(filePath: string, caption?: string | undefined): Promise<number>;
     sendFinalResponse(text: string): Promise<number[]>;
     sendError(message: string): Promise<number>;

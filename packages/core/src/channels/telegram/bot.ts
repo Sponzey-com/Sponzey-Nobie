@@ -13,11 +13,33 @@ import { TelegramResponder } from "./responder.js"
 import { FileHandler } from "./file-handler.js"
 import { registerCommands } from "./commands.js"
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
-import { findChannelMessageRef, getSession, insertChannelMessageRef } from "../../db/index.js"
+import { findChannelMessageRef, findLatestChannelMessageRefForThread, getSession, insertChannelMessageRef } from "../../db/index.js"
 import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js"
 import { setTelegramRuntimeError } from "./runtime.js"
 
 const log = createLogger("channel:telegram")
+
+export function findTelegramReplyTaskRef(params: {
+  chatId: number
+  replyToMessageId?: number | undefined
+  threadId?: number | undefined
+}) {
+  if (params.replyToMessageId === undefined) return undefined
+
+  const exactMessageRef = findChannelMessageRef({
+    source: "telegram",
+    externalChatId: String(params.chatId),
+    externalMessageId: String(params.replyToMessageId),
+    ...(params.threadId !== undefined ? { externalThreadId: String(params.threadId) } : {}),
+  })
+  if (exactMessageRef) return exactMessageRef
+
+  return findLatestChannelMessageRefForThread({
+    source: "telegram",
+    externalChatId: String(params.chatId),
+    ...(params.threadId !== undefined ? { externalThreadId: String(params.threadId) } : {}),
+  })
+}
 
 export interface SessionStatus {
   sessionId: string | undefined
@@ -133,7 +155,7 @@ export class TelegramChannel {
       const userId = from.id
       const chatId = chat.id
       const chatType = chat.type
-      const threadId = message.message_thread_id
+      const threadId = message.message_thread_id ?? message.reply_to_message?.message_thread_id
       const replyToMessageId = message.reply_to_message?.message_id
 
       if (!isAllowedUser(userId, chatType, chatId, this.config)) {
@@ -219,14 +241,7 @@ export class TelegramChannel {
       typing.start()
 
       let startedRunId = ""
-      const repliedTaskRef = replyToMessageId !== undefined
-        ? findChannelMessageRef({
-            source: "telegram",
-            externalChatId: String(chatId),
-            externalMessageId: String(replyToMessageId),
-            ...(threadId !== undefined ? { externalThreadId: String(threadId) } : {}),
-          })
-        : undefined
+      const repliedTaskRef = findTelegramReplyTaskRef({ chatId, replyToMessageId, threadId })
 
       try {
         if (repliedTaskRef) {

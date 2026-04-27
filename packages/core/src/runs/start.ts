@@ -23,11 +23,13 @@ import {
 import type { RootRun, TaskProfile } from "./types.js"
 import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import {
   appendRunEvent,
   clearActiveRunController,
   getRootRun,
   setRunStepStatus,
+  updateRunSummary,
   updateRunStatus,
 } from "./store.js"
 import {
@@ -39,6 +41,7 @@ import {
 } from "./start-driver-dependencies.js"
 import { rememberRunFailure } from "./start-support.js"
 import { resolveStartContextPlan, type StartPreflightFailure } from "./preflight.js"
+import { dispatchDelegatedSubAgentTasks } from "./orchestration-dispatch.js"
 
 const log = createLogger("runs:start")
 const syntheticApprovalScopes = new Set<string>()
@@ -49,6 +52,7 @@ export interface StartRootRunParams {
   message: string
   sessionId: string | undefined
   requestGroupId?: string | undefined
+  lineageRootRunId?: string | undefined
   parentRunId?: string | undefined
   originRunId?: string | undefined
   originRequestGroupId?: string | undefined
@@ -60,6 +64,7 @@ export interface StartRootRunParams {
   targetId?: string | undefined
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
+  orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
   workDir?: string | undefined
   source: "webui" | "cli" | "telegram" | "slack"
   skipIntake?: boolean | undefined
@@ -141,6 +146,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       now,
       maxDelegationTurns,
       ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+      ...(params.lineageRootRunId ? { lineageRootRunId: params.lineageRootRunId } : {}),
       ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
       ...(params.originRunId ? { originRunId: params.originRunId } : {}),
       ...(params.originRequestGroupId ? { originRequestGroupId: params.originRequestGroupId } : {}),
@@ -153,6 +159,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
       ...(params.model ? { model: params.model } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+      ...(params.orchestrationPlannerIntent
+        ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+        : {}),
       ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
       hasRequestGroupExecutionQueue,
     })
@@ -233,6 +242,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
       ...(params.targetId ? { targetId: params.targetId } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+      ...(params.contextMode ? { contextMode: params.contextMode } : {}),
+      ...(params.runScope ? { runScope: params.runScope } : {}),
+      ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
     })
     appendRunEvent(runId, `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang ? "required" : "not_required"}`)
     const preflightFailure = contextPlan.preflightFailure
@@ -252,7 +264,62 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       runId,
       task: async () => {
         const executionStartedAt = Date.now()
+        let executionMessage = params.message
         try {
+          if (
+            isRootRequest &&
+            !params.parentRunId &&
+            params.runScope !== "child" &&
+            !params.skipIntake &&
+            startPlan.orchestrationMode === "orchestration" &&
+            startPlan.orchestrationPlanSnapshot.delegatedTasks.length > 0
+          ) {
+            try {
+              const dispatchResult = await dispatchDelegatedSubAgentTasks({
+                plan: startPlan.orchestrationPlanSnapshot,
+                parentRunId: runId,
+                parentSessionId: sessionId,
+                parentRequestGroupId: requestGroupId,
+                source: params.source,
+                message: params.message,
+                ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+                workDir,
+                controller,
+              }, {
+                startSubAgentRun: startRootRun,
+                appendParentEvent: appendRunEvent,
+                updateParentSummary: updateRunSummary,
+              })
+              appendRunEvent(
+                runId,
+                `sub_agent_dispatch_summary:attempted=${dispatchResult.attempted};completed=${dispatchResult.completed};failed=${dispatchResult.failed};skipped=${dispatchResult.skipped}`,
+              )
+              const subAgentContext = dispatchResult.outcomes
+                .filter((outcome) => outcome.status !== "skipped")
+                .map((outcome) => [
+                  `- task=${outcome.taskId}`,
+                  outcome.agentId ? `agent=${outcome.agentId}` : undefined,
+                  outcome.subSessionId ? `subSession=${outcome.subSessionId}` : undefined,
+                  outcome.childRunId ? `childRun=${outcome.childRunId}` : undefined,
+                  `status=${outcome.status}`,
+                  outcome.reasonCode ? `reason=${outcome.reasonCode}` : undefined,
+                  outcome.summary ? `summary=${outcome.summary}` : undefined,
+                ].filter(Boolean).join("; "))
+                .join("\n")
+              if (subAgentContext.trim()) {
+                executionMessage = `${params.message}\n\n# Sub-agent execution results\n${subAgentContext}`
+              }
+            } catch (error) {
+              appendRunEvent(
+                runId,
+                `sub_agent_dispatch_failed:${error instanceof Error ? error.message : String(error)}`,
+              )
+              log.warn("sub-agent dispatch failed", {
+                runId,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            }
+          }
           await executeRootRunDriver({
             runId,
             sessionId,
@@ -260,8 +327,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             source: params.source,
             onChunk: params.onChunk,
             controller,
-            message: params.message,
-            ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+            message: executionMessage,
+            ...(params.originalRequest || executionMessage !== params.message
+              ? { originalRequest: params.originalRequest ?? params.message }
+              : {}),
             ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
             ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
             ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),

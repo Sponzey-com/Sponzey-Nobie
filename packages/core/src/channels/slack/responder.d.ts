@@ -7,6 +7,7 @@ export declare class SlackResponder {
     private api;
     sendToolStatus(toolName: string): Promise<string>;
     updateToolStatus(messageId: string, toolName: string, success: boolean): Promise<void>;
+    clearToolStatus(messageId: string): Promise<void>;
     sendFinalResponse(text: string): Promise<string[]>;
     sendError(message: string): Promise<string>;
     sendReceipt(text: string): Promise<string>;

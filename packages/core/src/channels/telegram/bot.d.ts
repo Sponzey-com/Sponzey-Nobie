@@ -1,4 +1,9 @@
 import type { TelegramConfig } from "../../config/types.js";
+export declare function findTelegramReplyTaskRef(params: {
+    chatId: number;
+    replyToMessageId?: number | undefined;
+    threadId?: number | undefined;
+}): import("../../db/index.js").DbChannelMessageRef | undefined;
 export interface SessionStatus {
     sessionId: string | undefined;
     runId: string | undefined;

@@ -12,6 +12,7 @@ MACOS_INFO_PLIST="$YEONJANG_DIR/manifests/macos/Info.plist"
 MACOS_ENTITLEMENTS="$YEONJANG_DIR/manifests/macos/Yeonjang.entitlements"
 CAMERA_HELPER_SWIFT="$YEONJANG_DIR/helpers/macos/camera_capture_helper.swift"
 CAMERA_HELPER_BINARY_NAME="yeonjang-camera-helper"
+NOBIE_ICON_PNG="$ROOT_DIR/resource/nobie-1-128.png"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "이 스크립트는 macOS 전용입니다."
@@ -35,6 +36,11 @@ fi
 
 if [[ ! -f "$CAMERA_HELPER_SWIFT" ]]; then
   echo "macOS 카메라 helper Swift 소스를 찾을 수 없습니다: $CAMERA_HELPER_SWIFT"
+  exit 1
+fi
+
+if [[ ! -f "$NOBIE_ICON_PNG" ]]; then
+  echo "Nobie 아이콘 리소스를 찾을 수 없습니다: $NOBIE_ICON_PNG"
   exit 1
 fi
 
@@ -80,6 +86,7 @@ mkdir -p "$APP_MACOS_DIR" "$APP_RESOURCES_DIR"
 cp "$MACOS_INFO_PLIST" "$APP_CONTENTS/Info.plist"
 cp "$BINARY_PATH" "$APP_BINARY_PATH"
 chmod +x "$APP_BINARY_PATH"
+"$APP_BINARY_PATH" --write-icon "$APP_RESOURCES_DIR/YeonjangIcon.png"
 
 echo "macOS 카메라 helper를 빌드합니다..."
 xcrun swiftc -O -o "$CAMERA_HELPER_BINARY_PATH" "$CAMERA_HELPER_SWIFT"

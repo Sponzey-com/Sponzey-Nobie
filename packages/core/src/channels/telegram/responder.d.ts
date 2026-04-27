@@ -6,6 +6,7 @@ export declare class TelegramResponder {
     constructor(bot: Bot, chatId: number, threadId?: number | undefined);
     sendToolStatus(toolName: string): Promise<number>;
     updateToolStatus(messageId: number, toolName: string, success: boolean): Promise<void>;
+    clearToolStatus(messageId: number): Promise<void>;
     sendFinalResponse(text: string): Promise<number[]>;
     sendError(message: string): Promise<number>;
     sendReceipt(text: string): Promise<number>;

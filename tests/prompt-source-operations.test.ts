@@ -19,32 +19,19 @@ function createPromptFixture(): string {
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
   for (const [filename, title] of [
-    ["definitions.md", "정의"],
-    ["definitions.md.en", "Definitions"],
-    ["identity.md", "정체성"],
-    ["identity.md.en", "Identity"],
-    ["user.md", "사용자"],
-    ["user.md.en", "User"],
-    ["soul.md", "소울"],
-    ["soul.md.en", "Soul"],
-    ["planner.md", "플래너"],
-    ["planner.md.en", "Planner"],
-    ["memory_policy.md", "메모리 정책"],
-    ["memory_policy.md.en", "Memory Policy"],
-    ["tool_policy.md", "도구 정책"],
-    ["tool_policy.md.en", "Tool Policy"],
-    ["web_retrieval_planner.md", "웹 검색 회복 플래너"],
-    ["web_retrieval_planner.md.en", "Web Retrieval Recovery Planner"],
-    ["recovery_policy.md", "복구 정책"],
-    ["recovery_policy.md.en", "Recovery Policy"],
-    ["completion_policy.md", "완료 정책"],
-    ["completion_policy.md.en", "Completion Policy"],
-    ["output_policy.md", "출력 정책"],
-    ["output_policy.md.en", "Output Policy"],
-    ["channel.md", "채널 정책"],
-    ["channel.md.en", "Channel Policy"],
-    ["bootstrap.md", "부트스트랩"],
-    ["bootstrap.md.en", "Bootstrap"],
+    ["definitions.md", "Definitions"],
+    ["identity.md", "Identity"],
+    ["user.md", "User"],
+    ["soul.md", "Soul"],
+    ["planner.md", "Planner"],
+    ["memory_policy.md", "Memory Policy"],
+    ["tool_policy.md", "Tool Policy"],
+    ["web_retrieval_planner.md", "Web Retrieval Recovery Planner"],
+    ["recovery_policy.md", "Recovery Policy"],
+    ["completion_policy.md", "Completion Policy"],
+    ["output_policy.md", "Output Policy"],
+    ["channel.md", "Channel Policy"],
+    ["bootstrap.md", "Bootstrap"],
   ] as const) {
     writeFileSync(join(promptsDir, filename), `# ${title}\n\n## 기준\n\n${filename} content\n`, "utf-8")
   }
@@ -83,7 +70,7 @@ describe("prompt source operations", () => {
       "output_policy",
       "channel",
     ])
-    expect(dryRun.sourceOrder[0]).toMatchObject({ sourceId: "definitions", locale: "ko" })
+    expect(dryRun.sourceOrder[0]).toMatchObject({ sourceId: "definitions", locale: "en" })
     expect(dryRun.totalChars).toBeGreaterThan(0)
   })
 
@@ -95,15 +82,15 @@ describe("prompt source operations", () => {
     const writeResult = writePromptSourceWithBackup({
       workDir: root,
       sourceId: "identity",
-      locale: "ko",
-      content: "# 정체성\n\n## 기준\n\n사용자 수정본\n",
+      locale: "en",
+      content: "# Identity\n\n## Rules\n\nUser edited copy\n",
     })
 
     expect(writeResult.backup).toBeTruthy()
     expect(writeResult.source.checksum).toBe(writeResult.diff.afterChecksum)
     expect(writeResult.diff.beforeChecksum).not.toBe(writeResult.diff.afterChecksum)
     expect(writeResult.backup?.backupPath && existsSync(writeResult.backup.backupPath)).toBe(true)
-    expect(readFileSync(promptPath, "utf-8")).toContain("사용자 수정본")
+    expect(readFileSync(promptPath, "utf-8")).toContain("User edited copy")
 
     const rollback = rollbackPromptSourceBackup({
       sourcePath: writeResult.backup!.sourcePath,
@@ -120,11 +107,11 @@ describe("prompt source operations", () => {
     expect(() => writePromptSourceWithBackup({
       workDir: root,
       sourceId: "identity",
-      locale: "ko",
+      locale: "en",
       content: "# identity\n\napi_key = sk-abcdefghijklmnopqrstuvwxyz123456",
     })).toThrow(/secret-like/iu)
 
-    rmSync(join(root, "prompts", "planner.md.en"))
+    rmSync(join(root, "prompts", "planner.md"))
     const parity = checkPromptSourceLocaleParity(root)
     expect(parity.ok).toBe(false)
     expect(parity.issues).toContainEqual({

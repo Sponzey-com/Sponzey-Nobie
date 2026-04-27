@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
 import { createLogger } from "../logger/index.js"
 import type { AgentCapabilityCallContext } from "../security/capability-isolation.js"
 
@@ -47,6 +47,8 @@ export interface McpToolCallPayload extends Record<string, unknown> {
     nobie: {
       agent_id: string
       session_id: string
+      binding_id?: string
+      client_session_id?: string
       permission_profile: {
         profile_id: string
         risk_ceiling: string
@@ -100,7 +102,9 @@ function toArray(value: unknown): unknown[] {
 }
 
 function toStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : []
 }
 
 function normalizeInputSchema(value: unknown): McpDiscoveredTool["inputSchema"] {
@@ -135,10 +139,10 @@ function extractToolOutput(payload: unknown): string {
 
 function isAbortSignal(value: unknown): value is AbortSignal {
   return Boolean(
-    value
-    && typeof value === "object"
-    && "aborted" in value
-    && typeof (value as AbortSignal).addEventListener === "function",
+    value &&
+      typeof value === "object" &&
+      "aborted" in value &&
+      typeof (value as AbortSignal).addEventListener === "function",
   )
 }
 
@@ -158,6 +162,8 @@ export function buildMcpToolCallPayload(
       nobie: {
         agent_id: context.agentId,
         session_id: context.sessionId,
+        ...(context.bindingId ? { binding_id: context.bindingId } : {}),
+        ...(context.clientSessionId ? { client_session_id: context.clientSessionId } : {}),
         permission_profile: {
           profile_id: context.permissionProfile.profileId,
           risk_ceiling: context.permissionProfile.riskCeiling,
@@ -171,7 +177,9 @@ export function buildMcpToolCallPayload(
         audit_id: context.auditId,
         ...(context.runId ? { run_id: context.runId } : {}),
         ...(context.requestGroupId ? { request_group_id: context.requestGroupId } : {}),
-        ...(context.capabilityDelegationId ? { capability_delegation_id: context.capabilityDelegationId } : {}),
+        ...(context.capabilityDelegationId
+          ? { capability_delegation_id: context.capabilityDelegationId }
+          : {}),
       },
     },
   }
@@ -188,7 +196,11 @@ export class McpStdioClient {
   private pending = new Map<number, PendingRequest>()
   private closedByUser = false
 
-  constructor(options: { name: string; config: McpServerConfig; onExit?: (error: string) => void }) {
+  constructor(options: {
+    name: string
+    config: McpServerConfig
+    onExit?: (error: string) => void
+  }) {
     this.name = options.name
     this.config = options.config
     this.onExit = options.onExit
@@ -309,9 +321,10 @@ export class McpStdioClient {
     child.on("exit", (code, signal) => {
       this.process = null
       this.initialized = false
-      const message = code !== null
-        ? `MCP server "${this.name}" exited with code ${code}.`
-        : `MCP server "${this.name}" exited with signal ${signal ?? "unknown"}.`
+      const message =
+        code !== null
+          ? `MCP server "${this.name}" exited with code ${code}.`
+          : `MCP server "${this.name}" exited with signal ${signal ?? "unknown"}.`
       this.rejectAll(new Error(message))
       if (!this.closedByUser) {
         this.onExit?.(message)
@@ -346,7 +359,9 @@ export class McpStdioClient {
         const message = JSON.parse(body) as JsonRpcMessage
         this.handleMessage(message)
       } catch (error) {
-        log.warn(`failed to parse MCP message from ${this.name}: ${error instanceof Error ? error.message : String(error)}`)
+        log.warn(
+          `failed to parse MCP message from ${this.name}: ${error instanceof Error ? error.message : String(error)}`,
+        )
       }
     }
   }
@@ -377,26 +392,17 @@ export class McpStdioClient {
     child.stdin.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`)
   }
 
-  private request(
+  private async request(
     method: string,
     params: Record<string, unknown>,
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    return new Promise(async (resolve, reject) => {
-      try {
-        await this.ensureProcess()
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)))
-        return
-      }
+    await this.ensureProcess()
+    const child = this.process
+    if (!child) throw new Error(`MCP server "${this.name}" process is not available.`)
 
-      const child = this.process
-      if (!child) {
-        reject(new Error(`MCP server "${this.name}" process is not available.`))
-        return
-      }
-
+    return new Promise((resolve, reject) => {
       const id = ++this.requestId
       const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params })
       const timeout = setTimeout(() => {

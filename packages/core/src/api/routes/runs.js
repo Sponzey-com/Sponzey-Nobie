@@ -1,15 +1,17 @@
 import crypto from "node:crypto";
-import { authMiddleware } from "../middleware/auth.js";
-import { listTaskContinuityForLineages, listMemoryAccessTraceForRun, } from "../../db/index.js";
-import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listActiveRootRuns, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
+import { exportRetrievalEvidenceTimeline, getRetrievalEvidenceTimeline, } from "../../control-plane/timeline.js";
+import { listMemoryAccessTraceForRun, listTaskContinuityForLineages } from "../../db/index.js";
 import { buildActiveRunProjections } from "../../runs/active-run-projection.js";
 import { startIngressRun } from "../../runs/ingress.js";
-import { createInboundMessageRecord } from "../../runs/request-isolation.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
+import { DEFAULT_STALE_RUN_MS, buildOperationsSummary } from "../../runs/operations.js";
+import { createInboundMessageRecord } from "../../runs/request-isolation.js";
+import { buildRunRuntimeInspectorProjection } from "../../runs/runtime-inspector-projection.js";
+import { resolveFocusBinding, } from "../../orchestration/command-workspace.js";
+import { cancelRootRun, cleanupStaleRunStates, clearHistoricalRunHistory, deleteRunHistory, getRootRun, listActiveRootRuns, listRootRuns, listRunsForRecentRequestGroups, } from "../../runs/store.js";
 import { buildTaskModels } from "../../runs/task-model.js";
-import { buildOperationsSummary, DEFAULT_STALE_RUN_MS } from "../../runs/operations.js";
+import { authMiddleware } from "../middleware/auth.js";
 import { createWebUiChunkDeliveryHandler } from "../ws/chunk-delivery.js";
-import { exportRetrievalEvidenceTimeline, getRetrievalEvidenceTimeline, } from "../../control-plane/timeline.js";
 function parseTimelineLimit(value) {
     const parsed = Number.parseInt(value ?? "", 10);
     if (!Number.isFinite(parsed) || parsed <= 0)
@@ -38,6 +40,9 @@ export async function startLocalRun(params) {
             externalMessageId: runId,
             rawText: params.message,
         }),
+        ...(params.focusResolution
+            ? { orchestrationPlannerIntent: params.focusResolution.plannerIntent }
+            : {}),
         ...(params.source === "webui"
             ? { onChunk: createWebUiChunkDeliveryHandler({ sessionId, runId }) }
             : {}),
@@ -65,6 +70,15 @@ export async function startLocalRun(params) {
         source,
         status: started.status,
         receipt: receipt.text,
+        ...(params.focusResolution
+            ? {
+                focus: {
+                    binding: params.focusResolution.binding,
+                    plannerTarget: params.focusResolution.plannerTarget,
+                    enforcement: params.focusResolution.enforcement,
+                },
+            }
+            : {}),
     };
 }
 export function registerRunsRoute(app) {
@@ -78,10 +92,10 @@ export function registerRunsRoute(app) {
         const runs = listRootRuns();
         return {
             runs,
-            activeRunProjections: buildActiveRunProjections(runs.filter((run) => (run.status === "queued"
-                || run.status === "running"
-                || run.status === "awaiting_approval"
-                || run.status === "awaiting_user"))),
+            activeRunProjections: buildActiveRunProjections(runs.filter((run) => run.status === "queued" ||
+                run.status === "running" ||
+                run.status === "awaiting_approval" ||
+                run.status === "awaiting_user")),
         };
     });
     app.get("/api/runs/active", { preHandler: authMiddleware }, async () => {
@@ -102,7 +116,9 @@ export function registerRunsRoute(app) {
         };
     });
     app.post("/api/runs/operations/stale-cleanup", { preHandler: authMiddleware }, async (req) => {
-        const staleMs = typeof req.body?.staleMs === "number" && Number.isFinite(req.body.staleMs) ? req.body.staleMs : undefined;
+        const staleMs = typeof req.body?.staleMs === "number" && Number.isFinite(req.body.staleMs)
+            ? req.body.staleMs
+            : undefined;
         const cleanup = cleanupStaleRunStates({ ...(staleMs ? { staleMs } : {}) });
         const snapshot = listTaskSnapshot();
         return {
@@ -131,6 +147,12 @@ export function registerRunsRoute(app) {
         if (!run)
             return reply.status(404).send({ error: "Run not found" });
         return { events: run.recentEvents };
+    });
+    app.get("/api/runs/:id/runtime-inspector", { preHandler: authMiddleware }, async (req, reply) => {
+        const run = getRootRun(req.params.id);
+        if (!run)
+            return reply.status(404).send({ error: "Run not found" });
+        return { projection: buildRunRuntimeInspectorProjection(run) };
     });
     app.get("/api/runs/:id/retrieval-timeline", { preHandler: authMiddleware }, async (req, reply) => {
         const run = getRootRun(req.params.id);
@@ -163,17 +185,37 @@ export function registerRunsRoute(app) {
         if (!run)
             return reply.status(404).send({ error: "Run not found" });
         const parsedLimit = Number.parseInt(req.query.limit ?? "", 10);
-        return { traces: listMemoryAccessTraceForRun(req.params.id, Number.isFinite(parsedLimit) ? parsedLimit : 100) };
+        return {
+            traces: listMemoryAccessTraceForRun(req.params.id, Number.isFinite(parsedLimit) ? parsedLimit : 100),
+        };
     });
     app.post("/api/runs", { preHandler: authMiddleware }, async (req, reply) => {
         const message = req.body?.message?.trim();
         if (!message)
             return reply.status(400).send({ error: "message is required" });
+        const focusThreadId = req.body.focusThreadId?.trim();
+        const parentAgentId = req.body.parentAgentId?.trim();
+        const focusResolution = focusThreadId
+            ? resolveFocusBinding({
+                threadId: focusThreadId,
+                ...(parentAgentId ? { parentAgentId } : {}),
+            })
+            : undefined;
+        if (focusResolution && !focusResolution.ok) {
+            return reply.status(focusResolution.statusCode).send({
+                ok: false,
+                error: focusResolution.reasonCode,
+                reasonCode: focusResolution.reasonCode,
+                ...(focusResolution.binding ? { binding: focusResolution.binding } : {}),
+                ...(focusResolution.details ? { details: focusResolution.details } : {}),
+            });
+        }
         return startLocalRun({
             message,
             sessionId: req.body.sessionId,
             model: req.body.model,
             source: "webui",
+            ...(focusResolution ? { focusResolution } : {}),
         });
     });
     app.post("/api/runs/:id/cancel", { preHandler: authMiddleware }, async (req, reply) => {
@@ -191,7 +233,10 @@ export function registerRunsRoute(app) {
         if (!result)
             return reply.status(404).send({ error: "Run not found" });
         if (result.blockedRunCount && result.blockedRunCount > 0) {
-            return reply.status(409).send({ error: "Active run history cannot be deleted", blockedRunCount: result.blockedRunCount });
+            return reply.status(409).send({
+                error: "Active run history cannot be deleted",
+                blockedRunCount: result.blockedRunCount,
+            });
         }
         return { ok: true, deletedRunCount: result.deletedRunCount };
     });

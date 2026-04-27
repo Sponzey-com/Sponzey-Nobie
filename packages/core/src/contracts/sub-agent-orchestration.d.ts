@@ -8,9 +8,64 @@ export type SubSessionStatus = "created" | "queued" | "running" | "waiting_for_i
 export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent";
 export type ResourceLockKind = "file" | "display" | "channel" | "mcp_server" | "secret_scope" | "external_target" | "custom";
 export type CapabilityRiskLevel = "safe" | "moderate" | "external" | "sensitive" | "dangerous";
+export type DepthScopedToolKind = "session_control" | "system" | "mcp" | "shell" | "filesystem" | "network" | "screen" | "other";
 export type DataExchangeRetentionPolicy = "session_only" | "short_term" | "long_term_candidate" | "discard_after_review";
 export type LearningApprovalState = "auto_applied" | "pending_review" | "rejected" | "applied_by_user";
-export type RelationshipEdgeType = "delegation" | "data_exchange" | "permission" | "capability_delegation" | "team_membership";
+export type RelationshipEdgeType = "parent_child" | "delegation" | "data_exchange" | "permission" | "capability_delegation" | "team_membership";
+export type NicknameEntityType = AgentEntityType | "team";
+export type NamedDeliveryKind = "data_exchange" | "result_report" | "handoff_context";
+export type TeamResultPolicyMode = "lead_synthesis" | "owner_synthesis" | "reviewer_required" | "verifier_required" | "quorum_required";
+export type TeamConflictPolicyMode = "lead_decides" | "owner_decides" | "reviewer_decides" | "report_conflict";
+export type TeamMembershipStatus = "active" | "inactive" | "fallback_only" | "removed";
+export type AgentRelationshipStatus = "active" | "disabled" | "archived";
+export type FeedbackTargetAgentPolicy = "same_agent" | "alternative_direct_child" | "parent_decides" | "fallback_agent" | "lead_assigns" | "nobie_direct";
+export interface ModelProfile {
+    providerId: string;
+    modelId: string;
+    effort?: string;
+    temperature?: number;
+    maxOutputTokens?: number;
+    timeoutMs?: number;
+    retryCount?: number;
+    costBudget?: number;
+    fallbackModelId?: string;
+}
+export interface ModelExecutionSnapshot {
+    providerId: string;
+    modelId: string;
+    effort?: string;
+    fallbackApplied: boolean;
+    fallbackFromModelId?: string;
+    fallbackReasonCode?: string;
+    timeoutMs?: number;
+    retryCount: number;
+    costBudget?: number;
+    maxOutputTokens?: number;
+    estimatedInputTokens: number;
+    estimatedOutputTokens: number;
+    estimatedCost: number;
+    attemptCount?: number;
+    latencyMs?: number;
+    reasonCodes: string[];
+}
+export interface DelegationPolicy {
+    enabled: boolean;
+    maxParallelSessions: number;
+    retryBudget: number;
+}
+export interface NicknameSnapshot {
+    entityType: NicknameEntityType;
+    entityId: string;
+    nicknameSnapshot: string;
+}
+export interface NicknameNamespaceEntry extends NicknameSnapshot {
+    sourcePath?: string;
+}
+export interface NicknameNamespaceConflict {
+    normalizedNickname: string;
+    existing: NicknameNamespaceEntry;
+    attempted: NicknameNamespaceEntry;
+}
 export interface OwnerScope {
     ownerType: "nobie" | "sub_agent" | "team" | "system";
     ownerId: string;
@@ -63,19 +118,26 @@ export interface CapabilityPolicy {
         maxCallsPerMinute?: number;
     };
 }
+export interface DepthScopedToolPolicy {
+    maxDepthByToolKind: Partial<Record<DepthScopedToolKind, number>>;
+    deniedToolNamesByDepth?: Record<string, string[]>;
+}
 export interface BaseAgentConfig {
     schemaVersion: ContractSchemaVersion;
     agentType: AgentEntityType;
     agentId: string;
     displayName: string;
     nickname?: string;
+    normalizedNickname?: string;
     status: AgentStatus;
     role: string;
     personality: string;
     specialtyTags: string[];
     avoidTasks: string[];
+    modelProfile?: ModelProfile;
     memoryPolicy: MemoryPolicy;
     capabilityPolicy: CapabilityPolicy;
+    delegationPolicy?: DelegationPolicy;
     profileVersion: number;
     createdAt: number;
     updatedAt: number;
@@ -91,25 +153,106 @@ export interface NobieConfig extends BaseAgentConfig {
 export interface SubAgentConfig extends BaseAgentConfig {
     agentType: "sub_agent";
     teamIds: string[];
-    delegation: {
-        enabled: boolean;
-        maxParallelSessions: number;
-        retryBudget: number;
-    };
+    delegation: DelegationPolicy;
 }
 export type AgentConfig = NobieConfig | SubAgentConfig;
+export interface TeamMembership {
+    membershipId: string;
+    teamId: string;
+    agentId: string;
+    ownerAgentIdSnapshot?: string;
+    teamRoles: string[];
+    primaryRole: string;
+    required: boolean;
+    fallbackForAgentId?: string;
+    sortOrder: number;
+    status: TeamMembershipStatus;
+}
+export interface AgentRelationship {
+    edgeId: string;
+    parentAgentId: string;
+    childAgentId: string;
+    relationshipType: "parent_child";
+    status: AgentRelationshipStatus;
+    sortOrder: number;
+    createdAt?: number;
+    updatedAt?: number;
+}
 export interface TeamConfig {
     schemaVersion: ContractSchemaVersion;
     teamId: string;
     displayName: string;
     nickname?: string;
+    normalizedNickname?: string;
     status: Exclude<AgentStatus, "degraded">;
     purpose: string;
+    ownerAgentId?: string;
+    leadAgentId?: string;
+    memberCountMin?: number;
+    memberCountMax?: number;
+    requiredTeamRoles?: string[];
+    requiredCapabilityTags?: string[];
+    resultPolicy?: TeamResultPolicyMode;
+    conflictPolicy?: TeamConflictPolicyMode;
+    memberships?: TeamMembership[];
     memberAgentIds: string[];
     roleHints: string[];
     profileVersion: number;
     createdAt: number;
     updatedAt: number;
+}
+export interface TeamExecutionPlanAssignment {
+    agentId: string;
+    taskIds: string[];
+    role?: string;
+    membershipId?: string;
+    required?: boolean;
+    executionState?: "active" | "fallback" | "synthesis" | "review" | "verification";
+    taskKinds?: Array<"member" | "synthesis" | "review" | "verification">;
+    inputContext?: JsonObject;
+    expectedOutputs?: ExpectedOutputContract[];
+    validationCriteria?: string[];
+    dependsOnTaskIds?: string[];
+    fallbackForAgentId?: string;
+    reasonCodes?: string[];
+    tasks?: TeamExecutionTaskSnapshot[];
+}
+export interface TeamExecutionTaskSnapshot {
+    taskId: string;
+    taskKind: "member" | "synthesis" | "review" | "verification";
+    executionKind: TaskExecutionKind;
+    scope: StructuredTaskScope;
+    assignedAgentId?: string;
+    assignedTeamId?: string;
+    requiredCapabilities: string[];
+    resourceLockIds: string[];
+    inputContext: JsonObject;
+    expectedOutputs: ExpectedOutputContract[];
+    validationCriteria: string[];
+    dependsOnTaskIds: string[];
+    required: boolean;
+    reasonCodes: string[];
+}
+export interface TeamExecutionFallbackAssignment {
+    missingAgentId: string;
+    fallbackAgentId: string;
+    reasonCode?: string;
+}
+export interface TeamExecutionPlan {
+    teamExecutionPlanId: string;
+    parentRunId: string;
+    teamId: string;
+    teamNicknameSnapshot?: string;
+    ownerAgentId: string;
+    leadAgentId: string;
+    memberTaskAssignments: TeamExecutionPlanAssignment[];
+    reviewerAgentIds: string[];
+    verifierAgentIds: string[];
+    fallbackAssignments: TeamExecutionFallbackAssignment[];
+    coverageReport: JsonObject;
+    conflictPolicySnapshot: TeamConflictPolicyMode;
+    resultPolicySnapshot: TeamResultPolicyMode;
+    createdAt: number;
 }
 export interface ExpectedOutputContract {
     outputId: string;
@@ -150,6 +293,9 @@ export interface SubSessionContract {
     subSessionId: string;
     parentSessionId: string;
     parentRunId: string;
+    parentAgentId?: string;
+    parentAgentDisplayName?: string;
+    parentAgentNickname?: string;
     agentId: string;
     agentDisplayName: string;
     agentNickname?: string;
@@ -158,6 +304,7 @@ export interface SubSessionContract {
     retryBudgetRemaining: number;
     promptBundleId: string;
     promptBundleSnapshot?: AgentPromptBundle;
+    modelExecutionSnapshot?: ModelExecutionSnapshot;
     startedAt?: number;
     finishedAt?: number;
 }
@@ -194,6 +341,7 @@ export interface OrchestrationTask {
         score?: number;
         reasonCodes: string[];
         excludedReasonCodes?: string[];
+        explanation?: string;
     };
 }
 export interface ApprovalRequirementContract {
@@ -221,11 +369,20 @@ export interface OrchestrationPlan {
         userMessage?: string;
     };
     plannerMetadata?: {
-        status: "planned" | "degraded";
+        status: "planned" | "degraded" | "requires_team_expansion" | "requires_workflow_recommendation";
         plannerVersion: string;
         timedOut: boolean;
+        latencyMs?: number;
+        targetP95Ms?: number;
         semanticComparisonUsed: false;
         reasonCodes: string[];
+        fastPath?: {
+            classification: "direct_nobie" | "delegation_candidate" | "workflow_candidate";
+            reasonCodes: string[];
+            targetP95Ms: number;
+            latencyMs: number;
+            explanation: string;
+        };
         candidateScores: Array<{
             agentId: string;
             teamIds: string[];
@@ -233,6 +390,7 @@ export interface OrchestrationPlan {
             selected: boolean;
             reasonCodes: string[];
             excludedReasonCodes: string[];
+            explanation?: string;
         }>;
         directReasonCodes: string[];
         fallbackReasonCodes: string[];
@@ -255,6 +413,7 @@ export interface AgentPromptBundle {
     }>;
     memoryPolicy: MemoryPolicy;
     capabilityPolicy: CapabilityPolicy;
+    modelProfileSnapshot?: ModelProfile;
     taskScope: StructuredTaskScope;
     safetyRules: string[];
     sourceProvenance: Array<{
@@ -265,12 +424,14 @@ export interface AgentPromptBundle {
     fragments?: AgentPromptFragment[];
     validation?: AgentPromptBundleValidationSummary;
     cacheKey?: string;
+    promptChecksum?: string;
+    profileVersionSnapshot?: number;
     renderedPrompt?: string;
     completionCriteria?: ExpectedOutputContract[];
     createdAt: number;
 }
-export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule";
-export type AgentPromptFragmentStatus = "active" | "inactive" | "blocked";
+export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "model_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule" | "self_nickname_rule" | "nickname_attribution_rule" | "capability_catalog" | "capability_binding";
+export type AgentPromptFragmentStatus = "active" | "inactive" | "review" | "blocked";
 export interface AgentPromptFragment {
     fragmentId: string;
     kind: AgentPromptFragmentKind;
@@ -294,6 +455,7 @@ export interface CommandRequest {
     parentRunId: string;
     subSessionId: string;
     targetAgentId: string;
+    targetNicknameSnapshot?: string;
     taskScope: StructuredTaskScope;
     contextPackageIds: string[];
     expectedOutputs: ExpectedOutputContract[];
@@ -304,15 +466,23 @@ export interface ProgressEvent {
     eventId: string;
     parentRunId: string;
     subSessionId: string;
+    speaker?: NicknameSnapshot;
     status: SubSessionStatus;
     summary: string;
     at: number;
+}
+export type ResultReportImpossibleReasonKind = "physical" | "logical" | "policy";
+export interface ResultReportImpossibleReason {
+    kind: ResultReportImpossibleReasonKind;
+    reasonCode: string;
+    detail: string;
 }
 export interface ResultReport {
     identity: RuntimeIdentity;
     resultReportId: string;
     parentRunId: string;
     subSessionId: string;
+    source?: NicknameSnapshot;
     status: "completed" | "needs_revision" | "failed";
     outputs: Array<{
         outputId: string;
@@ -331,18 +501,34 @@ export interface ResultReport {
         path?: string;
     }>;
     risksOrGaps: string[];
+    impossibleReason?: ResultReportImpossibleReason;
 }
 export interface FeedbackRequest {
     identity: RuntimeIdentity;
     feedbackRequestId: string;
     parentRunId: string;
     subSessionId: string;
+    sourceResultReportIds: string[];
+    previousSubSessionIds: string[];
+    targetAgentPolicy: FeedbackTargetAgentPolicy;
+    targetAgentId?: string;
+    targetAgentNicknameSnapshot?: string;
+    requestingAgentNicknameSnapshot?: string;
+    synthesizedContextExchangeId?: string;
+    carryForwardOutputs: Array<{
+        outputId: string;
+        status: "satisfied" | "partial";
+        value?: JsonValue;
+    }>;
     missingItems: string[];
+    conflictItems: string[];
     requiredChanges: string[];
+    additionalConstraints: string[];
     additionalContextRefs: string[];
     expectedRevisionOutputs: ExpectedOutputContract[];
     retryBudgetRemaining: number;
     reasonCode: string;
+    createdAt?: number;
 }
 export interface ErrorReport {
     identity: RuntimeIdentity;
@@ -358,6 +544,8 @@ export interface DataExchangePackage {
     exchangeId: string;
     sourceOwner: OwnerScope;
     recipientOwner: OwnerScope;
+    sourceNicknameSnapshot?: string;
+    recipientNicknameSnapshot?: string;
     purpose: string;
     allowedUse: "temporary_context" | "memory_candidate" | "verification_only";
     retentionPolicy: DataExchangeRetentionPolicy;
@@ -365,6 +553,35 @@ export interface DataExchangePackage {
     provenanceRefs: string[];
     payload: JsonObject;
     expiresAt?: number | null;
+    createdAt: number;
+}
+export interface UserVisibleAgentMessage {
+    identity: RuntimeIdentity;
+    messageId: string;
+    parentRunId: string;
+    speaker: NicknameSnapshot;
+    text: string;
+    createdAt: number;
+}
+export interface NamedHandoffEvent {
+    identity: RuntimeIdentity;
+    handoffId: string;
+    parentRunId: string;
+    sender: NicknameSnapshot;
+    recipient: NicknameSnapshot;
+    purpose: string;
+    createdAt: number;
+}
+export interface NamedDeliveryEvent {
+    identity: RuntimeIdentity;
+    deliveryId: string;
+    parentRunId: string;
+    deliveryKind: NamedDeliveryKind;
+    sender: NicknameSnapshot;
+    recipient: NicknameSnapshot;
+    summary: string;
+    exchangeId?: string;
+    resultReportId?: string;
     createdAt: number;
 }
 export interface CapabilityDelegationRequest {
@@ -377,13 +594,14 @@ export interface CapabilityDelegationRequest {
     inputPackageIds: string[];
     resultPackageId?: string;
     approvalId?: string;
-    status: "requested" | "approved" | "denied" | "completed" | "failed";
+    status: "requested" | "approved" | "denied" | "expired" | "completed" | "failed";
 }
 export interface LearningEvent {
     identity: RuntimeIdentity;
     learningEventId: string;
     agentId: string;
     agentType?: AgentEntityType;
+    sourceRunId?: string;
     sourceSessionId?: string;
     sourceSubSessionId?: string;
     learningTarget: "memory" | "role" | "personality" | "team_profile";
@@ -433,8 +651,23 @@ export interface RelationshipGraphEdge {
     label?: string;
     metadata?: JsonObject;
 }
+export declare function normalizeNicknameSnapshot(value: string): string;
+export declare function normalizeNickname(value: string): string;
+export declare function findNicknameNamespaceConflict(entries: NicknameNamespaceEntry[]): NicknameNamespaceConflict | undefined;
+export declare function validateTeamMembership(value: unknown): ContractValidationResult<TeamMembership>;
+export declare function validateAgentRelationship(value: unknown): ContractValidationResult<AgentRelationship>;
 export declare function validateAgentConfig(value: unknown): ContractValidationResult<AgentConfig>;
 export declare function validateTeamConfig(value: unknown): ContractValidationResult<TeamConfig>;
+export declare function validateTeamExecutionPlan(value: unknown): ContractValidationResult<TeamExecutionPlan>;
 export declare function validateOrchestrationPlan(value: unknown): ContractValidationResult<OrchestrationPlan>;
+export declare function validateCommandRequest(value: unknown): ContractValidationResult<CommandRequest>;
+export declare function validateDataExchangePackage(value: unknown): ContractValidationResult<DataExchangePackage>;
+export declare function validateResultReport(value: unknown, options?: {
+    expectedOutputs?: ExpectedOutputContract[];
+}): ContractValidationResult<ResultReport>;
+export declare function validateFeedbackRequest(value: unknown): ContractValidationResult<FeedbackRequest>;
 export declare function validateAgentPromptBundle(value: unknown): ContractValidationResult<AgentPromptBundle>;
+export declare function validateUserVisibleAgentMessage(value: unknown): ContractValidationResult<UserVisibleAgentMessage>;
+export declare function validateNamedHandoffEvent(value: unknown): ContractValidationResult<NamedHandoffEvent>;
+export declare function validateNamedDeliveryEvent(value: unknown): ContractValidationResult<NamedDeliveryEvent>;
 //# sourceMappingURL=sub-agent-orchestration.d.ts.map

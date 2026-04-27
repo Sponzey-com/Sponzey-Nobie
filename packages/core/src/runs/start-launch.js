@@ -40,6 +40,9 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.model ? { model: params.model } : {}),
         ...(params.targetId ? { targetId: params.targetId } : {}),
         ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
+        ...(params.orchestrationPlannerIntent
+            ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+            : {}),
     }, {
         analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
         isReusableRequestGroup: dependencies.isReusableRequestGroup,
@@ -62,7 +65,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         id: params.runId,
         sessionId: params.sessionId,
         requestGroupId: startPlan.requestGroupId,
-        lineageRootRunId: startPlan.requestGroupId,
+        lineageRootRunId: params.lineageRootRunId ?? startPlan.requestGroupId,
         ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
         ...(params.runScope ? { runScope: params.runScope } : {}),
         ...(params.handoffSummary ? { handoffSummary: params.handoffSummary } : {}),

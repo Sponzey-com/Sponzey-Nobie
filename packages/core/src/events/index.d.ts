@@ -45,6 +45,30 @@ export interface NobieEvents {
         summary: string;
         detail?: Record<string, unknown>;
     };
+    "orchestration.event": {
+        sequence: number;
+        cursor: string;
+        id: string;
+        createdAt: number;
+        emittedAt: number;
+        eventKind: string;
+        runId: string | null;
+        parentRunId: string | null;
+        requestGroupId: string | null;
+        subSessionId: string | null;
+        agentId: string | null;
+        teamId: string | null;
+        exchangeId: string | null;
+        approvalId: string | null;
+        correlationId: string;
+        dedupeKey: string | null;
+        source: string;
+        severity: "debug" | "info" | "warning" | "error";
+        summary: string;
+        payload: Record<string, unknown>;
+        payloadRawRef: string | null;
+        producerTask: string | null;
+    };
     "agent.start": {
         sessionId: string;
         runId: string;
