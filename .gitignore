@@ -147,5 +147,5 @@ vite.config.ts.timestamp-*
 .DS_Store
 .env
 .docs
-backups/*
+backups/
 .db
