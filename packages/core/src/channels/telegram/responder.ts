@@ -1,5 +1,13 @@
 import type { Bot } from "grammy"
-import { sendTelegramFile, sendTelegramPlainMessage, sendTelegramTextParts } from "./message-delivery.js"
+import {
+  sendTelegramFile,
+  sendTelegramFileWithReceipt,
+  sendTelegramPlainMessage,
+  sendTelegramTextParts,
+  sendTelegramTextPartsWithReceipts,
+  type TelegramFileDeliveryResult,
+  type TelegramTextPartsDeliveryResult,
+} from "./message-delivery.js"
 
 export class TelegramResponder {
   constructor(
@@ -46,6 +54,18 @@ export class TelegramResponder {
     })
   }
 
+  async sendFinalResponseWithReceipts(
+    text: string,
+    idempotencyKeyPrefix: string,
+  ): Promise<TelegramTextPartsDeliveryResult> {
+    return sendTelegramTextPartsWithReceipts({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      text,
+      idempotencyKeyPrefix,
+    })
+  }
+
   async sendError(message: string): Promise<number> {
     return sendTelegramPlainMessage({
       api: this.bot.api,
@@ -67,6 +87,20 @@ export class TelegramResponder {
       api: this.bot.api,
       target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
       filePath,
+      ...(caption !== undefined ? { caption } : {}),
+    })
+  }
+
+  async sendFileWithReceipt(
+    filePath: string,
+    idempotencyKey: string,
+    caption?: string | undefined,
+  ): Promise<TelegramFileDeliveryResult> {
+    return sendTelegramFileWithReceipt({
+      api: this.bot.api,
+      target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+      filePath,
+      idempotencyKey,
       ...(caption !== undefined ? { caption } : {}),
     })
   }

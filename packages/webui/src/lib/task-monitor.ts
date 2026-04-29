@@ -48,7 +48,7 @@ export type TaskMonitorViewMode = "normal" | "diagnostic"
 
 export interface TaskMonitorDelivery {
   status: TaskDeliveryStatus
-  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
+  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown" | (string & {})
   summary?: string
   artifact?: TaskArtifactModel
 }

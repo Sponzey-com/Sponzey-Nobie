@@ -1,5 +1,6 @@
 import { homedir } from "node:os"
 import { eventBus } from "../events/index.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode, type AIProvider } from "../ai/index.js"
 import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
@@ -175,7 +176,7 @@ export interface RunAgentParams {
   provider?: AIProvider | undefined
   systemPrompt?: string | undefined
   workDir?: string | undefined
-  source?: "webui" | "cli" | "telegram" | "slack" | undefined
+  source?: ChannelSource | undefined
   signal?: AbortSignal | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined

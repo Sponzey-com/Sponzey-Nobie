@@ -1,5 +1,6 @@
 import { existsSync, rmSync, statSync } from "node:fs"
 import { basename, extname, relative, resolve, sep } from "node:path"
+import type { ChannelSource } from "../channels/contracts.js"
 import { PATHS } from "../config/index.js"
 import {
   insertArtifactMetadata,
@@ -102,13 +103,19 @@ const PREVIEWABLE_MIME_TYPES = new Set([
   "application/json",
 ])
 
-export const CHANNEL_FILE_SIZE_LIMIT_BYTES: Record<"webui" | "telegram" | "slack", number> = {
+export const DEFAULT_CHANNEL_FILE_SIZE_LIMIT_BYTES = 100 * 1024 * 1024
+
+export const CHANNEL_FILE_SIZE_LIMIT_BYTES: Partial<Record<ChannelSource, number>> = {
   webui: 100 * 1024 * 1024,
   telegram: 50 * 1024 * 1024,
   slack: 1024 * 1024 * 1024,
 }
 
-export const ARTIFACT_THUMBNAIL_POLICY: Record<"webui" | "telegram" | "slack", "not_generated"> = {
+export function getChannelFileSizeLimitBytes(channel: ChannelSource): number {
+  return CHANNEL_FILE_SIZE_LIMIT_BYTES[channel] ?? DEFAULT_CHANNEL_FILE_SIZE_LIMIT_BYTES
+}
+
+export const ARTIFACT_THUMBNAIL_POLICY: Partial<Record<ChannelSource, "not_generated">> = {
   webui: "not_generated",
   telegram: "not_generated",
   slack: "not_generated",

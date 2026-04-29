@@ -1,4 +1,5 @@
 import { commitFinalDelivery } from "./channel-finalizer.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import {
   type RunChunkDeliveryHandler,
   emitAssistantTextDelivery,
@@ -12,7 +13,7 @@ import {
 } from "./recovery.js"
 import type { RunStatus, RunStepStatus } from "./types.js"
 
-export type FinalizationSource = "webui" | "cli" | "telegram" | "slack"
+export type FinalizationSource = ChannelSource
 
 export interface AwaitingUserParams {
   preview: string

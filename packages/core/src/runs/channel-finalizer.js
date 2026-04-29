@@ -10,11 +10,14 @@ const NOBIE_SPEAKER = {
     entityId: "agent:nobie",
     nicknameSnapshot: "노비",
 };
-function finalDeliveryKey(parentRunId) {
-    return `final:${parentRunId}`;
+function finalDeliveryTargetKey(input) {
+    return `${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`;
 }
-function finalDeliveryIdempotencyKey(parentRunId) {
-    return `final-delivery:${parentRunId}`;
+function finalDeliveryKey(input) {
+    return `final:${finalDeliveryTargetKey(input)}`;
+}
+function finalDeliveryIdempotencyKey(input) {
+    return `final-delivery:${finalDeliveryTargetKey(input)}`;
 }
 function normalizeSpeaker(speaker) {
     if (!speaker)
@@ -87,8 +90,11 @@ export function buildNobieFinalAnswer(input) {
         attributions,
     };
 }
-export function findCommittedFinalDelivery(parentRunId) {
-    return listMessageLedgerEvents({ runId: parentRunId, limit: 1000 }).find((event) => event.delivery_key === finalDeliveryKey(parentRunId) &&
+export function findCommittedFinalDelivery(parentRunId, options = {}) {
+    const scopedDeliveryKey = options.source && options.sessionId
+        ? finalDeliveryKey({ parentRunId, source: options.source, sessionId: options.sessionId })
+        : undefined;
+    return listMessageLedgerEvents({ runId: parentRunId, limit: 1000 }).find((event) => event.delivery_key === (scopedDeliveryKey ?? event.delivery_key) &&
         event.event_kind === "final_answer_delivered" &&
         eventSucceeded(event));
 }
@@ -136,8 +142,16 @@ export async function commitFinalDelivery(input) {
         text: input.text,
         ...(input.resultReports ? { resultReports: input.resultReports } : {}),
     });
-    const deliveryKey = finalDeliveryKey(input.parentRunId);
-    const idempotencyKey = finalDeliveryIdempotencyKey(input.parentRunId);
+    const deliveryKey = finalDeliveryKey({
+        parentRunId: input.parentRunId,
+        source: input.source,
+        sessionId: input.sessionId,
+    });
+    const idempotencyKey = finalDeliveryIdempotencyKey({
+        parentRunId: input.parentRunId,
+        source: input.source,
+        sessionId: input.sessionId,
+    });
     const reasonCodes = [];
     if (!answer.text.trim())
         reasonCodes.push("final_answer_empty");
@@ -162,7 +176,10 @@ export async function commitFinalDelivery(input) {
             speaker,
         });
     }
-    const existing = findCommittedFinalDelivery(input.parentRunId);
+    const existing = findCommittedFinalDelivery(input.parentRunId, {
+        source: input.source,
+        sessionId: input.sessionId,
+    });
     if (existing) {
         const duplicateHash = hashLedgerValue({
             parentRunId: input.parentRunId,
@@ -231,7 +248,7 @@ export async function commitFinalDelivery(input) {
         eventKind: "final_answer_generated",
         deliveryKind: "final",
         deliveryKey,
-        idempotencyKey: `final-answer:${input.parentRunId}`,
+        idempotencyKey: `final-answer:${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`,
         status: "generated",
         summary: "parent finalizer가 최종 응답을 생성했습니다.",
         detail: {

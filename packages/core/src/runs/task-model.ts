@@ -1,6 +1,7 @@
 import { basename, resolve } from "node:path"
 import { homedir } from "node:os"
 import { buildArtifactApiUrls, guessArtifactMimeType } from "../artifacts/lifecycle.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import type { TaskContinuitySnapshot } from "../db/index.js"
 import type { RootRun, RunStatus } from "./types.js"
 
@@ -18,6 +19,7 @@ export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic"
 
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed"
 export type TaskFailureKind = "execution" | "recovery" | "delivery"
+export type TaskDeliveryChannel = ChannelSource | "unknown"
 export type TaskChecklistItemKey = "request" | "execution" | "delivery" | "completion"
 export type TaskChecklistItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "not_required"
 
@@ -68,7 +70,7 @@ export interface TaskDeliveryModel {
   taskId: string
   status: TaskDeliveryStatus
   sourceAttemptId?: string
-  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
+  channel?: TaskDeliveryChannel
   summary?: string
   artifact?: TaskArtifactModel
 }
@@ -317,7 +319,7 @@ function resolveTaskGroupKey(run: RootRun, runsById: Map<string, RootRun>): stri
   return current.lineageRootRunId || current.requestGroupId || current.id
 }
 
-function detectDeliveryChannel(label: string): "telegram" | "webui" | "slack" | "cli" | "unknown" {
+function detectDeliveryChannel(label: string): TaskDeliveryChannel {
   // nobie-critical-decision-audit: task-model.delivery_channel_label
   // Display-only channel projection for task monitor labels.
   const normalized = label.toLowerCase()
@@ -365,7 +367,7 @@ function mapTerminalFailureStatus(status: TaskFailureModel["status"]): Extract<T
 interface TaskDeliverySignal {
   status: TaskDeliveryStatus
   sourceAttemptId?: string
-  channel?: "telegram" | "webui" | "slack" | "cli" | "unknown"
+  channel?: TaskDeliveryChannel
   summary?: string
   artifact?: TaskArtifactModel
   at?: number

@@ -4,36 +4,68 @@ import { cancelRootRun, getRootRun } from "../../runs/store.js";
 import { startIngressRun } from "../../runs/ingress.js";
 import { createInboundMessageRecord } from "../../runs/request-isolation.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
-import { findChannelMessageRef, findLatestChannelMessageRefForThread, insertChannelMessageRef } from "../../db/index.js";
+import { insertChannelMessageRef } from "../../db/index.js";
+import { buildAccessPolicyFromAllowedIds, evaluateInboundAccessPolicy, recordChannelAccessPolicyResult, } from "../access-policy.js";
+import { resolveChannelContinuation } from "../continuation.js";
 import { createSlackChunkDeliveryHandler } from "./chunk-delivery.js";
 import { clearActiveSlackConversationForSession, handleSlackApprovalAction, handleSlackApprovalMessage, registerSlackApprovalHandler, setActiveSlackConversationForSession } from "./approval-handler.js";
 import { SlackResponder } from "./responder.js";
 import { getOrCreateSlackSession, resolveSlackSessionKey } from "./session.js";
 const log = createLogger("channel:slack");
 export function findSlackReplyTaskRef(params) {
-    const exactMessageRef = findChannelMessageRef({
-        source: "slack",
-        externalChatId: params.channelId,
-        externalMessageId: params.messageTs,
-        externalThreadId: params.threadTs,
+    const result = resolveChannelContinuation({
+        envelope: buildSlackContinuationEnvelope({
+            channelId: params.channelId,
+            messageTs: params.messageTs,
+            threadTs: params.threadTs,
+            userId: "unknown",
+            text: "",
+        }),
     });
-    if (exactMessageRef)
-        return exactMessageRef;
-    if (params.threadTs === params.messageTs)
-        return undefined;
-    const threadRootRef = findChannelMessageRef({
-        source: "slack",
-        externalChatId: params.channelId,
-        externalMessageId: params.threadTs,
-        externalThreadId: params.threadTs,
-    });
-    if (threadRootRef)
-        return threadRootRef;
-    return findLatestChannelMessageRefForThread({
-        source: "slack",
-        externalChatId: params.channelId,
-        externalThreadId: params.threadTs,
-    });
+    if (result.selected?.messageRef)
+        return result.selected.messageRef;
+    return result.selected
+        ? {
+            id: `continuation:${result.selected.source}:${result.selected.externalMessageId ?? result.selected.runId}`,
+            source: "slack",
+            session_id: result.selected.sessionId ?? "",
+            root_run_id: result.selected.runId,
+            request_group_id: result.selected.requestGroupId,
+            external_chat_id: result.selected.externalChatId ?? params.channelId,
+            external_thread_id: result.selected.externalThreadId ?? params.threadTs,
+            external_message_id: result.selected.externalMessageId ?? params.messageTs,
+            role: "assistant",
+            created_at: result.selected.createdAt,
+        }
+        : undefined;
+}
+function buildSlackContinuationEnvelope(params) {
+    const isThreadReply = Boolean(params.threadTs) && params.threadTs !== params.messageTs;
+    return {
+        channelId: "slack:workspace",
+        provider: "slack",
+        connectionId: "slack:primary",
+        messageId: params.messageTs,
+        ...(params.threadTs ? { threadId: params.threadTs } : {}),
+        ...(isThreadReply && params.threadTs ? { replyToMessageId: params.threadTs } : {}),
+        sender: { id: params.userId, providerType: "user" },
+        room: { id: params.channelId, type: "channel" },
+        ...(params.teamId ? { workspace: { id: params.teamId } } : {}),
+        text: params.text,
+        attachments: [],
+        mentions: [],
+        timestamp: Date.now(),
+        rawPayloadRef: {
+            storage: "none",
+            redactionState: "not_stored",
+            provider: "slack",
+            createdAt: Date.now(),
+        },
+        ...(isThreadReply && params.threadTs
+            ? { continuationContext: { parentMessageId: params.threadTs, source: "thread" } }
+            : {}),
+        dedupeKey: `slack:${params.channelId}:${params.messageTs}`,
+    };
 }
 export class SlackChannel {
     config;
@@ -186,12 +218,31 @@ export class SlackChannel {
             log.info(`Ignored duplicate Slack inbound event channel=${channelId} ts=${messageTs} type=${eventType}`);
             return;
         }
-        if (!this.isAllowedUser(userId)) {
-            log.warn(`Ignored Slack message from disallowed user=${userId} channel=${channelId}`);
-            return;
-        }
-        if (!this.isAllowedChannel(channelId)) {
-            log.warn(`Ignored Slack message from disallowed channel=${channelId} user=${userId}`);
+        const inboundEnvelope = buildSlackContinuationEnvelope({
+            channelId,
+            messageTs,
+            threadTs,
+            userId,
+            text,
+            ...(envelope.payload?.team_id ? { teamId: envelope.payload.team_id } : {}),
+        });
+        const access = evaluateInboundAccessPolicy({
+            envelope: inboundEnvelope,
+            policy: buildAccessPolicyFromAllowedIds({
+                provider: "slack",
+                allowedUserIds: this.config.allowedUserIds,
+                allowedRoomIds: this.config.allowedChannelIds,
+                ...(envelope.payload?.team_id ? { teamId: envelope.payload.team_id } : {}),
+                requireAllowedPrincipal: true,
+                allowUnlisted: false,
+                emptyAllowlistAllows: true,
+            }),
+        });
+        recordChannelAccessPolicyResult(access);
+        if (!access.allowed) {
+            log.warn(`Ignored Slack message by policy user=${userId} channel=${channelId} reason=${access.policy.reasonCode}`);
+            const responder = new SlackResponder(this.config, channelId, threadTs);
+            await responder.sendReceipt(access.responseText ?? "This channel request is blocked by Nobie's access policy.").catch(() => undefined);
             return;
         }
         log.info(`Accepted Slack message user=${userId} channel=${channelId} thread=${threadTs}`);
@@ -219,7 +270,18 @@ export class SlackChannel {
         setActiveSlackConversationForSession(sessionId, channelId, userId, threadTs);
         const responder = new SlackResponder(this.config, channelId, threadTs);
         let startedRunId = "";
-        const repliedTaskRef = findSlackReplyTaskRef({ channelId, messageTs, threadTs });
+        const continuation = resolveChannelContinuation({ envelope: access.envelope });
+        if (continuation.status === "ambiguous") {
+            await responder.sendReceipt(continuation.confirmationPrompt ?? "Please choose which previous task to continue.");
+            clearActiveSlackConversationForSession(sessionId);
+            return;
+        }
+        const repliedTaskRef = continuation.selected
+            ? {
+                root_run_id: continuation.selected.runId,
+                request_group_id: continuation.selected.requestGroupId,
+            }
+            : undefined;
         try {
             if (repliedTaskRef) {
                 const cancelled = cancelRootRun(repliedTaskRef.root_run_id);

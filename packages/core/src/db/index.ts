@@ -732,6 +732,119 @@ export interface DbOrchestrationEventInput {
   producerTask?: string | null
 }
 
+export type DbChannelConnectionMode =
+  | "internal"
+  | "bot_api"
+  | "socket"
+  | "webhook"
+  | "local_bridge"
+  | "manual_bridge"
+export type DbChannelConnectionHealthStatus = "healthy" | "degraded" | "stopped" | "failed"
+export type DbChannelConnectionConfigSource = "compat" | "manual" | "import" | "system"
+export type DbChannelIdentityKind = "user" | "room" | "thread" | "bot" | "unknown"
+
+export interface DbChannelConnection {
+  connection_id: string
+  provider: string
+  display_name: string
+  connection_mode: DbChannelConnectionMode
+  enabled: number
+  configured: number
+  health_status: DbChannelConnectionHealthStatus
+  health_message: string | null
+  capability_manifest_json: string
+  auth_secret_refs_json: string
+  allowed_users_json: string
+  allowed_rooms_json: string
+  default_delivery_policy_json: string
+  source: string
+  config_source: DbChannelConnectionConfigSource
+  created_at: number
+  updated_at: number
+}
+
+export interface DbChannelConnectionInput {
+  connectionId: string
+  provider: string
+  displayName: string
+  connectionMode: DbChannelConnectionMode
+  enabled: boolean
+  configured: boolean
+  healthStatus: DbChannelConnectionHealthStatus
+  healthMessage?: string | null
+  capabilityManifest: unknown
+  authSecretRefs: unknown
+  allowedUsers: unknown
+  allowedRooms: unknown
+  defaultDeliveryPolicy: unknown
+  source: string
+  configSource?: DbChannelConnectionConfigSource
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface DbChannelCapability {
+  connection_id: string
+  provider: string
+  manifest_json: string
+  created_at: number
+  updated_at: number
+}
+
+export interface DbChannelCapabilityInput {
+  connectionId: string
+  provider: string
+  manifest: unknown
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface DbChannelIdentityMapping {
+  id: string
+  connection_id: string
+  provider: string
+  namespace_id: string
+  identity_kind: DbChannelIdentityKind
+  provider_identity_id: string
+  display_name_snapshot: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface DbChannelIdentityMappingInput {
+  id: string
+  connectionId: string
+  provider: string
+  namespaceId: string
+  identityKind: DbChannelIdentityKind
+  providerIdentityId: string
+  displayNameSnapshot?: string | null
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface DbChannelRuntimeEvent {
+  id: string
+  connection_id: string
+  provider: string
+  event_kind: string
+  health_status: DbChannelConnectionHealthStatus | null
+  summary: string
+  detail_json: string
+  created_at: number
+}
+
+export interface DbChannelRuntimeEventInput {
+  id?: string
+  connectionId: string
+  provider: string
+  eventKind: string
+  healthStatus?: DbChannelConnectionHealthStatus | null
+  summary: string
+  detail?: Record<string, unknown>
+  createdAt?: number
+}
+
 export type DbChannelSmokeRunMode = "dry-run" | "live-run"
 export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped"
 export type DbChannelSmokeStepStatus = "passed" | "failed" | "skipped"
@@ -1003,7 +1116,7 @@ export function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): s
   const id = crypto.randomUUID()
   getDb()
     .prepare(
-      `INSERT INTO channel_message_refs
+      `INSERT OR IGNORE INTO channel_message_refs
        (id, source, session_id, root_run_id, request_group_id, external_chat_id, external_thread_id, external_message_id, role, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
@@ -1579,6 +1692,206 @@ export function findLatestChannelMessageRefForThread(params: {
        LIMIT 1`,
     )
     .get(params.source, params.externalChatId)
+}
+
+export function upsertChannelConnection(input: DbChannelConnectionInput): string {
+  const db = getDb()
+  assertMigrationWriteAllowed(db, "channel.connection.upsert")
+  const updatedAt = input.updatedAt ?? Date.now()
+  const createdAt = input.createdAt ?? updatedAt
+  db.prepare(
+    `INSERT INTO channel_connections
+     (connection_id, provider, display_name, connection_mode, enabled, configured,
+      health_status, health_message, capability_manifest_json, auth_secret_refs_json,
+      allowed_users_json, allowed_rooms_json, default_delivery_policy_json,
+      source, config_source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(connection_id) DO UPDATE SET
+       provider = excluded.provider,
+       display_name = excluded.display_name,
+       connection_mode = excluded.connection_mode,
+       enabled = excluded.enabled,
+       configured = excluded.configured,
+       health_status = excluded.health_status,
+       health_message = excluded.health_message,
+       capability_manifest_json = excluded.capability_manifest_json,
+       auth_secret_refs_json = excluded.auth_secret_refs_json,
+       allowed_users_json = excluded.allowed_users_json,
+       allowed_rooms_json = excluded.allowed_rooms_json,
+       default_delivery_policy_json = excluded.default_delivery_policy_json,
+       source = excluded.source,
+       config_source = excluded.config_source,
+       updated_at = excluded.updated_at`,
+  ).run(
+    input.connectionId,
+    input.provider,
+    input.displayName,
+    input.connectionMode,
+    input.enabled ? 1 : 0,
+    input.configured ? 1 : 0,
+    input.healthStatus,
+    input.healthMessage ?? null,
+    toConfigJson(input.capabilityManifest),
+    toConfigJson(input.authSecretRefs),
+    toConfigJson(input.allowedUsers),
+    toConfigJson(input.allowedRooms),
+    toConfigJson(input.defaultDeliveryPolicy),
+    input.source,
+    input.configSource ?? "compat",
+    createdAt,
+    updatedAt,
+  )
+  return input.connectionId
+}
+
+export function listChannelConnections(): DbChannelConnection[] {
+  return getDb()
+    .prepare<[], DbChannelConnection>(
+      `SELECT * FROM channel_connections
+       ORDER BY provider ASC, display_name ASC`,
+    )
+    .all()
+}
+
+export function getChannelConnection(connectionId: string): DbChannelConnection | undefined {
+  return getDb()
+    .prepare<[string], DbChannelConnection>(
+      "SELECT * FROM channel_connections WHERE connection_id = ?",
+    )
+    .get(connectionId)
+}
+
+export function upsertChannelCapability(input: DbChannelCapabilityInput): string {
+  const db = getDb()
+  assertMigrationWriteAllowed(db, "channel.capability.upsert")
+  const updatedAt = input.updatedAt ?? Date.now()
+  const createdAt = input.createdAt ?? updatedAt
+  db.prepare(
+    `INSERT INTO channel_capabilities
+     (connection_id, provider, manifest_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(connection_id) DO UPDATE SET
+       provider = excluded.provider,
+       manifest_json = excluded.manifest_json,
+       updated_at = excluded.updated_at`,
+  ).run(input.connectionId, input.provider, toConfigJson(input.manifest), createdAt, updatedAt)
+  return input.connectionId
+}
+
+export function listChannelCapabilities(): DbChannelCapability[] {
+  return getDb()
+    .prepare<[], DbChannelCapability>(
+      `SELECT * FROM channel_capabilities
+       ORDER BY provider ASC, connection_id ASC`,
+    )
+    .all()
+}
+
+export function replaceChannelIdentityMappings(
+  connectionId: string,
+  mappings: DbChannelIdentityMappingInput[],
+): void {
+  const db = getDb()
+  assertMigrationWriteAllowed(db, "channel.identity.replace")
+  const replace = db.transaction(() => {
+    db.prepare("DELETE FROM channel_identity_mappings WHERE connection_id = ?").run(connectionId)
+    const stmt = db.prepare(
+      `INSERT INTO channel_identity_mappings
+       (id, connection_id, provider, namespace_id, identity_kind, provider_identity_id,
+        display_name_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    for (const mapping of mappings) {
+      const updatedAt = mapping.updatedAt ?? Date.now()
+      stmt.run(
+        mapping.id,
+        mapping.connectionId,
+        mapping.provider,
+        mapping.namespaceId,
+        mapping.identityKind,
+        mapping.providerIdentityId,
+        mapping.displayNameSnapshot ?? null,
+        mapping.createdAt ?? updatedAt,
+        updatedAt,
+      )
+    }
+  })
+  replace()
+}
+
+export function listChannelIdentityMappings(connectionId?: string): DbChannelIdentityMapping[] {
+  if (connectionId) {
+    return getDb()
+      .prepare<[string], DbChannelIdentityMapping>(
+        `SELECT * FROM channel_identity_mappings
+         WHERE connection_id = ?
+         ORDER BY identity_kind ASC, provider_identity_id ASC`,
+      )
+      .all(connectionId)
+  }
+
+  return getDb()
+    .prepare<[], DbChannelIdentityMapping>(
+      `SELECT * FROM channel_identity_mappings
+       ORDER BY provider ASC, identity_kind ASC, provider_identity_id ASC`,
+    )
+    .all()
+}
+
+export function insertChannelRuntimeEvent(input: DbChannelRuntimeEventInput): string {
+  const id = input.id ?? crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO channel_runtime_events
+       (id, connection_id, provider, event_kind, health_status, summary, detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.connectionId,
+      input.provider,
+      input.eventKind,
+      input.healthStatus ?? null,
+      input.summary,
+      toConfigJson(input.detail ?? {}),
+      input.createdAt ?? Date.now(),
+    )
+  return id
+}
+
+export function listChannelRuntimeEvents(input: {
+  connectionId?: string
+  provider?: string
+  limit?: number
+} = {}): DbChannelRuntimeEvent[] {
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 500))
+  if (input.connectionId) {
+    return getDb()
+      .prepare<[string, number], DbChannelRuntimeEvent>(
+        `SELECT * FROM channel_runtime_events
+         WHERE connection_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(input.connectionId, limit)
+  }
+  if (input.provider) {
+    return getDb()
+      .prepare<[string, number], DbChannelRuntimeEvent>(
+        `SELECT * FROM channel_runtime_events
+         WHERE provider = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(input.provider, limit)
+  }
+  return getDb()
+    .prepare<[number], DbChannelRuntimeEvent>(
+      `SELECT * FROM channel_runtime_events
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit)
 }
 
 export function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string {

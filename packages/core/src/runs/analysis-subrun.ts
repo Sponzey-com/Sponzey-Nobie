@@ -1,4 +1,5 @@
 import crypto from "node:crypto"
+import type { ChannelSource } from "../channels/contracts.js"
 import { buildFilesystemVerificationPrompt, verifyFilesystemTargets } from "./filesystem-verification.js"
 import type { RunContextMode, RunScope, RunStatus, RunStepStatus, TaskProfile } from "./types.js"
 
@@ -19,7 +20,7 @@ export interface AnalysisOnlySubrunDependencies {
     runScope?: RunScope
     handoffSummary?: string
     prompt: string
-    source: "webui" | "cli" | "telegram" | "slack"
+    source: ChannelSource
     taskProfile: TaskProfile
     targetLabel?: string
     contextMode: RunContextMode
@@ -66,7 +67,7 @@ export async function runFilesystemVerificationSubtask(params: {
   parentRunId: string
   requestGroupId: string
   sessionId: string
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   originalRequest: string
   mutationPaths: string[]
   workDir: string

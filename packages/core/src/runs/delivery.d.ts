@@ -1,11 +1,12 @@
 import type { AgentChunk } from "../agent/index.js";
 import { type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js";
+import type { ChannelSource, DeliveryReceipt } from "../channels/contracts.js";
 import type { NicknameSnapshot } from "../contracts/sub-agent-orchestration.js";
 import { insertMessage } from "../db/index.js";
 import { type MessageLedgerDeliveryKind } from "./message-ledger.js";
 export interface SuccessfulFileDelivery {
     toolName: string;
-    channel: "telegram" | "webui" | "slack";
+    channel: DeliverySource;
     filePath: string;
     url?: string;
     previewUrl?: string;
@@ -14,12 +15,14 @@ export interface SuccessfulFileDelivery {
     mimeType?: string;
     sizeBytes?: number;
     caption?: string;
-    messageId?: number;
+    messageId?: number | string;
+    deliveryReceipts?: DeliveryReceipt[];
 }
 export interface SuccessfulTextDelivery {
     channel: DeliverySource;
     text: string;
-    messageIds?: number[];
+    messageIds?: Array<number | string>;
+    deliveryReceipts?: DeliveryReceipt[];
     deliveryKind?: MessageLedgerDeliveryKind;
     parentRunId?: string;
     subSessionId?: string;
@@ -40,7 +43,7 @@ export interface DeliveryOutcome {
     requiresDirectArtifactRecovery: boolean;
 }
 export type RunChunkDeliveryHandler = ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | undefined> | ChunkDeliveryReceipt | undefined) | undefined;
-export type DeliverySource = "webui" | "cli" | "telegram" | "slack";
+export type DeliverySource = ChannelSource;
 export interface ArtifactDeliveryOnceParams<T> {
     runId?: string | undefined;
     channel: SuccessfulFileDelivery["channel"];
@@ -86,6 +89,12 @@ interface AssistantTextDeliveryDependencies {
     }) => void;
     writeReplyLog: (source: DeliverySource, text: string) => void;
 }
+interface DeliveryOutboxHooks {
+    now: () => number;
+    sleep: (delayMs: number) => Promise<void>;
+}
+export declare function setDeliveryOutboxTestHooks(hooks: Partial<DeliveryOutboxHooks>): void;
+export declare function resetDeliveryOutboxForTest(): void;
 export declare function buildArtifactDeliveryKey(params: {
     runId: string;
     channel: SuccessfulFileDelivery["channel"];
@@ -126,12 +135,20 @@ export declare function deliverChunk(params: {
     chunk: AgentChunk;
     runId: string;
     onError?: (message: string) => void;
+    source?: DeliverySource;
+    deliveryKind?: MessageLedgerDeliveryKind;
+    targetKey?: string;
+    priority?: "low" | "normal" | "high";
 }): Promise<ChunkDeliveryReceipt | undefined>;
 export declare function deliverTrackedChunk(params: {
     onChunk: RunChunkDeliveryHandler;
     chunk: AgentChunk;
     runId: string;
     onError?: (message: string) => void;
+    source?: DeliverySource;
+    deliveryKind?: MessageLedgerDeliveryKind;
+    targetKey?: string;
+    priority?: "low" | "normal" | "high";
     successfulFileDeliveries: SuccessfulFileDelivery[];
     successfulTextDeliveries: SuccessfulTextDelivery[];
     appendEvent: (runId: string, label: string) => void;

@@ -51,6 +51,14 @@ function passingTrace(current: ChannelSmokeScenario): ChannelSmokeTrace {
     artifacts: current.expectsArtifact
       ? [{ channel: current.channel, mode: current.channel === "webui" ? "download_link" : "native_file", url: "/api/artifacts/screens/test.png" }]
       : [],
+    capabilityFallbacks: current.expectsUnsupportedCapability
+      ? [{
+          capability: "supportsButtons",
+          receiptStatus: "unsupported_capability",
+          userVisible: true,
+          message: "This channel does not support interactive buttons.",
+        }]
+      : [],
     finalText: current.expectsFailure ? "지원하지 않는 기능이라 실행하지 않았습니다." : "완료했습니다.",
   }
 }
@@ -59,12 +67,23 @@ describe("channel smoke runner", () => {
   it("defines four smoke scenarios per supported user channel", () => {
     const scenarios = getDefaultChannelSmokeScenarios()
 
-    expect(scenarios).toHaveLength(12)
+    expect(scenarios).toHaveLength(28)
     expect(scenarios.filter((item) => item.channel === "webui")).toHaveLength(4)
     expect(scenarios.filter((item) => item.channel === "telegram")).toHaveLength(4)
     expect(scenarios.filter((item) => item.channel === "slack")).toHaveLength(4)
-    expect(scenarios.filter((item) => item.expectsApproval)).toHaveLength(3)
-    expect(scenarios.filter((item) => item.expectsArtifact)).toHaveLength(6)
+    expect(scenarios.filter((item) => item.channel === "discord")).toHaveLength(4)
+    expect(scenarios.filter((item) => item.channel === "google_chat")).toHaveLength(4)
+    expect(scenarios.filter((item) => item.channel === "imessage")).toHaveLength(4)
+    expect(scenarios.filter((item) => item.channel === "kakaotalk")).toHaveLength(4)
+    expect(scenarios.filter((item) => item.expectsApproval)).toHaveLength(7)
+    expect(scenarios.filter((item) => item.expectsArtifact)).toHaveLength(14)
+    expect(scenarios.filter((item) => item.expectsUnsupportedCapability)).toHaveLength(7)
+    expect(scenarios.filter((item) => item.releaseGate === "fixture").map((item) => item.channel)).toEqual(
+      expect.arrayContaining(["discord", "google_chat"]),
+    )
+    expect(scenarios.filter((item) => item.releaseGate === "manual").map((item) => item.channel)).toEqual(
+      expect.arrayContaining(["imessage", "kakaotalk"]),
+    )
   })
 
   it("skips external channel smoke tests when credentials or target ids are missing", () => {
@@ -78,6 +97,22 @@ describe("channel smoke runner", () => {
     expect(resolveChannelSmokeReadiness(config, scenario("slack.basic_query"))).toEqual({
       ready: false,
       skipReason: "slack_disabled",
+    })
+    expect(resolveChannelSmokeReadiness(config, scenario("discord.basic_query"))).toEqual({
+      ready: false,
+      skipReason: "discord_disabled",
+    })
+    expect(resolveChannelSmokeReadiness(config, scenario("google_chat.basic_query"))).toEqual({
+      ready: false,
+      skipReason: "google_chat_disabled",
+    })
+    expect(resolveChannelSmokeReadiness(config, scenario("imessage.basic_query"))).toEqual({
+      ready: false,
+      skipReason: "imessage_disabled",
+    })
+    expect(resolveChannelSmokeReadiness(config, scenario("kakaotalk.basic_query"))).toEqual({
+      ready: false,
+      skipReason: "kakaotalk_disabled",
     })
   })
 
@@ -169,6 +204,18 @@ describe("channel smoke runner", () => {
       "webui_artifact_mode_invalid:local_path_markdown",
       "local_path_exposed_in_final_text",
     ]))
+  })
+
+  it("fails unsupported capability fallback traces when the user-visible receipt is missing", () => {
+    const telegram = scenario("telegram.failure_tool")
+
+    const result = validateChannelSmokeTrace(telegram, {
+      ...passingTrace(telegram),
+      capabilityFallbacks: [{ capability: "supportsButtons", receiptStatus: "unsupported_capability", userVisible: false }],
+    })
+
+    expect(result.status).toBe("failed")
+    expect(result.failures).toContain("unsupported_capability_ui_missing")
   })
 
   it("runs ready scenarios and records skip instead of failing missing external channels", async () => {

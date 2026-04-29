@@ -8,7 +8,7 @@ GATEWAY_PID_FILE="$PIDS_DIR/nobie-gateway.pid"
 WEBUI_PID_FILE="$PIDS_DIR/nobie-webui.pid"
 
 GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
-WEBUI_PORT="${NOBIE_WEBUI_PORT:-5173}"
+WEBUI_PORT="${NOBIE_WEBUI_PORT:-4220}"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"

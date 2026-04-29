@@ -68,7 +68,7 @@ export interface RootRun {
   handoffSummary?: string
   title: string
   prompt: string
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: "webui" | "cli" | "telegram" | "slack" | (string & {})
   status: RunStatus
   taskProfile: TaskProfile
   targetId?: string

@@ -1,6 +1,7 @@
 import { runAgent } from "../agent/index.js"
 import type { AgentChunk, AgentContextMode } from "../agent/index.js"
 import type { AIProvider } from "../ai/index.js"
+import type { ChannelSource } from "../channels/contracts.js"
 
 export interface ExecutionChunkStreamParams {
   userMessage: string
@@ -11,7 +12,7 @@ export interface ExecutionChunkStreamParams {
   providerId?: string | undefined
   provider?: AIProvider | undefined
   workDir: string
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   signal: AbortSignal
   toolsEnabled?: boolean | undefined
   isRootRequest: boolean

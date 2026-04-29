@@ -1,4 +1,5 @@
 import type { AIProvider } from "../ai/index.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import {
   buildScheduleRegistrationCancelledEvent,
   buildScheduleRegistrationCreatedEvent,
@@ -43,7 +44,7 @@ export interface DelegatedRunStartParams {
   targetId?: string | undefined
   targetLabel?: string | undefined
   workDir: string
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   skipIntake?: boolean | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
@@ -88,7 +89,7 @@ export async function runIntakeBridgePass(
     requestGroupId: string
     model: string | undefined
     workDir: string
-    source: "webui" | "cli" | "telegram" | "slack"
+    source: ChannelSource
     runId: string
     onChunk: RunChunkDeliveryHandler | undefined
     reuseConversationContext: boolean

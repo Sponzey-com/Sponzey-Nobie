@@ -12,6 +12,7 @@ import { selectRequestGroupContextMessages } from "./request-group-context.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js"
 import { describeCron } from "../scheduler/cron.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import { parseTelegramSessionKey } from "../channels/telegram/session.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
 
@@ -204,7 +205,7 @@ function extractLiteralDeliveryText(text: string): string | null {
 
 function buildStructuredRequestEnvironment(
   sessionId: string | undefined,
-  source: "webui" | "cli" | "telegram" | "slack" | undefined,
+  source: ChannelSource | undefined,
 ): StructuredRequestEnvironment {
   const session = sessionId ? getSession(sessionId) : undefined
   const resolvedSource = session?.source ?? source ?? "unknown"
@@ -691,7 +692,7 @@ export async function analyzeTaskIntake(params: {
   requestGroupId?: string
   model?: string
   workDir?: string
-  source?: "webui" | "cli" | "telegram" | "slack"
+  source?: ChannelSource
 }): Promise<TaskIntakeResult | null> {
   const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
   const environment = buildStructuredRequestEnvironment(params.sessionId, params.source)
@@ -1119,7 +1120,7 @@ function buildConversationContext(
   requestGroupId: string | undefined,
   latestUserMessage: string,
   normalizedEnglishMessage: string,
-  source: "webui" | "cli" | "telegram" | "slack" | undefined,
+  source: ChannelSource | undefined,
 ): string {
   const lines: string[] = []
   const environment = buildStructuredRequestEnvironment(sessionId, source)

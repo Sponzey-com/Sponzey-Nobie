@@ -78,6 +78,14 @@ export interface UiShellResponse {
       telegramEnabled: boolean
       slackConfigured: boolean
       slackEnabled: boolean
+      discordConfigured: boolean
+      discordEnabled: boolean
+      googleChatConfigured: boolean
+      googleChatEnabled: boolean
+      imessageConfigured: boolean
+      imessageEnabled: boolean
+      kakaoTalkConfigured: boolean
+      kakaoTalkEnabled: boolean
     }
     yeonjang: {
       mqttEnabled: boolean
@@ -998,6 +1006,14 @@ export const api = {
             telegramEnabled: false,
             slackConfigured: false,
             slackEnabled: false,
+            discordConfigured: false,
+            discordEnabled: false,
+            googleChatConfigured: false,
+            googleChatEnabled: false,
+            imessageConfigured: false,
+            imessageEnabled: false,
+            kakaoTalkConfigured: false,
+            kakaoTalkEnabled: false,
           },
           yeonjang: { mqttEnabled: false, connectedExtensions: 0 },
         },
@@ -1319,6 +1335,72 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  channels: () => request<ChannelListResponse>("/api/channels"),
+
+  channel: (channelId: string) =>
+    request<ChannelDetailResponse>(`/api/channels/${encodeURIComponent(channelId)}`),
+
+  channelHealth: (channelId: string) =>
+    request<ChannelHealthResponse>(`/api/channels/${encodeURIComponent(channelId)}/health`),
+
+  channelCapabilities: (channelId: string) =>
+    request<ChannelCapabilitiesResponse>(`/api/channels/${encodeURIComponent(channelId)}/capabilities`),
+
+  enableChannel: (channelId: string, body: { acknowledgeRisk?: boolean } = {}) =>
+    request<ChannelActionResponse>(`/api/channels/${encodeURIComponent(channelId)}/enable`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  disableChannel: (channelId: string) =>
+    request<ChannelActionResponse>(`/api/channels/${encodeURIComponent(channelId)}/disable`, {
+      method: "POST",
+    }),
+
+  restartChannel: (channelId: string, body: { dryRun?: boolean } = {}) =>
+    request<ChannelActionResponse>(`/api/channels/${encodeURIComponent(channelId)}/restart`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  testChannel: (channelId: string) =>
+    request<ChannelActionResponse>(`/api/channels/${encodeURIComponent(channelId)}/test`, {
+      method: "POST",
+    }),
+
+  channelMessages: (
+    params: {
+      channel?: string
+      runId?: string
+      requestGroupId?: string
+      sessionKey?: string
+      threadKey?: string
+      limit?: number
+    } = {},
+  ) => request<ChannelMessagesResponse>(`/api/channel-messages${buildAdminLiveQuery(params)}`),
+
+  retryChannelDelivery: (deliveryId: string) =>
+    request<ChannelDeliveryRetryResponse>(
+      `/api/channel-deliveries/${encodeURIComponent(deliveryId)}/retry`,
+      { method: "POST" },
+    ),
+
+  channelApprovals: (
+    params: { status?: string; runId?: string; requestGroupId?: string; limit?: number } = {},
+  ) => request<ChannelApprovalsResponse>(`/api/approvals${buildAdminLiveQuery(params)}`),
+
+  respondChannelApproval: (
+    approvalId: string,
+    body: { decision: "allow_once" | "allow_run" | "deny"; decisionBy?: string },
+  ) =>
+    request<ChannelApprovalRespondResponse>(
+      `/api/approvals/${encodeURIComponent(approvalId)}/respond`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
 
   run: (runId: string) => request<{ run: RootRun }>(`/api/runs/${runId}`),
 
@@ -1897,7 +1979,177 @@ export interface AuditPromotionResponse {
   message?: string
 }
 
-export type ChannelSmokeChannel = "webui" | "telegram" | "slack"
+export interface ChannelValidationIssue {
+  code: string
+  severity: "error" | "warning"
+  message: string
+}
+
+export interface ChannelRuntimeState {
+  isRunning: boolean
+  lastStartedAt: number | null
+  lastStoppedAt: number | null
+  lastError: string | null
+  lastErrorAt: number | null
+}
+
+export interface ChannelHealthState {
+  status: "healthy" | "degraded" | "stopped" | "failed"
+  message: string | null
+  checkedAt: number
+}
+
+export interface ChannelCapabilitySummary {
+  supportsThreads: boolean
+  supportsReplies: boolean
+  supportsButtons: boolean
+  supportsFiles: boolean
+  supportsTypingIndicator: boolean
+  maxMessageLength: number
+  requiresWebhook: boolean
+  requiresLocalBridge: boolean
+  requiresUserSession: boolean
+  manualConfirmationRequired: boolean
+}
+
+export interface ChannelConnectionSummary {
+  channelId: string
+  connectionId: string
+  provider: string
+  displayName: string
+  enabled: boolean
+  configured: boolean
+  connectionMode: string
+  health: ChannelHealthState
+  runtime: ChannelRuntimeState
+  riskLevel: "low" | "medium" | "high" | "experimental" | string
+  capabilitySummary: ChannelCapabilitySummary
+  validation: {
+    ok: boolean
+    issues: ChannelValidationIssue[]
+  }
+}
+
+export interface ChannelConnectionDetail extends ChannelConnectionSummary {
+  secrets?: unknown
+  allowedUsers?: unknown[]
+  allowedRooms?: unknown[]
+  defaultDeliveryPolicy?: unknown
+  configSource?: string
+  source?: string
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface ChannelListResponse {
+  channels: ChannelConnectionSummary[]
+  count: number
+}
+
+export interface ChannelDetailResponse {
+  channel: ChannelConnectionDetail
+}
+
+export interface ChannelHealthResponse {
+  channelId: string
+  provider: string
+  health: ChannelHealthState
+  runtime: ChannelRuntimeState
+  validation: ChannelConnectionSummary["validation"]
+}
+
+export interface ChannelCapabilitiesResponse {
+  channelId: string
+  provider: string
+  capabilities: Record<string, unknown>
+}
+
+export interface ChannelActionResponse {
+  ok: boolean
+  status?: string
+  mode?: string
+  error?: string
+  receipt?: unknown
+  channel?: ChannelConnectionDetail | ChannelConnectionSummary
+  validation?: ChannelConnectionSummary["validation"]
+  requiresRiskAcknowledgment?: boolean
+}
+
+export interface ChannelMessageItem {
+  type: "ledger_event" | "channel_message_ref" | string
+  id: string
+  runId?: string | null
+  requestGroupId?: string | null
+  sessionKey?: string | null
+  threadKey?: string | null
+  channel?: string
+  source?: string
+  eventKind?: string
+  deliveryKey?: string | null
+  idempotencyKey?: string | null
+  status?: string
+  summary?: string
+  detail?: unknown
+  role?: string
+  externalChatId?: string
+  externalThreadId?: string | null
+  externalMessageId?: string
+  createdAt: number
+}
+
+export interface ChannelMessagesResponse {
+  messages: ChannelMessageItem[]
+  count: number
+}
+
+export interface ChannelDeliveryRetryResponse {
+  ok: boolean
+  status: "suppressed" | "accepted_for_reconciliation" | "already_requested" | string
+  reason?: string
+  retryEventId?: string | null
+  delivery?: ChannelMessageItem
+  error?: string
+}
+
+export interface ChannelApprovalItem {
+  id: string
+  runId: string
+  requestGroupId: string | null
+  channel: string
+  channelMessageId: string | null
+  toolName: string
+  riskLevel: string
+  kind: string
+  status: string
+  paramsHash: string
+  paramsPreview: unknown
+  requestedAt: number
+  expiresAt: number | null
+  consumedAt: number | null
+  decisionAt: number | null
+  decisionBy: string | null
+  decisionSource: string | null
+  supersededBy: string | null
+  metadata: unknown
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ChannelApprovalsResponse {
+  approvals: ChannelApprovalItem[]
+  count: number
+}
+
+export interface ChannelApprovalRespondResponse {
+  ok: boolean
+  accepted: boolean
+  status: string
+  reason?: string
+  decision?: "allow_once" | "allow_run" | "deny"
+  approval: ChannelApprovalItem | null
+}
+
+export type ChannelSmokeChannel = "webui" | "telegram" | "slack" | (string & {})
 export type ChannelSmokeRunMode = "dry-run" | "live-run"
 export type ChannelSmokeStatus = "running" | "passed" | "failed" | "skipped"
 

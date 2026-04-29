@@ -5,8 +5,9 @@ import {
   type MemoryJournalRecordInput,
 } from "../memory/journal.js"
 import type { DataExchangePackage } from "../contracts/sub-agent-orchestration.js"
+import type { ChannelSource } from "../channels/contracts.js"
 
-export type RunJournalSource = "webui" | "cli" | "telegram" | "slack"
+export type RunJournalSource = ChannelSource
 
 export interface RunInstructionJournalParams {
   runId: string

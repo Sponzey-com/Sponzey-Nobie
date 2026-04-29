@@ -682,12 +682,30 @@ export function buildReleasePipelinePlan(
       "Verify sanitized admin diagnostics export and bundle generation contract.",
     ),
     step(
+      "channel-delivery-release-gate",
+      "Channel delivery release gate",
+      [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "tests/channel-delivery-fallback.test.ts",
+        "tests/channel-smoke-runner.test.ts",
+        "tests/channel-adapter-contract-runner.test.ts",
+        "tests/channel-connections.test.ts",
+        "tests/task013-channel-api.test.ts",
+      ],
+      true,
+      false,
+      "Verify long text splitting, artifact fallback, unsupported capability receipts, channel fixture smoke, and connection API regressions.",
+    ),
+    step(
       "channel-smoke-dry-run",
       "Channel smoke dry-run",
       ["pnpm", "run", "smoke:channels"],
       true,
       true,
-      "Verify WebUI, Telegram, and Slack delivery pipeline without live external send unless configured.",
+      "Verify WebUI, Telegram, Slack, Discord, Google Chat fixture smoke plus iMessage/KakaoTalk manual-gate skip evidence without live external send unless configured.",
     ),
   ]
   if (targetPlatforms.has("macos"))
@@ -937,7 +955,7 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
       id: "channel-smoke",
       required: true,
       description:
-        "At least WebUI dry-run smoke passes; live Telegram/Slack smoke is required before public publish.",
+        "WebUI dry-run, Telegram/Slack live or semi-automated smoke, Discord/Google Chat fixture smoke, iMessage/KakaoTalk manual local bridge gate, and long text/artifact/approval/continuation/duplicate delivery regressions are reviewed before public publish.",
     },
   ]
 }

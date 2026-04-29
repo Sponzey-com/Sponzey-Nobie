@@ -49,7 +49,7 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
     {
       id: "channels",
       label: t("채널", "Channels"),
-      description: t("WebUI, Telegram, Slack 연결 정보와 smoke 확인을 관리합니다.", "Manage WebUI, Telegram, Slack connection details and smoke checks."),
+      description: t("Telegram, Slack, Discord, Google Chat, iMessage, KakaoTalk 연결과 진단을 관리합니다.", "Manage Telegram, Slack, Discord, Google Chat, iMessage, and KakaoTalk connections and diagnostics."),
       capabilityKey: "telegram.channel",
       savesDraft: true,
     },

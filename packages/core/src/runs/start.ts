@@ -1,4 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import {
   type TaskExecutionSemantics,
   type TaskIntentEnvelope,
@@ -66,7 +67,7 @@ export interface StartRootRunParams {
   workerRuntime?: WorkerRuntimeTarget | undefined
   orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
   workDir?: string | undefined
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   skipIntake?: boolean | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined

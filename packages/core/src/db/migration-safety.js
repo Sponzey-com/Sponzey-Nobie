@@ -19,6 +19,10 @@ const REQUIRED_TABLES = [
     "profile_restore_events",
     "team_execution_plans",
     "orchestration_events",
+    "channel_connections",
+    "channel_capabilities",
+    "channel_identity_mappings",
+    "channel_runtime_events",
 ];
 const REQUIRED_INDEXES = [
     "idx_migration_locks_status",
@@ -31,6 +35,9 @@ const REQUIRED_INDEXES = [
     "idx_team_execution_plans_parent_run",
     "idx_orchestration_events_run",
     "idx_orchestration_events_cursor",
+    "idx_channel_connections_provider",
+    "idx_channel_runtime_events_connection",
+    "idx_channel_identity_mappings_connection_namespace",
 ];
 export const MIGRATION_ROLLBACK_RUNBOOK_REF = "migration-rollback-runbook";
 export function ensureMigrationSafetyTables(db) {

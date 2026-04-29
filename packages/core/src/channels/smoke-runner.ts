@@ -1,4 +1,5 @@
 import type { NobieConfig } from "../config/types.js"
+import type { ChannelSource } from "./contracts.js"
 import {
   insertChannelSmokeRun,
   insertChannelSmokeStep,
@@ -6,15 +7,20 @@ import {
   type DbChannelSmokeRunStatus,
 } from "../db/index.js"
 
-export type ChannelSmokeChannel = "webui" | "telegram" | "slack"
+export type ChannelSmokeChannel = ChannelSource
 export type ChannelSmokeRunMode = "dry-run" | "live-run"
 export type ChannelSmokeScenarioKind =
   | "basic_query"
   | "approval_required_tool"
   | "artifact_delivery"
   | "failure_tool"
+export type ChannelSmokeReleaseGateMode = "automated" | "fixture" | "manual"
 export type ChannelSmokeStatus = "passed" | "failed" | "skipped"
-export type ChannelSmokeCorrelationKey = "webui_run_id" | "telegram_chat_thread" | "slack_thread"
+export type ChannelSmokeCorrelationKey =
+  | "webui_run_id"
+  | "telegram_chat_thread"
+  | "slack_thread"
+  | "channel_thread"
 export type ChannelSmokeArtifactMode =
   | "native_file"
   | "download_link"
@@ -34,6 +40,8 @@ export interface ChannelSmokeScenario {
   expectsApproval?: boolean
   expectsArtifact?: boolean
   expectsFailure?: boolean
+  expectsUnsupportedCapability?: boolean
+  releaseGate: ChannelSmokeReleaseGateMode
 }
 
 export interface ChannelSmokeReadiness {
@@ -63,6 +71,13 @@ export interface ChannelSmokeApprovalTrace {
   uiKind?: "button" | "text_fallback" | "inline" | "none"
 }
 
+export interface ChannelSmokeCapabilityFallbackTrace {
+  capability: string
+  receiptStatus: "unsupported_capability" | "fallback_used"
+  userVisible: boolean
+  message?: string
+}
+
 export interface ChannelSmokeTrace {
   sourceChannel: ChannelSmokeChannel
   responseChannel?: ChannelSmokeChannel
@@ -70,6 +85,7 @@ export interface ChannelSmokeTrace {
   toolCalls?: ChannelSmokeToolTrace[]
   approval?: ChannelSmokeApprovalTrace
   artifacts?: ChannelSmokeArtifactTrace[]
+  capabilityFallbacks?: ChannelSmokeCapabilityFallbackTrace[]
   finalText?: string
   auditLogId?: string
   skipped?: boolean
@@ -146,6 +162,7 @@ export function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[] {
     }),
     buildScenario("webui", "failure_tool", "Web UI 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
       expectsFailure: true,
+      expectsUnsupportedCapability: true,
     }),
     buildScenario("telegram", "basic_query", "Telegram 기본 질의", "오늘 상태를 한 줄로 알려줘"),
     buildScenario("telegram", "approval_required_tool", "Telegram 승인 도구", "메인 화면 캡쳐해서 보여줘", {
@@ -159,6 +176,7 @@ export function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[] {
     }),
     buildScenario("telegram", "failure_tool", "Telegram 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
       expectsFailure: true,
+      expectsUnsupportedCapability: true,
     }),
     buildScenario("slack", "basic_query", "Slack 기본 질의", "오늘 상태를 한 줄로 알려줘"),
     buildScenario("slack", "approval_required_tool", "Slack 승인 도구", "메인 화면 캡쳐해서 보여줘", {
@@ -172,6 +190,63 @@ export function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[] {
     }),
     buildScenario("slack", "failure_tool", "Slack 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
       expectsFailure: true,
+      expectsUnsupportedCapability: true,
+    }),
+    buildScenario("discord", "basic_query", "Discord 기본 질의", "오늘 상태를 한 줄로 알려줘"),
+    buildScenario("discord", "approval_required_tool", "Discord 승인 도구", "메인 화면 캡쳐해서 보여줘", {
+      expectedTool: "screen_capture",
+      expectsApproval: true,
+      expectsArtifact: true,
+    }),
+    buildScenario("discord", "artifact_delivery", "Discord artifact 전달", "메인 화면 캡쳐해서 파일로 보내줘", {
+      expectedTool: "screen_capture",
+      expectsArtifact: true,
+    }),
+    buildScenario("discord", "failure_tool", "Discord 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+      expectsFailure: true,
+      expectsUnsupportedCapability: true,
+    }),
+    buildScenario("google_chat", "basic_query", "Google Chat 기본 질의", "오늘 상태를 한 줄로 알려줘"),
+    buildScenario("google_chat", "approval_required_tool", "Google Chat 승인 도구", "메인 화면 캡쳐해서 보여줘", {
+      expectedTool: "screen_capture",
+      expectsApproval: true,
+      expectsArtifact: true,
+    }),
+    buildScenario("google_chat", "artifact_delivery", "Google Chat artifact 전달", "메인 화면 캡쳐해서 파일로 보내줘", {
+      expectedTool: "screen_capture",
+      expectsArtifact: true,
+    }),
+    buildScenario("google_chat", "failure_tool", "Google Chat 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+      expectsFailure: true,
+      expectsUnsupportedCapability: true,
+    }),
+    buildScenario("imessage", "basic_query", "iMessage 기본 질의", "오늘 상태를 한 줄로 알려줘"),
+    buildScenario("imessage", "approval_required_tool", "iMessage 승인 도구", "메인 화면 캡쳐해서 보여줘", {
+      expectedTool: "screen_capture",
+      expectsApproval: true,
+      expectsArtifact: true,
+    }),
+    buildScenario("imessage", "artifact_delivery", "iMessage artifact 전달", "메인 화면 캡쳐해서 링크로 보여줘", {
+      expectedTool: "screen_capture",
+      expectsArtifact: true,
+    }),
+    buildScenario("imessage", "failure_tool", "iMessage 미지원 기능 안내", "버튼 승인을 iMessage에서 처리해줘", {
+      expectsFailure: true,
+      expectsUnsupportedCapability: true,
+    }),
+    buildScenario("kakaotalk", "basic_query", "KakaoTalk 기본 질의", "오늘 상태를 한 줄로 알려줘"),
+    buildScenario("kakaotalk", "approval_required_tool", "KakaoTalk 승인 도구", "메인 화면 캡쳐해서 보여줘", {
+      expectedTool: "screen_capture",
+      expectsApproval: true,
+      expectsArtifact: true,
+    }),
+    buildScenario("kakaotalk", "artifact_delivery", "KakaoTalk artifact 전달", "메인 화면 캡쳐해서 링크로 보여줘", {
+      expectedTool: "screen_capture",
+      expectsArtifact: true,
+    }),
+    buildScenario("kakaotalk", "failure_tool", "KakaoTalk 미지원 기능 안내", "버튼 승인을 KakaoTalk에서 처리해줘", {
+      expectsFailure: true,
+      expectsUnsupportedCapability: true,
     }),
   ]
 }
@@ -192,8 +267,15 @@ function buildScenario(
     expectedTarget: channel,
     correlationKey: defaultCorrelationKey(channel),
     requiresExternalCredential: channel !== "webui",
+    releaseGate: defaultReleaseGate(channel),
     ...overrides,
   }
+}
+
+function defaultReleaseGate(channel: ChannelSmokeChannel): ChannelSmokeReleaseGateMode {
+  if (channel === "imessage" || channel === "kakaotalk") return "manual"
+  if (channel === "discord" || channel === "google_chat") return "fixture"
+  return "automated"
 }
 
 function defaultCorrelationKey(channel: ChannelSmokeChannel): ChannelSmokeCorrelationKey {
@@ -203,8 +285,9 @@ function defaultCorrelationKey(channel: ChannelSmokeChannel): ChannelSmokeCorrel
     case "slack":
       return "slack_thread"
     case "webui":
-    default:
       return "webui_run_id"
+    default:
+      return "channel_thread"
   }
 }
 
@@ -234,6 +317,50 @@ export function resolveChannelSmokeReadiness(
       if (slack.allowedChannelIds.length === 0) return { ready: false, skipReason: "slack_channel_id_missing" }
       return { ready: true }
     }
+    case "discord": {
+      const discord = config.discord
+      if (!discord?.enabled) return { ready: false, skipReason: "discord_disabled" }
+      if (!discord.botToken.trim()) return { ready: false, skipReason: "discord_bot_token_missing" }
+      if (!discord.applicationId.trim()) return { ready: false, skipReason: "discord_application_id_missing" }
+      if (discord.allowedChannelIds.length === 0) return { ready: false, skipReason: "discord_channel_id_missing" }
+      return { ready: true }
+    }
+    case "google_chat": {
+      const googleChat = config.googleChat
+      if (!googleChat?.enabled) return { ready: false, skipReason: "google_chat_disabled" }
+      if (!googleChat.projectId.trim() && !googleChat.appCredentialJson.trim() && !googleChat.serviceAccountEmail.trim()) {
+        return { ready: false, skipReason: "google_chat_app_credential_missing" }
+      }
+      if (!googleChat.verificationToken.trim()) return { ready: false, skipReason: "google_chat_verification_token_missing" }
+      if (googleChat.allowedSpaceIds.length === 0) return { ready: false, skipReason: "google_chat_space_id_missing" }
+      return { ready: true }
+    }
+    case "imessage": {
+      const imessage = config.imessage
+      if (!imessage?.enabled) return { ready: false, skipReason: "imessage_disabled" }
+      if (!imessage.riskAcknowledged) return { ready: false, skipReason: "imessage_risk_not_acknowledged" }
+      if (!imessage.localBridgeEnabled && !imessage.yeonjangBridgeEnabled) {
+        return { ready: false, skipReason: "imessage_local_bridge_missing" }
+      }
+      if ((imessage.allowedRecipientIds ?? []).length === 0) {
+        return { ready: false, skipReason: "imessage_recipient_id_missing" }
+      }
+      return { ready: false, skipReason: "imessage_local_bridge_manual_gate" }
+    }
+    case "kakaotalk": {
+      const kakaoTalk = config.kakaoTalk
+      if (!kakaoTalk?.enabled) return { ready: false, skipReason: "kakaotalk_disabled" }
+      if (!kakaoTalk.riskAcknowledged) return { ready: false, skipReason: "kakaotalk_risk_not_acknowledged" }
+      if (!kakaoTalk.localBridgeEnabled && !kakaoTalk.yeonjangBridgeEnabled && !kakaoTalk.businessApiEnabled) {
+        return { ready: false, skipReason: "kakaotalk_bridge_missing" }
+      }
+      if ((kakaoTalk.allowedUserIds ?? []).length === 0 && (kakaoTalk.allowedRoomIds ?? []).length === 0) {
+        return { ready: false, skipReason: "kakaotalk_target_id_missing" }
+      }
+      return { ready: false, skipReason: "kakaotalk_local_bridge_manual_gate" }
+    }
+    default:
+      return { ready: false, skipReason: `${scenario.channel}_smoke_not_registered` }
   }
 }
 
@@ -269,6 +396,12 @@ export function validateChannelSmokeTrace(
     if (scenario.channel !== "slack" && /^slack(?:_|\.)/i.test(toolCall.toolName)) {
       failures.push("slack_delivery_tool_used_outside_slack")
     }
+    if (scenario.channel !== "discord" && /^discord(?:_|\.)/i.test(toolCall.toolName)) {
+      failures.push("discord_delivery_tool_used_outside_discord")
+    }
+    if (scenario.channel !== "google_chat" && /^google_chat(?:_|\.)/i.test(toolCall.toolName)) {
+      failures.push("google_chat_delivery_tool_used_outside_google_chat")
+    }
     if (scenario.channel !== "webui" && /^webui(?:_|\.)/i.test(toolCall.toolName)) {
       failures.push("webui_delivery_tool_used_outside_webui")
     }
@@ -285,7 +418,7 @@ export function validateChannelSmokeTrace(
       failures.push("approval_timeout")
     } else if (trace.approval.uiVisible === false || trace.approval.uiKind === "none") {
       failures.push("approval_ui_missing")
-    } else if ((scenario.channel === "slack" || scenario.channel === "telegram") && trace.approval.uiKind && trace.approval.uiKind !== "button") {
+    } else if ((scenario.channel === "slack" || scenario.channel === "telegram" || scenario.channel === "discord" || scenario.channel === "google_chat") && trace.approval.uiKind && trace.approval.uiKind !== "button") {
       failures.push("approval_button_missing")
     } else if (trace.approval.targetChannel && trace.approval.targetChannel !== scenario.expectedTarget) {
       failures.push(`approval_target_mismatch:${trace.approval.targetChannel}`)
@@ -295,6 +428,7 @@ export function validateChannelSmokeTrace(
   }
 
   if (scenario.expectsArtifact) validateArtifactTrace(scenario, trace, failures)
+  if (scenario.expectsUnsupportedCapability) validateCapabilityFallbackTrace(trace, failures)
   if (trace.finalText && LOCAL_PATH_MARKDOWN_PATTERN.test(trace.finalText)) {
     failures.push("local_path_exposed_in_final_text")
   }
@@ -304,6 +438,23 @@ export function validateChannelSmokeTrace(
     return { status: "failed", reason: failures[0] ?? "smoke_validation_failed", failures }
   }
   return { status: "passed", failures }
+}
+
+function validateCapabilityFallbackTrace(
+  trace: ChannelSmokeTrace,
+  failures: string[],
+): void {
+  const fallbacks = trace.capabilityFallbacks ?? []
+  if (fallbacks.length === 0) {
+    failures.push("unsupported_capability_fallback_missing")
+    return
+  }
+  if (!fallbacks.some((fallback) => fallback.receiptStatus === "unsupported_capability")) {
+    failures.push("unsupported_capability_receipt_missing")
+  }
+  if (fallbacks.some((fallback) => fallback.userVisible === false)) {
+    failures.push("unsupported_capability_ui_missing")
+  }
 }
 
 function validateArtifactTrace(
@@ -327,7 +478,7 @@ function validateArtifactTrace(
     if (scenario.channel === "webui" && artifact.mode !== "inline_preview" && artifact.mode !== "download_link") {
       failures.push(`webui_artifact_mode_invalid:${artifact.mode}`)
     }
-    if ((scenario.channel === "telegram" || scenario.channel === "slack")
+    if ((scenario.channel === "telegram" || scenario.channel === "slack" || scenario.channel === "discord" || scenario.channel === "google_chat")
       && artifact.mode !== "native_file"
       && artifact.mode !== "download_link") {
       failures.push(`${scenario.channel}_artifact_mode_invalid:${artifact.mode}`)
@@ -418,6 +569,14 @@ export function createDryRunChannelSmokeExecutor(input: {
                 mode: "native_file",
                 filePath: "/tmp/nobie-smoke-dry-run.png",
               }]
+        : [],
+      capabilityFallbacks: scenario.expectsUnsupportedCapability
+        ? [{
+            capability: "supportsButtons",
+            receiptStatus: "unsupported_capability",
+            userVisible: true,
+            message: "This channel does not support interactive buttons; use a text fallback or Web UI approval.",
+          }]
         : [],
       finalText: scenario.expectsFailure
         ? "지원하지 않는 기능이라 실행하지 않았습니다."

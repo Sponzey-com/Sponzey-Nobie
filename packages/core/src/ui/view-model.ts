@@ -23,6 +23,14 @@ export interface UiShellDomainState {
       telegramEnabled: boolean
       slackConfigured: boolean
       slackEnabled: boolean
+      discordConfigured: boolean
+      discordEnabled: boolean
+      googleChatConfigured: boolean
+      googleChatEnabled: boolean
+      imessageConfigured: boolean
+      imessageEnabled: boolean
+      kakaoTalkConfigured: boolean
+      kakaoTalkEnabled: boolean
     }
     yeonjang: {
       mqttEnabled: boolean
@@ -161,7 +169,12 @@ export function buildNormalizedUiState(input: UiShellDomainState): NormalizedUiS
     metrics: {},
   })
 
-  const externalChannelEnabled = input.runtimeHealth.channels.telegramEnabled || input.runtimeHealth.channels.slackEnabled
+  const externalChannelEnabled = input.runtimeHealth.channels.telegramEnabled
+    || input.runtimeHealth.channels.slackEnabled
+    || input.runtimeHealth.channels.discordEnabled
+    || input.runtimeHealth.channels.googleChatEnabled
+    || input.runtimeHealth.channels.imessageEnabled
+    || input.runtimeHealth.channels.kakaoTalkEnabled
   push({
     key: "channels",
     component: uiMessage("component.channels"),

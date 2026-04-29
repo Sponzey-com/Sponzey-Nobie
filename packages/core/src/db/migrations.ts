@@ -2367,6 +2367,84 @@ export const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    version: 40,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_connections (
+          connection_id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          connection_mode TEXT NOT NULL CHECK(connection_mode IN ('internal', 'bot_api', 'socket', 'webhook', 'local_bridge', 'manual_bridge')),
+          enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+          configured INTEGER NOT NULL DEFAULT 0 CHECK(configured IN (0, 1)),
+          health_status TEXT NOT NULL DEFAULT 'stopped' CHECK(health_status IN ('healthy', 'degraded', 'stopped', 'failed')),
+          health_message TEXT,
+          capability_manifest_json TEXT NOT NULL,
+          auth_secret_refs_json TEXT NOT NULL,
+          allowed_users_json TEXT NOT NULL,
+          allowed_rooms_json TEXT NOT NULL,
+          default_delivery_policy_json TEXT NOT NULL,
+          source TEXT NOT NULL,
+          config_source TEXT NOT NULL DEFAULT 'compat' CHECK(config_source IN ('compat', 'manual', 'import', 'system')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_connections_provider
+          ON channel_connections(provider, enabled, configured);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_connections_health
+          ON channel_connections(health_status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS channel_capabilities (
+          connection_id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          manifest_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (connection_id) REFERENCES channel_connections(connection_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS channel_identity_mappings (
+          id TEXT PRIMARY KEY,
+          connection_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          namespace_id TEXT NOT NULL,
+          identity_kind TEXT NOT NULL CHECK(identity_kind IN ('user', 'room', 'thread', 'bot', 'unknown')),
+          provider_identity_id TEXT NOT NULL,
+          display_name_snapshot TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (connection_id) REFERENCES channel_connections(connection_id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_identity_mappings_connection_namespace
+          ON channel_identity_mappings(connection_id, namespace_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_identity_mappings_provider_kind
+          ON channel_identity_mappings(provider, identity_kind, provider_identity_id);
+
+        CREATE TABLE IF NOT EXISTS channel_runtime_events (
+          id TEXT PRIMARY KEY,
+          connection_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          event_kind TEXT NOT NULL,
+          health_status TEXT CHECK(health_status IN ('healthy', 'degraded', 'stopped', 'failed')),
+          summary TEXT NOT NULL,
+          detail_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (connection_id) REFERENCES channel_connections(connection_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_runtime_events_connection
+          ON channel_runtime_events(connection_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_runtime_events_provider_kind
+          ON channel_runtime_events(provider, event_kind, created_at DESC);
+      `)
+    },
+  },
 ]
 
 function schemaMigrationsTableExists(db: Database.Database): boolean {

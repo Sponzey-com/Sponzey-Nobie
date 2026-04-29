@@ -6,6 +6,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "./index.js"
+import type { ChannelSource } from "../channels/contracts.js"
 
 export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION
 
@@ -19,6 +20,7 @@ export type RelationshipEntityType =
   | "data_exchange"
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded"
 export type OrchestrationMode = "single_nobie" | "orchestration"
+export type SessionContractSource = ChannelSource | "scheduler" | "system"
 export type SubSessionStatus =
   | "created"
   | "queued"
@@ -374,7 +376,7 @@ export interface SessionContract {
   identity: RuntimeIdentity
   sessionId: string
   mode: OrchestrationMode
-  source: "webui" | "cli" | "telegram" | "slack" | "scheduler" | "system"
+  source: SessionContractSource
   owner: OwnerScope
   parentRequestId: string
   status: SubSessionStatus

@@ -6,7 +6,7 @@ import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../
 import { PATHS } from "../../config/paths.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js";
-import { startChannels } from "../../channels/index.js";
+import { CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY, buildChannelRegistryRuntimeDiagnostics, resolveChannelRegistryRuntimeMode, startChannels, } from "../../channels/index.js";
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js";
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js";
@@ -14,6 +14,8 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
 import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/embedding.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { chatWithContextPreflight } from "../../runs/context-preflight.js";
+import { applyChannelConnectionSettingsCompatPatch, buildSettingsChannelConnectionSnapshot, } from "../../channels/connections.js";
+import { getFeatureFlag } from "../../runtime/rollout-safety.js";
 function isOrchestrationMode(value) {
     return value === "single_nobie" || value === "orchestration";
 }
@@ -25,6 +27,14 @@ function buildLegacySettingsSnapshot() {
     const slackRuntime = getSlackRuntimeStatus();
     const connection = cfg.ai.connection;
     const providerCapability = getProviderCapabilityMatrix({ connection, memory: cfg.memory });
+    const channelRuntimeFeatureFlag = getFeatureFlag(CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY);
+    const channelConnections = buildSettingsChannelConnectionSnapshot({
+        config: cfg,
+        runtime: {
+            telegram: telegramRuntime,
+            slack: slackRuntime,
+        },
+    });
     return {
         ai: {
             provider: connection.provider,
@@ -79,6 +89,19 @@ function buildLegacySettingsSnapshot() {
             isRunning: slackChannel !== null,
             runtime: slackRuntime,
         },
+        channels: {
+            connections: channelConnections,
+            runtime: {
+                mode: resolveChannelRegistryRuntimeMode(channelRuntimeFeatureFlag),
+                featureFlag: {
+                    featureKey: channelRuntimeFeatureFlag.featureKey,
+                    mode: channelRuntimeFeatureFlag.mode,
+                    compatibilityMode: channelRuntimeFeatureFlag.compatibilityMode,
+                },
+                diagnostics: buildChannelRegistryRuntimeDiagnostics(cfg),
+            },
+        },
+        channelConnections,
         mqtt: {
             enabled: cfg.mqtt.enabled,
             host: cfg.mqtt.host,
@@ -243,6 +266,35 @@ export function registerSettingsRoute(app) {
             if (Array.isArray(tg.allowedGroupIds))
                 rawTg.allowedGroupIds = tg.allowedGroupIds;
         }
+        if (body.slack && typeof body.slack === "object") {
+            const slack = body.slack;
+            if (!raw.slack)
+                raw.slack = {};
+            const rawSlack = raw.slack;
+            if (typeof slack.enabled === "boolean")
+                rawSlack.enabled = slack.enabled;
+            if (typeof slack.botToken === "string" && slack.botToken && slack.botToken !== "***") {
+                rawSlack.botToken = slack.botToken;
+            }
+            else if (!rawSlack.botToken) {
+                const inMemToken = getConfig().slack?.botToken;
+                if (inMemToken)
+                    rawSlack.botToken = inMemToken;
+            }
+            if (typeof slack.appToken === "string" && slack.appToken && slack.appToken !== "***") {
+                rawSlack.appToken = slack.appToken;
+            }
+            else if (!rawSlack.appToken) {
+                const inMemToken = getConfig().slack?.appToken;
+                if (inMemToken)
+                    rawSlack.appToken = inMemToken;
+            }
+            if (Array.isArray(slack.allowedUserIds))
+                rawSlack.allowedUserIds = slack.allowedUserIds;
+            if (Array.isArray(slack.allowedChannelIds))
+                rawSlack.allowedChannelIds = slack.allowedChannelIds;
+        }
+        applyChannelConnectionSettingsCompatPatch(raw, "channels" in body ? body.channels : body.channelConnections);
         if (body.mqtt && typeof body.mqtt === "object") {
             const mqtt = body.mqtt;
             if (!raw.mqtt)

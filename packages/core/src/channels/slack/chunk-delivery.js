@@ -1,6 +1,8 @@
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
 import { deliverArtifactOnce, } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
+import { buildTextDeliveryKey, recordMessageLedgerEvent, } from "../../runs/message-ledger.js";
+import { buildSlackFailedDeliveryReceipt, buildSlackSentDeliveryReceipt, } from "./message-delivery.js";
 function isArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -36,6 +38,84 @@ export function createSlackChunkDeliveryHandler(context) {
             messageId,
             role,
         });
+    };
+    const target = () => ({
+        channelId: context.channelId,
+        threadTs: context.threadTs,
+    });
+    const textDeliveryIdempotencyPrefix = (kind) => {
+        return `slack:${kind}:${context.getRunId() ?? "pending"}:${context.channelId}:${context.threadTs}`;
+    };
+    const recordSlackTextDeliveryFailure = (error, text, kind) => {
+        const runId = context.getRunId();
+        if (!runId)
+            return;
+        const failedReceipt = buildSlackFailedDeliveryReceipt({
+            target: target(),
+            idempotencyKey: `${textDeliveryIdempotencyPrefix(kind)}:failed`,
+            error,
+        });
+        recordMessageLedgerEvent({
+            runId,
+            channel: "slack",
+            eventKind: "text_delivery_failed",
+            deliveryKind: context.deliveryKind ?? "final",
+            deliveryKey: buildTextDeliveryKey("slack", JSON.stringify([context.channelId, context.threadTs]), text),
+            idempotencyKey: failedReceipt.idempotencyKey,
+            status: "failed",
+            summary: failedReceipt.status === "rate_limited"
+                ? "Slack text delivery was rate limited."
+                : "Slack text delivery failed.",
+            detail: {
+                textLength: text.length,
+                receiptStatus: failedReceipt.status,
+                errorCode: failedReceipt.errorCode ?? null,
+                errorMessage: failedReceipt.errorMessage ?? null,
+                retryAfterMs: failedReceipt.retryAfterMs ?? null,
+            },
+        });
+    };
+    const sendFinalText = async (text, kind) => {
+        const idempotencyPrefix = textDeliveryIdempotencyPrefix(kind);
+        try {
+            if (context.responder.sendFinalResponseWithReceipts) {
+                const result = await context.responder.sendFinalResponseWithReceipts(text, idempotencyPrefix);
+                return {
+                    messageIds: result.messageIds,
+                    deliveryReceipts: result.receipts,
+                    deliveredText: text,
+                };
+            }
+            const messageIds = await context.responder.sendFinalResponse(text);
+            return {
+                messageIds,
+                deliveryReceipts: messageIds.map((messageId, index) => buildSlackSentDeliveryReceipt({
+                    target: target(),
+                    idempotencyKey: `${idempotencyPrefix}:part:${index + 1}`,
+                    messageId,
+                })),
+                deliveredText: text,
+            };
+        }
+        catch (error) {
+            recordSlackTextDeliveryFailure(error, text, kind);
+            context.logError(`Failed to send Slack text delivery: ${error instanceof Error ? error.message : String(error)}`);
+            return undefined;
+        }
+    };
+    const sendFileWithReceipt = async (filePath, idempotencyKey, caption) => {
+        if (context.responder.sendFileWithReceipt) {
+            return context.responder.sendFileWithReceipt(filePath, idempotencyKey, caption);
+        }
+        const messageId = await context.responder.sendFile(filePath, caption);
+        return {
+            messageId,
+            receipt: buildSlackSentDeliveryReceipt({
+                target: target(),
+                idempotencyKey,
+                messageId,
+            }),
+        };
     };
     return async (chunk) => {
         if (chunk.type === "text") {
@@ -80,15 +160,18 @@ export function createSlackChunkDeliveryHandler(context) {
                     ...(details.mimeType ? { mimeType: details.mimeType } : {}),
                     task: async () => {
                         try {
-                            const sentMessageId = await context.responder.sendFile(details.filePath, details.caption);
-                            recordIfRunPresent(sentMessageId, "assistant");
+                            const sent = await sendFileWithReceipt(details.filePath, `slack:file:${context.getRunId() ?? "pending"}:${details.filePath}`, details.caption);
+                            recordIfRunPresent(sent.messageId, "assistant");
                             return {
                                 artifactDeliveries: [
                                     {
                                         toolName: chunk.toolName,
                                         channel: "slack",
                                         filePath: details.filePath,
+                                        ...(sent.permalink ? { url: sent.permalink } : {}),
                                         ...(details.caption ? { caption: details.caption } : {}),
+                                        messageId: sent.messageId,
+                                        deliveryReceipts: [sent.receipt],
                                     },
                                 ],
                             };
@@ -102,15 +185,19 @@ export function createSlackChunkDeliveryHandler(context) {
                                 ...(details.mimeType ? { mimeType: details.mimeType } : {}),
                             });
                             const fallbackText = buildSlackArtifactFallbackMessage(artifact.fileName, artifact.ok ? artifact.downloadUrl : undefined, details.caption);
-                            const sentMessageIds = await context.responder.sendFinalResponse(fallbackText);
-                            for (const fallbackMessageId of sentMessageIds) {
+                            const sent = await sendFinalText(fallbackText, "artifact-fallback");
+                            if (!sent)
+                                throw error;
+                            for (const fallbackMessageId of sent.messageIds) {
                                 recordIfRunPresent(fallbackMessageId, "assistant");
                             }
                             return {
                                 textDeliveries: [
                                     {
                                         channel: "slack",
-                                        text: fallbackText,
+                                        text: sent.deliveredText,
+                                        messageIds: sent.messageIds,
+                                        deliveryReceipts: sent.deliveryReceipts,
                                     },
                                 ],
                                 ...(artifact.ok && artifact.url
@@ -127,6 +214,8 @@ export function createSlackChunkDeliveryHandler(context) {
                                                 mimeType: artifact.mimeType,
                                                 sizeBytes: details.size,
                                                 ...(details.caption ? { caption: details.caption } : {}),
+                                                ...(sent.messageIds[0] !== undefined ? { messageId: sent.messageIds[0] } : {}),
+                                                deliveryReceipts: sent.deliveryReceipts,
                                             },
                                         ],
                                     }
@@ -151,8 +240,12 @@ export function createSlackChunkDeliveryHandler(context) {
             if (!bufferedText)
                 return;
             const deliveredText = bufferedText;
-            const sentMessageIds = await context.responder.sendFinalResponse(bufferedText);
-            for (const messageId of sentMessageIds) {
+            const sent = await sendFinalText(bufferedText, "final");
+            if (!sent) {
+                bufferedText = "";
+                return;
+            }
+            for (const messageId of sent.messageIds) {
                 recordIfRunPresent(messageId, "assistant");
             }
             bufferedText = "";
@@ -161,6 +254,8 @@ export function createSlackChunkDeliveryHandler(context) {
                     {
                         channel: "slack",
                         text: deliveredText,
+                        messageIds: sent.messageIds,
+                        deliveryReceipts: sent.deliveryReceipts,
                         ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
                         ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
                         ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),

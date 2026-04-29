@@ -1,8 +1,9 @@
 import type { SubAgentResultReview } from "../agent/sub-agent-result-review.js";
+import type { ChannelSource } from "../channels/contracts.js";
 import { type NamedDeliveryEvent, type NicknameSnapshot, type ResultReport } from "../contracts/sub-agent-orchestration.js";
 import { type DbMessageLedgerEvent } from "../db/index.js";
 import { type AssistantTextDeliveryOutcome, type RunChunkDeliveryHandler, emitAssistantTextDelivery } from "./delivery.js";
-export type FinalDeliverySource = "webui" | "cli" | "telegram" | "slack";
+export type FinalDeliverySource = ChannelSource;
 export type FinalDeliveryStatus = "delivered" | "duplicate_suppressed" | "blocked" | "delivery_failed";
 export type FinalizerApprovalStatus = "requested" | "approved" | "approved_once" | "approved_run" | "consumed" | "denied" | "expired" | "superseded";
 export interface FinalizerApprovalState {
@@ -59,7 +60,10 @@ export declare function buildNobieFinalAnswer(input: {
     text: string;
     attributions: FinalDeliveryAttribution[];
 };
-export declare function findCommittedFinalDelivery(parentRunId: string): DbMessageLedgerEvent | undefined;
+export declare function findCommittedFinalDelivery(parentRunId: string, options?: {
+    source?: FinalDeliverySource;
+    sessionId?: string;
+}): DbMessageLedgerEvent | undefined;
 export declare function commitFinalDelivery(input: {
     parentRunId: string;
     sessionId: string;

@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
 import { stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
+import { stopDiscordRuntime } from "../../channels/discord/runtime.js"
+import { stopGoogleChatRuntime } from "../../channels/google-chat/runtime.js"
 import { testMcpServerConnection, testSkillPath, type SetupMcpServerDraft } from "../../control-plane/setup-extensions.js"
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import { resolveAIConnection } from "../../ai/index.js"
@@ -193,6 +195,8 @@ export function registerSetupRoute(app: FastifyInstance): void {
   app.post("/api/setup/reset", { preHandler: authMiddleware }, async () => {
     stopActiveSlackChannel()
     stopActiveTelegramChannel()
+    stopDiscordRuntime()
+    stopGoogleChatRuntime()
     return resetSetupEnvironment()
   })
 

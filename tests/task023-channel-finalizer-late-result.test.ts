@@ -279,7 +279,7 @@ describe("task023 channel delivery finalizer and late result policy", () => {
     })
 
     expect(first.status).toBe("delivered")
-    expect(first.idempotencyKey).toBe("final-delivery:run:task023")
+    expect(first.idempotencyKey).toMatch(/^final-delivery:run:task023:webui:/)
     expect(firstChunks.join("\n")).toContain("Researcher")
     expect(second.status).toBe("duplicate_suppressed")
     expect(secondOnChunk).not.toHaveBeenCalled()

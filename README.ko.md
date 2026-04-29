@@ -133,7 +133,7 @@ bash scripts/start-local.sh
 기본 로컬 주소:
 
 - Gateway: `http://127.0.0.1:18888`
-- WebUI: `http://127.0.0.1:5173`
+- WebUI: `http://127.0.0.1:4220`
 
 자주 쓰는 로컬 스크립트:
 

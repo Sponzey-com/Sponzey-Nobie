@@ -148,6 +148,54 @@ export interface SetupDraft {
     slackAppToken: string
     slackAllowedUserIds: string
     slackAllowedChannelIds: string
+    discordEnabled: boolean
+    discordBotToken: string
+    discordApplicationId: string
+    discordPublicKey: string
+    discordAllowedUserIds: string
+    discordAllowedGuildIds: string
+    discordAllowedChannelIds: string
+    discordGrantedIntents: string
+    discordBotPermissions: string
+    discordInstalledGuildIds: string
+    discordLargeGuildMode: boolean
+    googleChatEnabled: boolean
+    googleChatProjectId: string
+    googleChatAppCredentialJson: string
+    googleChatServiceAccountEmail: string
+    googleChatWebhookUrl: string
+    googleChatVerificationToken: string
+    googleChatAllowedUserIds: string
+    googleChatAllowedSpaceIds: string
+    googleChatDeployedSpaceIds: string
+    googleChatGrantedScopes: string
+    googleChatAppPublished: boolean
+    googleChatDomainWideDelegation: boolean
+    imessageEnabled: boolean
+    imessageMode: "outgoing_only" | "manual_confirm"
+    imessageLocalBridgeEnabled: boolean
+    imessageYeonjangBridgeEnabled: boolean
+    imessageRiskAcknowledged: boolean
+    imessageMessagesAppAvailable: boolean
+    imessageUserSessionActive: boolean
+    imessageAutomationPermissionGranted: boolean
+    imessageAllowedRecipientIds: string
+    imessageManualConfirmationRequired: boolean
+    kakaoTalkEnabled: boolean
+    kakaoTalkMode: "official" | "local_bridge"
+    kakaoTalkBusinessApiEnabled: boolean
+    kakaoTalkBusinessApiKey: string
+    kakaoTalkChannelId: string
+    kakaoTalkLocalBridgeEnabled: boolean
+    kakaoTalkYeonjangBridgeEnabled: boolean
+    kakaoTalkRiskAcknowledged: boolean
+    kakaoTalkAppAvailable: boolean
+    kakaoTalkUserSessionActive: boolean
+    kakaoTalkAutomationPermissionGranted: boolean
+    kakaoTalkAllowedUserIds: string
+    kakaoTalkAllowedRoomIds: string
+    kakaoTalkManualConfirmationRequired: boolean
+    kakaoTalkRateLimitPerMinute: number
   }
   mqtt: {
     enabled: boolean
@@ -258,6 +306,13 @@ function parseIdString(value: string): number[] {
     .split(/[\s,]+/)
     .map((item) => Number(item.trim()))
     .filter((item) => Number.isFinite(item))
+}
+
+function parseStringList(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function ensureParentDir(filePath: string): void {
@@ -675,6 +730,54 @@ export function buildSetupDraft(): SetupDraft {
       slackAppToken: config.slack?.appToken ?? "",
       slackAllowedUserIds: (config.slack?.allowedUserIds ?? []).join("\n"),
       slackAllowedChannelIds: (config.slack?.allowedChannelIds ?? []).join("\n"),
+      discordEnabled: config.discord?.enabled ?? false,
+      discordBotToken: config.discord?.botToken ?? "",
+      discordApplicationId: config.discord?.applicationId ?? "",
+      discordPublicKey: config.discord?.publicKey ?? "",
+      discordAllowedUserIds: (config.discord?.allowedUserIds ?? []).join("\n"),
+      discordAllowedGuildIds: (config.discord?.allowedGuildIds ?? []).join("\n"),
+      discordAllowedChannelIds: (config.discord?.allowedChannelIds ?? []).join("\n"),
+      discordGrantedIntents: (config.discord?.grantedIntents ?? []).join("\n"),
+      discordBotPermissions: (config.discord?.botPermissions ?? []).join("\n"),
+      discordInstalledGuildIds: (config.discord?.installedGuildIds ?? []).join("\n"),
+      discordLargeGuildMode: config.discord?.largeGuildMode === true,
+      googleChatEnabled: config.googleChat?.enabled ?? false,
+      googleChatProjectId: config.googleChat?.projectId ?? "",
+      googleChatAppCredentialJson: config.googleChat?.appCredentialJson ?? "",
+      googleChatServiceAccountEmail: config.googleChat?.serviceAccountEmail ?? "",
+      googleChatWebhookUrl: config.googleChat?.webhookUrl ?? "",
+      googleChatVerificationToken: config.googleChat?.verificationToken ?? "",
+      googleChatAllowedUserIds: (config.googleChat?.allowedUserIds ?? []).join("\n"),
+      googleChatAllowedSpaceIds: (config.googleChat?.allowedSpaceIds ?? []).join("\n"),
+      googleChatDeployedSpaceIds: (config.googleChat?.deployedSpaceIds ?? []).join("\n"),
+      googleChatGrantedScopes: (config.googleChat?.grantedScopes ?? []).join("\n"),
+      googleChatAppPublished: config.googleChat?.appPublished === true,
+      googleChatDomainWideDelegation: config.googleChat?.domainWideDelegation === true,
+      imessageEnabled: config.imessage?.enabled ?? false,
+      imessageMode: config.imessage?.mode ?? "manual_confirm",
+      imessageLocalBridgeEnabled: config.imessage?.localBridgeEnabled === true,
+      imessageYeonjangBridgeEnabled: config.imessage?.yeonjangBridgeEnabled === true,
+      imessageRiskAcknowledged: config.imessage?.riskAcknowledged === true,
+      imessageMessagesAppAvailable: config.imessage?.messagesAppAvailable === true,
+      imessageUserSessionActive: config.imessage?.userSessionActive === true,
+      imessageAutomationPermissionGranted: config.imessage?.automationPermissionGranted === true,
+      imessageAllowedRecipientIds: (config.imessage?.allowedRecipientIds ?? []).join("\n"),
+      imessageManualConfirmationRequired: config.imessage?.manualConfirmationRequired !== false,
+      kakaoTalkEnabled: config.kakaoTalk?.enabled ?? false,
+      kakaoTalkMode: config.kakaoTalk?.mode ?? "local_bridge",
+      kakaoTalkBusinessApiEnabled: config.kakaoTalk?.businessApiEnabled === true,
+      kakaoTalkBusinessApiKey: config.kakaoTalk?.businessApiKey ?? "",
+      kakaoTalkChannelId: config.kakaoTalk?.channelId ?? "",
+      kakaoTalkLocalBridgeEnabled: config.kakaoTalk?.localBridgeEnabled === true,
+      kakaoTalkYeonjangBridgeEnabled: config.kakaoTalk?.yeonjangBridgeEnabled === true,
+      kakaoTalkRiskAcknowledged: config.kakaoTalk?.riskAcknowledged === true,
+      kakaoTalkAppAvailable: config.kakaoTalk?.kakaoTalkAppAvailable === true,
+      kakaoTalkUserSessionActive: config.kakaoTalk?.userSessionActive === true,
+      kakaoTalkAutomationPermissionGranted: config.kakaoTalk?.automationPermissionGranted === true,
+      kakaoTalkAllowedUserIds: (config.kakaoTalk?.allowedUserIds ?? []).join("\n"),
+      kakaoTalkAllowedRoomIds: (config.kakaoTalk?.allowedRoomIds ?? []).join("\n"),
+      kakaoTalkManualConfirmationRequired: config.kakaoTalk?.manualConfirmationRequired !== false,
+      kakaoTalkRateLimitPerMinute: config.kakaoTalk?.rateLimitPerMinute ?? 6,
     },
     mqtt: {
       enabled: config.mqtt.enabled,
@@ -786,6 +889,70 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
       .split(/[\s,]+/)
       .map((value) => value.trim())
       .filter(Boolean),
+  }
+
+  raw.discord = {
+    ...toObject(raw.discord),
+    enabled: draft.channels.discordEnabled,
+    botToken: draft.channels.discordBotToken,
+    applicationId: draft.channels.discordApplicationId.trim(),
+    publicKey: draft.channels.discordPublicKey.trim(),
+    allowedUserIds: parseStringList(draft.channels.discordAllowedUserIds),
+    allowedGuildIds: parseStringList(draft.channels.discordAllowedGuildIds),
+    allowedChannelIds: parseStringList(draft.channels.discordAllowedChannelIds),
+    grantedIntents: parseStringList(draft.channels.discordGrantedIntents),
+    botPermissions: parseStringList(draft.channels.discordBotPermissions),
+    installedGuildIds: parseStringList(draft.channels.discordInstalledGuildIds),
+    largeGuildMode: draft.channels.discordLargeGuildMode,
+  }
+
+  raw.googleChat = {
+    ...toObject(raw.googleChat),
+    enabled: draft.channels.googleChatEnabled,
+    projectId: draft.channels.googleChatProjectId.trim(),
+    appCredentialJson: draft.channels.googleChatAppCredentialJson,
+    serviceAccountEmail: draft.channels.googleChatServiceAccountEmail.trim(),
+    webhookUrl: draft.channels.googleChatWebhookUrl.trim(),
+    verificationToken: draft.channels.googleChatVerificationToken,
+    allowedUserIds: parseStringList(draft.channels.googleChatAllowedUserIds),
+    allowedSpaceIds: parseStringList(draft.channels.googleChatAllowedSpaceIds),
+    deployedSpaceIds: parseStringList(draft.channels.googleChatDeployedSpaceIds),
+    grantedScopes: parseStringList(draft.channels.googleChatGrantedScopes),
+    appPublished: draft.channels.googleChatAppPublished,
+    domainWideDelegation: draft.channels.googleChatDomainWideDelegation,
+  }
+
+  raw.imessage = {
+    ...toObject(raw.imessage),
+    enabled: draft.channels.imessageEnabled,
+    mode: draft.channels.imessageMode,
+    localBridgeEnabled: draft.channels.imessageLocalBridgeEnabled,
+    yeonjangBridgeEnabled: draft.channels.imessageYeonjangBridgeEnabled,
+    riskAcknowledged: draft.channels.imessageRiskAcknowledged,
+    messagesAppAvailable: draft.channels.imessageMessagesAppAvailable,
+    userSessionActive: draft.channels.imessageUserSessionActive,
+    automationPermissionGranted: draft.channels.imessageAutomationPermissionGranted,
+    allowedRecipientIds: parseStringList(draft.channels.imessageAllowedRecipientIds),
+    manualConfirmationRequired: draft.channels.imessageManualConfirmationRequired,
+  }
+
+  raw.kakaoTalk = {
+    ...toObject(raw.kakaoTalk),
+    enabled: draft.channels.kakaoTalkEnabled,
+    mode: draft.channels.kakaoTalkMode,
+    businessApiEnabled: draft.channels.kakaoTalkBusinessApiEnabled,
+    businessApiKey: draft.channels.kakaoTalkBusinessApiKey,
+    channelId: draft.channels.kakaoTalkChannelId.trim(),
+    localBridgeEnabled: draft.channels.kakaoTalkLocalBridgeEnabled,
+    yeonjangBridgeEnabled: draft.channels.kakaoTalkYeonjangBridgeEnabled,
+    riskAcknowledged: draft.channels.kakaoTalkRiskAcknowledged,
+    kakaoTalkAppAvailable: draft.channels.kakaoTalkAppAvailable,
+    userSessionActive: draft.channels.kakaoTalkUserSessionActive,
+    automationPermissionGranted: draft.channels.kakaoTalkAutomationPermissionGranted,
+    allowedUserIds: parseStringList(draft.channels.kakaoTalkAllowedUserIds),
+    allowedRoomIds: parseStringList(draft.channels.kakaoTalkAllowedRoomIds),
+    manualConfirmationRequired: draft.channels.kakaoTalkManualConfirmationRequired,
+    rateLimitPerMinute: Math.max(1, Math.floor(Number.isFinite(draft.channels.kakaoTalkRateLimitPerMinute) ? draft.channels.kakaoTalkRateLimitPerMinute : 6)),
   }
 
   raw.mqtt = {

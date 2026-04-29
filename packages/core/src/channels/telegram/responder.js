@@ -1,4 +1,4 @@
-import { sendTelegramFile, sendTelegramPlainMessage, sendTelegramTextParts } from "./message-delivery.js";
+import { sendTelegramFile, sendTelegramFileWithReceipt, sendTelegramPlainMessage, sendTelegramTextParts, sendTelegramTextPartsWithReceipts, } from "./message-delivery.js";
 export class TelegramResponder {
     bot;
     chatId;
@@ -43,6 +43,14 @@ export class TelegramResponder {
             text,
         });
     }
+    async sendFinalResponseWithReceipts(text, idempotencyKeyPrefix) {
+        return sendTelegramTextPartsWithReceipts({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            text,
+            idempotencyKeyPrefix,
+        });
+    }
     async sendError(message) {
         return sendTelegramPlainMessage({
             api: this.bot.api,
@@ -62,6 +70,15 @@ export class TelegramResponder {
             api: this.bot.api,
             target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
             filePath,
+            ...(caption !== undefined ? { caption } : {}),
+        });
+    }
+    async sendFileWithReceipt(filePath, idempotencyKey, caption) {
+        return sendTelegramFileWithReceipt({
+            api: this.bot.api,
+            target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
+            filePath,
+            idempotencyKey,
             ...(caption !== undefined ? { caption } : {}),
         });
     }

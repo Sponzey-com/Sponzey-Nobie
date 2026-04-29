@@ -70,6 +70,8 @@ export async function applyRootRunDriverFailure(
     onChunk: params.onChunk,
     chunk: { type: "error", message: params.message },
     runId: params.runId,
+    source: params.source,
+    targetKey: params.sessionId,
     onError: dependencies.onDeliveryError ?? (() => {}),
   })
 }

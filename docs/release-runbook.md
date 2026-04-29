@@ -40,10 +40,42 @@ Platform binaries are optional on a single-host local release build, but must be
 6. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
 7. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
 8. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-9. Run channel smoke dry-run: `pnpm run smoke:channels`.
-10. Build Yeonjang packages for each target OS.
-11. Generate release manifest and checksum files: `pnpm run release:package`.
-12. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+9. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
+10. Run channel smoke dry-run: `pnpm run smoke:channels`.
+11. Build Yeonjang packages for each target OS.
+12. Generate release manifest and checksum files: `pnpm run release:package`.
+13. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## Channel Release Gate
+
+The channel release gate must prove that provider differences are represented as channel fallback evidence, not as orchestration failures.
+
+Automated or semi-automated gates:
+
+- WebUI dry-run must pass for basic query, approval UI, artifact link, and unsupported feature fallback.
+- Telegram and Slack must pass dry-run in CI and must have at least one live or semi-automated smoke before public publish when credentials are available.
+- Long text must respect each channel `maxMessageLength`: split when allowed, summarize-and-link when requested, or deliver as a safe artifact link.
+- Artifacts must use native file delivery when supported and fall back to a download link when native upload is unavailable.
+- Sensitive artifacts must require explicit approval before delivery.
+
+Fixture gates:
+
+- Discord and Google Chat fixture smoke must cover basic query, approval/button UI, artifact delivery, and unsupported capability fallback.
+- Fixture traces must reject cross-provider delivery tools, local path markdown, missing audit ids, and hidden approval controls.
+
+Manual local bridge gates:
+
+- iMessage and KakaoTalk are manual local bridge gates unless their local app, Yeonjang bridge, user session, automation permission, risk acknowledgement, and allowed targets are configured.
+- Manual smoke evidence must include the selected bridge mode, target id type, manual confirmation setting, rate limit, and user-visible fallback text.
+- Unsupported buttons, files, edits, deletes, threads, and typing indicators must be recorded as `unsupported_capability` receipt detail or a clear fallback notice.
+
+Regression checklist:
+
+- Duplicate delivery is blocked by idempotency keys and message ledger state.
+- Continuation replies stay in the originating thread or explicit continuation context.
+- Approval prompts are visible in the originating channel and do not silently downgrade into an invisible state.
+- Artifact messages never expose local filesystem paths.
+- Provider rate limits are recorded as retry/backoff receipts, not as lost runs.
 
 ## Sub-Agent Rollout Gate
 
@@ -149,5 +181,5 @@ Store these files with every release candidate:
 - Restore rehearsal report.
 - UI mode release gate summary from `manifest.json` under `uiModeEvidence`.
 - Sub-agent release readiness summary from `manifest.json` under `subAgentReleaseGate`.
-- Channel smoke result.
+- Channel delivery release gate and channel smoke result, including live/manual gate notes for external channels.
 - Yeonjang smoke result.

@@ -77,6 +77,54 @@ export interface SetupChannelDraft {
   slackAppToken: string
   slackAllowedUserIds: string
   slackAllowedChannelIds: string
+  discordEnabled: boolean
+  discordBotToken: string
+  discordApplicationId: string
+  discordPublicKey: string
+  discordAllowedUserIds: string
+  discordAllowedGuildIds: string
+  discordAllowedChannelIds: string
+  discordGrantedIntents: string
+  discordBotPermissions: string
+  discordInstalledGuildIds: string
+  discordLargeGuildMode: boolean
+  googleChatEnabled: boolean
+  googleChatProjectId: string
+  googleChatAppCredentialJson: string
+  googleChatServiceAccountEmail: string
+  googleChatWebhookUrl: string
+  googleChatVerificationToken: string
+  googleChatAllowedUserIds: string
+  googleChatAllowedSpaceIds: string
+  googleChatDeployedSpaceIds: string
+  googleChatGrantedScopes: string
+  googleChatAppPublished: boolean
+  googleChatDomainWideDelegation: boolean
+  imessageEnabled: boolean
+  imessageMode: "outgoing_only" | "manual_confirm"
+  imessageLocalBridgeEnabled: boolean
+  imessageYeonjangBridgeEnabled: boolean
+  imessageRiskAcknowledged: boolean
+  imessageMessagesAppAvailable: boolean
+  imessageUserSessionActive: boolean
+  imessageAutomationPermissionGranted: boolean
+  imessageAllowedRecipientIds: string
+  imessageManualConfirmationRequired: boolean
+  kakaoTalkEnabled: boolean
+  kakaoTalkMode: "official" | "local_bridge"
+  kakaoTalkBusinessApiEnabled: boolean
+  kakaoTalkBusinessApiKey: string
+  kakaoTalkChannelId: string
+  kakaoTalkLocalBridgeEnabled: boolean
+  kakaoTalkYeonjangBridgeEnabled: boolean
+  kakaoTalkRiskAcknowledged: boolean
+  kakaoTalkAppAvailable: boolean
+  kakaoTalkUserSessionActive: boolean
+  kakaoTalkAutomationPermissionGranted: boolean
+  kakaoTalkAllowedUserIds: string
+  kakaoTalkAllowedRoomIds: string
+  kakaoTalkManualConfirmationRequired: boolean
+  kakaoTalkRateLimitPerMinute: number
 }
 
 export interface SetupRemoteAccessDraft {

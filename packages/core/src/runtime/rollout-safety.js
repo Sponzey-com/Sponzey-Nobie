@@ -13,6 +13,7 @@ const DEFAULT_FEATURE_FLAGS = [
     defaultFlag("memory_retrieval", "shadow", "Memory retrieval candidates are compared before stricter ranking."),
     defaultFlag("delivery_outcome", "shadow", "Delivery outcome comparison stays diagnostic-only during rollout."),
     defaultFlag("sub_agent_orchestration", "off", "Sub-agent orchestration is opt-in and must preserve single Nobie fallback by default."),
+    defaultFlag("channel_registry_runtime", "off", "Channel registry runtime is opt-in while Telegram/Slack keep legacy direct runtime fallback."),
 ];
 function defaultFlag(featureKey, mode, reason) {
     return {

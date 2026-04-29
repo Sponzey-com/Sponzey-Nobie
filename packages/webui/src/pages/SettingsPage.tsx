@@ -1,8 +1,20 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { api, type MemoryQualitySnapshot, type MemoryWritebackReviewAction, type MemoryWritebackReviewItem, type MqttRuntimeResponse, type StatusResponse } from "../api/client"
+import {
+  api,
+  type ChannelApprovalItem,
+  type ChannelConnectionDetail,
+  type ChannelConnectionSummary,
+  type ChannelMessageItem,
+  type MemoryQualitySnapshot,
+  type MemoryWritebackReviewAction,
+  type MemoryWritebackReviewItem,
+  type MqttRuntimeResponse,
+  type StatusResponse,
+} from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
+import { CollapsibleText } from "../components/runs/CollapsibleText"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
@@ -10,6 +22,9 @@ import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
 import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
 import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
+import { DiscordSettingsForm } from "../components/setup/DiscordSettingsForm"
+import { GoogleChatSettingsForm } from "../components/setup/GoogleChatSettingsForm"
+import { IMessageLocalBridgeSettingsForm, KakaoTalkSettingsForm } from "../components/setup/LocalBridgeSettingsForm"
 import { SingleAIConnectionPanel } from "../components/setup/SingleAIConnectionPanel"
 import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
@@ -19,7 +34,7 @@ import { UpdatePanel } from "../components/UpdatePanel"
 import { UiLanguageSwitcher } from "../components/UiLanguageSwitcher"
 import { type AIBackendCard, type NewAIBackendInput } from "../contracts/ai"
 import type { ConfigurationOperationsSnapshot, MigrationDryRunResult } from "../contracts/config-operations"
-import type { SetupDraft } from "../contracts/setup"
+import type { SetupChannelDraft, SetupDraft } from "../contracts/setup"
 import {
   buildAdvancedSettingsTabs,
   isDraftSavingAdvancedSettingsTab,
@@ -155,6 +170,17 @@ export function SettingsPage() {
   const [memoryQuality, setMemoryQuality] = useState<MemoryQualitySnapshot | null>(null)
   const [memoryQualityLoading, setMemoryQualityLoading] = useState(false)
   const [memoryQualityError, setMemoryQualityError] = useState("")
+  const [channelRows, setChannelRows] = useState<ChannelConnectionSummary[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState("telegram:primary")
+  const [channelDetail, setChannelDetail] = useState<ChannelConnectionDetail | null>(null)
+  const [channelMessages, setChannelMessages] = useState<ChannelMessageItem[]>([])
+  const [channelApprovals, setChannelApprovals] = useState<ChannelApprovalItem[]>([])
+  const [channelLoading, setChannelLoading] = useState(false)
+  const [channelDetailLoading, setChannelDetailLoading] = useState(false)
+  const [channelError, setChannelError] = useState("")
+  const [channelActionMessage, setChannelActionMessage] = useState("")
+  const [channelActionId, setChannelActionId] = useState<string | null>(null)
+  const [localBridgeConsent, setLocalBridgeConsent] = useState(false)
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const { text, displayText } = useUiI18n()
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -166,6 +192,7 @@ export function SettingsPage() {
     saving,
     lastSavedAt,
     lastError,
+    initialize,
     refreshChecks,
     resetSetup,
     saveDraftSnapshot,
@@ -263,6 +290,44 @@ export function SettingsPage() {
     }
   }, [])
 
+  const loadChannelOverview = useCallback(async () => {
+    setChannelLoading(true)
+    try {
+      const [channels, messages, approvals] = await Promise.all([
+        api.channels(),
+        api.channelMessages({ limit: 25 }),
+        api.channelApprovals({ limit: 25 }),
+      ])
+      setChannelRows(channels.channels)
+      setChannelMessages(messages.messages)
+      setChannelApprovals(approvals.approvals)
+      setSelectedChannelId((current) =>
+        channels.channels.some((channel) => channel.channelId === current)
+          ? current
+          : channels.channels[0]?.channelId ?? current,
+      )
+      setChannelError("")
+    } catch (error) {
+      setChannelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChannelLoading(false)
+    }
+  }, [])
+
+  const loadSelectedChannelDetail = useCallback(async () => {
+    setChannelDetailLoading(true)
+    try {
+      const detail = await api.channel(selectedChannelId)
+      setChannelDetail(detail.channel)
+      setChannelError("")
+    } catch (error) {
+      setChannelDetail(null)
+      setChannelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChannelDetailLoading(false)
+    }
+  }, [selectedChannelId])
+
   useEffect(() => {
     if (tab !== "yeonjang") return
     void loadMqttRuntime()
@@ -286,6 +351,16 @@ export function SettingsPage() {
     if (tab !== "orchestration") return
     void loadOrchestrationSettings()
   }, [tab, editorVersion, loadOrchestrationSettings])
+
+  useEffect(() => {
+    if (tab !== "channels") return
+    void loadChannelOverview()
+  }, [tab, editorVersion, loadChannelOverview])
+
+  useEffect(() => {
+    if (tab !== "channels") return
+    void loadSelectedChannelDetail()
+  }, [tab, selectedChannelId, loadSelectedChannelDetail])
 
   const handleConfigAction = useCallback(async (action: "dryRun" | "dbBackup" | "dbExport" | "configExport" | "promptExport" | "promptRecover" | "promptImport" | "dbImport") => {
     setConfigOperationsLoading(true)
@@ -386,6 +461,66 @@ export function SettingsPage() {
       setMemoryReviewActionId(null)
     }
   }, [loadMemoryQuality, loadMemoryWritebackReview, memoryReviewEdits])
+
+  const refreshChannelUi = useCallback(async () => {
+    await Promise.all([
+      loadChannelOverview(),
+      loadSelectedChannelDetail(),
+      refreshChecks(true),
+      initialize(true),
+    ])
+    void useCapabilitiesStore.getState().refresh()
+  }, [initialize, loadChannelOverview, loadSelectedChannelDetail, refreshChecks])
+
+  const handleChannelAction = useCallback(async (action: "enable" | "disable" | "restart" | "test") => {
+    setChannelActionId(`${selectedChannelId}:${action}`)
+    setChannelError("")
+    setChannelActionMessage("")
+    try {
+      const result = action === "enable"
+        ? await api.enableChannel(selectedChannelId, { acknowledgeRisk: localBridgeConsent })
+        : action === "disable"
+          ? await api.disableChannel(selectedChannelId)
+          : action === "restart"
+            ? await api.restartChannel(selectedChannelId)
+            : await api.testChannel(selectedChannelId)
+      if (result.ok === false) throw new Error(result.error || "Channel action failed")
+      setChannelActionMessage(`${action}: ${result.status ?? result.mode ?? "ok"}`)
+      await refreshChannelUi()
+    } catch (error) {
+      setChannelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChannelActionId(null)
+    }
+  }, [localBridgeConsent, refreshChannelUi, selectedChannelId])
+
+  const handleChannelApprovalResponse = useCallback(async (approvalId: string, decision: "allow_once" | "allow_run" | "deny") => {
+    setChannelActionId(`approval:${approvalId}:${decision}`)
+    setChannelError("")
+    try {
+      const result = await api.respondChannelApproval(approvalId, { decision, decisionBy: "webui" })
+      setChannelActionMessage(`approval: ${result.status}`)
+      await loadChannelOverview()
+    } catch (error) {
+      setChannelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChannelActionId(null)
+    }
+  }, [loadChannelOverview])
+
+  const handleChannelDeliveryRetry = useCallback(async (deliveryId: string) => {
+    setChannelActionId(`delivery:${deliveryId}`)
+    setChannelError("")
+    try {
+      const result = await api.retryChannelDelivery(deliveryId)
+      setChannelActionMessage(`delivery retry: ${result.status}${result.reason ? ` / ${result.reason}` : ""}`)
+      await loadChannelOverview()
+    } catch (error) {
+      setChannelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChannelActionId(null)
+    }
+  }, [loadChannelOverview])
 
   const tabs = useMemo(() => buildAdvancedSettingsTabs(uiLanguage), [uiLanguage])
 
@@ -607,31 +742,31 @@ export function SettingsPage() {
             ) : activeCapability?.reason ? (
               <RuntimeNotice title={text("채널 상태", "Channel Status")} message={activeCapability.reason} tone="info" />
             ) : null}
-            <div className="grid gap-4 xl:grid-cols-2">
-              <CompactSection
-                title={text("Telegram", "Telegram")}
-                description={text("입력 채널 설정과 연결 점검을 함께 묶었습니다.", "The input channel settings and connection check are grouped together.")}
-              >
-                <TelegramSettingsForm
-                  value={activeDraft.channels}
-                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
-                />
-                <TelegramCheckPanel botToken={activeDraft.channels.botToken} />
-              </CompactSection>
-              <CompactSection
-                title={text("Slack", "Slack")}
-                description={text("토큰, 허용 대상, 연결 점검을 한 묶음으로 정리했습니다.", "Tokens, allowed targets, and the connection check are kept together.")}
-              >
-                <SlackSettingsForm
-                  value={activeDraft.channels}
-                  onChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
-                />
-                <SlackCheckPanel
-                  botToken={activeDraft.channels.slackBotToken}
-                  appToken={activeDraft.channels.slackAppToken}
-                />
-              </CompactSection>
-            </div>
+            <ChannelManagementPanel
+              channels={channelRows}
+              selectedChannelId={selectedChannelId}
+              detail={channelDetail}
+              messages={channelMessages}
+              approvals={channelApprovals}
+              loading={channelLoading}
+              detailLoading={channelDetailLoading}
+              error={channelError}
+              actionMessage={channelActionMessage}
+              actionId={channelActionId}
+              localBridgeConsent={localBridgeConsent}
+              draftChannels={activeDraft.channels}
+              onSelect={(channelId) => {
+                setSelectedChannelId(channelId)
+                setLocalBridgeConsent(false)
+                setChannelActionMessage("")
+              }}
+              onRefresh={() => void refreshChannelUi()}
+              onAction={(action) => void handleChannelAction(action)}
+              onConsentChange={setLocalBridgeConsent}
+              onDraftChannelsChange={(patch) => patchDraft("channels", { ...activeDraft.channels, ...patch })}
+              onApprovalRespond={(approvalId, decision) => void handleChannelApprovalResponse(approvalId, decision)}
+              onRetryDelivery={(deliveryId) => void handleChannelDeliveryRetry(deliveryId)}
+            />
           </div>
         )
 
@@ -912,6 +1047,616 @@ function CompactSection({
         {description ? <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div> : null}
       </div>
       <div className="space-y-3">{children}</div>
+    </div>
+  )
+}
+
+const CHANNEL_PROVIDER_CATALOG = [
+  { channelId: "telegram:primary", provider: "telegram", label: "Telegram", connectionMode: "bot_api", riskLevel: "low" },
+  { channelId: "slack:primary", provider: "slack", label: "Slack", connectionMode: "socket", riskLevel: "low" },
+  { channelId: "discord:primary", provider: "discord", label: "Discord", connectionMode: "socket", riskLevel: "medium" },
+  { channelId: "google_chat:primary", provider: "google_chat", label: "Google Chat", connectionMode: "webhook", riskLevel: "medium" },
+  { channelId: "imessage:local", provider: "imessage", label: "iMessage Local Bridge", connectionMode: "local_bridge", riskLevel: "experimental" },
+  { channelId: "kakaotalk:official", provider: "kakaotalk", label: "KakaoTalk Business", connectionMode: "webhook", riskLevel: "medium" },
+  { channelId: "kakaotalk:local", provider: "kakaotalk", label: "KakaoTalk Local Bridge", connectionMode: "local_bridge", riskLevel: "experimental" },
+] as const
+
+function buildCatalogChannel(item: typeof CHANNEL_PROVIDER_CATALOG[number]): ChannelConnectionSummary {
+  const isLocalBridge = item.connectionMode === "local_bridge"
+  const isWebhook = item.connectionMode === "webhook"
+  return {
+    channelId: item.channelId,
+    connectionId: item.channelId,
+    provider: item.provider,
+    displayName: item.label,
+    enabled: false,
+    configured: false,
+    connectionMode: item.connectionMode,
+    health: {
+      status: "stopped",
+      message: isLocalBridge ? "Local bridge consent required." : isWebhook ? "Provider adapter is not configured yet." : null,
+      checkedAt: Date.now(),
+    },
+    runtime: {
+      isRunning: false,
+      lastStartedAt: null,
+      lastStoppedAt: null,
+      lastError: null,
+      lastErrorAt: null,
+    },
+    riskLevel: item.riskLevel,
+    capabilitySummary: {
+      supportsThreads: isWebhook,
+      supportsReplies: true,
+      supportsButtons: isWebhook,
+      supportsFiles: true,
+      supportsTypingIndicator: false,
+      maxMessageLength: 4000,
+      requiresWebhook: isWebhook,
+      requiresLocalBridge: isLocalBridge,
+      requiresUserSession: isLocalBridge,
+      manualConfirmationRequired: isLocalBridge,
+    },
+    validation: {
+      ok: !isLocalBridge,
+      issues: isLocalBridge
+        ? [{
+          code: "local_bridge_risk_ack_required",
+          severity: "warning",
+          message: "Local bridge providers require explicit user consent before enablement.",
+        }]
+        : isWebhook
+          ? [{
+            code: "webhook_boundary_adapter_required",
+            severity: "warning",
+            message: "Webhook providers require adapter-side request verification.",
+          }]
+          : [],
+    },
+  }
+}
+
+function channelStatusClass(status: string): string {
+  switch (status) {
+    case "healthy":
+    case "delivered":
+    case "succeeded":
+    case "approved_once":
+    case "approved_run":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700"
+    case "failed":
+    case "denied":
+      return "border-red-200 bg-red-50 text-red-700"
+    case "degraded":
+    case "pending":
+    case "requested":
+    case "stopped":
+      return "border-amber-200 bg-amber-50 text-amber-800"
+    case "suppressed":
+    case "consumed":
+    case "expired":
+      return "border-stone-200 bg-stone-100 text-stone-600"
+    default:
+      return "border-blue-200 bg-blue-50 text-blue-700"
+  }
+}
+
+function riskClass(riskLevel: string): string {
+  switch (riskLevel) {
+    case "low":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700"
+    case "medium":
+      return "border-blue-200 bg-blue-50 text-blue-700"
+    case "high":
+    case "experimental":
+      return "border-amber-200 bg-amber-50 text-amber-800"
+    default:
+      return "border-stone-200 bg-stone-100 text-stone-600"
+  }
+}
+
+function formatChannelTimestamp(value: number | null | undefined): string {
+  if (!value) return "-"
+  return new Date(value).toLocaleString()
+}
+
+function stringifyCompact(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function isRetryableChannelMessage(message: ChannelMessageItem): boolean {
+  if (!message.deliveryKey) return false
+  if (message.status === "delivered" || message.status === "succeeded" || message.status === "suppressed") return false
+  if (message.eventKind === "delivery_finalized" || message.eventKind === "final_answer_delivered") return false
+  return true
+}
+
+function ChannelManagementPanel({
+  channels,
+  selectedChannelId,
+  detail,
+  messages,
+  approvals,
+  loading,
+  detailLoading,
+  error,
+  actionMessage,
+  actionId,
+  localBridgeConsent,
+  draftChannels,
+  onSelect,
+  onRefresh,
+  onAction,
+  onConsentChange,
+  onDraftChannelsChange,
+  onApprovalRespond,
+  onRetryDelivery,
+}: {
+  channels: ChannelConnectionSummary[]
+  selectedChannelId: string
+  detail: ChannelConnectionDetail | null
+  messages: ChannelMessageItem[]
+  approvals: ChannelApprovalItem[]
+  loading: boolean
+  detailLoading: boolean
+  error: string
+  actionMessage: string
+  actionId: string | null
+  localBridgeConsent: boolean
+  draftChannels: SetupChannelDraft
+  onSelect: (channelId: string) => void
+  onRefresh: () => void
+  onAction: (action: "enable" | "disable" | "restart" | "test") => void
+  onConsentChange: (value: boolean) => void
+  onDraftChannelsChange: (patch: Partial<SetupChannelDraft>) => void
+  onApprovalRespond: (approvalId: string, decision: "allow_once" | "allow_run" | "deny") => void
+  onRetryDelivery: (deliveryId: string) => void
+}) {
+  const { text, displayText } = useUiI18n()
+  const channelById = useMemo(() => new Map(channels.map((channel) => [channel.channelId, channel])), [channels])
+  const rows = useMemo(
+    () => CHANNEL_PROVIDER_CATALOG.map((item) => channelById.get(item.channelId) ?? buildCatalogChannel(item)),
+    [channelById],
+  )
+  const selected = detail ?? rows.find((channel) => channel.channelId === selectedChannelId) ?? rows[0]
+  const provider = selected?.provider ?? "telegram"
+  const providerMessages = messages
+    .filter((message) => message.channel === provider || message.source === provider)
+    .slice(0, 8)
+  const visibleMessages = providerMessages.length ? providerMessages : messages.slice(0, 8)
+  const visibleApprovals = approvals.slice(0, 8)
+  const lastInbound = messages.find((message) => (message.channel === provider || message.source === provider) && message.eventKind === "ingress_received")
+  const lastOutbound = messages.find((message) =>
+    (message.channel === provider || message.source === provider)
+    && Boolean(message.eventKind && /(delivered|delivery|sent|final)/i.test(message.eventKind)),
+  )
+  const unsupportedIssues = selected?.validation.issues.filter((issue) => /unsupported|missing|duplicate|webhook|local_bridge|runtime/i.test(issue.code)) ?? []
+  const isTelegram = selected?.provider === "telegram"
+  const isSlack = selected?.provider === "slack"
+  const isDiscord = selected?.provider === "discord"
+  const isGoogleChat = selected?.provider === "google_chat"
+  const requiresLocalBridge = selected?.capabilitySummary.requiresLocalBridge === true
+  const canEnable = Boolean(selected) && (isTelegram || isSlack || isDiscord || isGoogleChat || requiresLocalBridge)
+  const selectedActionPrefix = selected ? `${selected.channelId}:` : ""
+
+  return (
+    <div className="space-y-4">
+      <CompactSection
+        title={text("채널 연결", "Channel connections")}
+        description={text("모든 provider를 같은 목록에서 보고, 선택한 provider만 편집합니다.", "Review every provider in one list and edit only the selected provider.")}
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+          <div className="grid gap-2 sm:grid-cols-2 xl:w-[420px] xl:grid-cols-1">
+            {rows.map((channel) => (
+              <button
+                key={channel.channelId}
+                type="button"
+                onClick={() => onSelect(channel.channelId)}
+                className={`rounded-xl border px-4 py-3 text-left transition ${channel.channelId === selectedChannelId ? "border-stone-900 bg-white shadow-sm" : "border-stone-200 bg-stone-50 hover:bg-white"}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-stone-900">{channel.displayName}</div>
+                    <div className="mt-1 truncate text-xs text-stone-500">{channel.provider} · {channel.connectionMode}</div>
+                  </div>
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${riskClass(channel.riskLevel)}`}>
+                    {channel.riskLevel}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${channelStatusClass(channel.health.status)}`}>
+                    {channel.health.status}
+                  </span>
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${channel.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-stone-200 bg-white text-stone-600"}`}>
+                    {channel.enabled ? text("활성", "Enabled") : text("비활성", "Disabled")}
+                  </span>
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${channel.configured ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                    {channel.configured ? text("설정됨", "Configured") : text("미설정", "Unconfigured")}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div className="min-w-0 flex-1 space-y-3 rounded-xl border border-stone-200 bg-white p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-stone-900">{selected?.displayName ?? "-"}</div>
+                <div className="mt-1 text-xs text-stone-500">{selected?.channelId ?? selectedChannelId}</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onRefresh}
+                  disabled={loading || detailLoading}
+                  className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading || detailLoading ? text("불러오는 중", "Loading") : text("새로고침", "Refresh")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction(selected?.enabled ? "disable" : "enable")}
+                  disabled={!selected || (!selected.enabled && !canEnable) || Boolean(actionId)}
+                  className="rounded-xl border border-stone-200 bg-stone-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {actionId === `${selectedActionPrefix}${selected?.enabled ? "disable" : "enable"}`
+                    ? text("처리 중", "Working")
+                    : selected?.enabled ? text("비활성화", "Disable") : text("활성화", "Enable")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction("restart")}
+                  disabled={!selected?.enabled || Boolean(actionId)}
+                  className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("재시작", "Restart")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction("test")}
+                  disabled={!selected?.enabled || Boolean(actionId)}
+                  className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {text("테스트", "Test")}
+                </button>
+              </div>
+            </div>
+
+            {error ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+                {displayText(error)}
+              </div>
+            ) : null}
+            {actionMessage ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
+                {displayText(actionMessage)}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 md:grid-cols-4">
+              <MetricTile label={text("런타임", "Runtime")} value={selected?.runtime.isRunning ? text("연결", "Connected") : text("중지", "Stopped")} />
+              <MetricTile label={text("Health", "Health")} value={selected?.health.status ?? "-"} />
+              <MetricTile label={text("마지막 수신", "Last inbound")} value={formatChannelTimestamp(lastInbound?.createdAt)} />
+              <MetricTile label={text("마지막 발신", "Last outbound")} value={formatChannelTimestamp(lastOutbound?.createdAt)} />
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                <div className="text-xs font-semibold text-stone-500">{text("Capability", "Capability")}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[
+                    ["threads", selected?.capabilitySummary.supportsThreads],
+                    ["replies", selected?.capabilitySummary.supportsReplies],
+                    ["buttons", selected?.capabilitySummary.supportsButtons],
+                    ["files", selected?.capabilitySummary.supportsFiles],
+                    ["typing", selected?.capabilitySummary.supportsTypingIndicator],
+                    ["local", selected?.capabilitySummary.requiresLocalBridge],
+                    ["manual", selected?.capabilitySummary.manualConfirmationRequired],
+                  ].map(([label, active]) => (
+                    <span key={String(label)} className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${active ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-stone-200 bg-white text-stone-500"}`}>
+                      {String(label)}
+                    </span>
+                  ))}
+                  <span className="rounded-full border border-stone-200 bg-white px-2 py-1 text-[11px] font-semibold text-stone-500">
+                    max {selected?.capabilitySummary.maxMessageLength ?? "-"}
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                <div className="text-xs font-semibold text-stone-500">{text("진단", "Diagnostics")}</div>
+                <div className="mt-2 space-y-2">
+                  {unsupportedIssues.length === 0 ? (
+                    <div className="text-xs text-stone-500">{text("표시할 운영 이슈가 없습니다.", "No operational issues to show.")}</div>
+                  ) : unsupportedIssues.map((issue) => (
+                    <div key={issue.code} className={`rounded-xl border px-3 py-2 text-xs leading-5 ${issue.severity === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                      <span className="font-semibold">{issue.code}</span>: {displayText(issue.message)}
+                    </div>
+                  ))}
+                  {selected?.runtime.lastError ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                      {displayText(selected.runtime.lastError)}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <ProviderCredentialSection
+              selected={selected}
+              draftChannels={draftChannels}
+              localBridgeConsent={localBridgeConsent}
+              onConsentChange={onConsentChange}
+              onDraftChannelsChange={onDraftChannelsChange}
+            />
+          </div>
+        </div>
+      </CompactSection>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <CompactSection
+          title={text("메시지 Ledger", "Message ledger")}
+          description={text("채널 메시지와 delivery receipt를 같은 목록으로 봅니다.", "Channel messages and delivery receipts are shown together.")}
+        >
+          <div className="space-y-2">
+            {visibleMessages.length === 0 ? (
+              <div className="rounded-xl border border-stone-200 bg-white px-4 py-6 text-sm text-stone-500">
+                {text("표시할 채널 메시지가 없습니다.", "No channel messages to show.")}
+              </div>
+            ) : visibleMessages.map((message) => (
+              <div key={`${message.type}:${message.id}`} className="rounded-xl border border-stone-200 bg-white p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${channelStatusClass(message.status ?? message.role ?? "unknown")}`}>
+                        {message.status ?? message.role ?? message.type}
+                      </span>
+                      <span className="text-xs font-semibold text-stone-700">{message.channel ?? message.source ?? "-"}</span>
+                    </div>
+                    <div className="mt-2 text-xs text-stone-500">{formatChannelTimestamp(message.createdAt)}</div>
+                  </div>
+                  {isRetryableChannelMessage(message) ? (
+                    <button
+                      type="button"
+                      onClick={() => message.deliveryKey ? onRetryDelivery(message.deliveryKey) : undefined}
+                      disabled={Boolean(actionId)}
+                      className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {text("재시도", "Retry")}
+                    </button>
+                  ) : null}
+                </div>
+                <CollapsibleText
+                  value={message.summary || `${message.eventKind ?? message.type} ${message.id}`}
+                  showMoreLabel={text("전체 보기", "Show all")}
+                  showLessLabel={text("줄이기", "Collapse")}
+                  threshold={140}
+                  clampLines={2}
+                  className="mt-3 text-sm leading-6 text-stone-700"
+                />
+                {message.detail ? (
+                  <CollapsibleText
+                    value={stringifyCompact(message.detail)}
+                    showMoreLabel={text("상세 보기", "Show detail")}
+                    showLessLabel={text("상세 줄이기", "Collapse detail")}
+                    threshold={180}
+                    clampLines={3}
+                    className="mt-2 rounded-xl bg-stone-50 p-3 font-mono text-xs leading-5 text-stone-600"
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </CompactSection>
+
+        <CompactSection
+          title={text("Approval Center", "Approval center")}
+          description={text("채널 action과 WebUI action을 같은 approval 상태로 확인합니다.", "Channel actions and WebUI actions share the same approval state.")}
+        >
+          <div className="space-y-2">
+            {visibleApprovals.length === 0 ? (
+              <div className="rounded-xl border border-stone-200 bg-white px-4 py-6 text-sm text-stone-500">
+                {text("표시할 approval이 없습니다.", "No approvals to show.")}
+              </div>
+            ) : visibleApprovals.map((approval) => (
+              <div key={approval.id} className="rounded-xl border border-stone-200 bg-white p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${channelStatusClass(approval.status)}`}>
+                        {approval.status}
+                      </span>
+                      <span className="text-xs font-semibold text-stone-700">{approval.channel}</span>
+                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${riskClass(approval.riskLevel)}`}>
+                        {approval.riskLevel}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-stone-900">{approval.toolName}</div>
+                    <div className="mt-1 text-xs text-stone-500">{formatChannelTimestamp(approval.requestedAt)}</div>
+                  </div>
+                  {approval.status === "requested" ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onApprovalRespond(approval.id, "allow_once")}
+                        disabled={Boolean(actionId)}
+                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {text("1회 승인", "Allow once")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onApprovalRespond(approval.id, "deny")}
+                        disabled={Boolean(actionId)}
+                        className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {text("거부", "Deny")}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <CollapsibleText
+                  value={stringifyCompact(approval.paramsPreview)}
+                  showMoreLabel={text("파라미터 보기", "Show params")}
+                  showLessLabel={text("파라미터 줄이기", "Collapse params")}
+                  threshold={160}
+                  clampLines={3}
+                  className="mt-3 rounded-xl bg-stone-50 p-3 font-mono text-xs leading-5 text-stone-600"
+                />
+              </div>
+            ))}
+          </div>
+        </CompactSection>
+      </div>
+    </div>
+  )
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{label}</div>
+      <div className="mt-2 truncate text-sm font-semibold text-stone-900" title={value}>{value}</div>
+    </div>
+  )
+}
+
+function ProviderCredentialSection({
+  selected,
+  draftChannels,
+  localBridgeConsent,
+  onConsentChange,
+  onDraftChannelsChange,
+}: {
+  selected: ChannelConnectionSummary | ChannelConnectionDetail | undefined
+  draftChannels: SetupChannelDraft
+  localBridgeConsent: boolean
+  onConsentChange: (value: boolean) => void
+  onDraftChannelsChange: (patch: Partial<SetupChannelDraft>) => void
+}) {
+  const { text } = useUiI18n()
+  if (!selected) return null
+
+  if (selected.provider === "telegram") {
+    return (
+      <div className="space-y-3">
+        <TelegramSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <TelegramCheckPanel botToken={draftChannels.botToken} />
+      </div>
+    )
+  }
+
+  if (selected.provider === "slack") {
+    return (
+      <div className="space-y-3">
+        <SlackSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <SlackCheckPanel botToken={draftChannels.slackBotToken} appToken={draftChannels.slackAppToken} />
+      </div>
+    )
+  }
+
+  if (selected.provider === "discord") {
+    return (
+      <div className="space-y-3">
+        <DiscordSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm leading-6 text-stone-600">
+          {text("Discord 진단은 저장 후 채널 상세의 Diagnostics 영역에서 bot token, application id, public key, intent, permission, guild install 상태로 표시됩니다.", "After saving, Discord diagnostics appear above as bot token, application id, public key, intent, permission, and guild install checks.")}
+        </div>
+      </div>
+    )
+  }
+
+  if (selected.provider === "google_chat") {
+    return (
+      <div className="space-y-3">
+        <GoogleChatSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm leading-6 text-stone-600">
+          {text("Google Chat 진단은 저장 후 채널 상세의 Diagnostics 영역에서 credential, request verification, Workspace 배포, scope, space 접근 상태로 표시됩니다.", "After saving, Google Chat diagnostics appear above as credential, request verification, Workspace deployment, scope, and space access checks.")}
+        </div>
+      </div>
+    )
+  }
+
+  if (selected.provider === "imessage") {
+    return (
+      <div className="space-y-3">
+        <IMessageLocalBridgeSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <div className="rounded-xl border border-amber-200 bg-white p-4 text-sm leading-6 text-amber-900">
+          {text("iMessage는 서버 bot 채널이 아니라 macOS 사용자 세션의 Messages.app 자동화 경로입니다. 저장 후 Diagnostics에서 앱 접근, 세션, 자동화 권한, 허용 수신자 상태를 확인합니다.", "iMessage is a macOS user-session automation path, not a server bot channel. After saving, diagnostics show app access, session, automation permission, and allowed recipient status.")}
+          <label className="mt-3 flex items-center gap-3 font-medium">
+            <input
+              type="checkbox"
+              checked={localBridgeConsent}
+              onChange={(event) => onConsentChange(event.target.checked)}
+            />
+            {text("활성화 버튼에 사용할 위험 확인 동의", "Risk acknowledgement for the enable button")}
+          </label>
+        </div>
+      </div>
+    )
+  }
+
+  if (selected.provider === "kakaotalk") {
+    const isLocalBridge = selected.capabilitySummary.requiresLocalBridge
+    return (
+      <div className="space-y-3">
+        <KakaoTalkSettingsForm value={draftChannels} onChange={onDraftChannelsChange} />
+        <div className="rounded-xl border border-amber-200 bg-white p-4 text-sm leading-6 text-amber-900">
+          {isLocalBridge
+            ? text("KakaoTalk local bridge는 개인/데스크톱 앱 자동화 경로이며 experimental로 취급합니다. 허용 사용자/방, 수동 확인, rate limit, 감사 로그를 함께 적용해야 합니다.", "KakaoTalk local bridge is a personal desktop app automation path and is treated as experimental. Allowed users/rooms, manual confirmation, rate limits, and audit must stay enabled together.")
+            : text("KakaoTalk Business는 공식 API 경로입니다. local bridge 권한과 별개로 business API 사용, 채널 ID, API key가 필요합니다.", "KakaoTalk Business is the official API path. It requires business API enablement, a channel ID, and an API key separate from local bridge permissions.")}
+          {isLocalBridge ? (
+            <label className="mt-3 flex items-center gap-3 font-medium">
+              <input
+                type="checkbox"
+                checked={localBridgeConsent}
+                onChange={(event) => onConsentChange(event.target.checked)}
+              />
+              {text("활성화 버튼에 사용할 위험 확인 동의", "Risk acknowledgement for the enable button")}
+            </label>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  if (selected.capabilitySummary.requiresLocalBridge) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="text-sm font-semibold text-amber-900">{selected.displayName}</div>
+        <div className="mt-2 text-sm leading-6 text-amber-800">
+          {text("로컬 브리지 채널은 사용자 세션과 명시적 동의가 필요합니다.", "Local bridge channels require a user session and explicit consent.")}
+        </div>
+        <label className="mt-3 flex items-center gap-3 text-sm font-medium text-amber-900">
+          <input
+            type="checkbox"
+            checked={localBridgeConsent}
+            onChange={(event) => onConsentChange(event.target.checked)}
+          />
+          {text("위험을 확인하고 활성화 요청을 허용합니다.", "I acknowledge the risk and allow enablement.")}
+        </label>
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <div>
+        <label className="mb-1 block text-sm font-medium text-stone-700">{text("Provider", "Provider")}</label>
+        <input className="input" value={selected.provider} readOnly />
+      </div>
+      <div>
+        <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 방식", "Connection mode")}</label>
+        <input className="input" value={selected.connectionMode} readOnly />
+      </div>
+      <div className="md:col-span-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+        {text("이 provider는 credential section이 아직 연결되지 않았습니다. API/adapter 구현 후 같은 shell 안에서 편집됩니다.", "This provider does not have a connected credential section yet. It will be edited in this same shell after the API/adapter is implemented.")}
+      </div>
     </div>
   )
 }

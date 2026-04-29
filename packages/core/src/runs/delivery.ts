@@ -3,14 +3,18 @@ import { homedir } from "node:os"
 import { basename } from "node:path"
 import type { AgentChunk } from "../agent/index.js"
 import { type ArtifactRetentionPolicy, recordArtifactMetadata } from "../artifacts/lifecycle.js"
+import { buildCapabilityFallbackNotice } from "../channels/delivery-fallback.js"
+import type { ChannelSource, DeliveryReceipt } from "../channels/contracts.js"
 import type { NicknameSnapshot } from "../contracts/sub-agent-orchestration.js"
 import {
   getTaskContinuity,
   hasArtifactReceipt,
   insertArtifactReceipt,
+  insertChannelMessageRef,
   insertDiagnosticEvent,
   insertMessage,
   upsertTaskContinuity,
+  type DbMessageLedgerStatus,
 } from "../db/index.js"
 import { eventBus } from "../events/index.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
@@ -27,7 +31,7 @@ import { getRootRun } from "./store.js"
 
 export interface SuccessfulFileDelivery {
   toolName: string
-  channel: "telegram" | "webui" | "slack"
+  channel: DeliverySource
   filePath: string
   url?: string
   previewUrl?: string
@@ -36,13 +40,15 @@ export interface SuccessfulFileDelivery {
   mimeType?: string
   sizeBytes?: number
   caption?: string
-  messageId?: number
+  messageId?: number | string
+  deliveryReceipts?: DeliveryReceipt[]
 }
 
 export interface SuccessfulTextDelivery {
   channel: DeliverySource
   text: string
-  messageIds?: number[]
+  messageIds?: Array<number | string>
+  deliveryReceipts?: DeliveryReceipt[]
   deliveryKind?: MessageLedgerDeliveryKind
   parentRunId?: string
   subSessionId?: string
@@ -71,7 +77,7 @@ export type RunChunkDeliveryHandler =
     ) => Promise<ChunkDeliveryReceipt | undefined> | ChunkDeliveryReceipt | undefined)
   | undefined
 
-export type DeliverySource = "webui" | "cli" | "telegram" | "slack"
+export type DeliverySource = ChannelSource
 
 export interface ArtifactDeliveryOnceParams<T> {
   runId?: string | undefined
@@ -119,6 +125,33 @@ const defaultAssistantTextDeliveryDependencies: AssistantTextDeliveryDependencie
   emitStream: (payload) => eventBus.emit("agent.stream", payload),
   emitEnd: (payload) => eventBus.emit("agent.end", payload),
   writeReplyLog: (source, text) => logAssistantReply(source, text),
+}
+
+interface DeliveryOutboxHooks {
+  now: () => number
+  sleep: (delayMs: number) => Promise<void>
+}
+
+const defaultDeliveryOutboxHooks: DeliveryOutboxHooks = {
+  now: () => Date.now(),
+  sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+}
+
+let deliveryOutboxHooks: DeliveryOutboxHooks = defaultDeliveryOutboxHooks
+const providerSendQueues = new Map<string, Promise<unknown>>()
+const providerBackoffUntil = new Map<string, number>()
+
+export function setDeliveryOutboxTestHooks(hooks: Partial<DeliveryOutboxHooks>): void {
+  deliveryOutboxHooks = {
+    ...defaultDeliveryOutboxHooks,
+    ...hooks,
+  }
+}
+
+export function resetDeliveryOutboxForTest(): void {
+  providerSendQueues.clear()
+  providerBackoffUntil.clear()
+  deliveryOutboxHooks = defaultDeliveryOutboxHooks
 }
 
 const MAX_COMPLETED_ARTIFACT_DELIVERY_KEYS = 2_000
@@ -506,6 +539,9 @@ export async function emitAssistantTextDelivery(params: {
     onChunk: params.onChunk,
     chunk: { type: "text", delta: normalized },
     runId: params.runId,
+    source: params.source,
+    deliveryKind,
+    targetKey: params.sessionId,
     onError: (message) => {
       textDeliveryFailed = true
       params.onError?.(message)
@@ -520,6 +556,9 @@ export async function emitAssistantTextDelivery(params: {
       onChunk: params.onChunk,
       chunk: { type: "done", totalTokens: 0 },
       runId: params.runId,
+      source: params.source,
+      deliveryKind,
+      targetKey: params.sessionId,
       onError: (message) => {
         doneDeliveryFailed = true
         params.onError?.(message)
@@ -591,24 +630,257 @@ export function resolveAssistantTextDeliveryOutcome(
   }
 }
 
+function inferChunkDeliveryKind(chunk: AgentChunk): MessageLedgerDeliveryKind {
+  if (chunk.type === "tool_end") return "artifact"
+  if (chunk.type === "tool_start") return "progress"
+  if (chunk.type === "error" || chunk.type === "execution_recovery" || chunk.type === "ai_recovery") {
+    return "diagnostic"
+  }
+  return "final"
+}
+
+function getDeliveryProvider(params: {
+  runId: string
+  source?: DeliverySource
+}): DeliverySource {
+  if (params.source) return params.source
+  return getRootRun(params.runId)?.source ?? "unknown"
+}
+
+function providerSendQueueKey(params: {
+  provider: DeliverySource
+  targetKey?: string
+  runId: string
+}): string {
+  return `${params.provider}:${params.targetKey ?? getRootRun(params.runId)?.sessionId ?? params.runId}`
+}
+
+function getRetryAfterMs(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined
+  const value = (error as Record<string, unknown>)["retryAfterMs"]
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : undefined
+}
+
+function collectDeliveryReceipts(receipt: ChunkDeliveryReceipt | undefined): DeliveryReceipt[] {
+  return [
+    ...(receipt?.artifactDeliveries ?? []).flatMap((delivery) => delivery.deliveryReceipts ?? []),
+    ...(receipt?.textDeliveries ?? []).flatMap((delivery) => delivery.deliveryReceipts ?? []),
+  ]
+}
+
+function resolveLedgerStatusFromReceipts(receipts: DeliveryReceipt[]): DbMessageLedgerStatus {
+  if (receipts.length === 0) return "succeeded"
+  if (receipts.some((receipt) => receipt.status === "failed" || receipt.status === "blocked_by_policy" || receipt.status === "unsupported_capability")) {
+    return "failed"
+  }
+  if (receipts.some((receipt) => receipt.status === "rate_limited" || receipt.status === "partial")) {
+    return "degraded"
+  }
+  if (receipts.some((receipt) => receipt.status === "delivered")) return "delivered"
+  if (receipts.some((receipt) => receipt.status === "sent")) return "sent"
+  return "pending"
+}
+
+function maxRetryAfterFromReceipts(receipts: DeliveryReceipt[]): number | undefined {
+  const values = receipts
+    .map((receipt) => receipt.retryAfterMs)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+  return values.length > 0 ? Math.max(...values) : undefined
+}
+
+function rememberProviderBackoff(providerKey: string, retryAfterMs: number | undefined): void {
+  if (!retryAfterMs) return
+  const nextUntil = deliveryOutboxHooks.now() + retryAfterMs
+  providerBackoffUntil.set(providerKey, Math.max(providerBackoffUntil.get(providerKey) ?? 0, nextUntil))
+}
+
+function summarizeReceiptsForOutbox(receipts: DeliveryReceipt[]): Array<Record<string, unknown>> {
+  return receipts.map((receipt) => ({
+    provider: receipt.provider,
+    status: receipt.status,
+    connectionId: receipt.connectionId,
+    channelId: receipt.channelId,
+    target: receipt.target,
+    idempotencyKey: receipt.idempotencyKey,
+    messageId: receipt.messageId ?? null,
+    threadId: receipt.threadId ?? null,
+    retryAfterMs: receipt.retryAfterMs ?? null,
+    errorCode: receipt.errorCode ?? null,
+    errorMessage: receipt.errorMessage ?? null,
+    capability: receipt.capability ?? null,
+    fallbackNotice: buildCapabilityFallbackNotice(receipt) ?? null,
+    providerResponseRef: receipt.providerResponseRef ?? null,
+  }))
+}
+
+async function runInProviderSendQueue<T>(params: {
+  providerKey: string
+  task: () => Promise<T>
+}): Promise<T> {
+  const previous = providerSendQueues.get(params.providerKey) ?? Promise.resolve()
+  let current: Promise<T>
+  current = previous
+    .catch(() => undefined)
+    .then(params.task)
+  const tracked = current
+    .finally(() => {
+      if (providerSendQueues.get(params.providerKey) === tracked) {
+        providerSendQueues.delete(params.providerKey)
+      }
+    })
+    .catch(() => undefined)
+  providerSendQueues.set(params.providerKey, tracked)
+  return current
+}
+
+function recordOutboxEvent(input: {
+  runId: string
+  provider: DeliverySource
+  providerKey: string
+  eventKind: "delivery_attempted" | "delivery_receipted" | "delivery_backoff_scheduled"
+  deliveryKind: MessageLedgerDeliveryKind
+  deliveryKey: string
+  idempotencyKey: string
+  status: DbMessageLedgerStatus
+  summary: string
+  detail?: Record<string, unknown>
+}): void {
+  const run = getRootRun(input.runId)
+  recordMessageLedgerEvent({
+    runId: input.runId,
+    requestGroupId: run?.requestGroupId ?? input.runId,
+    sessionKey: run?.sessionId ?? null,
+    channel: input.provider,
+    eventKind: input.eventKind,
+    deliveryKind: input.deliveryKind,
+    deliveryKey: input.deliveryKey,
+    idempotencyKey: input.idempotencyKey,
+    status: input.status,
+    summary: input.summary,
+    detail: {
+      providerKey: input.providerKey,
+      ...(input.detail ?? {}),
+    },
+  })
+}
+
 export async function deliverChunk(params: {
   onChunk: RunChunkDeliveryHandler
   chunk: AgentChunk
   runId: string
   onError?: (message: string) => void
+  source?: DeliverySource
+  deliveryKind?: MessageLedgerDeliveryKind
+  targetKey?: string
+  priority?: "low" | "normal" | "high"
 }): Promise<ChunkDeliveryReceipt | undefined> {
   if (!params.onChunk) return undefined
   const recoveryKey = buildChunkDeliveryRecoveryKey(params.runId, params.chunk)
+  const provider = getDeliveryProvider(params)
+  const providerKey = providerSendQueueKey({
+    provider,
+    runId: params.runId,
+    ...(params.targetKey ? { targetKey: params.targetKey } : {}),
+  })
+  const deliveryKind = params.deliveryKind ?? inferChunkDeliveryKind(params.chunk)
+  const deliveryKey = `chunk:${providerKey}:${recoveryKey}`
+  const priority = params.priority ?? "normal"
   try {
-    return (
-      (await enqueueBackpressureTask({
-        queueName: "delivery",
-        runId: params.runId,
-        recoveryKey,
-        task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
-      })) ?? undefined
-    )
+    return await runInProviderSendQueue({
+      providerKey,
+      task: async () => {
+        const backoffDelayMs = Math.max(0, (providerBackoffUntil.get(providerKey) ?? 0) - deliveryOutboxHooks.now())
+        if (backoffDelayMs > 0) {
+          recordOutboxEvent({
+            runId: params.runId,
+            provider,
+            providerKey,
+            eventKind: "delivery_backoff_scheduled",
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey: `delivery-backoff:${deliveryKey}:${deliveryOutboxHooks.now()}`,
+            status: "pending",
+            summary: `${provider} delivery is waiting for provider backoff.`,
+            detail: {
+              delayMs: backoffDelayMs,
+              priority,
+              chunkType: params.chunk.type,
+            },
+          })
+          await deliveryOutboxHooks.sleep(backoffDelayMs)
+        }
+
+        recordOutboxEvent({
+          runId: params.runId,
+          provider,
+          providerKey,
+          eventKind: "delivery_attempted",
+          deliveryKind,
+          deliveryKey,
+          idempotencyKey: `delivery-attempt:${deliveryKey}`,
+          status: "started",
+          summary: `${provider} delivery attempt started.`,
+          detail: {
+            priority,
+            chunkType: params.chunk.type,
+          },
+        })
+
+        const receipt = (
+          (await enqueueBackpressureTask({
+            queueName: "delivery",
+            runId: params.runId,
+            recoveryKey: deliveryKey,
+            task: async () => (await params.onChunk?.(params.chunk)) ?? undefined,
+          })) ?? undefined
+        )
+        const deliveryReceipts = collectDeliveryReceipts(receipt)
+        rememberProviderBackoff(providerKey, maxRetryAfterFromReceipts(deliveryReceipts))
+        if (receipt || deliveryReceipts.length > 0) {
+          recordOutboxEvent({
+            runId: params.runId,
+            provider,
+            providerKey,
+            eventKind: "delivery_receipted",
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey: `delivery-receipt:${deliveryKey}:${deliveryOutboxHooks.now()}`,
+            status: resolveLedgerStatusFromReceipts(deliveryReceipts),
+            summary: `${provider} delivery receipt recorded.`,
+            detail: {
+              priority,
+              chunkType: params.chunk.type,
+              receipts: summarizeReceiptsForOutbox(deliveryReceipts),
+            },
+          })
+        }
+        return receipt
+      },
+    })
   } catch (error) {
+    const retryAfterMs = getRetryAfterMs(error)
+    rememberProviderBackoff(providerKey, retryAfterMs)
+    recordOutboxEvent({
+      runId: params.runId,
+      provider,
+      providerKey,
+      eventKind: "delivery_receipted",
+      deliveryKind,
+      deliveryKey,
+      idempotencyKey: `delivery-receipt:${deliveryKey}:${deliveryOutboxHooks.now()}:failed`,
+      status: retryAfterMs ? "degraded" : "failed",
+      summary: retryAfterMs
+        ? `${provider} delivery was rate limited.`
+        : `${provider} delivery failed.`,
+      detail: {
+        priority,
+        chunkType: params.chunk.type,
+        retryAfterMs: retryAfterMs ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    })
     const rawMessage = error instanceof Error ? error.message : String(error)
     const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`)
     const retryDecision = recordRetryBudgetAttempt({
@@ -649,6 +921,10 @@ export async function deliverTrackedChunk(params: {
   chunk: AgentChunk
   runId: string
   onError?: (message: string) => void
+  source?: DeliverySource
+  deliveryKind?: MessageLedgerDeliveryKind
+  targetKey?: string
+  priority?: "low" | "normal" | "high"
   successfulFileDeliveries: SuccessfulFileDelivery[]
   successfulTextDeliveries: SuccessfulTextDelivery[]
   appendEvent: (runId: string, label: string) => void
@@ -658,6 +934,10 @@ export async function deliverTrackedChunk(params: {
     chunk: params.chunk,
     runId: params.runId,
     ...(params.onError ? { onError: params.onError } : {}),
+    ...(params.source ? { source: params.source } : {}),
+    ...(params.deliveryKind ? { deliveryKind: params.deliveryKind } : {}),
+    ...(params.targetKey ? { targetKey: params.targetKey } : {}),
+    ...(params.priority ? { priority: params.priority } : {}),
   })
   applyChunkDeliveryReceipt({
     runId: params.runId,
@@ -667,6 +947,53 @@ export async function deliverTrackedChunk(params: {
     appendEvent: params.appendEvent,
   })
   return receipt
+}
+
+function channelRefTarget(receipt: DeliveryReceipt): {
+  externalChatId: string
+  externalThreadId?: string
+  externalMessageId: string
+} | undefined {
+  const externalChatId = receipt.target.roomId ?? receipt.target.userId ?? receipt.channelId
+  const externalMessageId = receipt.messageId ?? receipt.target.messageId
+  if (!externalChatId || !externalMessageId) return undefined
+  return {
+    externalChatId,
+    ...(receipt.threadId ?? receipt.target.threadId ?? receipt.target.topicId
+      ? { externalThreadId: receipt.threadId ?? receipt.target.threadId ?? receipt.target.topicId }
+      : {}),
+    externalMessageId,
+  }
+}
+
+function recordChannelMessageRefsFromReceipts(input: {
+  runId: string
+  source: DeliverySource
+  receipts: DeliveryReceipt[]
+  role: "assistant" | "tool"
+}): void {
+  if (input.receipts.length === 0) return
+  const run = getRootRun(input.runId)
+  if (!run) return
+  for (const receipt of input.receipts) {
+    const target = channelRefTarget(receipt)
+    if (!target) continue
+    try {
+      insertChannelMessageRef({
+        source: input.source,
+        session_id: run.sessionId,
+        root_run_id: run.id,
+        request_group_id: run.requestGroupId,
+        external_chat_id: target.externalChatId,
+        external_thread_id: target.externalThreadId ?? null,
+        external_message_id: target.externalMessageId,
+        role: input.role,
+        created_at: receipt.timestamp || Date.now(),
+      })
+    } catch {
+      // Channel refs are lookup aids. Duplicate or degraded writes must not affect delivery.
+    }
+  }
 }
 
 export function applyChunkDeliveryReceipt(params: {
@@ -686,6 +1013,12 @@ export function applyChunkDeliveryReceipt(params: {
     if (alreadyRecorded) continue
 
     params.successfulFileDeliveries.push(delivery)
+    recordChannelMessageRefsFromReceipts({
+      runId: params.runId,
+      source: delivery.channel,
+      receipts: delivery.deliveryReceipts ?? [],
+      role: "assistant",
+    })
     if (delivery.channel === "telegram") {
       params.appendEvent(
         params.runId,
@@ -717,6 +1050,9 @@ export function applyChunkDeliveryReceipt(params: {
       detail: {
         toolName: delivery.toolName,
         filePath: displayHomePath(delivery.filePath),
+        ...(delivery.deliveryReceipts
+          ? { deliveryReceipts: summarizeDeliveryReceiptsForLedger(delivery.deliveryReceipts) }
+          : {}),
         ...(delivery.url ? { url: delivery.url } : {}),
         ...(delivery.previewUrl ? { previewUrl: delivery.previewUrl } : {}),
         ...(delivery.downloadUrl ? { downloadUrl: delivery.downloadUrl } : {}),
@@ -761,6 +1097,12 @@ export function applyChunkDeliveryReceipt(params: {
     if (alreadyRecorded) continue
 
     params.successfulTextDeliveries.push(delivery)
+    recordChannelMessageRefsFromReceipts({
+      runId: params.runId,
+      source: delivery.channel,
+      receipts: delivery.deliveryReceipts ?? [],
+      role: "assistant",
+    })
     if (delivery.channel === "telegram") {
       params.appendEvent(params.runId, "텔레그램 텍스트 전달 완료")
     } else if (delivery.channel === "webui") {
@@ -794,10 +1136,30 @@ export function applyChunkDeliveryReceipt(params: {
       detail: {
         textLength: delivery.text.length,
         ...(delivery.messageIds ? { messageIds: delivery.messageIds } : {}),
+        ...(delivery.deliveryReceipts
+          ? { deliveryReceipts: summarizeDeliveryReceiptsForLedger(delivery.deliveryReceipts) }
+          : {}),
         ...(delivery.deliveryKind ? { deliveryKind: delivery.deliveryKind } : {}),
       },
     })
   }
+}
+
+function summarizeDeliveryReceiptsForLedger(receipts: DeliveryReceipt[]): Array<Record<string, unknown>> {
+  return receipts.map((receipt) => ({
+    status: receipt.status,
+    provider: receipt.provider,
+    connectionId: receipt.connectionId,
+    messageId: receipt.messageId ?? null,
+    threadId: receipt.threadId ?? null,
+    idempotencyKey: receipt.idempotencyKey,
+    ...(receipt.errorCode ? { errorCode: receipt.errorCode } : {}),
+    ...(receipt.errorMessage ? { errorMessage: receipt.errorMessage } : {}),
+    ...(receipt.capability ? { capability: receipt.capability } : {}),
+    ...(buildCapabilityFallbackNotice(receipt)
+      ? { fallbackNotice: buildCapabilityFallbackNotice(receipt) }
+      : {}),
+  }))
 }
 
 export function logAssistantReply(source: DeliverySource, text: string): void {

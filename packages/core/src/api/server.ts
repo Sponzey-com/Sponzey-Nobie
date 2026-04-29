@@ -26,6 +26,7 @@ import { registerArtifactsRoute } from "./routes/artifacts.js"
 import { registerAuditRoute } from "./routes/audit.js"
 import { registerBenchmarkRoutes } from "./routes/benchmarks.js"
 import { registerCapabilitiesRoute } from "./routes/capabilities.js"
+import { registerChannelsRoute } from "./routes/channels.js"
 import { registerChannelSmokeRoute } from "./routes/channel-smoke.js"
 import { registerCommandPaletteRoutes } from "./routes/command-palette.js"
 import { registerConfigOperationsRoute } from "./routes/config-operations.js"
@@ -114,6 +115,7 @@ export async function startServer(): Promise<void> {
   registerMemoryRoute(server)
   registerPromptSourcesRoute(server)
   registerConfigOperationsRoute(server)
+  registerChannelsRoute(server)
   registerChannelSmokeRoute(server)
   registerDoctorRoute(server)
   registerControlTimelineRoute(server)

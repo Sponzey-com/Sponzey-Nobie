@@ -1,5 +1,6 @@
 import type { SubAgentResultReview } from "../agent/sub-agent-result-review.js"
 import { decideSubSessionCompletionIntegration } from "../agent/sub-agent-result-review.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import { CONTRACT_SCHEMA_VERSION, type JsonValue } from "../contracts/index.js"
 import {
   type NamedDeliveryEvent,
@@ -21,7 +22,7 @@ import {
 } from "./delivery.js"
 import { hashLedgerValue, recordMessageLedgerEvent } from "./message-ledger.js"
 
-export type FinalDeliverySource = "webui" | "cli" | "telegram" | "slack"
+export type FinalDeliverySource = ChannelSource
 export type FinalDeliveryStatus =
   | "delivered"
   | "duplicate_suppressed"
@@ -97,12 +98,28 @@ const NOBIE_SPEAKER: NicknameSnapshot = {
   nicknameSnapshot: "노비",
 }
 
-function finalDeliveryKey(parentRunId: string): string {
-  return `final:${parentRunId}`
+function finalDeliveryTargetKey(input: {
+  parentRunId: string
+  source: FinalDeliverySource
+  sessionId: string
+}): string {
+  return `${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`
 }
 
-function finalDeliveryIdempotencyKey(parentRunId: string): string {
-  return `final-delivery:${parentRunId}`
+function finalDeliveryKey(input: {
+  parentRunId: string
+  source: FinalDeliverySource
+  sessionId: string
+}): string {
+  return `final:${finalDeliveryTargetKey(input)}`
+}
+
+function finalDeliveryIdempotencyKey(input: {
+  parentRunId: string
+  source: FinalDeliverySource
+  sessionId: string
+}): string {
+  return `final-delivery:${finalDeliveryTargetKey(input)}`
 }
 
 function normalizeSpeaker(speaker: NicknameSnapshot | undefined): NicknameSnapshot {
@@ -190,10 +207,16 @@ export function buildNobieFinalAnswer(input: {
   }
 }
 
-export function findCommittedFinalDelivery(parentRunId: string): DbMessageLedgerEvent | undefined {
+export function findCommittedFinalDelivery(
+  parentRunId: string,
+  options: { source?: FinalDeliverySource; sessionId?: string } = {},
+): DbMessageLedgerEvent | undefined {
+  const scopedDeliveryKey = options.source && options.sessionId
+    ? finalDeliveryKey({ parentRunId, source: options.source, sessionId: options.sessionId })
+    : undefined
   return listMessageLedgerEvents({ runId: parentRunId, limit: 1000 }).find(
     (event) =>
-      event.delivery_key === finalDeliveryKey(parentRunId) &&
+      event.delivery_key === (scopedDeliveryKey ?? event.delivery_key) &&
       event.event_kind === "final_answer_delivered" &&
       eventSucceeded(event),
   )
@@ -273,8 +296,16 @@ export async function commitFinalDelivery(input: {
     text: input.text,
     ...(input.resultReports ? { resultReports: input.resultReports } : {}),
   })
-  const deliveryKey = finalDeliveryKey(input.parentRunId)
-  const idempotencyKey = finalDeliveryIdempotencyKey(input.parentRunId)
+  const deliveryKey = finalDeliveryKey({
+    parentRunId: input.parentRunId,
+    source: input.source,
+    sessionId: input.sessionId,
+  })
+  const idempotencyKey = finalDeliveryIdempotencyKey({
+    parentRunId: input.parentRunId,
+    source: input.source,
+    sessionId: input.sessionId,
+  })
   const reasonCodes: string[] = []
 
   if (!answer.text.trim()) reasonCodes.push("final_answer_empty")
@@ -302,7 +333,10 @@ export async function commitFinalDelivery(input: {
     })
   }
 
-  const existing = findCommittedFinalDelivery(input.parentRunId)
+  const existing = findCommittedFinalDelivery(input.parentRunId, {
+    source: input.source,
+    sessionId: input.sessionId,
+  })
   if (existing) {
     const duplicateHash = hashLedgerValue({
       parentRunId: input.parentRunId,
@@ -373,7 +407,7 @@ export async function commitFinalDelivery(input: {
     eventKind: "final_answer_generated",
     deliveryKind: "final",
     deliveryKey,
-    idempotencyKey: `final-answer:${input.parentRunId}`,
+    idempotencyKey: `final-answer:${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`,
     status: "generated",
     summary: "parent finalizer가 최종 응답을 생성했습니다.",
     detail: {

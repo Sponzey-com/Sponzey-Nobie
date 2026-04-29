@@ -186,6 +186,54 @@ function createInitialSetupDraft(): SetupDraft {
       slackAppToken: "",
       slackAllowedUserIds: "",
       slackAllowedChannelIds: "",
+      discordEnabled: false,
+      discordBotToken: "",
+      discordApplicationId: "",
+      discordPublicKey: "",
+      discordAllowedUserIds: "",
+      discordAllowedGuildIds: "",
+      discordAllowedChannelIds: "",
+      discordGrantedIntents: "",
+      discordBotPermissions: "",
+      discordInstalledGuildIds: "",
+      discordLargeGuildMode: false,
+      googleChatEnabled: false,
+      googleChatProjectId: "",
+      googleChatAppCredentialJson: "",
+      googleChatServiceAccountEmail: "",
+      googleChatWebhookUrl: "",
+      googleChatVerificationToken: "",
+      googleChatAllowedUserIds: "",
+      googleChatAllowedSpaceIds: "",
+      googleChatDeployedSpaceIds: "",
+      googleChatGrantedScopes: "",
+      googleChatAppPublished: false,
+      googleChatDomainWideDelegation: false,
+      imessageEnabled: false,
+      imessageMode: "manual_confirm",
+      imessageLocalBridgeEnabled: false,
+      imessageYeonjangBridgeEnabled: false,
+      imessageRiskAcknowledged: false,
+      imessageMessagesAppAvailable: false,
+      imessageUserSessionActive: false,
+      imessageAutomationPermissionGranted: false,
+      imessageAllowedRecipientIds: "",
+      imessageManualConfirmationRequired: true,
+      kakaoTalkEnabled: false,
+      kakaoTalkMode: "local_bridge",
+      kakaoTalkBusinessApiEnabled: false,
+      kakaoTalkBusinessApiKey: "",
+      kakaoTalkChannelId: "",
+      kakaoTalkLocalBridgeEnabled: false,
+      kakaoTalkYeonjangBridgeEnabled: false,
+      kakaoTalkRiskAcknowledged: false,
+      kakaoTalkAppAvailable: false,
+      kakaoTalkUserSessionActive: false,
+      kakaoTalkAutomationPermissionGranted: false,
+      kakaoTalkAllowedUserIds: "",
+      kakaoTalkAllowedRoomIds: "",
+      kakaoTalkManualConfirmationRequired: true,
+      kakaoTalkRateLimitPerMinute: 6,
     },
     mqtt: {
       enabled: false,
@@ -412,6 +460,18 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
       pendingChannelRuntimeSync = true
     }
     if (Object.prototype.hasOwnProperty.call(patch, "slackEnabled")) {
+      pendingChannelRuntimeSync = true
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "discordEnabled")) {
+      pendingChannelRuntimeSync = true
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "googleChatEnabled")) {
+      pendingChannelRuntimeSync = true
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "imessageEnabled")) {
+      pendingChannelRuntimeSync = true
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "kakaoTalkEnabled")) {
       pendingChannelRuntimeSync = true
     }
     setDraftAndPersist({

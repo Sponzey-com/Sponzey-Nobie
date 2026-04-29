@@ -6,6 +6,7 @@ import {
   exportRetrievalEvidenceTimeline,
   getRetrievalEvidenceTimeline,
 } from "../../control-plane/timeline.js"
+import type { ChannelSource } from "../../channels/contracts.js"
 import { listMemoryAccessTraceForRun, listTaskContinuityForLineages } from "../../db/index.js"
 import { buildActiveRunProjections } from "../../runs/active-run-projection.js"
 import { startIngressRun } from "../../runs/ingress.js"
@@ -49,7 +50,7 @@ export async function startLocalRun(params: {
   message: string
   sessionId: string | undefined
   model: string | undefined
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   focusResolution?: FocusResolveSuccess | undefined
 }) {
   const runId = crypto.randomUUID()

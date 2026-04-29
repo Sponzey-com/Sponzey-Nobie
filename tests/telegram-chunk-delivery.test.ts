@@ -1,9 +1,41 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
+import { reloadConfig } from "../packages/core/src/config/index.js"
+import { closeDb } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+
+const previousStateDir = process.env["NOBIE_STATE_DIR"]
+const previousConfig = process.env["NOBIE_CONFIG"]
+const tempDirs: string[] = []
+
+function useTempState(): void {
+  closeDb()
+  const stateDir = mkdtempSync(join(tmpdir(), "nobie-telegram-chunk-"))
+  tempDirs.push(stateDir)
+  process.env["NOBIE_STATE_DIR"] = stateDir
+  delete process.env["NOBIE_CONFIG"]
+  reloadConfig()
+}
+
+beforeEach(() => {
+  useTempState()
+})
 
 afterEach(() => {
   resetArtifactDeliveryDedupeForTest()
+  closeDb()
+  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
+  else process.env["NOBIE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
+  else process.env["NOBIE_CONFIG"] = previousConfig
+  reloadConfig()
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 describe("telegram chunk delivery helper", () => {
@@ -29,11 +61,23 @@ describe("telegram chunk delivery helper", () => {
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("안녕")
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       textDeliveries: [{
         channel: "telegram",
         text: "안녕",
         messageIds: [101, 102],
+        deliveryReceipts: [
+          expect.objectContaining({
+            status: "sent",
+            messageId: "101",
+            idempotencyKey: "telegram:final:run-1:42120565:main:part:1",
+          }),
+          expect.objectContaining({
+            status: "sent",
+            messageId: "102",
+            idempotencyKey: "telegram:final:run-1:42120565:main:part:2",
+          }),
+        ],
       }],
     })
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
@@ -73,13 +117,20 @@ describe("telegram chunk delivery helper", () => {
     })
 
     expect(responder.sendFile).toHaveBeenCalledWith("/tmp/result.png", "caption")
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       artifactDeliveries: [{
         toolName: "telegram_send_file",
         channel: "telegram",
         filePath: "/tmp/result.png",
         caption: "caption",
         messageId: 303,
+        deliveryReceipts: [
+          expect.objectContaining({
+            status: "sent",
+            messageId: "303",
+            idempotencyKey: "telegram:file:run-2:/tmp/result.png",
+          }),
+        ],
       }],
     })
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
@@ -122,13 +173,20 @@ describe("telegram chunk delivery helper", () => {
 
     expect(responder.sendFile).toHaveBeenCalledTimes(1)
     expect(responder.sendFile).toHaveBeenCalledWith("/tmp/duplicate-result.png", "caption")
-    expect(firstReceipt).toEqual({
+    expect(firstReceipt).toMatchObject({
       artifactDeliveries: [{
         toolName: "telegram_send_file",
         channel: "telegram",
         filePath: "/tmp/duplicate-result.png",
         caption: "caption",
         messageId: 303,
+        deliveryReceipts: [
+          expect.objectContaining({
+            status: "sent",
+            messageId: "303",
+            idempotencyKey: "telegram:file:run-duplicate-artifact:/tmp/duplicate-result.png",
+          }),
+        ],
       }],
     })
     expect(secondReceipt).toBeUndefined()
@@ -400,11 +458,18 @@ describe("telegram chunk delivery helper", () => {
     expect(responder.sendFinalResponse).toHaveBeenCalledWith(
       "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
     )
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       textDeliveries: [{
         channel: "telegram",
         text: "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
         messageIds: [1002],
+        deliveryReceipts: [
+          expect.objectContaining({
+            status: "sent",
+            messageId: "1002",
+            idempotencyKey: "telegram:final:run-6:42120565:main:part:1",
+          }),
+        ],
       }],
     })
   })
@@ -445,5 +510,76 @@ describe("telegram chunk delivery helper", () => {
 
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("(120, 240) 클릭 완료")
     expect(responder.sendError).not.toHaveBeenCalled()
+  })
+
+  it("falls back to a compact diagnostic message when final text would create too many chunks", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue([1201]),
+      sendError: vi.fn(),
+    }
+    const recordOutgoingMessageRef = vi.fn()
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-too-many-chunks",
+      maxTextChunks: 1,
+      recordOutgoingMessageRef,
+      logError: vi.fn(),
+    })
+    const longText = "a".repeat(4100)
+
+    await onChunk?.({ type: "text", delta: longText })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).toHaveBeenCalledTimes(1)
+    const deliveredText = responder.sendFinalResponse.mock.calls[0]?.[0]
+    expect(deliveredText).toContain("결과가 너무 길어")
+    expect(deliveredText).not.toBe(longText)
+    expect(receipt).toMatchObject({
+      textDeliveries: [{
+        channel: "telegram",
+        text: deliveredText,
+        messageIds: [1201],
+        deliveryKind: "diagnostic",
+        deliveryReceipts: [
+          expect.objectContaining({
+            status: "sent",
+            messageId: "1201",
+            idempotencyKey: "telegram:final:run-too-many-chunks:42120565:main:part:1",
+          }),
+        ],
+      }],
+    })
+    expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
+  })
+
+  it("records text delivery failures without failing the execution chunk", async () => {
+    const logError = vi.fn()
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockRejectedValue(new Error("telegram unavailable")),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-delivery-failure",
+      recordOutgoingMessageRef: vi.fn(),
+      logError,
+    })
+
+    await onChunk?.({ type: "text", delta: "final answer" })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(receipt).toBeUndefined()
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith("final answer")
+    expect(logError).toHaveBeenCalledWith("Failed to send Telegram text delivery: telegram unavailable")
   })
 })

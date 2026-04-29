@@ -1,10 +1,11 @@
 import crypto from "node:crypto"
+import type { ChannelProvider, ChannelSource } from "../channels/contracts.js"
 
 export const CONTRACT_SCHEMA_VERSION = 1 as const
 
 export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION
 export type ContractLocaleHint = "ko" | "en" | "mixed" | "unknown"
-export type ContractSource = "webui" | "telegram" | "slack" | "cli" | "scheduler" | "system"
+export type ContractSource = ChannelSource | "scheduler" | "system"
 
 export type IntentType =
   | "schedule_request"
@@ -36,7 +37,14 @@ export type ToolTargetKind =
   | "unknown"
 
 export type DeliveryMode = "reply" | "direct_artifact" | "channel_message" | "none"
-export type DeliveryChannel = "current_session" | "telegram" | "slack" | "webui" | "local" | "agent" | "none"
+export type DeliveryChannel =
+  | "current_session"
+  | ChannelProvider
+  | "webui"
+  | "cli"
+  | "local"
+  | "agent"
+  | "none"
 export type ScheduleKind = "one_time" | "recurring"
 export type ScheduleMissedPolicy = "skip" | "catch_up_once" | "next_only"
 export type SchedulePayloadKind = "literal_message" | "agent_task" | "tool_task" | "artifact_delivery"

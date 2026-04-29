@@ -1,28 +1,6 @@
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
-function splitSlackText(text, maxLength = 3000) {
-    const normalized = text.trim();
-    if (!normalized)
-        return [];
-    if (normalized.length <= maxLength)
-        return [normalized];
-    const parts = [];
-    let remaining = normalized;
-    while (remaining.length > maxLength) {
-        let splitIndex = remaining.lastIndexOf("\n", maxLength);
-        if (splitIndex < Math.floor(maxLength * 0.5)) {
-            splitIndex = remaining.lastIndexOf(" ", maxLength);
-        }
-        if (splitIndex < Math.floor(maxLength * 0.5)) {
-            splitIndex = maxLength;
-        }
-        parts.push(remaining.slice(0, splitIndex).trim());
-        remaining = remaining.slice(splitIndex).trim();
-    }
-    if (remaining)
-        parts.push(remaining);
-    return parts;
-}
+import { SlackRateLimitError, buildSlackSentDeliveryReceipt, parseSlackRetryAfterMs, splitSlackText, } from "./message-delivery.js";
 export class SlackResponder {
     config;
     channelId;
@@ -42,8 +20,21 @@ export class SlackResponder {
             },
             body: isForm ? body.toString() : JSON.stringify(body),
         });
+        if (response.status === 429) {
+            throw new SlackRateLimitError({
+                method,
+                retryAfterMs: parseSlackRetryAfterMs(response.headers) ?? 60_000,
+            });
+        }
         const payload = await response.json();
         if (!response.ok || payload.ok !== true) {
+            if (payload.error === "ratelimited") {
+                throw new SlackRateLimitError({
+                    method,
+                    retryAfterMs: parseSlackRetryAfterMs(response.headers) ?? 60_000,
+                    message: payload.response_metadata?.messages?.join(", ") || "Slack API rate limit exceeded.",
+                });
+            }
             const message = payload.error
                 || payload.response_metadata?.messages?.join(", ")
                 || `Slack API ${method} failed`;
@@ -88,6 +79,27 @@ export class SlackResponder {
             messageIds.push(response.ts);
         }
         return messageIds;
+    }
+    async sendFinalResponseWithReceipts(text, idempotencyKeyPrefix) {
+        const messageIds = [];
+        const receipts = [];
+        const parts = splitSlackText(text);
+        for (let index = 0; index < parts.length; index += 1) {
+            const part = parts[index] ?? "";
+            const response = await this.api("chat.postMessage", {
+                channel: this.channelId,
+                thread_ts: this.threadTs,
+                text: part,
+            });
+            messageIds.push(response.ts);
+            receipts.push(buildSlackSentDeliveryReceipt({
+                target: { channelId: this.channelId, threadTs: this.threadTs },
+                idempotencyKey: `${idempotencyKeyPrefix}:part:${index + 1}`,
+                messageId: response.ts,
+                providerResponse: response,
+            }));
+        }
+        return { messageIds, receipts };
     }
     async sendError(message) {
         const response = await this.api("chat.postMessage", {
@@ -158,6 +170,10 @@ export class SlackResponder {
         return response.ts;
     }
     async sendFile(filePath, caption) {
+        const result = await this.sendFileWithReceipt(filePath, `slack:file:${this.channelId}:${this.threadTs}:${filePath}`, caption);
+        return result.messageId;
+    }
+    async sendFileWithReceipt(filePath, idempotencyKey, caption) {
         const data = await readFile(filePath);
         const fileName = basename(filePath);
         const uploadInfo = await this.api("files.getUploadURLExternal", new URLSearchParams({
@@ -180,10 +196,25 @@ export class SlackResponder {
             thread_ts: this.threadTs,
             ...(caption ? { initial_comment: caption } : {}),
         }));
-        const sharedTs = complete.files?.[0]?.shares?.public
-            ? Object.values(complete.files[0].shares.public)[0]?.[0]?.ts
-            : undefined;
-        return sharedTs ?? uploadInfo.file_id;
+        const file = complete.files?.[0];
+        const publicTs = file?.shares?.public ? Object.values(file.shares.public)[0]?.[0]?.ts : undefined;
+        const privateTs = file?.shares?.private ? Object.values(file.shares.private)[0]?.[0]?.ts : undefined;
+        const messageId = publicTs ?? privateTs ?? uploadInfo.file_id;
+        return {
+            messageId,
+            fileId: uploadInfo.file_id,
+            ...(file?.permalink ? { permalink: file.permalink } : {}),
+            receipt: buildSlackSentDeliveryReceipt({
+                target: { channelId: this.channelId, threadTs: this.threadTs },
+                idempotencyKey,
+                messageId,
+                fileId: uploadInfo.file_id,
+                providerResponse: {
+                    uploadInfo,
+                    complete,
+                },
+            }),
+        };
     }
 }
 //# sourceMappingURL=responder.js.map

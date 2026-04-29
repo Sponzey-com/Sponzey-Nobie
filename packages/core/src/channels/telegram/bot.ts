@@ -6,14 +6,20 @@ import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
 import { createInboundMessageRecord } from "../../runs/request-isolation.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
-import { isAllowedUser } from "./auth.js"
+import {
+  buildAccessPolicyFromAllowedIds,
+  evaluateInboundAccessPolicy,
+  recordChannelAccessPolicyResult,
+} from "../access-policy.js"
+import { resolveChannelContinuation } from "../continuation.js"
+import type { InboundEnvelope } from "../contracts.js"
 import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
 import { TypingIndicator } from "./typing.js"
 import { TelegramResponder } from "./responder.js"
 import { FileHandler } from "./file-handler.js"
 import { registerCommands } from "./commands.js"
 import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
-import { findChannelMessageRef, findLatestChannelMessageRefForThread, getSession, insertChannelMessageRef } from "../../db/index.js"
+import { getSession, insertChannelMessageRef } from "../../db/index.js"
 import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js"
 import { setTelegramRuntimeError } from "./runtime.js"
 
@@ -25,20 +31,63 @@ export function findTelegramReplyTaskRef(params: {
   threadId?: number | undefined
 }) {
   if (params.replyToMessageId === undefined) return undefined
-
-  const exactMessageRef = findChannelMessageRef({
-    source: "telegram",
-    externalChatId: String(params.chatId),
-    externalMessageId: String(params.replyToMessageId),
-    ...(params.threadId !== undefined ? { externalThreadId: String(params.threadId) } : {}),
+  const result = resolveChannelContinuation({
+    envelope: buildTelegramContinuationEnvelope({
+      chatId: params.chatId,
+      messageId: params.replyToMessageId,
+      replyToMessageId: params.replyToMessageId,
+      ...(params.threadId !== undefined ? { threadId: params.threadId } : {}),
+    }),
   })
-  if (exactMessageRef) return exactMessageRef
+  if (result.selected?.messageRef) return result.selected.messageRef
+  return result.selected
+    ? {
+        id: `continuation:${result.selected.source}:${result.selected.externalMessageId ?? result.selected.runId}`,
+        source: "telegram",
+        session_id: result.selected.sessionId ?? "",
+        root_run_id: result.selected.runId,
+        request_group_id: result.selected.requestGroupId,
+        external_chat_id: result.selected.externalChatId ?? String(params.chatId),
+        external_thread_id: result.selected.externalThreadId ?? null,
+        external_message_id: result.selected.externalMessageId ?? String(params.replyToMessageId),
+        role: "assistant",
+        created_at: result.selected.createdAt,
+      }
+    : undefined
+}
 
-  return findLatestChannelMessageRefForThread({
-    source: "telegram",
-    externalChatId: String(params.chatId),
-    ...(params.threadId !== undefined ? { externalThreadId: String(params.threadId) } : {}),
-  })
+function buildTelegramContinuationEnvelope(params: {
+  chatId: number
+  messageId: number
+  replyToMessageId?: number | undefined
+  threadId?: number | undefined
+  userId?: number | undefined
+  text?: string | undefined
+}): InboundEnvelope {
+  return {
+    channelId: "telegram:primary",
+    provider: "telegram",
+    connectionId: "telegram:primary",
+    messageId: String(params.messageId),
+    ...(params.threadId !== undefined ? { threadId: String(params.threadId) } : {}),
+    ...(params.replyToMessageId !== undefined ? { replyToMessageId: String(params.replyToMessageId) } : {}),
+    sender: { id: String(params.userId ?? 0), providerType: "user" },
+    room: { id: String(params.chatId), type: "unknown" },
+    text: params.text ?? "",
+    attachments: [],
+    mentions: [],
+    timestamp: Date.now(),
+    rawPayloadRef: {
+      storage: "none",
+      redactionState: "not_stored",
+      provider: "telegram",
+      createdAt: Date.now(),
+    },
+    ...(params.replyToMessageId !== undefined
+      ? { continuationContext: { parentMessageId: String(params.replyToMessageId), source: "reply" as const } }
+      : {}),
+    dedupeKey: `telegram:${params.chatId}:${params.threadId ?? "main"}:${params.messageId}`,
+  }
 }
 
 export interface SessionStatus {
@@ -158,8 +207,28 @@ export class TelegramChannel {
       const threadId = message.message_thread_id ?? message.reply_to_message?.message_thread_id
       const replyToMessageId = message.reply_to_message?.message_id
 
-      if (!isAllowedUser(userId, chatType, chatId, this.config)) {
-        log.warn(`Rejected user=${userId} chat=${chatId} type=${chatType}`)
+      const access = evaluateInboundAccessPolicy({
+        envelope: buildTelegramContinuationEnvelope({
+          chatId,
+          messageId: message.message_id,
+          ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
+          ...(threadId !== undefined ? { threadId } : {}),
+          userId,
+          text: message.text ?? message.caption ?? "",
+        }),
+        policy: buildAccessPolicyFromAllowedIds({
+          provider: "telegram",
+          allowedUserIds: this.config.allowedUserIds,
+          allowedRoomIds: this.config.allowedGroupIds,
+          requireAllowedPrincipal: true,
+          allowUnlisted: false,
+          emptyAllowlistAllows: false,
+        }),
+      })
+      recordChannelAccessPolicyResult(access)
+      if (!access.allowed) {
+        log.warn(`Rejected user=${userId} chat=${chatId} type=${chatType} reason=${access.policy.reasonCode}`)
+        await ctx.reply(access.responseText ?? "This channel request is blocked by Nobie's access policy.").catch(() => undefined)
         return
       }
 
@@ -241,7 +310,21 @@ export class TelegramChannel {
       typing.start()
 
       let startedRunId = ""
-      const repliedTaskRef = findTelegramReplyTaskRef({ chatId, replyToMessageId, threadId })
+      const continuation = resolveChannelContinuation({
+        envelope: access.envelope,
+      })
+      if (continuation.status === "ambiguous") {
+        typing.stop()
+        await responder.sendReceipt(continuation.confirmationPrompt ?? "Please choose which previous task to continue.")
+        clearActiveChatForSession(sessionId)
+        return
+      }
+      const repliedTaskRef = continuation.selected
+        ? {
+            root_run_id: continuation.selected.runId,
+            request_group_id: continuation.selected.requestGroupId,
+          }
+        : undefined
 
       try {
         if (repliedTaskRef) {

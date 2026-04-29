@@ -133,7 +133,7 @@ bash scripts/start-local.sh
 Default local addresses:
 
 - Gateway: `http://127.0.0.1:18888`
-- WebUI: `http://127.0.0.1:5173`
+- WebUI: `http://127.0.0.1:4220`
 
 Useful local scripts:
 

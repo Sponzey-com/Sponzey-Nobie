@@ -146,6 +146,8 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
                 onChunk: params.onChunk,
                 chunk,
                 runId: params.runId,
+                source: params.source,
+                targetKey: params.sessionId,
                 ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
                 successfulFileDeliveries: params.successfulFileDeliveries,
                 successfulTextDeliveries: params.successfulTextDeliveries,

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import { normalizeChannelSource } from "../../channels/contracts.js"
 import { toolDispatcher } from "../../tools/index.js"
 import { authMiddleware } from "../middleware/auth.js"
 
@@ -6,7 +7,7 @@ export function registerToolsRoute(app: FastifyInstance): void {
   app.get("/api/tools", { preHandler: authMiddleware }, async (request) => {
     const requestedSource = typeof request.query === "object" && request.query !== null && "source" in request.query
       && typeof (request.query as { source?: unknown }).source === "string"
-      ? (request.query as { source: "webui" | "cli" | "telegram" | "slack" }).source
+      ? normalizeChannelSource((request.query as { source: string }).source)
       : null
 
     const tools = toolDispatcher

@@ -1,6 +1,11 @@
 import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
 import { deliverArtifactOnce, } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
+import { buildTextDeliveryKey, recordMessageLedgerEvent, } from "../../runs/message-ledger.js";
+import { buildTelegramFailedDeliveryReceipt, buildTelegramSentDeliveryReceipt, } from "./message-delivery.js";
+import { splitMessage } from "./markdown.js";
+const DEFAULT_MAX_TEXT_CHUNKS = 20;
+const FALLBACK_PREVIEW_LENGTH = 1200;
 function isArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -21,6 +26,17 @@ function buildTelegramArtifactFallbackMessage(fileName, downloadUrl, caption) {
 function shouldSendToolStartStatus(toolName) {
     return toolName !== "shell_exec";
 }
+export function buildTelegramTooManyChunksFallbackText(input) {
+    const preview = input.text.trim().slice(0, FALLBACK_PREVIEW_LENGTH);
+    const suffix = input.text.trim().length > FALLBACK_PREVIEW_LENGTH ? "\n\n...[truncated]" : "";
+    return [
+        `결과가 너무 길어 Telegram 메시지 ${input.estimatedChunks}개로 나뉠 수 있어 자동 분할 전송을 중단했습니다.`,
+        `최대 허용 분할 수: ${input.maxChunks}`,
+        "전체 결과는 WebUI 실행 상세 또는 생성된 artifact에서 확인해 주세요.",
+        "",
+        preview + suffix,
+    ].join("\n");
+}
 export function createTelegramChunkDeliveryHandler(context) {
     let bufferedText = "";
     let toolOwnedResponseActive = false;
@@ -37,6 +53,86 @@ export function createTelegramChunkDeliveryHandler(context) {
             messageId,
             role,
         });
+    };
+    const target = () => ({
+        chatId: context.chatId,
+        ...(context.threadId !== undefined ? { threadId: context.threadId } : {}),
+    });
+    const textDeliveryIdempotencyPrefix = (kind) => {
+        return `telegram:${kind}:${context.getRunId() ?? "pending"}:${context.chatId}:${context.threadId ?? "main"}`;
+    };
+    const sendFinalText = async (text, kind) => {
+        const estimatedChunks = splitMessage(text).length;
+        const maxChunks = context.maxTextChunks ?? DEFAULT_MAX_TEXT_CHUNKS;
+        const deliveredText = estimatedChunks > maxChunks
+            ? buildTelegramTooManyChunksFallbackText({ text, estimatedChunks, maxChunks })
+            : text;
+        const idempotencyPrefix = textDeliveryIdempotencyPrefix(kind);
+        try {
+            if (context.responder.sendFinalResponseWithReceipts) {
+                const result = await context.responder.sendFinalResponseWithReceipts(deliveredText, idempotencyPrefix);
+                return {
+                    messageIds: result.messageIds,
+                    deliveryReceipts: result.receipts,
+                    deliveredText,
+                };
+            }
+            const messageIds = await context.responder.sendFinalResponse(deliveredText);
+            return {
+                messageIds,
+                deliveryReceipts: messageIds.map((messageId, index) => buildTelegramSentDeliveryReceipt({
+                    target: target(),
+                    idempotencyKey: `${idempotencyPrefix}:part:${index + 1}`,
+                    messageId,
+                })),
+                deliveredText,
+            };
+        }
+        catch (error) {
+            recordTelegramTextDeliveryFailure(error, deliveredText, kind);
+            context.logError(`Failed to send Telegram text delivery: ${error instanceof Error ? error.message : String(error)}`);
+            return undefined;
+        }
+    };
+    const recordTelegramTextDeliveryFailure = (error, text, kind) => {
+        const runId = context.getRunId();
+        if (!runId)
+            return;
+        const failedReceipt = buildTelegramFailedDeliveryReceipt({
+            target: target(),
+            idempotencyKey: `${textDeliveryIdempotencyPrefix(kind)}:failed`,
+            error,
+        });
+        recordMessageLedgerEvent({
+            runId,
+            channel: "telegram",
+            eventKind: "text_delivery_failed",
+            deliveryKind: context.deliveryKind ?? "final",
+            deliveryKey: buildTextDeliveryKey("telegram", JSON.stringify([context.chatId, context.threadId ?? "main"]), text),
+            idempotencyKey: failedReceipt.idempotencyKey,
+            status: "failed",
+            summary: "Telegram text delivery failed.",
+            detail: {
+                textLength: text.length,
+                receiptStatus: failedReceipt.status,
+                errorCode: failedReceipt.errorCode ?? null,
+                errorMessage: failedReceipt.errorMessage ?? null,
+            },
+        });
+    };
+    const sendFileWithReceipt = async (filePath, idempotencyKey, caption) => {
+        if (context.responder.sendFileWithReceipt) {
+            return context.responder.sendFileWithReceipt(filePath, idempotencyKey, caption);
+        }
+        const messageId = await context.responder.sendFile(filePath, caption);
+        return {
+            messageId,
+            receipt: buildTelegramSentDeliveryReceipt({
+                target: target(),
+                idempotencyKey,
+                messageId,
+            }),
+        };
     };
     return async (chunk) => {
         if (chunk.type === "text") {
@@ -81,8 +177,8 @@ export function createTelegramChunkDeliveryHandler(context) {
                     ...(details.mimeType ? { mimeType: details.mimeType } : {}),
                     task: async () => {
                         try {
-                            const sentMessageId = await context.responder.sendFile(details.filePath, details.caption);
-                            recordIfRunPresent(sentMessageId, "assistant");
+                            const sent = await sendFileWithReceipt(details.filePath, `telegram:file:${context.getRunId() ?? "pending"}:${details.filePath}`, details.caption);
+                            recordIfRunPresent(sent.messageId, "assistant");
                             return {
                                 artifactDeliveries: [
                                     {
@@ -90,7 +186,8 @@ export function createTelegramChunkDeliveryHandler(context) {
                                         channel: "telegram",
                                         filePath: details.filePath,
                                         ...(details.caption ? { caption: details.caption } : {}),
-                                        messageId: sentMessageId,
+                                        messageId: sent.messageId,
+                                        deliveryReceipts: [sent.receipt],
                                     },
                                 ],
                             };
@@ -104,16 +201,19 @@ export function createTelegramChunkDeliveryHandler(context) {
                                 ...(details.mimeType ? { mimeType: details.mimeType } : {}),
                             });
                             const fallbackText = buildTelegramArtifactFallbackMessage(artifact.fileName, artifact.ok ? artifact.downloadUrl : undefined, details.caption);
-                            const sentMessageIds = await context.responder.sendFinalResponse(fallbackText);
-                            for (const fallbackMessageId of sentMessageIds) {
+                            const sent = await sendFinalText(fallbackText, "artifact-fallback");
+                            if (!sent)
+                                throw error;
+                            for (const fallbackMessageId of sent.messageIds) {
                                 recordIfRunPresent(fallbackMessageId, "assistant");
                             }
                             return {
                                 textDeliveries: [
                                     {
                                         channel: "telegram",
-                                        text: fallbackText,
-                                        messageIds: sentMessageIds,
+                                        text: sent.deliveredText,
+                                        messageIds: sent.messageIds,
+                                        deliveryReceipts: sent.deliveryReceipts,
                                     },
                                 ],
                                 ...(artifact.ok && artifact.url
@@ -130,9 +230,10 @@ export function createTelegramChunkDeliveryHandler(context) {
                                                 mimeType: artifact.mimeType,
                                                 sizeBytes: details.size,
                                                 ...(details.caption ? { caption: details.caption } : {}),
-                                                ...(sentMessageIds[0] !== undefined
-                                                    ? { messageId: sentMessageIds[0] }
+                                                ...(sent.messageIds[0] !== undefined
+                                                    ? { messageId: sent.messageIds[0] }
                                                     : {}),
+                                                deliveryReceipts: sent.deliveryReceipts,
                                             },
                                         ],
                                     }
@@ -157,8 +258,12 @@ export function createTelegramChunkDeliveryHandler(context) {
             if (!bufferedText)
                 return;
             const deliveredText = bufferedText;
-            const sentMessageIds = await context.responder.sendFinalResponse(bufferedText);
-            for (const messageId of sentMessageIds) {
+            const sent = await sendFinalText(bufferedText, "final");
+            if (!sent) {
+                bufferedText = "";
+                return;
+            }
+            for (const messageId of sent.messageIds) {
                 recordIfRunPresent(messageId, "assistant");
             }
             bufferedText = "";
@@ -166,8 +271,10 @@ export function createTelegramChunkDeliveryHandler(context) {
                 textDeliveries: [
                     {
                         channel: "telegram",
-                        text: deliveredText,
-                        messageIds: sentMessageIds,
+                        text: sent.deliveredText,
+                        messageIds: sent.messageIds,
+                        deliveryReceipts: sent.deliveryReceipts,
+                        ...(sent.deliveredText !== deliveredText ? { deliveryKind: "diagnostic" } : {}),
                         ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
                         ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
                         ...(context.subSessionId ? { subSessionId: context.subSessionId } : {}),

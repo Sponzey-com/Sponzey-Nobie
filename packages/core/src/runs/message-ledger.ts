@@ -48,6 +48,10 @@ export type MessageLedgerEventKind =
   | "agent_config_imported"
   | "team_config_imported"
   | "recovery_stop_generated"
+  | "delivery_attempted"
+  | "delivery_receipted"
+  | "delivery_backoff_scheduled"
+  | "channel_policy_evaluated"
   | "delivery_finalized"
 
 export type MessageLedgerDeliveryKind =

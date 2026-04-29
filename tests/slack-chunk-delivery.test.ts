@@ -1,9 +1,42 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
+import { SlackRateLimitError } from "../packages/core/src/channels/slack/message-delivery.ts"
+import { reloadConfig } from "../packages/core/src/config/index.js"
+import { closeDb } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+
+const previousStateDir = process.env["NOBIE_STATE_DIR"]
+const previousConfig = process.env["NOBIE_CONFIG"]
+const tempDirs: string[] = []
+
+function useTempState(): void {
+  closeDb()
+  const stateDir = mkdtempSync(join(tmpdir(), "nobie-slack-chunk-"))
+  tempDirs.push(stateDir)
+  process.env["NOBIE_STATE_DIR"] = stateDir
+  delete process.env["NOBIE_CONFIG"]
+  reloadConfig()
+}
+
+beforeEach(() => {
+  useTempState()
+})
 
 afterEach(() => {
   resetArtifactDeliveryDedupeForTest()
+  closeDb()
+  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
+  else process.env["NOBIE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
+  else process.env["NOBIE_CONFIG"] = previousConfig
+  reloadConfig()
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 describe("slack chunk delivery helper", () => {
@@ -30,10 +63,25 @@ describe("slack chunk delivery helper", () => {
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("안녕 슬랙")
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       textDeliveries: [{
         channel: "slack",
         text: "안녕 슬랙",
+        messageIds: ["slack-msg-1", "slack-msg-2"],
+        deliveryReceipts: [
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-msg-1",
+            idempotencyKey: "slack:final:run-slack-1:C_SLACK:thread-1:part:1",
+          }),
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-msg-2",
+            idempotencyKey: "slack:final:run-slack-1:C_SLACK:thread-1:part:2",
+          }),
+        ],
       }],
     })
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
@@ -74,12 +122,21 @@ describe("slack chunk delivery helper", () => {
     })
 
     expect(responder.sendFile).toHaveBeenCalledWith("/tmp/result.png", "메인 화면")
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       artifactDeliveries: [{
         toolName: "screen_capture",
         channel: "slack",
         filePath: "/tmp/result.png",
         caption: "메인 화면",
+        messageId: "slack-file-ts",
+        deliveryReceipts: [
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-file-ts",
+            idempotencyKey: "slack:file:run-slack-2:/tmp/result.png",
+          }),
+        ],
       }],
     })
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
@@ -123,12 +180,21 @@ describe("slack chunk delivery helper", () => {
 
     expect(responder.sendFile).toHaveBeenCalledTimes(1)
     expect(responder.sendFile).toHaveBeenCalledWith("/tmp/slack-duplicate-result.png", "메인 화면")
-    expect(firstReceipt).toEqual({
+    expect(firstReceipt).toMatchObject({
       artifactDeliveries: [{
         toolName: "screen_capture",
         channel: "slack",
         filePath: "/tmp/slack-duplicate-result.png",
         caption: "메인 화면",
+        messageId: "slack-file-ts-1",
+        deliveryReceipts: [
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-file-ts-1",
+            idempotencyKey: "slack:file:run-slack-duplicate-artifact:/tmp/slack-duplicate-result.png",
+          }),
+        ],
       }],
     })
     expect(secondReceipt).toBeUndefined()
@@ -328,10 +394,100 @@ describe("slack chunk delivery helper", () => {
     expect(responder.sendFinalResponse).toHaveBeenCalledWith(
       "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
     )
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       textDeliveries: [{
         channel: "slack",
         text: "연장 \"yeonjang-main\" 카메라 1개:\n- FaceTime HD Camera · 사용 가능 (default)",
+        messageIds: ["slack-final-ts"],
+        deliveryReceipts: [
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-final-ts",
+            idempotencyKey: "slack:final:run-slack-4:C_SLACK:thread-4:part:1",
+          }),
+        ],
+      }],
+    })
+  })
+
+  it("records Slack rate-limited final text delivery without failing the run chunk", async () => {
+    const logError = vi.fn()
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockRejectedValue(new SlackRateLimitError({
+        retryAfterMs: 2_500,
+        method: "chat.postMessage",
+      })),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-rate-limited",
+      getRunId: () => "run-slack-rate-limited",
+      recordOutgoingMessageRef: vi.fn(),
+      logError,
+    })
+
+    await onChunk?.({ type: "text", delta: "레이트 리밋 응답" })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(receipt).toBeUndefined()
+    expect(logError).toHaveBeenCalledWith("Failed to send Slack text delivery: Slack API rate limit exceeded.")
+  })
+
+  it("falls back to Slack thread artifact link when file upload fails", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockRejectedValue(new Error("upload failed")),
+      sendFinalResponse: vi.fn().mockResolvedValue(["slack-fallback-ts"]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-artifact-fallback",
+      getRunId: () => "run-slack-artifact-fallback",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    const receipt = await onChunk?.({
+      type: "tool_end",
+      toolName: "screen_capture",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery",
+        channel: "slack",
+        filePath: "/tmp/fallback-result.png",
+        caption: "캡처 결과",
+        size: 123,
+        source: "slack",
+      },
+    })
+
+    expect(responder.sendFile).toHaveBeenCalledWith("/tmp/fallback-result.png", "캡처 결과")
+    expect(responder.sendFinalResponse).toHaveBeenCalledTimes(1)
+    expect(responder.sendFinalResponse.mock.calls[0]?.[0]).toContain("캡처 결과")
+    expect(receipt).toMatchObject({
+      textDeliveries: [{
+        channel: "slack",
+        messageIds: ["slack-fallback-ts"],
+        deliveryReceipts: [
+          expect.objectContaining({
+            provider: "slack",
+            status: "sent",
+            messageId: "slack-fallback-ts",
+            idempotencyKey: "slack:artifact-fallback:run-slack-artifact-fallback:C_SLACK:thread-artifact-fallback:part:1",
+          }),
+        ],
       }],
     })
   })

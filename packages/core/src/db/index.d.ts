@@ -581,6 +581,104 @@ export interface DbOrchestrationEventInput {
     payloadRawRef?: string | null;
     producerTask?: string | null;
 }
+export type DbChannelConnectionMode = "internal" | "bot_api" | "socket" | "webhook" | "local_bridge" | "manual_bridge";
+export type DbChannelConnectionHealthStatus = "healthy" | "degraded" | "stopped" | "failed";
+export type DbChannelConnectionConfigSource = "compat" | "manual" | "import" | "system";
+export type DbChannelIdentityKind = "user" | "room" | "thread" | "bot" | "unknown";
+export interface DbChannelConnection {
+    connection_id: string;
+    provider: string;
+    display_name: string;
+    connection_mode: DbChannelConnectionMode;
+    enabled: number;
+    configured: number;
+    health_status: DbChannelConnectionHealthStatus;
+    health_message: string | null;
+    capability_manifest_json: string;
+    auth_secret_refs_json: string;
+    allowed_users_json: string;
+    allowed_rooms_json: string;
+    default_delivery_policy_json: string;
+    source: string;
+    config_source: DbChannelConnectionConfigSource;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbChannelConnectionInput {
+    connectionId: string;
+    provider: string;
+    displayName: string;
+    connectionMode: DbChannelConnectionMode;
+    enabled: boolean;
+    configured: boolean;
+    healthStatus: DbChannelConnectionHealthStatus;
+    healthMessage?: string | null;
+    capabilityManifest: unknown;
+    authSecretRefs: unknown;
+    allowedUsers: unknown;
+    allowedRooms: unknown;
+    defaultDeliveryPolicy: unknown;
+    source: string;
+    configSource?: DbChannelConnectionConfigSource;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface DbChannelCapability {
+    connection_id: string;
+    provider: string;
+    manifest_json: string;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbChannelCapabilityInput {
+    connectionId: string;
+    provider: string;
+    manifest: unknown;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface DbChannelIdentityMapping {
+    id: string;
+    connection_id: string;
+    provider: string;
+    namespace_id: string;
+    identity_kind: DbChannelIdentityKind;
+    provider_identity_id: string;
+    display_name_snapshot: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbChannelIdentityMappingInput {
+    id: string;
+    connectionId: string;
+    provider: string;
+    namespaceId: string;
+    identityKind: DbChannelIdentityKind;
+    providerIdentityId: string;
+    displayNameSnapshot?: string | null;
+    createdAt?: number;
+    updatedAt?: number;
+}
+export interface DbChannelRuntimeEvent {
+    id: string;
+    connection_id: string;
+    provider: string;
+    event_kind: string;
+    health_status: DbChannelConnectionHealthStatus | null;
+    summary: string;
+    detail_json: string;
+    created_at: number;
+}
+export interface DbChannelRuntimeEventInput {
+    id?: string;
+    connectionId: string;
+    provider: string;
+    eventKind: string;
+    healthStatus?: DbChannelConnectionHealthStatus | null;
+    summary: string;
+    detail?: Record<string, unknown>;
+    createdAt?: number;
+}
 export type DbChannelSmokeRunMode = "dry-run" | "live-run";
 export type DbChannelSmokeRunStatus = "running" | "passed" | "failed" | "skipped";
 export type DbChannelSmokeStepStatus = "passed" | "failed" | "skipped";
@@ -784,6 +882,19 @@ export declare function findLatestChannelMessageRefForThread(params: {
     externalChatId: string;
     externalThreadId?: string;
 }): DbChannelMessageRef | undefined;
+export declare function upsertChannelConnection(input: DbChannelConnectionInput): string;
+export declare function listChannelConnections(): DbChannelConnection[];
+export declare function getChannelConnection(connectionId: string): DbChannelConnection | undefined;
+export declare function upsertChannelCapability(input: DbChannelCapabilityInput): string;
+export declare function listChannelCapabilities(): DbChannelCapability[];
+export declare function replaceChannelIdentityMappings(connectionId: string, mappings: DbChannelIdentityMappingInput[]): void;
+export declare function listChannelIdentityMappings(connectionId?: string): DbChannelIdentityMapping[];
+export declare function insertChannelRuntimeEvent(input: DbChannelRuntimeEventInput): string;
+export declare function listChannelRuntimeEvents(input?: {
+    connectionId?: string;
+    provider?: string;
+    limit?: number;
+}): DbChannelRuntimeEvent[];
 export declare function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string;
 export declare function updateChannelSmokeRun(id: string, fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>): void;
 export declare function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string;

@@ -100,7 +100,7 @@ export function insertAuditLog(log) {
 export function insertChannelMessageRef(ref) {
     const id = crypto.randomUUID();
     getDb()
-        .prepare(`INSERT INTO channel_message_refs
+        .prepare(`INSERT OR IGNORE INTO channel_message_refs
        (id, source, session_id, root_run_id, request_group_id, external_chat_id, external_thread_id, external_message_id, role, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, ref.source, ref.session_id, ref.root_run_id, ref.request_group_id, ref.external_chat_id, ref.external_thread_id, ref.external_message_id, ref.role, ref.created_at);
@@ -450,6 +450,128 @@ export function findLatestChannelMessageRefForThread(params) {
        ORDER BY created_at DESC
        LIMIT 1`)
         .get(params.source, params.externalChatId);
+}
+export function upsertChannelConnection(input) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "channel.connection.upsert");
+    const updatedAt = input.updatedAt ?? Date.now();
+    const createdAt = input.createdAt ?? updatedAt;
+    db.prepare(`INSERT INTO channel_connections
+     (connection_id, provider, display_name, connection_mode, enabled, configured,
+      health_status, health_message, capability_manifest_json, auth_secret_refs_json,
+      allowed_users_json, allowed_rooms_json, default_delivery_policy_json,
+      source, config_source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(connection_id) DO UPDATE SET
+       provider = excluded.provider,
+       display_name = excluded.display_name,
+       connection_mode = excluded.connection_mode,
+       enabled = excluded.enabled,
+       configured = excluded.configured,
+       health_status = excluded.health_status,
+       health_message = excluded.health_message,
+       capability_manifest_json = excluded.capability_manifest_json,
+       auth_secret_refs_json = excluded.auth_secret_refs_json,
+       allowed_users_json = excluded.allowed_users_json,
+       allowed_rooms_json = excluded.allowed_rooms_json,
+       default_delivery_policy_json = excluded.default_delivery_policy_json,
+       source = excluded.source,
+       config_source = excluded.config_source,
+       updated_at = excluded.updated_at`).run(input.connectionId, input.provider, input.displayName, input.connectionMode, input.enabled ? 1 : 0, input.configured ? 1 : 0, input.healthStatus, input.healthMessage ?? null, toConfigJson(input.capabilityManifest), toConfigJson(input.authSecretRefs), toConfigJson(input.allowedUsers), toConfigJson(input.allowedRooms), toConfigJson(input.defaultDeliveryPolicy), input.source, input.configSource ?? "compat", createdAt, updatedAt);
+    return input.connectionId;
+}
+export function listChannelConnections() {
+    return getDb()
+        .prepare(`SELECT * FROM channel_connections
+       ORDER BY provider ASC, display_name ASC`)
+        .all();
+}
+export function getChannelConnection(connectionId) {
+    return getDb()
+        .prepare("SELECT * FROM channel_connections WHERE connection_id = ?")
+        .get(connectionId);
+}
+export function upsertChannelCapability(input) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "channel.capability.upsert");
+    const updatedAt = input.updatedAt ?? Date.now();
+    const createdAt = input.createdAt ?? updatedAt;
+    db.prepare(`INSERT INTO channel_capabilities
+     (connection_id, provider, manifest_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(connection_id) DO UPDATE SET
+       provider = excluded.provider,
+       manifest_json = excluded.manifest_json,
+       updated_at = excluded.updated_at`).run(input.connectionId, input.provider, toConfigJson(input.manifest), createdAt, updatedAt);
+    return input.connectionId;
+}
+export function listChannelCapabilities() {
+    return getDb()
+        .prepare(`SELECT * FROM channel_capabilities
+       ORDER BY provider ASC, connection_id ASC`)
+        .all();
+}
+export function replaceChannelIdentityMappings(connectionId, mappings) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "channel.identity.replace");
+    const replace = db.transaction(() => {
+        db.prepare("DELETE FROM channel_identity_mappings WHERE connection_id = ?").run(connectionId);
+        const stmt = db.prepare(`INSERT INTO channel_identity_mappings
+       (id, connection_id, provider, namespace_id, identity_kind, provider_identity_id,
+        display_name_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        for (const mapping of mappings) {
+            const updatedAt = mapping.updatedAt ?? Date.now();
+            stmt.run(mapping.id, mapping.connectionId, mapping.provider, mapping.namespaceId, mapping.identityKind, mapping.providerIdentityId, mapping.displayNameSnapshot ?? null, mapping.createdAt ?? updatedAt, updatedAt);
+        }
+    });
+    replace();
+}
+export function listChannelIdentityMappings(connectionId) {
+    if (connectionId) {
+        return getDb()
+            .prepare(`SELECT * FROM channel_identity_mappings
+         WHERE connection_id = ?
+         ORDER BY identity_kind ASC, provider_identity_id ASC`)
+            .all(connectionId);
+    }
+    return getDb()
+        .prepare(`SELECT * FROM channel_identity_mappings
+       ORDER BY provider ASC, identity_kind ASC, provider_identity_id ASC`)
+        .all();
+}
+export function insertChannelRuntimeEvent(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO channel_runtime_events
+       (id, connection_id, provider, event_kind, health_status, summary, detail_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.connectionId, input.provider, input.eventKind, input.healthStatus ?? null, input.summary, toConfigJson(input.detail ?? {}), input.createdAt ?? Date.now());
+    return id;
+}
+export function listChannelRuntimeEvents(input = {}) {
+    const limit = Math.max(1, Math.min(input.limit ?? 50, 500));
+    if (input.connectionId) {
+        return getDb()
+            .prepare(`SELECT * FROM channel_runtime_events
+         WHERE connection_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`)
+            .all(input.connectionId, limit);
+    }
+    if (input.provider) {
+        return getDb()
+            .prepare(`SELECT * FROM channel_runtime_events
+         WHERE provider = ?
+         ORDER BY created_at DESC
+         LIMIT ?`)
+            .all(input.provider, limit);
+    }
+    return getDb()
+        .prepare(`SELECT * FROM channel_runtime_events
+       ORDER BY created_at DESC
+       LIMIT ?`)
+        .all(limit);
 }
 export function insertChannelSmokeRun(input) {
     const id = input.id ?? crypto.randomUUID();

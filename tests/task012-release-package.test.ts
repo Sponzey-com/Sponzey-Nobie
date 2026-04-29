@@ -205,6 +205,7 @@ describe("task012 release package", () => {
       "ui-mode-release-gate",
       "backup-rehearsal",
       "admin-diagnostic-export",
+      "channel-delivery-release-gate",
       "channel-smoke-dry-run",
       "yeonjang-macos",
       "yeonjang-windows",

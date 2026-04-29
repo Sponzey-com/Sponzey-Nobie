@@ -1,4 +1,5 @@
 import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "../contracts/sub-agent-orchestration.js"
+import type { ChannelSource } from "../channels/contracts.js"
 
 export type RunStatus =
   | "queued"
@@ -36,7 +37,7 @@ export interface RootRun {
   handoffSummary?: string
   title: string
   prompt: string
-  source: "webui" | "cli" | "telegram" | "slack"
+  source: ChannelSource
   status: RunStatus
   taskProfile: TaskProfile
   targetId?: string

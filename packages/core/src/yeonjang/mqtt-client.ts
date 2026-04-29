@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import mqtt, { type MqttClient } from "mqtt"
+import type { ChannelSource } from "../channels/contracts.js"
 import { getConfig } from "../config/index.js"
 import { createLogger } from "../logger/index.js"
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots, validateMqttBrokerConfig, type MqttExtensionSnapshot } from "../mqtt/broker.js"
@@ -17,7 +18,7 @@ export interface YeonjangRequestMetadata {
   runId?: string
   requestGroupId?: string
   sessionId?: string
-  source?: "webui" | "cli" | "telegram" | "slack"
+  source?: ChannelSource
   agentId?: string
   auditId?: string
   capabilityDelegationId?: string
