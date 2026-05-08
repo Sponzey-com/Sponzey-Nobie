@@ -9,7 +9,7 @@ import { getConfig } from "../config/index.js"
 import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js"
 import { insertDiagnosticEvent } from "../db/index.js"
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js"
-import { detectAvailableProvider, formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js"
+import { formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js"
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { createLogger } from "../logger/index.js"
 import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/latency.js"
@@ -25,6 +25,10 @@ import type { RootRun, TaskProfile } from "./types.js"
 import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
+import type {
+  AgentExecutionDecision,
+  AgentExecutionDecisionTraceSnapshot,
+} from "../orchestration/execution-decision-contract.js"
 import {
   appendRunEvent,
   clearActiveRunController,
@@ -43,6 +47,11 @@ import {
 import { rememberRunFailure } from "./start-support.js"
 import { resolveStartContextPlan, type StartPreflightFailure } from "./preflight.js"
 import { dispatchDelegatedSubAgentTasks } from "./orchestration-dispatch.js"
+import {
+  recordTopologyDispatchFollowupTrace,
+  resolveTopologyDispatchFollowupDecision,
+  type TopologyDispatchFollowupDecision,
+} from "./topology-dispatch-fallback.js"
 
 const log = createLogger("runs:start")
 const syntheticApprovalScopes = new Set<string>()
@@ -66,6 +75,8 @@ export interface StartRootRunParams {
   targetLabel?: string | undefined
   workerRuntime?: WorkerRuntimeTarget | undefined
   orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
+  agentExecutionDecision?: AgentExecutionDecision | undefined
+  agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined
   workDir?: string | undefined
   source: ChannelSource
   skipIntake?: boolean | undefined
@@ -128,7 +139,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const runId = params.runId ?? crypto.randomUUID()
   const controller = new AbortController()
-  const targetId = params.targetId ?? (params.model ? detectAvailableProvider() : undefined)
+  const targetId = params.targetId?.trim() ? params.targetId : undefined
   const now = Date.now()
   const workDir = params.workDir ?? process.cwd()
   const incomingIntentContract = params.intentEnvelope
@@ -162,6 +173,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
       ...(params.orchestrationPlannerIntent
         ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+        : {}),
+      ...(params.agentExecutionDecision ? { agentExecutionDecision: params.agentExecutionDecision } : {}),
+      ...(params.agentExecutionDecisionTrace
+        ? { agentExecutionDecisionTrace: params.agentExecutionDecisionTrace }
         : {}),
       ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
       hasRequestGroupExecutionQueue,
@@ -214,17 +229,23 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       workerSessionId,
       topologyRouting,
     } = startPlan
+    const suppressFinalDelivery =
+      params.runScope === "child" || Boolean(params.parentRunId)
+    const effectiveOnChunk = suppressFinalDelivery ? undefined : params.onChunk
     const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun
     const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
       runId,
       sessionId,
       requestGroupId,
       source: params.source,
-      onChunk: params.onChunk,
+      onChunk: effectiveOnChunk,
       message: params.message,
       model: params.model,
+      ...(params.providerId ? { providerId: params.providerId } : {}),
+      ...(params.provider ? { provider: params.provider } : {}),
       workDir,
       reuseConversationContext: entrySemantics.reuse_conversation_context,
+      ...(suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
       activeQueueCancellationMode: entrySemantics.active_queue_cancellation_mode,
       startNestedRootRun: startRootRun,
       syntheticApprovalScopes,
@@ -238,14 +259,14 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.model ? { model: params.model } : {}),
       ...(params.providerId ? { providerId: params.providerId } : {}),
       ...(params.provider ? { provider: params.provider } : {}),
-      ...(params.onChunk ? { onChunk: params.onChunk } : {}),
+      ...(effectiveOnChunk ? { onChunk: effectiveOnChunk } : {}),
       ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
       ...(topologyRouting.mode === "route" && !params.immediateCompletionText
         ? { immediateCompletionText: "topology-runtime" }
         : {}),
       ...(params.toolsEnabled === false ? { toolsEnabled: params.toolsEnabled } : {}),
       ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
-      ...(params.targetId ? { targetId: params.targetId } : {}),
+      ...(targetId ? { targetId } : {}),
       ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
       ...(params.contextMode ? { contextMode: params.contextMode } : {}),
       ...(params.runScope ? { runScope: params.runScope } : {}),
@@ -259,7 +280,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         runId,
         sessionId,
         source: params.source,
-        onChunk: params.onChunk,
+        onChunk: effectiveOnChunk,
         logWarn: (message) => log.warn(message),
       })
     }
@@ -270,6 +291,16 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       task: async () => {
         const executionStartedAt = Date.now()
         let executionMessage = params.message
+        let topologyDelegatedDispatchAttempted = false
+        let topologyDispatchFollowupDecision: TopologyDispatchFollowupDecision | undefined
+        const topologyAgentIds = new Set(
+          startPlan.orchestrationRegistrySnapshot.activeSubAgents
+            .filter((agent) => agent.source === "topology")
+            .map((agent) => agent.agentId),
+        )
+        const hasTopologyDelegatedTasks = startPlan.orchestrationPlanSnapshot.delegatedTasks.some((task) =>
+          task.assignedAgentId !== undefined && topologyAgentIds.has(task.assignedAgentId)
+        )
         try {
           if (
             isRootRequest &&
@@ -280,6 +311,19 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             startPlan.orchestrationPlanSnapshot.delegatedTasks.length > 0
           ) {
             try {
+              setRunStepStatus(
+                runId,
+                "executing",
+                "running",
+                "서브 에이전트에게 작업을 위임했고 결과를 기다리고 있습니다.",
+              )
+              updateRunStatus(
+                runId,
+                "running",
+                "서브 에이전트에게 작업을 위임했고 결과를 기다리고 있습니다.",
+                false,
+              )
+              appendRunEvent(runId, "parent_run_awaiting_child_result:sub_agent_dispatch")
               const dispatchResult = await dispatchDelegatedSubAgentTasks({
                 plan: startPlan.orchestrationPlanSnapshot,
                 parentRunId: runId,
@@ -299,11 +343,43 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                 runId,
                 `sub_agent_dispatch_summary:attempted=${dispatchResult.attempted};completed=${dispatchResult.completed};failed=${dispatchResult.failed};skipped=${dispatchResult.skipped}`,
               )
+              if (hasTopologyDelegatedTasks && dispatchResult.attempted > 0) {
+                topologyDelegatedDispatchAttempted = true
+                topologyDispatchFollowupDecision = resolveTopologyDispatchFollowupDecision({
+                  dispatchResult,
+                  plan: startPlan.orchestrationPlanSnapshot,
+                  currentExecutorId: "agent:nobie",
+                  availableDirectChildExecutorIds: topologyRouting.mode === "route"
+                    ? topologyRouting.availableDirectChildExecutorIds
+                    : [],
+                })
+                if (topologyDispatchFollowupDecision && topologyRouting.mode === "route") {
+                  const traceResult = recordTopologyDispatchFollowupTrace({
+                    decision: topologyDispatchFollowupDecision,
+                    dispatchResult,
+                    plan: startPlan.orchestrationPlanSnapshot,
+                    runId,
+                    requestGroupId,
+                    sessionId,
+                    source: params.source,
+                    topologyId: topologyRouting.topologyId,
+                    entryNodeId: topologyRouting.selectedExecutorId ?? topologyRouting.entryNodeId,
+                  })
+                  appendRunEvent(
+                    runId,
+                    `topology_dispatch_followup_trace:${traceResult.topologyRunId};decision_trace=${traceResult.decisionTraceId};events=${traceResult.traceEventCount}`,
+                  )
+                }
+              }
               const subAgentContext = dispatchResult.outcomes
                 .filter((outcome) => outcome.status !== "skipped")
                 .map((outcome) => [
                   `- task=${outcome.taskId}`,
+                  outcome.agentDisplayName ? `executor=${outcome.agentDisplayName}` : undefined,
+                  outcome.agentSource ? `source=${outcome.agentSource}` : undefined,
                   outcome.agentId ? `agent=${outcome.agentId}` : undefined,
+                  outcome.topologyId ? `topology=${outcome.topologyId}` : undefined,
+                  outcome.topologyExecutorId ? `topologyExecutor=${outcome.topologyExecutorId}` : undefined,
                   outcome.subSessionId ? `subSession=${outcome.subSessionId}` : undefined,
                   outcome.childRunId ? `childRun=${outcome.childRunId}` : undefined,
                   `status=${outcome.status}`,
@@ -325,12 +401,53 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
               })
             }
           }
+          if (topologyDelegatedDispatchAttempted && topologyRouting.mode === "route") {
+            appendRunEvent(
+              runId,
+              `topology_runtime_deferred_to_sub_agent_dispatch:${topologyRouting.topologyId}:selected=${topologyRouting.selectedExecutorId ?? "unselected"}`,
+            )
+          }
+          if (topologyDispatchFollowupDecision) {
+            appendRunEvent(
+              runId,
+              `topology_dispatch_followup_decision:${topologyDispatchFollowupDecision.action};reason=${topologyDispatchFollowupDecision.reasonCode};failed=${topologyDispatchFollowupDecision.failedExecutorIds.join(",") || "none"}`,
+            )
+            if (topologyDispatchFollowupDecision.action === "self_solve") {
+              appendRunEvent(
+                runId,
+                "delegated_executor_runtime_failure_direct_current_agent:self_solve_after_delegation_failure",
+              )
+            } else {
+              const summary = topologyDispatchFollowupDecision.summary
+              updateRunSummary(runId, summary)
+              setRunStepStatus(
+                runId,
+                "executing",
+                topologyDispatchFollowupDecision.action === "fail_with_reason" ? "failed" : "pending",
+                summary,
+              )
+              updateRunStatus(
+                runId,
+                topologyDispatchFollowupDecision.action === "fail_with_reason" ? "failed" : "awaiting_user",
+                summary,
+                false,
+              )
+              appendRunEvent(
+                runId,
+                `topology_dispatch_followup_blocked_root_loop:${topologyDispatchFollowupDecision.action};reason=${topologyDispatchFollowupDecision.reasonCode}`,
+              )
+              return getRootRun(runId)
+            }
+          }
+          const skipIntakeForTopologyDispatch =
+            params.skipIntake === true || topologyDelegatedDispatchAttempted
+          const driverTopologyRouting = topologyDelegatedDispatchAttempted ? undefined : topologyRouting
           await executeRootRunDriver({
             runId,
             sessionId,
             requestGroupId,
             source: params.source,
-            onChunk: params.onChunk,
+            onChunk: effectiveOnChunk,
             controller,
             message: executionMessage,
             ...(params.originalRequest || executionMessage !== params.message
@@ -342,10 +459,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             currentModel: params.model,
             currentProviderId: params.providerId,
             currentProvider: params.provider,
-            currentTargetId: params.targetId,
+            currentTargetId: targetId,
             currentTargetLabel: params.targetLabel,
             workDir,
-            ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
+            ...(skipIntakeForTopologyDispatch ? { skipIntake: true } : {}),
             ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
             reconnectNeedsClarification,
             ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
@@ -354,9 +471,10 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             ...(workerSessionId ? { workerSessionId } : {}),
             ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
             isRootRequest,
+            ...(suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
             contextMode: effectiveContextMode,
             taskProfile: effectiveTaskProfile,
-            topologyRouting,
+            ...(driverTopologyRouting ? { topologyRouting: driverTopologyRouting } : {}),
             syntheticApprovalRuntimeDependencies,
             defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
           }, driverDependencies)

@@ -233,7 +233,7 @@ describe("run intake bridge pass", () => {
       message: "[Task Intake Bridge]\nCreate a calendar app",
       sessionId: "session-3",
       taskProfile: "coding",
-      requestGroupId: "group-3",
+      requestGroupId: "run-3:child:1",
       parentRunId: "run-3",
       runScope: "child",
       handoffSummary: "캘린더 만들기",
@@ -247,11 +247,159 @@ describe("run intake bridge pass", () => {
       source: "cli",
       skipIntake: true,
     }))
+    expect(dependencies.startDelegatedRun.mock.calls[0]?.[0]).not.toHaveProperty("onChunk")
     expect(result).toEqual({
       kind: "complete_silent",
       summary: "후속 실행으로 전달되었습니다.",
       eventLabel: "intake 후속 실행 생성 완료",
     })
+  })
+
+  it("waits for delegated child results when the starter returns a completion handle", async () => {
+    const dependencies = createDependencies()
+    dependencies.startDelegatedRun.mockReturnValue({
+      runId: "child-run-1",
+      finished: Promise.resolve({
+        status: "completed",
+        summary: "행랑아범이 확인한 결과입니다.",
+      }),
+    })
+    const moduleDependencies = {
+      analyzeTaskIntake: vi.fn().mockResolvedValue({
+        ...createBaseIntakeResult(),
+        action_items: [{
+          id: "task-1",
+          type: "run_task" as const,
+          title: "증시 확인",
+          priority: "high" as const,
+          reason: "후속 실행",
+          payload: {
+            preferred_target: "provider:openai",
+          },
+        }],
+      }),
+      resolveRunRoute: vi.fn().mockReturnValue({
+        targetId: "workspace:draft:node:executor-5",
+        targetLabel: "행랑아범",
+        model: "gpt-5.4",
+        reason: "routing:executor",
+      }),
+      executeScheduleActions: vi.fn(),
+      createDefaultScheduleActionDependencies: vi.fn(),
+      inferDelegatedTaskProfile: vi.fn().mockReturnValue("research"),
+      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n증시 확인"),
+    }
+
+    const result = await runIntakeBridgePass({
+      message: "코스피 확인",
+      originalRequest: "코스피 확인",
+      sessionId: "session-aggregate",
+      requestGroupId: "group-aggregate",
+      model: "gpt-test",
+      workDir: "/tmp/project",
+      source: "webui",
+      runId: "run-aggregate",
+      onChunk: undefined,
+      reuseConversationContext: false,
+    }, dependencies, moduleDependencies)
+
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
+      requestGroupId: "run-aggregate:child:1",
+      parentRunId: "run-aggregate",
+      targetId: "workspace:draft:node:executor-5",
+    }))
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-aggregate",
+      "parent_run_awaiting_child_result:intake_followup;child_run=child-run-1",
+    )
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-aggregate",
+      "parent_run_child_result_received:intake_followup;child_run=child-run-1;status=completed",
+    )
+    expect(result).toEqual({
+      kind: "complete",
+      text: "행랑아범이 확인한 결과입니다.",
+      eventLabel: "intake 처리 결과 전달",
+    })
+  })
+
+  it("retries intake instead of finalizing when delegated child review finds missing work", async () => {
+    const dependencies = createDependencies()
+    dependencies.startDelegatedRun.mockReturnValue({
+      runId: "child-run-market",
+      finished: Promise.resolve({
+        status: "completed",
+        summary: [
+          "나스닥 종합지수 시가: 확인 실패",
+          "나스닥 종합지수 현재값: 확인 실패",
+          "테슬라 현재값: 417.63달러",
+        ].join("\n"),
+      }),
+    })
+    const moduleDependencies = {
+      analyzeTaskIntake: vi.fn().mockResolvedValue({
+        ...createBaseIntakeResult(),
+        action_items: [{
+          id: "task-market",
+          type: "run_task" as const,
+          title: "나스닥과 테슬라 가격 확인",
+          priority: "high" as const,
+          reason: "후속 실행",
+          payload: {
+            preferred_target: "provider:openai",
+          },
+        }],
+      }),
+      resolveRunRoute: vi.fn().mockReturnValue({
+        targetId: "workspace:draft:node:executor-5",
+        targetLabel: "행랑아범",
+        model: "gpt-5.4",
+        reason: "routing:executor",
+      }),
+      executeScheduleActions: vi.fn(),
+      createDefaultScheduleActionDependencies: vi.fn(),
+      inferDelegatedTaskProfile: vi.fn().mockReturnValue("research"),
+      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n나스닥과 테슬라 가격 확인"),
+      reviewTaskCompletion: vi.fn().mockResolvedValue({
+        status: "followup" as const,
+        summary: "나스닥 시가와 현재값이 아직 확인되지 않았습니다.",
+        reason: "요청한 현재 지수 중 일부가 미확인 상태입니다.",
+        followupPrompt: "나스닥 종합지수 시가와 현재값을 다른 신뢰 가능한 경로로 확인하고, 이미 확인된 테슬라 값과 함께 최종 답변을 작성하세요.",
+        remainingItems: ["나스닥 종합지수 시가", "나스닥 종합지수 현재값"],
+      }),
+    }
+
+    const result = await runIntakeBridgePass({
+      message: "오늘 나스닥 출발 지수하고 현재 지수 알려줘. 테슬라 가격도",
+      originalRequest: "오늘 나스닥 출발 지수하고 현재 지수 알려줘. 테슬라 가격도",
+      sessionId: "session-market",
+      requestGroupId: "group-market",
+      model: "gpt-test",
+      workDir: "/tmp/project",
+      source: "telegram",
+      runId: "run-market",
+      onChunk: undefined,
+      reuseConversationContext: false,
+    }, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.reviewTaskCompletion).toHaveBeenCalledWith(expect.objectContaining({
+      originalRequest: "오늘 나스닥 출발 지수하고 현재 지수 알려줘. 테슬라 가격도",
+      latestAssistantMessage: expect.stringContaining("나스닥 종합지수 시가: 확인 실패"),
+      workDir: "/tmp/project",
+    }))
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-market",
+      "parent_run_child_result_review:intake_followup;child_run=child-run-market;status=followup;remaining=2",
+    )
+    expect(result).toMatchObject({
+      kind: "retry_intake",
+      summary: "나스닥 시가와 현재값이 아직 확인되지 않았습니다.",
+      reason: "요청한 현재 지수 중 일부가 미확인 상태입니다.",
+      remainingItems: ["나스닥 종합지수 시가", "나스닥 종합지수 현재값"],
+      eventLabel: "하위 실행 결과 미완료로 재분석",
+    })
+    expect(result && "message" in result ? result.message : "").toContain("Focused follow-up")
+    expect(result && "message" in result ? result.message : "").toContain("나스닥 종합지수 시가와 현재값")
   })
 
   it("normalizes mistaken direct artifact semantics before delegated weather runs", async () => {
@@ -273,6 +421,7 @@ describe("run intake bridge pass", () => {
         reason: "live information requires web lookup",
         payload: {
           goal: "Current weather conditions for Dongcheon-dong",
+          preferred_target: "provider:openai",
         },
       }],
       structured_request: {
