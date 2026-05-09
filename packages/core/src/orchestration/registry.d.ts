@@ -1,5 +1,6 @@
-import { type OrchestrationConfig } from "../config/index.js";
+import { type NobieConfig } from "../config/index.js";
 import { type AgentConfig, type AgentRelationship, type CapabilityPolicy, type PermissionProfile, type SubAgentConfig, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
+import type { NodeContract } from "../contracts/enterprise-topology.js";
 import { type AgentConfigPersistenceOptions, type TeamConfigPersistenceOptions } from "../db/index.js";
 import { type AgentCapabilitySummary, type AgentModelSummary } from "./capability-model.js";
 export interface AgentRuntimeLoadSnapshot {
@@ -23,6 +24,21 @@ export interface AgentSkillMcpSummary {
     disabledToolNames: string[];
     secretScopeId?: string;
 }
+export declare const EXECUTOR_PROFILE_SCHEMA_VERSION: 1;
+export declare const EXECUTOR_PROFILE_METADATA_KEY: "executorProfile";
+export interface ExecutorProfile {
+    schemaVersion: typeof EXECUTOR_PROFILE_SCHEMA_VERSION;
+    executorId: string;
+    displayName: string;
+    roleName: string;
+    definition: string;
+    does: string[];
+    delegationScope: string[];
+    expectedOutputs: string[];
+    handoffStyle: string;
+    declineCriteria: string[];
+    riskBoundary: string[];
+}
 export type OrchestrationRegistryStatus = "ready" | "degraded";
 export type OrchestrationRegistryDiagnosticSeverity = "info" | "warning" | "invalid";
 export interface OrchestrationRegistryDiagnostic {
@@ -44,8 +60,7 @@ export interface AgentRegistryEntry {
     avoidTasks: string[];
     teamIds: string[];
     delegationEnabled: boolean;
-    retryBudget: number;
-    source: "db" | "config";
+    source: "db" | "config" | "topology";
     config: SubAgentConfig;
     permissionProfile: PermissionProfile;
     capabilityPolicy: CapabilityPolicy;
@@ -55,6 +70,7 @@ export interface AgentRegistryEntry {
     degradedReasonCodes: string[];
     currentLoad: AgentRuntimeLoadSnapshot;
     failureRate: AgentFailureRateSnapshot;
+    executorProfile?: ExecutorProfile;
 }
 export interface TeamRegistryEntry {
     teamId: string;
@@ -210,12 +226,26 @@ export interface OrchestrationRegistrySnapshot {
     diagnostics: OrchestrationRegistryDiagnostic[];
 }
 export interface RegistryServiceDependencies {
-    getConfig?: () => Pick<{
-        orchestration: OrchestrationConfig;
-    }, "orchestration">;
+    getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>;
     now?: () => number;
     failureWindowMs?: number;
 }
+export declare function normalizeExecutorProfile(value: unknown, fallback: {
+    executorId: string;
+    displayName: string;
+    roleName?: string | undefined;
+    definition?: string | undefined;
+    does?: string[] | undefined;
+    delegationScope?: string[] | undefined;
+    expectedOutputs?: string[] | undefined;
+    handoffStyle?: string | undefined;
+    declineCriteria?: string[] | undefined;
+    riskBoundary?: string[] | undefined;
+}): ExecutorProfile;
+export declare function buildExecutorProfileFromNode(node: NodeContract, overrides?: {
+    executorId?: string;
+    displayName?: string;
+}): ExecutorProfile;
 export declare function clearAgentCapabilityIndexCache(): void;
 export declare function buildOrchestrationRegistrySnapshot(dependencies?: RegistryServiceDependencies): OrchestrationRegistrySnapshot;
 export declare function createAgentRegistryService(dependencies?: RegistryServiceDependencies): {

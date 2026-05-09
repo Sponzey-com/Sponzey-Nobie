@@ -251,7 +251,6 @@ export function buildTopologyWorkspaceStarterDraft(
   primary.failurePolicy = {
     failureReportRequired: true,
     allowPartialSuccess: true,
-    maxRetryAttempts: 0,
     fallbackNodeIds: [escalation.id],
   }
   primary.recoveryPolicy = {
@@ -344,7 +343,6 @@ function starterNode(
     failurePolicy: {
       failureReportRequired: true,
       allowPartialSuccess: true,
-      maxRetryAttempts: 0,
       fallbackNodeIds: [],
     },
     recoveryPolicy: {

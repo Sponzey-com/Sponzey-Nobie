@@ -189,6 +189,9 @@ export function buildNestedDelegationPlan(input) {
         taskScopes: budget.selectedTaskScopes,
         parentAgentId: input.parentAgentId,
         ...(input.intent ? { intent: input.intent } : {}),
+        ...(input.agentExecutionDecision
+            ? { agentExecutionDecision: input.agentExecutionDecision }
+            : {}),
         ...(input.now ? { now: input.now } : {}),
         ...(input.idProvider ? { idProvider: input.idProvider } : {}),
     });

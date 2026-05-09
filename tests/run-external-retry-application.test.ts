@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 import { applyExternalRecoveryAttempt } from "../packages/core/src/runs/external-retry-application.ts"
 
 describe("external retry application", () => {
-  it("stops when the ai recovery limit is reached", () => {
+  it("continues ai recovery past the old fixed retry count", () => {
     const rememberRunFailure = vi.fn()
+    const incrementDelegationTurnCount = vi.fn()
     const appendRunEvent = vi.fn()
+    const setRunStepStatus = vi.fn()
+    const updateRunStatus = vi.fn()
 
     const result = applyExternalRecoveryAttempt({
       kind: "ai",
@@ -25,13 +28,13 @@ describe("external retry application", () => {
         reason: "403 blocked",
         message: "forbidden",
       },
-      limitRemainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+      limitRemainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
     }, {
       rememberRunFailure,
-      incrementDelegationTurnCount: vi.fn(),
+      incrementDelegationTurnCount,
       appendRunEvent,
-      setRunStepStatus: vi.fn(),
-      updateRunStatus: vi.fn(),
+      setRunStepStatus,
+      updateRunStatus,
     })
 
     expect(rememberRunFailure).toHaveBeenCalledWith({
@@ -42,14 +45,16 @@ describe("external retry application", () => {
       detail: "403 blocked\nforbidden",
       title: "ai_recovery",
     })
-    expect(appendRunEvent).toHaveBeenCalledWith("run-1", "AI 복구 한도 도달 0/2")
+    expect(incrementDelegationTurnCount).toHaveBeenCalledWith("run-1", "AI 오류를 분석하고 다른 방법으로 재시도합니다.")
+    expect(appendRunEvent).toHaveBeenCalledWith("run-1", "AI 오류 복구 신호 1")
+    expect(setRunStepStatus).toHaveBeenCalledWith("run-1", "executing", "running", "AI 오류를 분석하고 다른 방법으로 재시도합니다.")
+    expect(updateRunStatus).toHaveBeenCalledWith("run-1", "running", "AI 오류를 분석하고 다른 방법으로 재시도합니다.", true)
     expect(result).toEqual({
-      kind: "stop",
-      stop: {
-        summary: "AI 복구 재시도 한도(2회)에 도달했습니다.",
+      kind: "retry",
+      payload: {
+        summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
-        rawMessage: "forbidden",
-        remainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+        message: "forbidden",
       },
     })
   })
@@ -80,7 +85,7 @@ describe("external retry application", () => {
         reason: "sandbox denied",
         message: "command failed",
       },
-      limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+      limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
     }, {
       rememberRunFailure,
       incrementDelegationTurnCount,
@@ -98,7 +103,7 @@ describe("external retry application", () => {
       title: "worker_runtime_recovery",
     })
     expect(incrementDelegationTurnCount).toHaveBeenCalledWith("run-2", "Claude Code 오류를 분석하고 다른 경로로 재시도합니다.")
-    expect(appendRunEvent).toHaveBeenCalledWith("run-2", "작업 세션 복구 재시도 1/2")
+    expect(appendRunEvent).toHaveBeenCalledWith("run-2", "작업 세션 복구 신호 1")
     expect(setRunStepStatus).toHaveBeenCalledWith("run-2", "executing", "running", "Claude Code 오류를 분석하고 다른 경로로 재시도합니다.")
     expect(updateRunStatus).toHaveBeenCalledWith("run-2", "running", "Claude Code 오류를 분석하고 다른 경로로 재시도합니다.", true)
     expect(result).toEqual({

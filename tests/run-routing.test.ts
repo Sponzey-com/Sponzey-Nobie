@@ -121,19 +121,20 @@ function createDraft(): SetupDraft {
 }
 
 describe("resolveRunRouteFromDraft", () => {
-  it("uses the configured default routing target even for coding tasks", () => {
+  it("does not use the configured default routing target without an explicit provider target", () => {
     const route = resolveRunRouteFromDraft(
       createDraft(),
       { taskProfile: "coding" },
     )
 
-    expect(route.targetId).toBe("provider:openai")
+    expect(route.targetId).toBeUndefined()
     expect(route.workerRuntime).toBeUndefined()
-    expect(route.providerId).toBe("openai")
-    expect(route.model).toBe("gpt-4o-mini")
+    expect(route.providerId).toBeUndefined()
+    expect(route.model).toBeUndefined()
+    expect(route.reason).toBe("routing:no-explicit-provider-target")
   })
 
-  it("returns no configured backend when the configured default target is unavailable", () => {
+  it("returns no configured backend when the explicit target is unavailable", () => {
     const draft = createDraft()
     draft.aiBackends = draft.aiBackends.map((backend) => (
       backend.id === "provider:openai"
@@ -143,7 +144,7 @@ describe("resolveRunRouteFromDraft", () => {
 
     const route = resolveRunRouteFromDraft(
       draft,
-      { taskProfile: "coding" },
+      { preferredTarget: "provider:openai", taskProfile: "coding" },
     )
 
     expect(route.targetId).toBeUndefined()
@@ -152,7 +153,7 @@ describe("resolveRunRouteFromDraft", () => {
     expect(route.reason).toBe("routing:no-configured-ai-backend")
   })
 
-  it("does not invent a fallback model for the selected backend", () => {
+  it("does not invent a fallback model for the explicit selected backend", () => {
     const draft = createDraft()
     draft.aiBackends = draft.aiBackends.map((backend) => (
       backend.id === "provider:openai"
@@ -160,7 +161,10 @@ describe("resolveRunRouteFromDraft", () => {
         : backend
     ))
 
-    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+    const route = resolveRunRouteFromDraft(draft, {
+      preferredTarget: "provider:openai",
+      taskProfile: "general_chat",
+    })
 
     expect(route.targetId).toBeUndefined()
     expect(route.providerId).toBeUndefined()
@@ -171,28 +175,31 @@ describe("resolveRunRouteFromDraft", () => {
   it("does not switch to another backend only because the task profile changed", () => {
     const route = resolveRunRouteFromDraft(createDraft(), { taskProfile: "private_local" })
 
-    expect(route.targetId).toBe("provider:openai")
-    expect(route.providerId).toBe("openai")
-    expect(route.model).toBe("gpt-4o-mini")
+    expect(route.targetId).toBeUndefined()
+    expect(route.providerId).toBeUndefined()
+    expect(route.model).toBeUndefined()
+    expect(route.reason).toBe("routing:no-explicit-provider-target")
   })
 
-  it("keeps the configured default target even when another preferred target is requested", () => {
+  it("uses the explicit preferred provider target instead of the default route", () => {
     const route = resolveRunRouteFromDraft(createDraft(), {
       preferredTarget: "provider:anthropic",
       taskProfile: "coding",
     })
 
-    expect(route.targetId).toBe("provider:openai")
-    expect(route.providerId).toBe("openai")
-    expect(route.model).toBe("gpt-4o-mini")
+    expect(route.targetId).toBe("provider:anthropic")
+    expect(route.providerId).toBe("anthropic")
+    expect(route.model).toBe("claude-3-5-haiku-20241022")
+    expect(route.reason).toBe("explicit_provider:provider:anthropic")
   })
 
-  it("uses the default target for planning tasks instead of profile-specific alternatives", () => {
+  it("does not use the default target for planning tasks without explicit provider target", () => {
     const route = resolveRunRouteFromDraft(createDraft(), { taskProfile: "planning" })
 
-    expect(route.targetId).toBe("provider:openai")
-    expect(route.providerId).toBe("openai")
-    expect(route.model).toBe("gpt-4o-mini")
+    expect(route.targetId).toBeUndefined()
+    expect(route.providerId).toBeUndefined()
+    expect(route.model).toBeUndefined()
+    expect(route.reason).toBe("routing:no-explicit-provider-target")
   })
 
   it("does not fall back to an unconfigured anthropic backend", () => {
@@ -208,7 +215,7 @@ describe("resolveRunRouteFromDraft", () => {
 
     const route = resolveRunRouteFromDraft(
       draft,
-      { taskProfile: "coding" },
+      { preferredTarget: "provider:anthropic", taskProfile: "coding" },
     )
 
     expect(route.targetId).toBeUndefined()
@@ -232,7 +239,10 @@ describe("resolveRunRouteFromDraft", () => {
         : { ...backend, enabled: false }
     ))
 
-    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+    const route = resolveRunRouteFromDraft(draft, {
+      preferredTarget: "provider:openai",
+      taskProfile: "general_chat",
+    })
     const provider = route.provider as unknown as {
       oauthConfig?: { authFilePath?: string }
       profile?: { apiKeys: string[] }
@@ -259,7 +269,10 @@ describe("resolveRunRouteFromDraft", () => {
       profile.id === "default" ? { ...profile, targets: ["provider:ollama"] } : profile
     ))
 
-    const route = resolveRunRouteFromDraft(draft, { taskProfile: "general_chat" })
+    const route = resolveRunRouteFromDraft(draft, {
+      preferredTarget: "provider:ollama",
+      taskProfile: "general_chat",
+    })
 
     expect(route.targetId).toBe("provider:ollama")
     expect(route.providerId).toBe("ollama")

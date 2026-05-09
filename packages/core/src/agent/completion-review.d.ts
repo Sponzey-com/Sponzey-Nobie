@@ -1,6 +1,6 @@
 import { type AIProvider } from "../ai/index.js";
-export { buildFeedbackRequest, collectResultReviewIssues, decideSubSessionCompletionIntegration, getSubAgentResultRetryBudgetLimit, normalizeResultReviewFailureKey, reviewSubAgentResult, } from "./sub-agent-result-review.js";
-export type { SubAgentResultParentIntegrationStatus, SubAgentResultReview, SubAgentResultReviewInput, SubAgentResultReviewIssue, SubAgentResultReviewIssueCode, SubAgentResultReviewVerdict, SubAgentRetryClass, SubSessionCompletionIntegrationDecision, } from "./sub-agent-result-review.js";
+export { aggregateSubSessionResultsForParent, buildParentAggregationRuntimeEvent, buildFeedbackRequest, collectResultReviewIssues, decideSubSessionCompletionIntegration, getSubAgentResultRetryBudgetLimit, normalizeResultReviewFailureKey, reviewSubAgentResult, summarizeChildResultForParent, } from "./sub-agent-result-review.js";
+export type { ParentAggregationChildInput, ParentAggregationInput, ParentAggregationNextAction, ParentAggregationRuntimeEventInput, ParentAggregationTrace, ParentFacingChildResult, ParentFacingChildResultStatus, SubAgentResultParentIntegrationStatus, SubAgentResultReview, SubAgentResultReviewInput, SubAgentResultReviewIssue, SubAgentResultReviewIssueCode, SubAgentResultReviewVerdict, SubAgentRetryClass, SubSessionCompletionIntegrationDecision, } from "./sub-agent-result-review.js";
 export type CompletionReviewStatus = "complete" | "followup" | "ask_user";
 export interface CompletionReviewResult {
     status: CompletionReviewStatus;

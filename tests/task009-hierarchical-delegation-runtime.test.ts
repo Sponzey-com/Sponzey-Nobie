@@ -46,7 +46,6 @@ function threeLevelTopologyFixture(): EnterpriseTopology {
     failurePolicy: {
       failureReportRequired: true,
       allowPartialSuccess: true,
-      maxRetryAttempts: 0,
       fallbackNodeIds: [],
     },
     recoveryPolicy: {

@@ -10,7 +10,7 @@ const defaultModuleDependencies = {
 };
 export async function applyErrorChunkPass(params, dependencies, moduleDependencies = defaultModuleDependencies) {
     if (params.executionRecoveryLimitStop) {
-        dependencies.appendRunEvent(params.runId, "실행 복구 한도에 도달해 자동 진행을 중단합니다.");
+        dependencies.appendRunEvent(params.runId, "실행 복구를 자동으로 계속할 수 없어 중단합니다.");
         await moduleDependencies.deliverTrackedChunk({
             onChunk: params.onChunk,
             chunk: params.chunk,
@@ -41,7 +41,7 @@ export async function applyErrorChunkPass(params, dependencies, moduleDependenci
                 reason,
                 message: params.chunk.message,
             },
-            limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+            limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
         }, dependencies);
         await moduleDependencies.deliverTrackedChunk({
             onChunk: params.onChunk,

@@ -34,11 +34,38 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
 }
 
 describe("task006 tool intent bypass", () => {
-  it("classifies explicit tool/current-value intents without semantic comparison", () => {
-    expect(detectExplicitToolIntent("메인 화면 캡쳐해서 보여줘")).toBe("screen_capture")
-    expect(detectExplicitToolIntent("열려있는 창 목록 보여줘")).toBe("window_list")
-    expect(detectExplicitToolIntent("지금 동천동 날씨 어때?")).toBe("weather_current")
-    expect(detectExplicitToolIntent("지금 나스닥 지수는 얼마야?")).toBe("finance_index_current")
+  it("classifies explicit tool/current-value intents from structured contracts only", () => {
+    expect(detectExplicitToolIntent("메인 화면 캡쳐해서 보여줘")).toBeNull()
+    expect(detectExplicitToolIntent("메인 화면 캡쳐해서 보여줘", buildIncomingIntentContract({
+      sessionId: "session-1",
+      source: "webui",
+      targetId: "display:main",
+      actionType: "run_tool",
+    }))).toBe("screen_capture")
+    expect(detectExplicitToolIntent("열려있는 창 목록 보여줘", buildIncomingIntentContract({
+      sessionId: "session-1",
+      source: "webui",
+      targetId: "window:list",
+      actionType: "run_tool",
+    }))).toBe("window_list")
+    expect(detectExplicitToolIntent("지금 동천동 날씨 어때?", buildIncomingIntentContract({
+      sessionId: "session-1",
+      source: "webui",
+      targetId: "weather:current",
+      actionType: "run_tool",
+    }))).toBe("weather_current")
+    expect(detectExplicitToolIntent("지금 나스닥 지수는 얼마야?", buildIncomingIntentContract({
+      sessionId: "session-1",
+      source: "webui",
+      targetId: "finance:nasdaq",
+      actionType: "run_tool",
+    }))).toBe("finance_index_current")
+    expect(detectExplicitToolIntent("日経平均を確認して", buildIncomingIntentContract({
+      sessionId: "session-1",
+      source: "webui",
+      targetId: "finance:nikkei",
+      actionType: "run_tool",
+    }))).toBe("finance_index_current")
   })
 
   it("bypasses active-run inspection for screen capture after retrieval", async () => {
@@ -48,7 +75,12 @@ describe("task006 tool intent bypass", () => {
       sessionId: "session-1",
       runId: "run-capture",
       source: "webui",
-      incomingIntentContract: buildIncomingIntentContract({ sessionId: "session-1", source: "webui", targetId: "display:main" }),
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-1",
+        source: "webui",
+        targetId: "display:main",
+        actionType: "run_tool",
+      }),
     }, dependencies)
 
     expect(dependencies.listActiveSessionRequestGroups).not.toHaveBeenCalled()
@@ -65,7 +97,12 @@ describe("task006 tool intent bypass", () => {
       sessionId: "session-1",
       runId: "run-kosdaq",
       source: "telegram",
-      incomingIntentContract: buildIncomingIntentContract({ sessionId: "session-1", source: "telegram", targetId: "finance:kosdaq" }),
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-1",
+        source: "telegram",
+        targetId: "finance:kosdaq",
+        actionType: "run_tool",
+      }),
     }, dependencies)
 
     expect(dependencies.listActiveSessionRequestGroups).not.toHaveBeenCalled()
@@ -86,6 +123,17 @@ describe("task006 tool intent bypass", () => {
       hasStructuredIncomingContract: true,
       hasExplicitCandidateId: false,
       hasRequestGroupId: false,
+    })).toBe(false)
+    expect(shouldInspectActiveRunCandidates({
+      message: "방금 그 파일 다시 보내줘",
+      hasStructuredIncomingContract: true,
+      hasExplicitCandidateId: false,
+      hasRequestGroupId: false,
+      incomingIntentContract: buildIncomingIntentContract({
+        sessionId: "session-1",
+        source: "telegram",
+        targetId: "artifact:last",
+      }),
     })).toBe(true)
     expect(shouldInspectActiveRunCandidates({
       message: "이 실행에 이어서 처리",
@@ -95,4 +143,3 @@ describe("task006 tool intent bypass", () => {
     })).toBe(true)
   })
 })
-

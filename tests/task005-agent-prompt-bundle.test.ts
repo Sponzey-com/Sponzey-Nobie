@@ -106,7 +106,6 @@ function subAgent(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     ...overrides,
   }
@@ -256,6 +255,14 @@ describe("task005 agent prompt bundle", () => {
         promptSource("user"),
         promptSource("soul"),
         promptSource("planner"),
+        promptSource("nobie_execution"),
+        promptSource("memory_policy"),
+        promptSource("tool_policy"),
+        promptSource("recovery_policy"),
+        promptSource("topology_executor_policy"),
+        promptSource("completion_policy"),
+        promptSource("output_policy"),
+        promptSource("channel"),
         promptSource("bootstrap", "first_run"),
       ],
       now: () => now,
@@ -265,15 +272,30 @@ describe("task005 agent prompt bundle", () => {
     expect(result.bundle.renderedPrompt).toContain("AgentPromptBundle")
     expect(result.bundle.renderedPrompt).toContain("evidence researcher")
     expect(result.bundle.completionCriteria?.[0]?.outputId).toBe("answer")
-    expect(result.bundle.sourceProvenance.map((item) => item.sourceId)).toEqual(expect.arrayContaining([
+    const sourceIds = result.bundle.sourceProvenance.map((item) => item.sourceId)
+    expect(sourceIds).toEqual(expect.arrayContaining([
       "profile:sub_agent:agent:researcher",
       "team:team:research",
       "prompt:identity:en",
       "prompt:soul:en",
       "prompt:planner:en",
-      "prompt:bootstrap:en",
+      "prompt:nobie_execution:en",
+      "prompt:memory_policy:en",
+      "prompt:tool_policy:en",
+      "prompt:recovery_policy:en",
+      "prompt:topology_executor_policy:en",
+      "prompt:completion_policy:en",
+      "prompt:output_policy:en",
+      "prompt:channel:en",
     ]))
-    expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en" && fragment.status === "inactive")).toBe(true)
+    expect(sourceIds).not.toContain("prompt:bootstrap:en")
+    expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en")).toBe(false)
+    expect(result.bundle.fragments?.filter((fragment) => fragment.sourceId.startsWith("prompt:")).every((fragment) => fragment.status === "active")).toBe(true)
+    expect(result.bundle.renderedPrompt).toContain("# nobie_execution")
+    expect(result.bundle.renderedPrompt).toContain("# completion_policy")
+    expect(result.bundle.renderedPrompt).toContain("# output_policy")
+    expect(result.bundle.renderedPrompt).toContain("# channel")
+    expect(result.bundle.renderedPrompt).not.toContain("# bootstrap")
   })
 
   it("renders capability policy when legacy allowlists omit disabledToolNames", () => {
@@ -456,7 +478,6 @@ describe("task005 agent prompt bundle", () => {
       agentNickname: "Res",
       commandRequestId: "command:1",
       status: "queued",
-      retryBudgetRemaining: 2,
       promptBundleId: bundle.bundleId,
       promptBundleSnapshot: bundle,
     }

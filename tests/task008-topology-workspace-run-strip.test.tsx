@@ -41,7 +41,7 @@ function runRecord(overrides: Partial<EnterpriseTopologyRunRecord> = {}): Enterp
 }
 
 describe("task008 topology workspace run strip", () => {
-  it("keeps Manual Run, Target, WorkOrder Template, Context, Success/Failure, and Run in a one-line control strip", () => {
+  it("renders the simple run panel without WorkOrder Template or Context controls", () => {
     const topology = buildTopologyWorkspaceStarterDraft("tool-assisted-flow", { now })
     const targetState = resolveTopologyRunTargetState({ topology })
     const html = renderToStaticMarkup(
@@ -56,16 +56,15 @@ describe("task008 topology workspace run strip", () => {
       }),
     )
 
-    expect(html).toContain('data-testid="topology-run-strip-controls"')
-    expect(html).toContain('data-layout="one-line"')
-    expect(html).toContain("Manual Run")
-    expect(html).toContain("Target")
-    expect(html).toContain("WorkOrder Template")
-    expect(html).toContain("Context")
-    expect(html).toContain("성공")
-    expect(html).toContain("실패 점검")
+    expect(html).toContain('data-testid="topology-run-simple-panel"')
+    expect(html).not.toContain('data-testid="topology-run-strip-controls"')
+    expect(html).not.toContain('data-layout="one-line"')
+    expect(html).not.toContain("Manual Run")
+    expect(html).not.toContain("Target")
+    expect(html).not.toContain("WorkOrder Template")
+    expect(html).not.toContain("Context")
     expect(html).toContain("실행")
-    expect(html).toContain('data-testid="topology-run-advanced-input"')
+    expect(html).not.toContain('data-testid="topology-run-advanced-input"')
     expect(html).not.toContain("<details open")
   })
 
@@ -126,7 +125,7 @@ describe("task008 topology workspace run strip", () => {
 
     expect(targetState.issue).toBe("no_entry_node")
     expect(html).toContain('data-testid="topology-run-entry-quick-fix"')
-    expect(html).toContain("시작 노드 지정")
+    expect(html).toContain("시작 실행자 지정")
     expect(submitButtonTag(html)).toContain('disabled=""')
   })
 
@@ -171,7 +170,7 @@ describe("task008 topology workspace run strip", () => {
     )
 
     expect(html).toContain('data-testid="topology-run-trace-cta"')
-    expect(html).toContain("Trace 보기")
+    expect(html).toContain("기록 보기")
     expect(html).toContain('data-testid="topology-run-history"')
     expect(html).toContain('data-testid="topology-run-history-item"')
     expect(html).toContain("node:tool-assisted-work")

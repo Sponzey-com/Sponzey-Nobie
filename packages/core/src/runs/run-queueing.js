@@ -1,4 +1,4 @@
-import { resolveRunRoute } from "./routing.js";
+import { isExplicitProviderRouteTarget, resolveRunRoute } from "./routing.js";
 const MAX_DELAY_TIMER_MS = 2_147_483_647;
 const delayedRunTimers = new Map();
 const delayedSessionQueues = new Map();
@@ -53,11 +53,14 @@ export function scheduleDelayedRootRun(params, dependencies) {
             sessionId: params.sessionId,
             jobId,
             task: async () => {
-                const route = resolveRouteImpl({
+                const explicitProviderTarget = isExplicitProviderRouteTarget(params.preferredTarget);
+                const route = explicitProviderTarget
+                    ? resolveRouteImpl({
                     preferredTarget: params.preferredTarget,
                     taskProfile: params.taskProfile,
                     fallbackModel: params.model,
-                });
+                })
+                    : { reason: "routing:no-explicit-provider-target" };
                 dependencies.logInfo("delayed run firing", {
                     jobId,
                     sessionId: params.sessionId,
@@ -68,6 +71,7 @@ export function scheduleDelayedRootRun(params, dependencies) {
                     model: route.model ?? params.model ?? null,
                     providerId: route.providerId ?? null,
                     workerRuntime: route.workerRuntime?.kind ?? null,
+                    providerRouteReason: route.reason,
                     toolsEnabled: params.toolsEnabled ?? true,
                     contextMode: params.contextMode ?? "full",
                 });

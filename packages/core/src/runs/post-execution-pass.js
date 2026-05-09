@@ -7,7 +7,6 @@ import { applyExecutionPostPassDecision } from "./execution-postpass-application
 import { decideFilesystemPostPassRecovery, } from "./filesystem-postpass.js";
 import { applyFilesystemPostPassDecision } from "./filesystem-postpass-application.js";
 import { runReviewEntryPass } from "./review-entry-pass.js";
-import { getRecoveryBudgetState, canConsumeRecoveryBudget } from "./recovery-budget.js";
 const defaultModuleDependencies = {
     decideExecutionPostPassRecovery,
     applyExecutionPostPassDecision,
@@ -71,11 +70,6 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
                 : {}),
         };
     }
-    const deliveryBudget = getRecoveryBudgetState({
-        usage: params.recoveryBudgetUsage,
-        kind: "delivery",
-        maxDelegationTurns: params.maxDelegationTurns,
-    });
     const deliveryPass = moduleDependencies.runDeliveryPass({
         preview: params.preview,
         wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
@@ -85,14 +79,9 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
         sawRealFilesystemMutation: params.sawRealFilesystemMutation,
         source: params.source,
         seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
-        canRetry: (params.maxDelegationTurns <= 0 || params.usedTurns < params.maxDelegationTurns)
-            && canConsumeRecoveryBudget({
-                usage: params.recoveryBudgetUsage,
-                kind: "delivery",
-                maxDelegationTurns: params.maxDelegationTurns,
-            }),
+        canRetry: true,
         maxTurns: params.maxDelegationTurns,
-        deliveryBudgetLimit: deliveryBudget.limit,
+        deliveryBudgetLimit: 0,
         originalRequest: params.originalRequest,
         previousResult: params.preview,
     });

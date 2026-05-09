@@ -25,7 +25,7 @@ export interface AdminMemoryDocumentView {
   ftsStatus: "available" | "missing" | "empty"
   vectorStatus: "available" | "missing" | "empty"
   indexStatus: string | null
-  indexRetryCount: number
+  indexSignalCount: number
   indexLastError: string | null
   runId: string | null
   requestGroupId: string | null
@@ -39,7 +39,7 @@ export interface AdminMemoryWritebackView {
   ownerKind: AdminMemoryOwnerKind
   sourceType: string
   status: string
-  retryCount: number
+  signalCount: number
   lastError: string | null
   runId: string | null
   requestGroupId: string | null
@@ -611,7 +611,7 @@ function buildMemoryInspector(input: InspectorInput): AdminMemoryInspector {
       ftsStatus: chunkCount === 0 ? "empty" as const : ftsCount > 0 ? "available" as const : "missing" as const,
       vectorStatus: chunkCount === 0 ? "empty" as const : embeddingCount > 0 ? "available" as const : "missing" as const,
       indexStatus: row.index_status,
-      indexRetryCount: Number(row.index_retry_count ?? 0),
+      indexSignalCount: Number(row.index_retry_count ?? 0),
       indexLastError: row.index_last_error ? redactText(row.index_last_error) : null,
       runId: metadataRunId(metadata),
       requestGroupId: metadataRequestGroupId(metadata),
@@ -628,7 +628,7 @@ function buildMemoryInspector(input: InspectorInput): AdminMemoryInspector {
       ownerKind: ownerKind(row.scope, row.source_type),
       sourceType: row.source_type,
       status: row.status,
-      retryCount: row.retry_count,
+      signalCount: row.retry_count,
       lastError: row.last_error ? redactText(row.last_error) : null,
       runId: row.run_id,
       requestGroupId: metadataRequestGroupId(metadata),

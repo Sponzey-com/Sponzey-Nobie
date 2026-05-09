@@ -8,6 +8,10 @@ import {
   validateTelegramWebhookSecretToken,
   type TelegramAdapterTransport,
 } from "../packages/core/src/channels/telegram/adapter.ts"
+import {
+  telegramAllowedRoomIdsForChatType,
+  telegramRoomTypeForChatType,
+} from "../packages/core/src/channels/telegram/auth.ts"
 import type { TelegramConfig } from "../packages/core/src/config/types.ts"
 import { runChannelAdapterContractTests } from "./fixtures/channel-adapter-contract-runner.ts"
 import {
@@ -192,6 +196,14 @@ describe("Telegram adapter facade policies", () => {
       valid: false,
       reason: "missing_received_secret",
     })
+  })
+
+  it("does not apply group allowlist rooms to private direct messages", () => {
+    expect(telegramAllowedRoomIdsForChatType("private", [0, -100100])).toEqual([])
+    expect(telegramAllowedRoomIdsForChatType("group", [0, -100100])).toEqual([0, -100100])
+    expect(telegramAllowedRoomIdsForChatType("supergroup", [0, -100100])).toEqual([0, -100100])
+    expect(telegramRoomTypeForChatType("private")).toBe("direct")
+    expect(telegramRoomTypeForChatType("supergroup")).toBe("group")
   })
 
   it("reports missing token as health failure without starting network transport", async () => {

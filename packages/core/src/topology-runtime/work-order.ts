@@ -9,6 +9,7 @@ import {
   validateWorkOrder,
   type AuthorityScope,
   type EnterpriseMetadata,
+  type EnterpriseMetadataValue,
   type EnterpriseTimestamp,
   type NodeContract,
   type PermissionScope,
@@ -74,7 +75,6 @@ export interface WorkOrderRuntimeEnvelopeInput {
   targetAgentId?: string
   targetNicknameSnapshot?: string
   contextPackageId?: string
-  retryBudget?: number
   now?: () => number
   authorityPreflight?: WorkOrderAuthorityPreflightInput
   baseCapabilityPolicy?: CapabilityPolicy
@@ -125,7 +125,6 @@ export interface WorkOrderPromptBridge {
 
 export interface WorkOrderResultReviewBridge {
   expectedOutputs: ExpectedOutputContract[]
-  retryBudgetRemaining: number
   additionalContextRefs: string[]
   successCriterionIds: string[]
 }
@@ -240,7 +239,6 @@ export function createWorkOrderRuntimeEnvelope(input: WorkOrderRuntimeEnvelopeIn
     ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
     contextPackageIds: [contextPackageId],
     expectedOutputs,
-    retryBudget: input.retryBudget ?? input.nodeContractSnapshot.failurePolicy?.maxRetryAttempts ?? 0,
   })
 
   const commandValidation = validateCommandRequest(command)
@@ -272,7 +270,6 @@ export function createWorkOrderRuntimeEnvelope(input: WorkOrderRuntimeEnvelopeIn
       promptBridge: buildWorkOrderPromptBridge(input.workOrder, expectedOutputs, [contextPackageId]),
       resultReviewBridge: {
         expectedOutputs,
-        retryBudgetRemaining: command.retryBudget,
         additionalContextRefs: [contextPackageId],
         successCriterionIds: input.workOrder.successCriteria.map((criterion) => criterion.criterionId),
       },
@@ -533,8 +530,8 @@ function buildWorkOrderCommandRequest(input: {
   targetNicknameSnapshot?: string
   contextPackageIds: string[]
   expectedOutputs: ExpectedOutputContract[]
-  retryBudget: number
 }): CommandRequest {
+  const topologyExecutor = topologyExecutorMetadataFromWorkOrder(input.workOrder)
   return {
     identity: input.identity,
     commandRequestId: input.commandRequestId,
@@ -542,6 +539,7 @@ function buildWorkOrderCommandRequest(input: {
     subSessionId: input.subSessionId,
     targetAgentId: input.targetAgentId,
     ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+    ...(topologyExecutor ? { topologyExecutor } : {}),
     taskScope: {
       goal: input.workOrder.objective,
       intentType: "topology_work_order",
@@ -552,11 +550,25 @@ function buildWorkOrderCommandRequest(input: {
         "topology_work_order",
         `work_order:${input.workOrder.workOrderId}`,
         `target:${input.workOrder.to.type}:${input.workOrder.to.id}`,
+        ...(topologyExecutor?.executorId ? [`executor:${topologyExecutor.executorId}`] : []),
+        ...(topologyExecutor?.edgeId ? [`edge:${topologyExecutor.edgeId}`] : []),
       ],
     },
     contextPackageIds: input.contextPackageIds,
     expectedOutputs: input.expectedOutputs,
-    retryBudget: Math.max(0, input.retryBudget),
+  }
+}
+
+function topologyExecutorMetadataFromWorkOrder(workOrder: WorkOrder): CommandRequest["topologyExecutor"] | undefined {
+  const metadata = workOrder.input.executorGraph
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined
+  const record = metadata as Record<string, EnterpriseMetadataValue | undefined>
+  if (typeof record.graphExecutionPlanId !== "string") return undefined
+  return {
+    graphExecutionPlanId: record.graphExecutionPlanId,
+    ...(typeof record.executorId === "string" ? { executorId: record.executorId } : {}),
+    ...(typeof record.edgeId === "string" ? { edgeId: record.edgeId } : {}),
+    ...(typeof record.systemPreparation === "boolean" ? { systemPreparation: record.systemPreparation } : {}),
   }
 }
 

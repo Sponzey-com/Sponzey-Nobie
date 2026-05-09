@@ -8,26 +8,26 @@ import {
 } from "../packages/core/src/runs/recovery-budget.ts"
 
 describe("run recovery budget helpers", () => {
-  it("tracks different recovery limits by failure kind", () => {
+  it("keeps recovery kinds unbounded by fixed retry count", () => {
     const usage = createRecoveryBudgetUsage()
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "interpretation",
       maxDelegationTurns: 5,
-    }).limit).toBe(5)
+    }).limit).toBe(0)
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "delivery",
       maxDelegationTurns: 5,
-    }).limit).toBe(5)
+    }).limit).toBe(0)
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "external",
       maxDelegationTurns: 5,
-    }).limit).toBe(5)
+    }).limit).toBe(0)
   })
 
   it("consumes budget independently per recovery kind", () => {
@@ -49,7 +49,7 @@ describe("run recovery budget helpers", () => {
       maxDelegationTurns: 5,
     })
 
-    expect(formatRecoveryBudgetProgress(state)).toBe("3/5")
+    expect(formatRecoveryBudgetProgress(state)).toBe("신호 3")
     expect(canConsumeRecoveryBudget({
       usage,
       kind: "delivery",

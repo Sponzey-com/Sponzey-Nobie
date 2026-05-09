@@ -1,10 +1,15 @@
 import { type OrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
+import { type AgentRegistryEntry } from "../orchestration/registry.js";
 import type { StartRootRunParams, StartedRootRun } from "./start.js";
 import type { RootRun } from "./types.js";
 export interface DelegatedTaskDispatchOutcome {
     taskId: string;
     subSessionId?: string;
     agentId?: string;
+    agentDisplayName?: string;
+    agentSource?: AgentRegistryEntry["source"];
+    topologyId?: string;
+    topologyExecutorId?: string;
     status: "completed" | "failed" | "skipped";
     reasonCode?: string;
     childRunId?: string;

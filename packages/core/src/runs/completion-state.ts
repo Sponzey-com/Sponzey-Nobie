@@ -156,7 +156,7 @@ export function deriveCompletionStageState(params: {
   }
 
   if (truncatedRecoveryRequired) {
-    blockingReasons.push("중간 절단된 출력이라 복구 재시도가 한 번 더 필요합니다.")
+    blockingReasons.push("중간 절단된 출력이라 다른 방식의 복구가 필요합니다.")
   }
 
   const checklistItems: CompletionChecklistItem[] = [
@@ -196,7 +196,7 @@ export function deriveCompletionStageState(params: {
         : interpretationStatus === "user_input_required"
           ? { reason: "completion review가 사용자 추가 입력을 요구합니다." }
           : truncatedRecoveryRequired
-            ? { reason: "중간 절단된 출력이라 복구 재시도가 한 번 더 필요합니다." }
+            ? { reason: "중간 절단된 출력이라 다른 방식의 복구가 필요합니다." }
             : recoveryStatus === "required"
               ? { reason: blockingReasons[0] || "완료 전에 처리할 항목이 남아 있습니다." }
               : {}),

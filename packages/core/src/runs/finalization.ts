@@ -96,9 +96,31 @@ export async function completeRunWithAssistantMessage(params: {
   text: string
   source: FinalizationSource
   onChunk: RunChunkDeliveryHandler | undefined
+  suppressFinalDelivery?: boolean
+  suppressFinalDeliveryReasonCode?: string
   dependencies: FinalizationDependencies
 }): Promise<void> {
-  if (params.text) {
+  if (params.text && params.suppressFinalDelivery) {
+    const reasonCode =
+      params.suppressFinalDeliveryReasonCode ?? "child_result_parent_aggregation_required"
+    recordMessageLedgerEvent({
+      runId: params.runId,
+      sessionKey: params.sessionId,
+      channel: params.source,
+      eventKind: "final_answer_suppressed",
+      deliveryKind: "final",
+      deliveryKey: `final-suppressed:${params.runId}`,
+      idempotencyKey: `final-answer-suppressed:${params.runId}:${reasonCode}`,
+      status: "suppressed",
+      summary: "하위 실행의 최종 채널 응답을 차단하고 상위 검증/취합으로 넘겼습니다.",
+      detail: {
+        reasonCode,
+        textLength: params.text.trim().length,
+        parentAggregationRequired: true,
+      },
+    })
+    params.dependencies.appendRunEvent(params.runId, `child_final_delivery_suppressed:${reasonCode}`)
+  } else if (params.text) {
     const finalDelivery = await commitFinalDelivery({
       parentRunId: params.runId,
       sessionId: params.sessionId,

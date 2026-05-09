@@ -149,9 +149,9 @@ export function insertQueueBackpressureEvent(input) {
     getDb()
         .prepare(`INSERT INTO queue_backpressure_events
        (id, created_at, queue_name, event_kind, run_id, request_group_id, pending_count,
-        retry_count, retry_budget_remaining, recovery_key, action_taken, detail_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.createdAt ?? Date.now(), input.queueName, input.eventKind, input.runId ?? null, input.requestGroupId ?? null, input.pendingCount ?? 0, input.retryCount ?? 0, input.retryBudgetRemaining ?? null, input.recoveryKey ?? null, input.actionTaken, toJsonOrNull(input.detail));
+        retry_count, recovery_key, action_taken, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.createdAt ?? Date.now(), input.queueName, input.eventKind, input.runId ?? null, input.requestGroupId ?? null, input.pendingCount ?? 0, input.retryCount ?? 0, input.recoveryKey ?? null, input.actionTaken, toJsonOrNull(input.detail));
     return id;
 }
 export function listQueueBackpressureEvents(input = {}) {
@@ -668,9 +668,16 @@ export function upsertPromptSources(sources) {
     tx();
 }
 export function updateRunPromptSourceSnapshot(runId, snapshot) {
+    const current = getDb()
+        .prepare(`SELECT prompt_source_snapshot FROM root_runs WHERE id = ?`)
+        .get(runId);
+    const existing = parseJsonRecord(current?.prompt_source_snapshot);
+    const mergedSnapshot = existing
+        ? { ...existing, ...snapshot }
+        : snapshot;
     getDb()
         .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
-        .run(JSON.stringify(snapshot), Date.now(), runId);
+        .run(JSON.stringify(mergedSnapshot), Date.now(), runId);
 }
 export function getPromptSourceStates() {
     return getDb()
@@ -774,7 +781,6 @@ function deriveDelegationPolicyValue(value) {
     return {
         enabled: asBoolean(legacyDelegation.enabled) ?? false,
         maxParallelSessions: asNumber(legacyDelegation.maxParallelSessions) ?? 1,
-        retryBudget: asNumber(legacyDelegation.retryBudget) ?? 0,
     };
 }
 function buildPersistedTeamMemberships(config) {
@@ -1554,9 +1560,9 @@ export function insertRunSubSession(input, options = {}) {
     try {
         db.prepare(`INSERT INTO run_subsessions
        (sub_session_id, parent_run_id, parent_session_id, parent_sub_session_id, parent_request_id, agent_id, agent_display_name,
-        agent_nickname, command_request_id, status, retry_budget_remaining, prompt_bundle_id, contract_json, schema_version,
+        agent_nickname, command_request_id, status, prompt_bundle_id, contract_json, schema_version,
         audit_id, idempotency_key, created_at, updated_at, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.subSessionId, input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.retryBudgetRemaining, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now, input.startedAt ?? null, input.finishedAt ?? null);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.subSessionId, input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now, input.startedAt ?? null, input.finishedAt ?? null);
         return true;
     }
     catch (error) {
@@ -1580,7 +1586,6 @@ export function updateRunSubSession(input, options = {}) {
            agent_nickname = ?,
            command_request_id = ?,
            status = ?,
-           retry_budget_remaining = ?,
            prompt_bundle_id = ?,
            contract_json = ?,
            schema_version = ?,
@@ -1590,7 +1595,7 @@ export function updateRunSubSession(input, options = {}) {
            started_at = ?,
            finished_at = ?
        WHERE sub_session_id = ?`)
-        .run(input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.retryBudgetRemaining, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, input.startedAt ?? null, input.finishedAt ?? null, input.subSessionId);
+        .run(input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, input.startedAt ?? null, input.finishedAt ?? null, input.subSessionId);
     return result.changes > 0;
 }
 export function getRunSubSession(subSessionId) {

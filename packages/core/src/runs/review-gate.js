@@ -48,17 +48,39 @@ export function decideReviewGate(params) {
 }
 export function decideSubSessionReviewGate(reviews) {
     const blocked = reviews.filter((item) => !item.review.accepted);
+    const limited = reviews.filter((item) => item.review.accepted &&
+        (item.review.verdict === "limited_success" ||
+            item.review.parentIntegrationStatus === "limited_parent_integration"));
     if (blocked.length === 0) {
+        if (limited.length > 0) {
+            return {
+                kind: "parent_aggregation_required",
+                blockedSubSessionIds: [],
+                limitedSubSessionIds: limited.map((item) => item.subSessionId),
+                reasonCodes: [
+                    "limited_success_parent_integration_requires_parent_decision",
+                    "parent_aggregation_required",
+                ],
+            };
+        }
         return {
             kind: "allow_parent_completion",
             blockedSubSessionIds: [],
+            limitedSubSessionIds: [],
             reasonCodes: ["all_sub_session_results_accepted"],
         };
     }
-    const needsManualAction = blocked.some((item) => !item.review.canRetry);
+    const needsManualAction = blocked.some((item) => !item.review.canRetry &&
+        (item.review.manualActionReason === "permission_required" ||
+            item.review.manualActionReason === "user_decision_required"));
     return {
-        kind: needsManualAction ? "manual_action_required" : "wait_for_revision",
+        kind: needsManualAction
+            ? "manual_action_required"
+            : blocked.some((item) => item.review.canRetry)
+                ? "wait_for_revision"
+                : "parent_aggregation_required",
         blockedSubSessionIds: blocked.map((item) => item.subSessionId),
+        limitedSubSessionIds: limited.map((item) => item.subSessionId),
         reasonCodes: [...new Set(blocked.map((item) => item.review.manualActionReason
                 ?? item.review.normalizedFailureKey
                 ?? "sub_session_result_not_accepted"))].sort(),

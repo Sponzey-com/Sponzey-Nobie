@@ -113,9 +113,10 @@ const DEFAULT_SYSTEM_PROMPT = [
     "Analyze the reason for failure.",
     "If needed, change the target, the model, or the execution route.",
     "Do not simply retry the exact same request in the exact same way.",
-    "Automatic recovery and retry must stay within the configured retry limit for the current request.",
-    "When the limit is reached, stop clearly instead of looping forever.",
-    "Leave a clear reason for the stop.",
+    "Do not use a fixed retry count as the reason to abandon ordinary execution.",
+    "Continue recovery while there is a concrete new path, tool, target, input correction, permission state, or verification strategy to try.",
+    "Stop only when the work is impossible, every safe alternative is exhausted, the next step requires approval, or the next step is risky or privacy-sensitive and needs the user's decision.",
+    "Leave a clear reason when automatic recovery cannot continue.",
     "",
     "[Completion Rules]",
     "Mark the task complete only when all required follow-up work is finished.",
@@ -250,7 +251,7 @@ export async function* runAgent(params) {
     const reasoningDirective = forceReasoningMode
         ? `\n[추론 정책]\n현재 실행 대상은 llama/ollama 계열로 간주합니다. 항상 사유 모드를 켜고 더 신중하게 검토한 뒤 답하세요. 즉시 반응하지 말고, 작업 계획과 가능한 해결 경로를 먼저 내부적으로 점검한 뒤 진행하세요. 내부적으로 충분히 숙고하되, 중간 추론을 길게 노출하지 말고 최종 답변만 간결하게 제시하세요.`
         : "";
-    const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요. 같은 요청 안에서 동일한 검색어, URL, 출처를 반복 호출하지 마세요. 웹 도구가 중복 호출을 skipped로 반환하면 그 결과를 실패가 아니라 이미 확보한 근거로 간주하세요. web_search는 검색 발견 단계이며 사용자 문장 분류나 별도 게이트 판단으로 완료를 막지 않습니다. 도구 결과의 freshnessPolicy와 sourceGuard.status를 우선 따르세요. freshnessPolicy=latest_approximate 또는 sourceGuard.status=approximate_latest이면 source와 fetchTimestamp를 함께 밝히고 "수집 시각 기준 근사값"으로 답할 수 있습니다. 단, 근사값 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. web_search만 성공한 상태에서 값이 없다고 최종 답변하지 마세요. 값 미추출로 완료하려면 같은 요청 안에서 web_fetch 또는 브라우저 근거 확인을 최소 1회 수행했어야 합니다. freshnessPolicy=strict_timestamp이면 sourceTimestamp 또는 신뢰 가능한 기준 시각이 없을 때 수치를 확정하지 마세요. web_fetch나 브라우저 페이지에서 숫자가 잘 추출되지 않아도 이미 확보한 web_search 스니펫에 요청 대상과 직접 연결된 수치 후보가 있고 도구 정책이 근사값을 허용하면 그 근사값으로 답하세요. 웹 페이지 값 추출을 위해 로컬 workspace file_search를 사용하지 마세요. file_search는 로컬 파일 검색 전용이며 웹 검색 결과나 브라우저 HTML의 숫자 추출 fallback이 아닙니다. 브라우저 검색은 느린 보조 근거입니다. 직접 fetch나 공식 API가 이미 충분하면 브라우저 timeout을 전체 실패로 뒤집지 마세요.`;
+    const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요. 같은 요청 안에서 동일한 검색어, URL, 출처를 반복 호출하지 마세요. 웹 도구가 중복 호출을 skipped로 반환하면 그 결과를 실패가 아니라 이미 확보한 근거로 간주하세요. web_search는 검색 발견 단계이며 사용자 문장 분류나 별도 게이트 판단으로 완료를 막지 않습니다. 도구 결과의 freshnessPolicy와 sourceGuard.status를 우선 따르세요. freshnessPolicy=latest_approximate 또는 sourceGuard.status=approximate_latest이면 source와 fetchTimestamp를 함께 밝히고 "수집 시각 기준 근사값"으로 답할 수 있습니다. 단, 근사값 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. web_search만 성공한 상태에서 값이 없다고 최종 답변하지 마세요. 값 미추출은 완료 조건이 아니라 보강 조건입니다. 같은 요청 안에서 요청된 값 중 하나라도 미확인 상태라면 다른 출처, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 안전한 대안이 남아 있는지 확인하고 계속 진행하세요. freshnessPolicy=strict_timestamp이면 sourceTimestamp 또는 신뢰 가능한 기준 시각이 없을 때 수치를 확정하지 마세요. web_fetch나 브라우저 페이지에서 숫자가 잘 추출되지 않아도 이미 확보한 web_search 스니펫에 요청 대상과 직접 연결된 수치 후보가 있고 도구 정책이 근사값을 허용하면 그 근사값으로 답하세요. 웹 페이지 값 추출을 위해 로컬 workspace file_search를 사용하지 마세요. file_search는 로컬 파일 검색 전용이며 웹 검색 결과나 브라우저 HTML의 숫자 추출 fallback이 아닙니다. 브라우저 검색은 느린 보조 근거입니다. 직접 fetch나 공식 API가 이미 충분하면 브라우저 timeout을 전체 실패로 뒤집지 마세요. 모든 안전한 대안이 소진된 경우에만 시도한 출처와 미확인 항목을 명시해 제한적으로 종료하세요.`;
     const instructions = loadMergedInstructions(workDir);
     const profileContext = buildUserProfilePromptContext();
     const nobieMd = loadNobieMd(workDir);

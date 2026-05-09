@@ -48,7 +48,10 @@ import type {
   EnterpriseTopologyImportRequest,
   EnterpriseTopologyImportResponse,
   EnterpriseTopologyRunFailureReportsResponse,
+  EnterpriseTopologyRunListResponse,
+  EnterpriseTopologyRunProjectionResponse,
   EnterpriseTopologyRunTraceResponse,
+  GraphExecutionPlanPreviewResponse,
   TopologyImportExportFormat,
   WorkOrderTemplateCatalogResponse,
 } from "../lib/enterprise-topology-operations"
@@ -57,6 +60,10 @@ import {
   type TopologyWorkspaceSnapshot,
   type TopologyWorkspaceSnapshotLoadRequest,
 } from "../lib/topology-workspace"
+import type {
+  NodeDefinitionSuggestionRequest,
+  NodeDefinitionSuggestionResult,
+} from "../lib/node-definition-suggestion"
 import { localAdapter } from "./adapters/local"
 import type {
   ControlPlaneAdapter,
@@ -314,7 +321,7 @@ export interface AdminToolLabResponse {
       startedAt: number | null
       finishedAt: number | null
       durationMs: number | null
-      retryCount: number
+      signalCount: number
       eventCount: number
       paramsRedacted: unknown
       outputRedacted: unknown
@@ -365,7 +372,7 @@ export interface AdminToolLabResponse {
         fetchTimestamp: string | null
         sourceTimestamp: string | null
         durationMs: number | null
-        retryCount: number
+        signalCount: number
       }>
       candidateExtraction: {
         eventCount: number
@@ -468,7 +475,7 @@ export interface AdminRuntimeInspectorsResponse {
         ftsStatus: string
         vectorStatus: string
         indexStatus: string | null
-        indexRetryCount: number
+        indexSignalCount: number
         indexLastError: string | null
         runId: string | null
         requestGroupId: string | null
@@ -484,7 +491,7 @@ export interface AdminRuntimeInspectorsResponse {
         ownerKind: "user" | "diagnostic"
         sourceType: string
         status: string
-        retryCount: number
+        signalCount: number
         lastError: string | null
         runId: string | null
         requestGroupId: string | null
@@ -1362,6 +1369,11 @@ export const api = {
       body: JSON.stringify({ layout }),
     }),
 
+  enterpriseTopologyGuiDraft: (topologyId: string) =>
+    request<EnterpriseTopologyGuiDraftResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft`,
+    ),
+
   startEnterpriseTopologyGuiDraft: (
     topologyId: string,
     payload: EnterpriseTopologyGuiDraftStartRequest = {},
@@ -1442,6 +1454,25 @@ export const api = {
       `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/compiled-preview`,
     ),
 
+  createEnterpriseTopologyGuiDraftExecutionPlan: (topologyId: string) =>
+    request<GraphExecutionPlanPreviewResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/executor-graph/plan`,
+      { method: "POST" },
+    ),
+
+  suggestExecutorNodeDefinition: (
+    _workspaceId: string,
+    topologyId: string,
+    payload: Partial<NodeDefinitionSuggestionRequest>,
+  ) =>
+    request<NodeDefinitionSuggestionResult>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/executor-nodes/suggest-definition`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+
   runEnterpriseTopologyGuiDraft: (
     topologyId: string,
     payload: EnterpriseTopologyGuiDraftRunRequest,
@@ -1452,6 +1483,16 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload),
       },
+    ),
+
+  topologyRuns: (params: { topologyId?: string; rootRunId?: string; status?: string; limit?: number } = {}) =>
+    request<EnterpriseTopologyRunListResponse>(
+      `/api/topology-runs${buildAdminLiveQuery(params)}`,
+    ),
+
+  topologyRun: (topologyRunId: string, params: { limit?: number } = {}) =>
+    request<EnterpriseTopologyRunProjectionResponse>(
+      `/api/topology-runs/${encodeURIComponent(topologyRunId)}${buildAdminLiveQuery(params)}`,
     ),
 
   topologyRunTrace: (topologyRunId: string) =>

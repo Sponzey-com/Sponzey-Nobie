@@ -59,14 +59,12 @@ function buildSlackContinuationEnvelope(params: {
   text: string
   teamId?: string | undefined
 }): InboundEnvelope {
-  const isThreadReply = Boolean(params.threadTs) && params.threadTs !== params.messageTs
   return {
     channelId: "slack:workspace",
     provider: "slack",
     connectionId: "slack:primary",
     messageId: params.messageTs,
     ...(params.threadTs ? { threadId: params.threadTs } : {}),
-    ...(isThreadReply && params.threadTs ? { replyToMessageId: params.threadTs } : {}),
     sender: { id: params.userId, providerType: "user" },
     room: { id: params.channelId, type: "channel" },
     ...(params.teamId ? { workspace: { id: params.teamId } } : {}),
@@ -80,9 +78,6 @@ function buildSlackContinuationEnvelope(params: {
       provider: "slack",
       createdAt: Date.now(),
     },
-    ...(isThreadReply && params.threadTs
-      ? { continuationContext: { parentMessageId: params.threadTs, source: "thread" as const } }
-      : {}),
     dedupeKey: `slack:${params.channelId}:${params.messageTs}`,
   }
 }

@@ -29,10 +29,12 @@ function createPromptFixture(): string {
     "user.md",
     "soul.md",
     "planner.md",
+    "nobie-execution.md",
     "memory_policy.md",
     "tool_policy.md",
     "web_retrieval_planner.md",
     "recovery_policy.md",
+    "topology_executor_policy.md",
     "completion_policy.md",
     "output_policy.md",
     "channel.md",
@@ -65,10 +67,12 @@ describe("prompt source registry", () => {
       "user",
       "soul",
       "planner",
+      "nobie_execution",
       "memory_policy",
       "tool_policy",
       "web_retrieval_planner",
       "recovery_policy",
+      "topology_executor_policy",
       "completion_policy",
       "output_policy",
       "channel",
@@ -82,9 +86,11 @@ describe("prompt source registry", () => {
       "user",
       "soul",
       "planner",
+      "nobie_execution",
       "memory_policy",
       "tool_policy",
       "recovery_policy",
+      "topology_executor_policy",
       "completion_policy",
       "output_policy",
       "channel",
@@ -94,7 +100,10 @@ describe("prompt source registry", () => {
     expect(assembly?.text).toContain("identity.md content")
     expect(assembly?.text).toContain("soul.md content")
     expect(assembly?.text).toContain("planner.md content")
+    expect(assembly?.text).toContain("nobie-execution.md content")
+    expect(assembly?.text).toContain("topology_executor_policy.md content")
     expect(assembly?.text).toContain("output_policy.md content")
+    expect(assembly?.text).toContain("channel.md content")
     expect(assembly?.text).not.toContain("bootstrap.md content")
     expect(assembly?.snapshot.sources.every((source) => source.checksum.length === 64)).toBe(true)
   })
@@ -156,16 +165,20 @@ describe("prompt source registry", () => {
     expect(first.created).toContain("identity.md")
     expect(first.created).toContain("user.md")
     expect(first.created).toContain("planner.md")
+    expect(first.created).toContain("nobie-execution.md")
     expect(first.created).toContain("memory_policy.md")
     expect(first.created).toContain("tool_policy.md")
     expect(first.created).toContain("web_retrieval_planner.md")
     expect(first.created).toContain("recovery_policy.md")
+    expect(first.created).toContain("topology_executor_policy.md")
     expect(first.created).toContain("completion_policy.md")
     expect(first.created).toContain("output_policy.md")
     expect(first.created).toContain("channel.md")
     expect(first.created).toContain("bootstrap.md")
     expect(existsSync(join(first.promptsDir, "user.md"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "web_retrieval_planner.md"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "nobie-execution.md"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "topology_executor_policy.md"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "output_policy.md"))).toBe(true)
 
     const userPromptPath = join(first.promptsDir, "user.md")
@@ -188,6 +201,38 @@ describe("prompt source registry", () => {
     expect(firstRun?.text).toContain("bootstrap.md content")
   })
 
+  it("keeps late runtime policies inside the prompt assembly ceiling", () => {
+    const root = createPromptFixture()
+    const promptsDir = join(root, "prompts")
+    const repeated = "policy line ".repeat(450)
+    for (const filename of [
+      "definitions.md",
+      "identity.md",
+      "user.md",
+      "soul.md",
+      "planner.md",
+      "nobie-execution.md",
+      "memory_policy.md",
+      "tool_policy.md",
+      "recovery_policy.md",
+      "topology_executor_policy.md",
+      "completion_policy.md",
+      "output_policy.md",
+      "channel.md",
+    ]) {
+      const tailMarker = filename === "channel.md" ? "\nCHANNEL_TAIL_MARKER\n" : "\n"
+      writeFileSync(join(promptsDir, filename), `# ${filename}\n\n${repeated}${tailMarker}`, "utf-8")
+    }
+
+    const assembly = loadSystemPromptSourceAssembly(root)
+
+    expect(assembly?.snapshot.sources.at(-3)?.sourceId).toBe("completion_policy")
+    expect(assembly?.snapshot.sources.at(-2)?.sourceId).toBe("output_policy")
+    expect(assembly?.snapshot.sources.at(-1)?.sourceId).toBe("channel")
+    expect(assembly?.text).toContain("CHANNEL_TAIL_MARKER")
+    expect(assembly?.text).not.toContain("bootstrap.md content")
+  })
+
   it("detects secret-like prompt source content and excludes it from the registry", () => {
     const root = createPromptFixture()
     const unsafe = "# identity\n\napi_key = sk-abcdefghijklmnopqrstuvwxyz123456"
@@ -206,7 +251,7 @@ describe("prompt source registry", () => {
 
     bootstrap()
     const firstCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count
-    expect(firstCount).toBe(13)
+    expect(firstCount).toBe(15)
     expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "en")).toBe(true)
 
     bootstrap()

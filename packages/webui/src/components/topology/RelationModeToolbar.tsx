@@ -640,7 +640,11 @@ export function RelationModeToolbar({
   const runtimeCandidate = activeRelationType !== undefined && isRuntimeRelationCandidate(activeRelationType, catalog)
 
   return (
-    <section className="border-b border-stone-200 bg-white px-3 py-2" data-testid="enterprise-relation-mode-toolbar">
+    <section
+      className="border-b border-stone-200 bg-white px-3 py-2"
+      data-testid="enterprise-relation-mode-toolbar"
+      data-active-relation-type={activeRelationType ?? ""}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-400">
           {text("연결", "Connect")}

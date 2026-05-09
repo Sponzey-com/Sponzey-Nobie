@@ -36,14 +36,14 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
 }
 
 describe("task006 continuation contract", () => {
-  it("detects explicit references without semantic similarity", () => {
-    expect(hasExplicitContinuationReference("방금 그 파일 다시 보내줘")).toBe(true)
-    expect(hasExplicitContinuationReference("그거 이어서 진행해줘")).toBe(true)
+  it("does not classify continuation references from raw message text", () => {
+    expect(hasExplicitContinuationReference("방금 그 파일 다시 보내줘")).toBe(false)
+    expect(hasExplicitContinuationReference("그거 이어서 진행해줘")).toBe(false)
     expect(hasExplicitContinuationReference("지금 코스닥 지수 알려줘")).toBe(false)
     expect(hasExplicitContinuationReference("메인 화면 캡쳐해서 보여줘")).toBe(false)
   })
 
-  it("allows continuation only when the message contains an explicit reference", async () => {
+  it("allows continuation only when the structured contract references an active target", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
       message: "방금 그 파일 다시 보내줘",
@@ -57,9 +57,11 @@ describe("task006 continuation contract", () => {
     expect(dependencies.compareRequestContinuation).toHaveBeenCalledTimes(1)
     expect(result.requestGroupId).toBe("group-prev")
     expect(result.isRootRequest).toBe(false)
+    expect(result.requestIsolation).toBe("continuation")
+    expect(result.continuationSource).toBe("explicit_contract_comparison")
   })
 
-  it("does not turn a missing explicit-reference candidate into a forced clarification", async () => {
+  it("does not turn a missing structured active target into a forced clarification", async () => {
     const dependencies = createDependencies({
       listActiveSessionRequestGroups: vi.fn(() => []),
     })
@@ -76,6 +78,7 @@ describe("task006 continuation contract", () => {
     expect(result.reconnectNeedsClarification).toBe(false)
     expect(result.requestGroupId).toBe("run-no-candidate")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
   })
 })
-

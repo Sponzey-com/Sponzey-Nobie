@@ -11,7 +11,7 @@ describe("run running application", () => {
     const result = applyRunningContinuationState({
       runId: "run-1",
       state: {
-        eventLabels: ["복구 재시도 1/3", "대안 후보: 다른 도구"],
+        eventLabels: ["복구 신호 1", "대안 후보: 다른 도구"],
         reviewStepStatus: "running",
         reviewSummary: "다른 방법으로 다시 시도합니다.",
         executingSummary: "복구 실행 중입니다.",
@@ -35,7 +35,7 @@ describe("run running application", () => {
       },
     })
 
-    expect(events).toEqual(["복구 재시도 1/3", "대안 후보: 다른 도구"])
+    expect(events).toEqual(["복구 신호 1", "대안 후보: 다른 도구"])
     expect(summaries).toEqual(["다른 방법으로 다시 시도합니다."])
     expect(steps).toEqual([
       { stepKey: "reviewing", status: "running", summary: "다른 방법으로 다시 시도합니다." },

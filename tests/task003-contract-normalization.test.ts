@@ -119,13 +119,11 @@ function agentConfig(): SubAgentConfig {
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: ["team:research"],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 2,
     createdAt: now,
@@ -191,7 +189,6 @@ function commandRequest(): CommandRequest {
     },
     contextPackageIds: ["exchange:ctx-1"],
     expectedOutputs: [expectedOutput],
-    retryBudget: 2,
   }
 }
 
@@ -303,7 +300,7 @@ describe("task003 contract normalization and validators", () => {
     expect(validation.ok).toBe(true)
     expect(legacy.normalizedNickname).toBe("researcher")
     expect(legacy.modelProfile.providerId).toBe("provider:unknown")
-    expect(legacy.delegationPolicy?.retryBudget).toBe(2)
+    expect(legacy.delegationPolicy).toEqual({ enabled: true, maxParallelSessions: 2 })
   })
 
   it("promotes legacy team rows without losing member or role meaning across serialization boundaries", () => {
@@ -444,7 +441,7 @@ describe("task003 contract normalization and validators", () => {
     if (!invalid.ok) expect(invalid.issues.map((issue) => issue.path)).toContain("$.outputs")
   })
 
-  it("rejects feedback requests without source result ids and retry budget, and validates generated feedback", () => {
+  it("rejects feedback requests without source result ids and validates generated feedback", () => {
     const feedback = buildFeedbackRequest({
       resultReport: resultReport({
         outputs: [
@@ -456,7 +453,6 @@ describe("task003 contract normalization and validators", () => {
       missingItems: ["missing_evidence:answer:source"],
       requiredChanges: ["Attach one source citation."],
       additionalContextRefs: ["exchange:ctx-1"],
-      retryBudgetRemaining: 1,
       reasonCode: "sub_agent_result_review:required_evidence_missing:answer:source:none",
       now: () => now,
       idProvider: () => "feedback:1",
@@ -472,14 +468,12 @@ describe("task003 contract normalization and validators", () => {
     const invalid = validateFeedbackRequest({
       ...feedback,
       sourceResultReportIds: [],
-      retryBudgetRemaining: undefined,
     } as unknown)
 
     expect(invalid.ok).toBe(false)
     if (!invalid.ok) {
       expect(invalid.issues.map((issue) => issue.path)).toEqual(expect.arrayContaining([
         "$.sourceResultReportIds",
-        "$.retryBudgetRemaining",
       ]))
     }
   })

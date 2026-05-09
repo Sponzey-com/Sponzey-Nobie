@@ -138,10 +138,12 @@ export interface CompiledAuthorityRule {
 
 export interface CompiledDelegationTree {
   rootNodeIds: string[]
+  rootChildNodeIds: string[]
   entryNodeId: string | null
   exitNodeIds: string[]
   edges: Record<string, string[]>
   parents: Record<string, string[]>
+  incomingEdgeCountByNodeId: Record<string, number>
 }
 
 export interface CompiledDelegationScope {
@@ -198,6 +200,7 @@ export interface CompiledResponsibilityIndex {
 export interface CompiledRuntimeExecutionContext {
   topologyId: string
   entryNodeId: string | null
+  rootChildNodeIds: string[]
   exitNodeIds: string[]
   nodeCount: number
   delegationEdgeCount: number
@@ -320,7 +323,8 @@ export function compileTopology(topology: EnterpriseTopology, options: CompileTo
     responsibilityIndex: buildResponsibilityIndex(topology),
     runtimeExecutionContext: {
       topologyId: topology.id,
-      entryNodeId: parentChildTree.entryNodeId,
+      entryNodeId: null,
+      rootChildNodeIds: [...parentChildTree.rootChildNodeIds],
       exitNodeIds: [...parentChildTree.exitNodeIds],
       nodeCount: topology.nodes.length,
       delegationEdgeCount: Object.values(parentChildTree.edges).reduce((count, children) => count + children.length, 0),
@@ -403,14 +407,18 @@ function buildDelegationGraph(topology: EnterpriseTopology): DelegationGraph {
   const edges: Record<string, string[]> = Object.fromEntries(topology.nodes.map((node) => [node.id, []]))
   const parents: Record<string, string[]> = Object.fromEntries(topology.nodes.map((node) => [node.id, []]))
   const relationIdsByPair = new Map<string, string[]>()
+  const delegationRelations = topology.relations.filter((relation) => (
+    relation.relationType === "delegates_to" &&
+    relation.from.entityType === "node" &&
+    relation.to.entityType === "node"
+  ))
 
-  topology.nodes.forEach((node) => {
-    node.children.forEach((childNodeId) => addDelegationEdge(edges, parents, relationIdsByPair, node.id, childNodeId))
-  })
-
-  topology.relations.forEach((relation) => {
-    if (relation.relationType !== "delegates_to") return
-    if (relation.from.entityType !== "node" || relation.to.entityType !== "node") return
+  if (delegationRelations.length === 0) {
+    topology.nodes.forEach((node) => {
+      node.children.forEach((childNodeId) => addDelegationEdge(edges, parents, relationIdsByPair, node.id, childNodeId))
+    })
+  }
+  delegationRelations.forEach((relation) => {
     addDelegationEdge(edges, parents, relationIdsByPair, relation.from.id, relation.to.id, relation.id)
   })
 
@@ -422,13 +430,18 @@ function buildCompiledDelegationTree(topology: EnterpriseTopology, graph: Delega
   const childIds = new Set(Object.values(graph.edges).flat())
   const rootNodeIds = nodeIds.filter((nodeId) => !childIds.has(nodeId))
   const exitNodeIds = nodeIds.filter((nodeId) => (graph.edges[nodeId] ?? []).length === 0)
+  const incomingEdgeCountByNodeId = Object.fromEntries(
+    nodeIds.map((nodeId) => [nodeId, graph.parents[nodeId]?.length ?? 0]),
+  )
 
   return {
     rootNodeIds,
-    entryNodeId: rootNodeIds[0] ?? nodeIds[0] ?? null,
+    rootChildNodeIds: [...rootNodeIds],
+    entryNodeId: null,
     exitNodeIds,
     edges: graph.edges,
     parents: graph.parents,
+    incomingEdgeCountByNodeId,
   }
 }
 

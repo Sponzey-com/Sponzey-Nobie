@@ -1,5 +1,6 @@
 import type { CommandRequest, OrchestrationPlan, StructuredTaskScope, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
 import type { OrchestrationModeSnapshot } from "./mode.js";
+import type { AgentExecutionDecision } from "./execution-decision-contract.js";
 import { type OrchestrationPlannerIntent } from "./planner.js";
 import type { OrchestrationRegistrySnapshot } from "./registry.js";
 export interface NestedCommandValidationResult {
@@ -36,6 +37,7 @@ export interface NestedDelegationPlannerInput {
     parentSubSessionDepth?: number;
     taskScopes?: StructuredTaskScope[];
     intent?: OrchestrationPlannerIntent;
+    agentExecutionDecision?: AgentExecutionDecision;
     maxDepth?: number;
     maxChildrenPerAgent?: number;
     nestedSpawnBudgetRemaining?: number;

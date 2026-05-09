@@ -1099,16 +1099,6 @@ function validateNodeFailureAndRecoveryPolicies(topology, indexes, issues) {
             }));
         }
         else {
-            if (!Number.isInteger(node.failurePolicy.maxRetryAttempts) || node.failurePolicy.maxRetryAttempts < 0) {
-                issues.push(createTopologyValidatorIssue({
-                    path: `${path}.failurePolicy.maxRetryAttempts`,
-                    code: "invalid_failure_policy",
-                    severity: "invalid",
-                    message: "FailurePolicy maxRetryAttempts must be a non-negative integer.",
-                    entityId: node.id,
-                    entityType: "node",
-                }));
-            }
             node.failurePolicy.fallbackNodeIds.forEach((fallbackNodeId, fallbackIndex) => {
                 validateTypedReference(indexes, issues, "node", fallbackNodeId, `${path}.failurePolicy.fallbackNodeIds[${fallbackIndex}]`, ownerFrom("node", node.id));
             });

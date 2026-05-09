@@ -81,7 +81,7 @@ describe("filesystem post-pass application", () => {
           summary: "파일 검증 복구를 다시 시도합니다.",
           budgetKind: "execution",
           maxDelegationTurns: 3,
-          eventLabel: "파일 검증 복구 재시도",
+          eventLabel: "파일 검증 복구",
           nextMessage: "verification retry",
           reviewStepStatus: "running",
           executingStepSummary: "파일 검증 복구를 다시 시도합니다.",

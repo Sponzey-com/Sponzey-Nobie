@@ -94,7 +94,6 @@ export function createWorkOrderRuntimeEnvelope(input) {
         ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
         contextPackageIds: [contextPackageId],
         expectedOutputs,
-        retryBudget: input.retryBudget ?? input.nodeContractSnapshot.failurePolicy?.maxRetryAttempts ?? 0,
     });
     const commandValidation = validateCommandRequest(command);
     if (!commandValidation.ok) {
@@ -124,7 +123,6 @@ export function createWorkOrderRuntimeEnvelope(input) {
             promptBridge: buildWorkOrderPromptBridge(input.workOrder, expectedOutputs, [contextPackageId]),
             resultReviewBridge: {
                 expectedOutputs,
-                retryBudgetRemaining: command.retryBudget,
                 additionalContextRefs: [contextPackageId],
                 successCriterionIds: input.workOrder.successCriteria.map((criterion) => criterion.criterionId),
             },
@@ -360,7 +358,6 @@ function buildWorkOrderCommandRequest(input) {
         },
         contextPackageIds: input.contextPackageIds,
         expectedOutputs: input.expectedOutputs,
-        retryBudget: Math.max(0, input.retryBudget),
     };
 }
 function buildWorkOrderInputDataExchangePackage(input) {

@@ -276,7 +276,6 @@ export function createEnterpriseTopologyPaletteEntity(
       failurePolicy: {
         failureReportRequired: true,
         allowPartialSuccess: true,
-        maxRetryAttempts: 0,
         fallbackNodeIds: [],
       },
       recoveryPolicy: {
@@ -496,11 +495,7 @@ export function EnterpriseTopologyPalette({
       className="min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-white p-4"
       data-testid="enterprise-topology-palette"
     >
-      <div className="text-sm font-semibold text-stone-950">
-        {text("업무 블록", "Work blocks")}
-      </div>
-
-      <div className="mt-3 grid gap-3">
+      <div className="grid gap-3">
         <PaletteGroup
           title={text("기본", "Core")}
           items={coreItems}

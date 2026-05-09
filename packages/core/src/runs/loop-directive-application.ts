@@ -28,6 +28,8 @@ export async function applyLoopDirective(
     onChunk: RunChunkDeliveryHandler | undefined
     directive: LoopDirective
     finalizationDependencies: FinalizationDependencies
+    suppressFinalDelivery?: boolean
+    suppressFinalDeliveryReasonCode?: string
   },
   moduleDependencies: LoopDirectiveApplicationModuleDependencies = defaultModuleDependencies,
 ): Promise<"break"> {
@@ -42,6 +44,10 @@ export async function applyLoopDirective(
       text: params.directive.text,
       source: params.source,
       onChunk: params.onChunk,
+      ...(params.suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
+      ...(params.suppressFinalDeliveryReasonCode
+        ? { suppressFinalDeliveryReasonCode: params.suppressFinalDeliveryReasonCode }
+        : {}),
       dependencies: params.finalizationDependencies,
     })
     return "break"

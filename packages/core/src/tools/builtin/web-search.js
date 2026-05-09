@@ -51,7 +51,7 @@ function buildPolicyFooter(policy, guard) {
         lines.push(`[확정성: ${guard.status} - ${guard.userMessage}]`);
     }
     if (policy.freshnessPolicy === "latest_approximate") {
-        lines.push("[후속 조치: web_search 결과에 요청 값이 직접 보이지 않으면, 값 미추출로 답하기 전에 결과 URL 또는 직접 시세 URL을 web_fetch로 최소 1회 확인하세요. 같은 검색어 반복과 file_search 우회는 금지합니다.]");
+        lines.push("[후속 조치: web_search 결과에 요청 값이 직접 보이지 않으면, 값 미추출로 답하지 말고 결과 URL, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 다른 안전한 확인 경로를 사용하세요. 같은 검색어 반복과 file_search 우회는 금지합니다. 모든 안전한 대안이 소진된 경우에만 미확인 항목과 시도한 출처를 명시해 제한적으로 종료하세요.]");
     }
     return `\n\n${lines.join("\n")}`;
 }

@@ -175,7 +175,6 @@ function subSession(): SubSessionContract {
     agentNickname: "A",
     commandRequestId: "command:task020",
     status: "awaiting_approval",
-    retryBudgetRemaining: 1,
     promptBundleId: "prompt:task020",
     startedAt: now,
   }

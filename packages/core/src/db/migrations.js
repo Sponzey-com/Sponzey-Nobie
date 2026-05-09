@@ -1159,7 +1159,6 @@ export const MIGRATIONS = [
           request_group_id TEXT,
           pending_count INTEGER NOT NULL DEFAULT 0,
           retry_count INTEGER NOT NULL DEFAULT 0,
-          retry_budget_remaining INTEGER,
           recovery_key TEXT,
           action_taken TEXT NOT NULL,
           detail_json TEXT
@@ -1495,7 +1494,6 @@ export const MIGRATIONS = [
           agent_nickname TEXT,
           command_request_id TEXT NOT NULL,
           status TEXT NOT NULL CHECK(status IN ('created', 'queued', 'running', 'waiting_for_input', 'awaiting_approval', 'completed', 'needs_revision', 'failed', 'cancelled')),
-          retry_budget_remaining INTEGER NOT NULL,
           prompt_bundle_id TEXT NOT NULL,
           contract_json TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
@@ -1875,7 +1873,6 @@ export const MIGRATIONS = [
                         ? {
                             enabled: asBoolean(config["delegation"]["enabled"]) ?? false,
                             maxParallelSessions: asNumber(config["delegation"]["maxParallelSessions"]) ?? 1,
-                            retryBudget: asNumber(config["delegation"]["retryBudget"]) ?? 0,
                         }
                         : null;
                 updateAgentConfig.run(normalizedNickname, modelProfileJson, toJsonOrNull(delegationPolicy), row.agent_id);

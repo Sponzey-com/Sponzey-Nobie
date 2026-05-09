@@ -26,7 +26,6 @@ export interface PlannedNodeToolCall {
     timeoutMs?: number;
     approvalRequired: boolean;
     approvalStatus: NodeToolApprovalStatus;
-    retryBudget: number;
     fallbackNodeIds: string[];
     reasonCodes: string[];
 }

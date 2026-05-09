@@ -119,7 +119,6 @@ const runtimeResources: AgentTopologyProjection = {
         delegation: {
           enabled: true,
           maxParallelSessions: 2,
-          retryBudget: 1,
         },
         diagnostics: [],
       },
@@ -296,7 +295,7 @@ describe("task010 topology workspace resources layer", () => {
     expect(mappedNode.metadata?.agentConfigId).toBeUndefined()
   })
 
-  it("moves legacy runtime topology access to the workspace resources mode while keeping compatibility", () => {
+  it("keeps runtime resources as an internal projection without exposing a resources workspace route", () => {
     const topologyPage = readFileSync(
       new URL("../packages/webui/src/pages/TopologyPage.tsx", import.meta.url),
       "utf-8",
@@ -306,13 +305,14 @@ describe("task010 topology workspace resources layer", () => {
       "utf-8",
     )
 
-    expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("resources")
+    expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("build")
     expect(resolveTopologyWorkspaceInitialLayer("?layer=trace")).toBe("trace")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=unknown")).toBe("build")
     expect(clientSource).toContain('request<AgentTopologyResponse>("/api/agent-topology")')
     expect(clientSource).toContain("runtimeResources")
     expect(topologyPage).toContain("api.agentTopology")
-    expect(topologyPage).toContain("/advanced/topology?mode=resources")
+    expect(topologyPage).not.toContain("/advanced/topology?mode=resources")
+    expect(topologyPage).not.toContain("runtime-topology-workspace-resources-link")
     expect(topologyPage).toContain("Runtime Resource Topology")
     expect(topologyPage).not.toContain("EnterpriseTopologyCanvas")
   })

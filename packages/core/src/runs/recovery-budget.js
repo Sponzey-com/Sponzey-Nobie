@@ -7,16 +7,9 @@ export function createRecoveryBudgetUsage() {
     };
 }
 export function getRecoveryBudgetLimit(kind, maxDelegationTurns) {
-    if (maxDelegationTurns <= 0)
-        return 0;
-    switch (kind) {
-        case "interpretation":
-        case "execution":
-        case "delivery":
-        case "external":
-        default:
-            return maxDelegationTurns;
-    }
+    void kind;
+    void maxDelegationTurns;
+    return 0;
 }
 export function getRecoveryBudgetState(params) {
     const used = params.usage[params.kind] ?? 0;
@@ -43,24 +36,16 @@ export function consumeRecoveryBudget(params) {
     return getRecoveryBudgetState(params);
 }
 export function formatRecoveryBudgetProgress(state) {
-    return `${state.used}/${state.limit > 0 ? state.limit : "무제한"}`;
+    return `신호 ${state.used}`;
 }
 export function getSubSessionRevisionBudgetLimit(budgetClass = "default") {
-    switch (budgetClass) {
-        case "format_only":
-            return 3;
-        case "risk_or_external":
-        case "expensive":
-            return 1;
-        case "default":
-        default:
-            return 2;
-    }
+    void budgetClass;
+    return Number.MAX_SAFE_INTEGER;
 }
 export function canRetrySubSessionRevision(params) {
+    void params.budgetClass;
     if (params.repeatedFailure)
         return false;
-    const limit = getSubSessionRevisionBudgetLimit(params.budgetClass ?? "default");
-    return Math.min(Math.max(0, params.retryBudgetRemaining), limit) > 0;
+    return true;
 }
 //# sourceMappingURL=recovery-budget.js.map

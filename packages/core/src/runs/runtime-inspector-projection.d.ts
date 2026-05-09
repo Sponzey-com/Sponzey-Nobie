@@ -1,4 +1,5 @@
 import type { DataExchangePackage, ExpectedOutputContract, OrchestrationMode, SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
+import { type TopologyRunTraceProjection } from "../topology-runtime/trace.js";
 import type { RootRun } from "./types.js";
 export type RuntimeInspectorControlAction = "send" | "steer" | "retry" | "feedback" | "redelegate" | "cancel" | "kill";
 export type RuntimeInspectorApprovalState = "not_required" | "required" | "approved" | "denied" | "pending";
@@ -55,8 +56,8 @@ export interface RunRuntimeInspectorModel {
     fallbackFromModelId?: string;
     fallbackReasonCode?: string;
     effort?: string;
-    retryCount: number;
-    attemptCount?: number;
+    signalCount: number;
+    strategyChangeCount?: number;
     estimatedInputTokens: number;
     estimatedOutputTokens: number;
     estimatedCost: number;
@@ -78,7 +79,6 @@ export interface RunRuntimeInspectorSubSession {
     status: SubSessionStatus;
     commandSummary: string;
     expectedOutputs: RunRuntimeInspectorExpectedOutput[];
-    retryBudgetRemaining: number;
     promptBundleId: string;
     startedAt?: number;
     finishedAt?: number;
@@ -131,6 +131,10 @@ export interface RunRuntimeInspectorPlanTask {
     goal: string;
     assignedAgentId?: string;
     assignedTeamId?: string;
+    assignmentSource?: "topology" | "agent" | "team" | "direct";
+    assignedTopologyId?: string;
+    assignedExecutorId?: string;
+    assignedExecutorName?: string;
     reasonCodes: string[];
 }
 export interface RunRuntimeInspectorPlanProjection {
@@ -145,6 +149,11 @@ export interface RunRuntimeInspectorPlanProjection {
     parallelGroupCount: number;
     fallbackMode?: string;
     fallbackReasonCode?: string;
+    fallbackWarnings?: string[];
+    selectedExecutorSource?: string;
+    selectedExecutorId?: string;
+    rejectedExecutorId?: string;
+    rejectedReasonCodes?: string[];
     taskSummaries: RunRuntimeInspectorPlanTask[];
 }
 export interface RunRuntimeInspectorFinalizer {
@@ -155,22 +164,92 @@ export interface RunRuntimeInspectorFinalizer {
     summary?: string;
     at?: number;
 }
+export interface RunRuntimeInspectorTopologyRun {
+    topologyRunId: string;
+    topologyId: string;
+    status: string;
+    entryNodeId?: string;
+    startedAt: number;
+    finishedAt?: number;
+    nodeRunCount: number;
+    workOrderCount: number;
+    traceEventCount: number;
+    toolCallCount: number;
+    failureCount: number;
+    observedEdgeCount: number;
+    projection: TopologyRunTraceProjection;
+}
+export interface RunRuntimeInspectorTopologyRouting {
+    mode: "route" | "fallback" | "unknown";
+    reasonCode?: string;
+    featureFlagMode?: string;
+    executionDecisionSource?: string;
+    executionDecisionGraphId?: string;
+    executionDecisionGraphSource?: string;
+    executionDecisionCurrentExecutorId?: string;
+    executionDecisionAvailableExecutorIds?: string[];
+    executionDecisionDiagnosticExecutorIds?: string[];
+    executionDecisionAllExecutorIds?: string[];
+    executionDecisionAllRegisteredExecutorIds?: string[];
+    executionDecisionSelectedExecutorId?: string;
+    executionDecisionSelectedConnectionPath?: string[];
+    executionDecisionNormalizedConnectionPath?: string[];
+    executionDecisionRoute?: string;
+    executionDecisionFallbackReason?: string;
+    executionDecisionValidationStatus?: string;
+    executionDecisionValidationIssues?: string[];
+    executionDecisionResolvedExecutorId?: string;
+    providerFallbackBlocked: boolean;
+    providerFallbackBlockedReasonCode?: string;
+    riskBoundaryRequiresUserApproval?: boolean;
+    riskBoundaryKind?: string;
+    riskBoundaryReason?: string;
+    topologyId?: string;
+    topologyName?: string;
+    topologyVersion?: number;
+    topologySchemaVersion?: number;
+    topologyMigrationSource?: string;
+    entryNodeId?: string;
+    entryNodeName?: string;
+    explicit?: boolean;
+    providerFallback: boolean;
+    providerFallbackReasonCode?: string;
+    activeTopologyCount?: number;
+    selectedExecutorIds: string[];
+    selectedEdgeIds: string[];
+    assignedTopologyAgentIds: string[];
+    issues: string[];
+}
 export interface RunRuntimeInspectorProjection {
     schemaVersion: 1;
     runId: string;
     requestGroupId: string;
+    requestIdentity: RunRuntimeInspectorRequestIdentity;
     generatedAt: number;
     orchestrationMode: OrchestrationMode;
+    topologyRouting: RunRuntimeInspectorTopologyRouting;
     plan: RunRuntimeInspectorPlanProjection;
     subSessions: RunRuntimeInspectorSubSession[];
     dataExchanges: RunRuntimeInspectorDataExchangeSummary[];
     approvals: RunRuntimeInspectorApprovalSummary[];
     timeline: RunRuntimeInspectorTimelineEvent[];
+    topologyRuns: RunRuntimeInspectorTopologyRun[];
     finalizer: RunRuntimeInspectorFinalizer;
     redaction: {
         payloadsRedacted: true;
         rawPayloadVisible: false;
     };
+}
+export interface RunRuntimeInspectorRequestIdentity {
+    runId: string;
+    requestGroupId: string;
+    lineageRootRunId?: string;
+    parentRunId?: string;
+    rootRunId: string;
+    userMessageKey?: string;
+    requestIsolationMode?: string;
+    continuationSource?: string;
+    contextMode?: string;
 }
 export interface RunRuntimeInspectorProjectionOptions {
     now?: number;

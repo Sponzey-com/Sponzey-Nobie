@@ -67,8 +67,6 @@ export interface AgentModelSummary {
     availability: CapabilityModelAvailabilityStatus;
     providerId?: string;
     modelId?: string;
-    timeoutMs?: number;
-    retryCount?: number;
     costBudget?: number;
     fallbackModelId?: string;
     diagnostics: CapabilityModelDiagnostic[];

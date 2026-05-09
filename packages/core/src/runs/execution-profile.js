@@ -22,7 +22,16 @@ export function buildResolvedExecutionProfile(params) {
     };
 }
 export function normalizeDirectArtifactDeliverySemantics(params) {
-    return resolveExecutionSemantics(params);
+    const executionSemantics = resolveExecutionSemantics(params);
+    if (executionSemantics.artifactDelivery === "direct" &&
+        executionSemantics.filesystemEffect === "none" &&
+        executionSemantics.privilegedOperation === "none") {
+        return {
+            ...executionSemantics,
+            artifactDelivery: "none",
+        };
+    }
+    return executionSemantics;
 }
 export function createExecutionLoopRuntimeState(params) {
     const executionProfile = buildResolvedExecutionProfile(params);
@@ -111,22 +120,11 @@ function buildFallbackIntentEnvelope(structuredRequest, executionSemantics) {
     };
 }
 function resolveExecutionSemantics(params) {
-    const base = params.executionSemantics ?? buildDefaultTaskExecutionSemantics();
-    const shouldUseDirectArtifactDelivery = shouldTreatAsDirectArtifactDelivery(params, base);
-    if (base.artifactDelivery === "direct" && !shouldUseDirectArtifactDelivery) {
-        return {
-            ...base,
-            artifactDelivery: "none",
-        };
-    }
-    if (base.artifactDelivery === "direct")
-        return base;
-    if (!shouldUseDirectArtifactDelivery)
-        return base;
-    return {
-        ...base,
-        artifactDelivery: "direct",
-    };
+    void params.message;
+    void params.originalRequest;
+    void params.structuredRequest;
+    void params.intentEnvelope;
+    return params.executionSemantics ?? buildDefaultTaskExecutionSemantics();
 }
 function repairIntentEnvelope(params) {
     if (!params.intentEnvelope) {
@@ -137,50 +135,5 @@ function repairIntentEnvelope(params) {
         execution_semantics: params.executionSemantics,
         delivery_mode: params.executionSemantics.artifactDelivery,
     };
-}
-function shouldTreatAsDirectArtifactDelivery(params, executionSemantics) {
-    if (executionSemantics.approvalTool === "screen_capture" || executionSemantics.approvalTool === "yeonjang_camera_capture") {
-        return true;
-    }
-    const userFacingRequest = [params.originalRequest, params.structuredRequest?.target, params.intentEnvelope?.target]
-        .filter((value) => typeof value === "string" && value.trim().length > 0)
-        .join("\n");
-    const plainTextInformationRequest = looksLikePlainTextInformationRequest(userFacingRequest || params.message);
-    const combined = [
-        params.message,
-        params.originalRequest,
-        params.structuredRequest?.target,
-        params.structuredRequest?.normalized_english,
-        params.intentEnvelope?.target,
-        params.intentEnvelope?.normalized_english,
-    ]
-        .filter((value) => typeof value === "string" && value.trim().length > 0)
-        .join("\n");
-    if (!combined)
-        return false;
-    const normalized = combined.trim();
-    if (!normalized)
-        return false;
-    const referencesExplicitArtifactFile = /\.(pdf|png|jpe?g|webp|csv|json|txt|docx|xlsx)\b/iu.test(normalized);
-    const referencesArtifactImage = /(screen\s*capture|screenshot|screen shot|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture)/iu.test(normalized)
-        || /(화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영)/u.test(combined);
-    const referencesArtifactDelivery = (/\b(file|document|attachment|report|image|artifact)\b/iu.test(normalized)
-        && /\b(send|deliver|attach|return|export|show)\b/iu.test(normalized)) || (/(?:파일|문서|첨부|보고서|이미지)/u.test(normalized)
-        && /(?:보내|전달|첨부|반환|내보내|보여)/u.test(normalized));
-    if (referencesExplicitArtifactFile || referencesArtifactImage)
-        return true;
-    if (plainTextInformationRequest)
-        return false;
-    return referencesArtifactDelivery;
-}
-export function looksLikePlainTextInformationRequest(value) {
-    const normalized = value.trim();
-    if (!normalized)
-        return false;
-    const asksForInformation = /(?:날씨|기온|온도|습도|바람|강수|뉴스|소식|환율|주가|시세|증시|지수|코스피|코스닥|나스닥|검색|조회|알려|어때|뭐야|얼마|몇|weather|temperature|humidity|wind|forecast|news|exchange rate|stock|price|market|index|quote|kospi|kosdaq|nasdaq|current|today|now)/iu.test(normalized);
-    if (!asksForInformation)
-        return false;
-    const requestsArtifact = /(?:화면\s*캡처|스크린\s*캡처|스크린샷|캡쳐|카메라\s*(?:캡처|촬영)|사진\s*촬영|파일|문서|첨부|이미지|다운로드|보고서\s*파일|screenshot|screen\s*capture|camera\s*capture|take\s+(?:a\s+)?photo|take\s+(?:a\s+)?picture|file|attachment|image|download)/iu.test(normalized);
-    return !requestsArtifact;
 }
 //# sourceMappingURL=execution-profile.js.map

@@ -197,11 +197,11 @@ function approvalStateFor(events, context, toolName) {
         return "requested";
     return "not_required";
 }
-function maxRetryCount(events) {
+function maxSignalCount(events) {
     let max = 0;
     for (const event of events) {
         const detail = detailRecord(event.detail);
-        const explicit = asNumber(detail?.retryCount ?? detail?.retry_count ?? detail?.attemptIndex);
+        const explicit = asNumber(detail?.signalCount ?? detail?.signal_count ?? detail?.retryCount ?? detail?.retry_count ?? detail?.attemptIndex);
         if (explicit != null)
             max = Math.max(max, explicit);
     }
@@ -253,7 +253,7 @@ export function buildAdminToolCallsInspector(input) {
             startedAt,
             finishedAt,
             durationMs,
-            retryCount: maxRetryCount(ordered),
+            signalCount: maxSignalCount(ordered),
             eventCount: ordered.length,
             paramsRedacted: params.value,
             outputRedacted: output.value,
@@ -468,7 +468,7 @@ function attemptViewFromToolCall(call) {
         fetchTimestamp: policy?.fetchTimestamp ?? null,
         sourceTimestamp: null,
         durationMs: call.durationMs,
-        retryCount: call.retryCount,
+        signalCount: call.signalCount,
     };
 }
 function sourceAttemptFromEvent(event) {
@@ -488,7 +488,7 @@ function sourceAttemptFromEvent(event) {
         fetchTimestamp: evidence.fetchTimestamp,
         sourceTimestamp: evidence.sourceTimestamp ?? null,
         durationMs: asNumber(detailRecord(event.detail)?.durationMs),
-        retryCount: asNumber(detailRecord(event.detail)?.retryCount) ?? 0,
+        signalCount: asNumber(detailRecord(event.detail)?.signalCount ?? detailRecord(event.detail)?.retryCount) ?? 0,
     };
 }
 export function buildAdminWebRetrievalLab(input) {

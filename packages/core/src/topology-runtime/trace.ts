@@ -19,6 +19,10 @@ import {
   type ObservedTopologyEdgeRecord,
   type TopologyGapFindingRecord,
 } from "../topology/metrics.js"
+import {
+  attachExecutorFailureEvidence,
+  buildExecutorTraceEventPayload,
+} from "../topology/executor-observability.js"
 import type { NodeRuntimeExecutionResult } from "./node-runtime.js"
 
 export interface CreateNodeRuntimeTraceEventInput {
@@ -34,6 +38,10 @@ export interface CreateNodeRuntimeTraceEventInput {
 }
 
 export function createNodeRuntimeTraceEvent(input: CreateNodeRuntimeTraceEventInput): TraceEvent {
+  const payload = buildExecutorTraceEventPayload({
+    workOrder: input.workOrder,
+    ...(input.payload !== undefined ? { payload: input.payload } : {}),
+  })
   return {
     schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
     traceEventId: `trace:${input.workOrder.topologyRunId}:${input.nodeRunId}:${input.sequence}`,
@@ -46,7 +54,7 @@ export function createNodeRuntimeTraceEvent(input: CreateNodeRuntimeTraceEventIn
     component: input.component ?? "node-runtime",
     at: input.at,
     reasonCode: input.reasonCode ?? `node_runtime_${input.state}`,
-    ...(input.payload !== undefined ? { payload: structuredClone(input.payload) } : {}),
+    ...(payload !== undefined ? { payload: structuredClone(payload) } : {}),
   }
 }
 
@@ -744,6 +752,14 @@ export function recordTopologyRuntimeExecution(
     }
 
     if (result.failureReport !== undefined) {
+      const failureWorkOrder = workOrderRecords.find((record) =>
+        record.workOrder.workOrderId === result.failureReport?.workOrderId
+      )?.workOrder
+      const failureReport = attachExecutorFailureEvidence({
+        failureReport: result.failureReport,
+        ...(failureWorkOrder ? { workOrder: failureWorkOrder } : {}),
+        traceEvents: result.traceEvents,
+      })
       db.prepare(
         `INSERT INTO topology_failure_reports
          (failure_report_id, topology_run_id, node_run_id, work_order_id, node_id, failure_phase, report_json, created_at)
@@ -752,14 +768,14 @@ export function recordTopologyRuntimeExecution(
            failure_phase = excluded.failure_phase,
            report_json = excluded.report_json`,
       ).run(
-        result.failureReport.failureReportId,
-        result.failureReport.topologyRunId,
-        result.failureReport.nodeRunId,
-        result.failureReport.workOrderId,
-        result.failureReport.nodeId,
-        failurePhaseFor({ failureReport: result.failureReport, traceEvents: result.traceEvents }),
-        jsonString(result.failureReport),
-        timestampToNumber(result.failureReport.createdAt, finishedAt),
+        failureReport.failureReportId,
+        failureReport.topologyRunId,
+        failureReport.nodeRunId,
+        failureReport.workOrderId,
+        failureReport.nodeId,
+        failurePhaseFor({ failureReport, traceEvents: result.traceEvents }),
+        jsonString(failureReport),
+        timestampToNumber(failureReport.createdAt, finishedAt),
       )
     }
 

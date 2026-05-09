@@ -36,7 +36,9 @@ export interface StatusResponse {
       agentId: string
       displayName: string
       nickname?: string
-      source: "db" | "config"
+      source: "topology" | "db" | "config"
+      topologyId?: string
+      executorId?: string
     }>
     reasonCode: string
     reason: string

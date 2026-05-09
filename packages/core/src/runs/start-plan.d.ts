@@ -11,6 +11,9 @@ import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusa
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import { resolveTopologyRootRunRouting, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
+import { type AgentExecutionDecision } from "../orchestration/execution-decision-contract.js";
+export type StartPlanRequestIsolation = "root" | "continuation";
+export type StartPlanContinuationSource = "new_root" | "explicit_request_group" | "explicit_force_request_group" | "explicit_id" | "explicit_contract_comparison" | "explicit_contract_clarification";
 export interface StartPlan {
     entrySemantics: RequestEntrySemantics;
     requestedClosedRequestGroup: boolean;
@@ -18,6 +21,8 @@ export interface StartPlan {
     reconnectTarget?: RootRun | undefined;
     reconnectCandidateCount: number;
     reconnectNeedsClarification: boolean;
+    requestIsolation: StartPlanRequestIsolation;
+    continuationSource: StartPlanContinuationSource;
     requestGroupId: string;
     isRootRequest: boolean;
     effectiveTaskProfile: TaskProfile;
@@ -27,6 +32,7 @@ export interface StartPlan {
     orchestrationMode: OrchestrationMode;
     orchestrationRegistrySnapshot: OrchestrationModeSnapshot;
     orchestrationPlanSnapshot: OrchestrationPlan;
+    agentExecutionDecision?: AgentExecutionDecision;
     topologyRouting: TopologyRootRunRoutingDecision;
     workerSessionId?: string | undefined;
     reusableWorkerSessionRun?: RootRun | undefined;
@@ -74,6 +80,7 @@ export declare function buildStartPlan(params: {
     targetId?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
+    agentExecutionDecision?: AgentExecutionDecision | undefined;
 }, dependencies: StartPlanDependencies): Promise<StartPlan>;
 export { defaultDependencies as defaultStartPlanDependencies };
 //# sourceMappingURL=start-plan.d.ts.map

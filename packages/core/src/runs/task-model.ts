@@ -15,6 +15,23 @@ export type TaskAttemptKind =
   | "truncated_recovery"
   | "scheduled_execution"
 
+export type TaskAttemptExecutionKind =
+  | "new_request"
+  | "followup_execution"
+  | "augmentation_verification"
+  | "recovery_execution"
+  | "system_intake"
+  | "scheduled_execution"
+
+export type TaskRunRelationshipKind =
+  | "root_request"
+  | "child_execution"
+  | "followup_execution"
+  | "augmentation_verification"
+  | "internal_recovery"
+  | "system_intake"
+  | "scheduled_execution"
+
 export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic"
 
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed"
@@ -45,6 +62,12 @@ export interface TaskAttemptModel {
   taskId: string
   requestGroupId: string
   kind: TaskAttemptKind
+  executionKind?: TaskAttemptExecutionKind
+  relationshipKind?: TaskRunRelationshipKind
+  rootRunId?: string
+  originRunId?: string
+  userMessageKey?: string
+  augmentationOfRunId?: string
   title: string
   prompt: string
   status: RunStatus
@@ -136,6 +159,10 @@ export interface TaskMonitorModel {
 
 export interface TaskContinuityModel {
   lineageRootRunId: string
+  requestGroupId?: string
+  rootRunId?: string
+  originRunId?: string
+  userMessageKey?: string
   parentRunId?: string
   handoffSummary?: string
   lastGoodState?: string
@@ -170,9 +197,24 @@ export interface TaskPromptSourceDiagnosticModel {
   checksum?: string
 }
 
+export interface TaskRequestIdentityModel {
+  originRunId: string
+  rootRunId: string
+  requestGroupId: string
+  lineageRootRunId: string
+  userMessageKey?: string
+  requestIsolationMode?: string
+  continuationSource?: string
+  contextMode?: string
+}
+
 export interface TaskModel {
   id: string
   requestGroupId: string
+  rootRunId?: string
+  originRunId?: string
+  userMessageKey?: string
+  requestIdentity?: TaskRequestIdentityModel
   sessionId: string
   source: RootRun["source"]
   anchorRunId: string
@@ -241,6 +283,98 @@ function mapRecoveryKind(kind: TaskAttemptKind): TaskRecoveryKind {
       return "truncated_output"
     default:
       return "generic"
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function getStringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key]
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function getPromptSourceSnapshot(run: RootRun): Record<string, unknown> | undefined {
+  return asRecord(run.promptSourceSnapshot)
+}
+
+function getInboundMessageSnapshot(run: RootRun): Record<string, unknown> | undefined {
+  return asRecord(getPromptSourceSnapshot(run)?.inboundMessage)
+}
+
+function getRequestIsolationSnapshot(run: RootRun): Record<string, unknown> | undefined {
+  return asRecord(getPromptSourceSnapshot(run)?.requestIsolation)
+}
+
+function getUserMessageKey(run: RootRun): string | undefined {
+  return getStringField(getInboundMessageSnapshot(run), "messageKey")
+}
+
+function getRequestIsolationMode(run: RootRun): string | undefined {
+  return getStringField(getRequestIsolationSnapshot(run), "mode")
+}
+
+function getContinuationSource(run: RootRun): string | undefined {
+  return getStringField(getRequestIsolationSnapshot(run), "continuationSource")
+}
+
+function getRequestContextMode(run: RootRun): string | undefined {
+  return getStringField(getRequestIsolationSnapshot(run), "contextMode")
+}
+
+function resolveRootRun(run: RootRun, runsById: Map<string, RootRun>): RootRun {
+  let current = run
+  const visited = new Set<string>()
+
+  while (current.parentRunId && !visited.has(current.id)) {
+    visited.add(current.id)
+    const parent = runsById.get(current.parentRunId)
+    if (!parent) break
+    current = parent
+  }
+
+  return current
+}
+
+function resolveAttemptExecutionKind(kind: TaskAttemptKind): TaskAttemptExecutionKind {
+  switch (kind) {
+    case "primary":
+      return "new_request"
+    case "followup":
+    case "approval_continuation":
+      return "followup_execution"
+    case "verification":
+      return "augmentation_verification"
+    case "filesystem_retry":
+    case "truncated_recovery":
+      return "recovery_execution"
+    case "intake_bridge":
+      return "system_intake"
+    case "scheduled_execution":
+      return "scheduled_execution"
+  }
+}
+
+function resolveRunRelationshipKind(run: RootRun, kind: TaskAttemptKind, index: number): TaskRunRelationshipKind {
+  switch (kind) {
+    case "primary":
+      return "root_request"
+    case "verification":
+      return "augmentation_verification"
+    case "filesystem_retry":
+    case "truncated_recovery":
+      return "internal_recovery"
+    case "intake_bridge":
+      return "system_intake"
+    case "scheduled_execution":
+      return "scheduled_execution"
+    case "approval_continuation":
+      return "followup_execution"
+    case "followup":
+      return run.runScope === "child" || run.parentRunId ? "child_execution" : index === 0 ? "root_request" : "followup_execution"
   }
 }
 
@@ -599,8 +733,13 @@ function buildTaskMonitor(
 
 function mapContinuitySnapshot(snapshot: TaskContinuitySnapshot | undefined): TaskContinuityModel | undefined {
   if (!snapshot) return undefined
+  const identity = snapshot as TaskContinuitySnapshot & Partial<Pick<TaskContinuityModel, "requestGroupId" | "rootRunId" | "originRunId" | "userMessageKey">>
   return {
     lineageRootRunId: snapshot.lineageRootRunId,
+    ...(identity.requestGroupId ? { requestGroupId: identity.requestGroupId } : {}),
+    ...(identity.rootRunId ? { rootRunId: identity.rootRunId } : {}),
+    ...(identity.originRunId ? { originRunId: identity.originRunId } : {}),
+    ...(identity.userMessageKey ? { userMessageKey: identity.userMessageKey } : {}),
     ...(snapshot.parentRunId ? { parentRunId: snapshot.parentRunId } : {}),
     ...(snapshot.handoffSummary ? { handoffSummary: snapshot.handoffSummary } : {}),
     ...(snapshot.lastGoodState ? { lastGoodState: snapshot.lastGoodState } : {}),
@@ -967,15 +1106,33 @@ export function buildTaskModels(
     const anchorRun = [...orderedRuns].find((run) => run.runScope === "root" || !run.parentRunId) ?? orderedRuns[0]
     if (!anchorRun || !latestRun) continue
     const taskId = anchorRun.lineageRootRunId || anchorRun.requestGroupId || anchorRun.id
+    const rootRun = resolveRootRun(anchorRun, runsById)
+    const userMessageKey = getUserMessageKey(anchorRun) ?? getUserMessageKey(rootRun)
+    const requestIsolationMode = getRequestIsolationMode(anchorRun) ?? getRequestIsolationMode(rootRun)
+    const continuationSource = getContinuationSource(anchorRun) ?? getContinuationSource(rootRun)
+    const contextMode = getRequestContextMode(anchorRun) ?? getRequestContextMode(rootRun)
     const summary = computeTaskSummary(groupRuns)
 
     const attempts: TaskAttemptModel[] = orderedRuns.map((run, index) => {
       const kind = classifyAttemptKind(run, index)
+      const executionKind = resolveAttemptExecutionKind(kind)
+      const relationshipKind = resolveRunRelationshipKind(run, kind, index)
+      const attemptRootRun = resolveRootRun(run, runsById)
+      const attemptUserMessageKey = getUserMessageKey(run) ?? getUserMessageKey(attemptRootRun) ?? userMessageKey
+      const previousRun = index > 0 ? orderedRuns[index - 1] : undefined
       return {
         id: run.id,
         taskId,
         requestGroupId: run.requestGroupId,
         kind,
+        executionKind,
+        relationshipKind,
+        rootRunId: attemptRootRun.id,
+        originRunId: anchorRun.id,
+        ...(attemptUserMessageKey ? { userMessageKey: attemptUserMessageKey } : {}),
+        ...(executionKind === "augmentation_verification"
+          ? { augmentationOfRunId: run.parentRunId ?? previousRun?.id ?? attemptRootRun.id }
+          : {}),
         title:
           kind === "scheduled_execution"
             ? extractPromptField(run.prompt, "Task")
@@ -1026,6 +1183,19 @@ export function buildTaskModels(
     tasks.push({
       id: taskId,
       requestGroupId: anchorRun.requestGroupId,
+      rootRunId: rootRun.id,
+      originRunId: anchorRun.id,
+      ...(userMessageKey ? { userMessageKey } : {}),
+      requestIdentity: {
+        originRunId: anchorRun.id,
+        rootRunId: rootRun.id,
+        requestGroupId: anchorRun.requestGroupId,
+        lineageRootRunId: taskId,
+        ...(userMessageKey ? { userMessageKey } : {}),
+        ...(requestIsolationMode ? { requestIsolationMode } : {}),
+        ...(continuationSource ? { continuationSource } : {}),
+        ...(contextMode ? { contextMode } : {}),
+      },
       sessionId: anchorRun.sessionId,
       source: anchorRun.source,
       anchorRunId: anchorRun.id,
@@ -1051,5 +1221,5 @@ export function buildTaskModels(
     })
   }
 
-  return tasks.sort((a, b) => b.updatedAt - a.updatedAt)
+  return tasks.sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt))
 }

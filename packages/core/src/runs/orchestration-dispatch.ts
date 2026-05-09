@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { ParentAggregationNextAction } from "../agent/sub-agent-result-review.js"
 import { CONTRACT_SCHEMA_VERSION, type JsonValue } from "../contracts/index.js"
 import {
   type CommandRequest,
@@ -22,14 +23,38 @@ import { buildTeamExecutionPlan } from "../orchestration/team-execution-plan.js"
 import type { StartRootRunParams, StartedRootRun } from "./start.js"
 import type { RootRun, TaskProfile } from "./types.js"
 
+export type DelegatedTaskDispatchOutcomeStatus =
+  | "running"
+  | "pending_result"
+  | "completed"
+  | "failed"
+  | "skipped"
+
+export interface DelegatedTaskDispatchLifecycleEntry {
+  status: DelegatedTaskDispatchOutcomeStatus
+  at: number
+  reasonCode?: string
+  childRunId?: string
+  summary?: string
+}
+
 export interface DelegatedTaskDispatchOutcome {
   taskId: string
   subSessionId?: string
   agentId?: string
-  status: "completed" | "failed" | "skipped"
+  agentDisplayName?: string
+  agentSource?: AgentRegistryEntry["source"]
+  topologyId?: string
+  topologyExecutorId?: string
+  status: DelegatedTaskDispatchOutcomeStatus
   reasonCode?: string
   childRunId?: string
   summary?: string
+  parentAggregationNextAction?: ParentAggregationNextAction
+  feedbackRequestId?: string
+  startedAt?: number
+  completedAt?: number
+  lifecycle?: DelegatedTaskDispatchLifecycleEntry[]
 }
 
 export interface DelegatedTaskDispatchResult {
@@ -165,7 +190,6 @@ function commandRequestFor(input: {
     taskScope: input.task.scope,
     contextPackageIds: [],
     expectedOutputs: input.task.scope.expectedOutputs,
-    retryBudget: input.agent.retryBudget,
   }
 }
 
@@ -244,6 +268,37 @@ function isDelegationDispatchEligible(params: DelegatedTaskDispatchParams): bool
   return params.plan.delegatedTasks.some((task) => task.assignedAgentId?.trim() || task.assignedTeamId?.trim())
 }
 
+function topologyAssignmentFromAgentId(agent: AgentRegistryEntry): {
+  topologyId?: string
+  topologyExecutorId?: string
+} {
+  if (agent.source !== "topology") return {}
+  const marker = ":node:"
+  const markerIndex = agent.agentId.indexOf(marker)
+  if (markerIndex < 0) return {}
+  return {
+    topologyId: agent.agentId.slice(0, markerIndex),
+    topologyExecutorId: `node:${agent.agentId.slice(markerIndex + marker.length)}`,
+  }
+}
+
+function teamDispatchBlockReason(task: OrchestrationTask): string | undefined {
+  const reasonCodes = new Set([
+    ...task.scope.reasonCodes,
+    ...(task.planningTrace?.reasonCodes ?? []),
+  ])
+  if (reasonCodes.has("inferred_team_target_from_capability")) {
+    return "inferred_team_target_from_capability_blocked"
+  }
+  if (reasonCodes.has("inferred_team_target_from_request")) {
+    return "inferred_team_target_from_request_blocked"
+  }
+  if (!reasonCodes.has("explicit_team_target")) {
+    return "team_dispatch_requires_explicit_target"
+  }
+  return undefined
+}
+
 function teamTaskOrder(taskKind: TeamExecutionTaskSnapshot["taskKind"]): number {
   if (taskKind === "member") return 0
   if (taskKind === "synthesis") return 1
@@ -302,6 +357,7 @@ export async function dispatchDelegatedSubAgentTasks(
   const originalRequest = params.originalRequest?.trim() || params.message
   const outcomes: DelegatedTaskDispatchOutcome[] = []
   let attempted = 0
+  const now = dependencies.now ?? (() => Date.now())
 
   const dispatchAgentTask = async (
     task: OrchestrationTask,
@@ -331,6 +387,35 @@ export async function dispatchDelegatedSubAgentTasks(
       originalRequest,
     })
     attempted += 1
+    const topologyAssignment = topologyAssignmentFromAgentId(agent)
+    const startedAt = now()
+    const outcomeRecord: DelegatedTaskDispatchOutcome = {
+      taskId: task.taskId,
+      subSessionId,
+      agentId: agent.agentId,
+      agentDisplayName: agent.displayName,
+      agentSource: agent.source,
+      ...topologyAssignment,
+      status: "running",
+      startedAt,
+      lifecycle: [{
+        status: "running",
+        at: startedAt,
+        summary: "Sub-agent dispatch started.",
+      }],
+    }
+    outcomes.push(outcomeRecord)
+    appendParentEvent(
+      params.parentRunId,
+      [
+        "sub_agent_dispatch_running",
+        task.taskId,
+        agent.source,
+        agent.agentId,
+        topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+        topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+      ].filter(Boolean).join(":"),
+    )
     const outcome = await runner.runSubSession(
       {
         command,
@@ -368,6 +453,20 @@ export async function dispatchDelegatedSubAgentTasks(
           originalRequest,
           workDir: params.workDir,
         })
+        const pendingAt = now()
+        outcomeRecord.status = "pending_result"
+        outcomeRecord.childRunId = started.runId
+        outcomeRecord.lifecycle?.push({
+          status: "pending_result",
+          at: pendingAt,
+          childRunId: started.runId,
+          summary: "Child run started; awaiting result report.",
+        })
+        appendParentEvent(
+          params.parentRunId,
+          `sub_agent_dispatch_pending_result:${task.taskId}:${agent.agentId}:${started.runId}`,
+        )
+        updateParentSummary(params.parentRunId, "서브 에이전트 결과를 기다리고 있습니다.")
         const childRun = await started.finished
         const failedStatuses = new Set<RootRun["status"]>(["failed", "cancelled", "interrupted"])
         const reportStatus: ResultReport["status"] =
@@ -393,20 +492,57 @@ export async function dispatchDelegatedSubAgentTasks(
       },
     )
     const summary = resultSummary(outcome.resultReport)
-    outcomes.push({
-      taskId: task.taskId,
-      subSessionId: outcome.subSession.subSessionId,
-      agentId: agent.agentId,
-      status: outcome.status === "completed" ? "completed" : "failed",
-      ...(outcome.errorReport?.reasonCode ? { reasonCode: outcome.errorReport.reasonCode } : {}),
-      ...(outcome.resultReport?.evidence[0]?.sourceRef
-        ? { childRunId: outcome.resultReport.evidence[0].sourceRef }
-        : {}),
+    const completedAt = now()
+    const finalStatus = outcome.status === "completed" ? "completed" : "failed"
+    outcomeRecord.subSessionId = outcome.subSession.subSessionId
+    outcomeRecord.status = finalStatus
+    outcomeRecord.completedAt = completedAt
+    if (outcome.errorReport?.reasonCode) outcomeRecord.reasonCode = outcome.errorReport.reasonCode
+    if (outcome.resultReport?.evidence[0]?.sourceRef) {
+      outcomeRecord.childRunId = outcome.resultReport.evidence[0].sourceRef
+    }
+    if (summary) outcomeRecord.summary = summary
+    if (outcome.parentAggregationTrace?.nextAction) {
+      outcomeRecord.parentAggregationNextAction = outcome.parentAggregationTrace.nextAction
+    }
+    if (outcome.feedbackRequest?.feedbackRequestId) {
+      outcomeRecord.feedbackRequestId = outcome.feedbackRequest.feedbackRequestId
+    }
+    outcomeRecord.lifecycle?.push({
+      status: finalStatus,
+      at: completedAt,
+      ...(outcomeRecord.reasonCode ? { reasonCode: outcomeRecord.reasonCode } : {}),
+      ...(outcomeRecord.childRunId ? { childRunId: outcomeRecord.childRunId } : {}),
       ...(summary ? { summary } : {}),
     })
+    appendParentEvent(
+      params.parentRunId,
+      [
+        "delegated_task_result",
+        task.taskId,
+        agent.source,
+        agent.agentId,
+        agent.displayName,
+        outcome.status === "completed" ? "completed" : "failed",
+        topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+        topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+      ].filter(Boolean).join(":"),
+    )
   }
 
   const dispatchTeamTask = async (task: OrchestrationTask, teamId: string): Promise<void> => {
+    const blockReason = teamDispatchBlockReason(task)
+    if (blockReason) {
+      outcomes.push({
+        taskId: task.taskId,
+        status: "skipped",
+        reasonCode: blockReason,
+        summary: `Skipped team dispatch for ${teamId} because the team was not explicitly selected.`,
+      })
+      appendParentEvent(params.parentRunId, `team_dispatch_skipped:${task.taskId}:${teamId}:${blockReason}`)
+      return
+    }
+
     const teamPlan = buildTeamExecutionPlan({
       teamId,
       teamExecutionPlanId: `team-plan:${params.parentRunId}:${task.taskId}`,

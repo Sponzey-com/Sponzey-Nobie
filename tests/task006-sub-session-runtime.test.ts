@@ -108,6 +108,11 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
       skillMcpAllowlist: allowlist,
       rateLimit: { maxConcurrentCalls: 2 },
     },
+    modelProfileSnapshot: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+      maxOutputTokens: 1024,
+    },
     taskScope,
     safetyRules: ["Do not deliver sub-session results directly to the user."],
     sourceProvenance: [{ sourceId: "profile:agent:researcher", version: "1" }],
@@ -115,7 +120,7 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
   }
 }
 
-function command(id: string, retryBudget = 2): CommandRequest {
+function command(id: string): CommandRequest {
   return {
     identity: identity("sub_session", id, `idem:${id}`),
     commandRequestId: `command:${id}`,
@@ -125,7 +130,6 @@ function command(id: string, retryBudget = 2): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget,
   }
 }
 
@@ -186,7 +190,6 @@ function outcome(taskId: string, status: SubSessionStatus = "completed"): SubSes
       agentDisplayName: "Researcher",
       commandRequestId: `command:${taskId}`,
       status,
-      retryBudgetRemaining: 1,
       promptBundleId: "prompt-bundle:researcher",
     },
     status,

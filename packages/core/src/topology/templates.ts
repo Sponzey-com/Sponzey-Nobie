@@ -352,7 +352,6 @@ export function buildTopologyFlowTemplateDraft(
   primary.failurePolicy = {
     failureReportRequired: true,
     allowPartialSuccess: true,
-    maxRetryAttempts: 0,
     fallbackNodeIds: [escalation.id],
   }
   primary.recoveryPolicy = {
@@ -446,7 +445,6 @@ function flowNode(
     failurePolicy: {
       failureReportRequired: true,
       allowPartialSuccess: true,
-      maxRetryAttempts: 0,
       fallbackNodeIds: [],
     },
     recoveryPolicy: {

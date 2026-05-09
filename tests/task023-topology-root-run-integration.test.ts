@@ -10,6 +10,7 @@ import {
 } from "../packages/core/src/db/index.js"
 import {
   TOPOLOGY_RUNTIME_FEATURE_KEY,
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
   listTopologyRuns,
@@ -17,6 +18,7 @@ import {
   runTopologyRootRun,
   setFeatureFlagMode,
   type EnterpriseTopology,
+  type AgentExecutionDecision,
   type TopologyRootRunRoutingDecision,
 } from "../packages/core/src/index.ts"
 import {
@@ -71,6 +73,41 @@ function activateTopology(topology: EnterpriseTopology = topologyFixture()) {
   return { registry, topology, appended, activation }
 }
 
+function executionDecision(selectedExecutorId = "node:intake"): AgentExecutionDecision {
+  return {
+    contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+    current_executor_id: "agent:nobie",
+    domain: "task023_topology_root_run",
+    behavior_pattern: "delegate",
+    execution_route: "delegate_to_child",
+    selected_executor_id: selectedExecutorId,
+    selected_connection_path: [selectedExecutorId],
+    task_profile: {
+      title: "토폴로지 루트 실행",
+      summary: "검증된 실행자 선택만 토폴로지 루트 실행으로 승격한다.",
+      goals: ["선택된 실행자가 사용자 요청을 처리한다."],
+      task_units: [{
+        id: "task023-entry",
+        title: "선택된 실행자 처리",
+        goal: "선택된 토폴로지 실행자가 결과를 만든다.",
+        preferred_executor_id: selectedExecutorId,
+      }],
+      success_criteria: ["컴파일된 기본 엔트리에 의존하지 않는다."],
+    },
+    required_outputs: [{
+      id: "answer",
+      label: "사용자에게 전달할 처리 결과",
+    }],
+    risk_boundary: {
+      requires_user_approval: false,
+      reason: "테스트용 실행자 선택",
+    },
+    confidence: 0.99,
+    fallback_if_unavailable: "direct_current_agent",
+    reason: "테스트가 선택한 실행자를 토폴로지 런타임에 전달합니다.",
+  }
+}
+
 afterEach(() => {
   closeDb()
   for (const dir of tempDirs.splice(0)) {
@@ -121,10 +158,10 @@ describe("task023 topology root-run opt-in integration", () => {
     expect(plan.orchestrationMode).toBe("single_nobie")
   })
 
-  it("routes explicit topology targets to the active compiled entry node", async () => {
+  it("does not route explicit topology targets without a selected executor", async () => {
     useTempState()
     enableTopologyRuntime()
-    const { topology, appended } = activateTopology()
+    const { topology } = activateTopology()
     const plan = await buildStartPlan({
       message: "이 요청은 topology:customer-success 로 처리해줘",
       sessionId: "session:explicit",
@@ -134,13 +171,9 @@ describe("task023 topology root-run opt-in integration", () => {
     }, defaultStartPlanDependencies)
 
     expect(plan.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      reasonCode: "explicit_topology_target",
-      topologyId: topology.id,
-      topologyVersion: appended.version.version,
-      topologyVersionId: appended.version.versionId,
-      entryNodeId: "node:intake",
-      explicit: true,
+      mode: "fallback",
+      reasonCode: "selected_executor_missing",
+      explicitTopologyId: topology.id,
     }))
   })
 
@@ -155,6 +188,7 @@ describe("task023 topology root-run opt-in integration", () => {
       source: "webui",
       targetId: topology.id,
       isRootRequest: true,
+      executionDecision: executionDecision("node:intake"),
     })
     expect(decision.mode).toBe("route")
 
@@ -193,6 +227,7 @@ describe("task023 topology root-run opt-in integration", () => {
       source: "webui",
       targetId: topology.id,
       isRootRequest: true,
+      executionDecision: executionDecision("node:intake"),
     })
     expect(decision.mode).toBe("route")
     insertSession({
@@ -347,6 +382,10 @@ describe("task023 topology root-run opt-in integration", () => {
         topologyVersionId: "topology-version:customer-success:1",
         compiledTopologySnapshotId: "compiled:task023",
         entryNodeId: "node:intake",
+        selectedExecutorId: "node:intake",
+        selectedConnectionPath: ["node:intake"],
+        availableDirectChildExecutorIds: ["topology:customer-success:node:intake"],
+        entrySelection: "execution_decision",
         explicit: true,
       },
       syntheticApprovalRuntimeDependencies: {} as never,

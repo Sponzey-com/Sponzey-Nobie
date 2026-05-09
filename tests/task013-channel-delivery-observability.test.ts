@@ -115,7 +115,6 @@ function subSession(overrides: Partial<SubSessionContract> = {}): SubSessionCont
     agentNickname: "weather",
     commandRequestId: "command-1",
     status: "running",
-    retryBudgetRemaining: 2,
     promptBundleId: "bundle-1",
     ...overrides,
   }
@@ -175,7 +174,6 @@ function runInputForProgress(subSessionId: string): RunSubSessionInput {
     },
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 1,
   }
   const promptBundle = {
     identity: runtimeIdentity(`bundle:${subSessionId}`),

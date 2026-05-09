@@ -113,7 +113,6 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
     if (!text && !event.files?.length)
         return [];
     const threadId = event.thread_ts?.trim() || (eventType === "app_mention" ? messageId : "");
-    const isThreadReply = Boolean(event.thread_ts?.trim()) && event.thread_ts?.trim() !== messageId;
     const timestamp = parseSlackTimestamp(event.event_ts ?? event.ts, options.now);
     return [{
             channelId: options.channelId ?? DEFAULT_CHANNEL_ID,
@@ -121,7 +120,6 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
             connectionId: options.connectionId ?? DEFAULT_CONNECTION_ID,
             messageId,
             ...(threadId ? { threadId } : {}),
-            ...(isThreadReply && event.thread_ts ? { replyToMessageId: event.thread_ts } : {}),
             sender: {
                 id: userId,
                 providerType: "user",
@@ -133,9 +131,6 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
             mentions,
             timestamp,
             rawPayloadRef: createRawPayloadRef({ provider: "slack", payload: rawPayload, createdAt: timestamp }),
-            ...(isThreadReply && event.thread_ts
-                ? { continuationContext: { parentMessageId: event.thread_ts, source: "thread" } }
-                : {}),
             dedupeKey: `slack:${roomId}:${messageId}`,
         }];
 }

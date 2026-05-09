@@ -11,8 +11,11 @@ import {
   type FeatureFlagMode,
   type RuntimeFeatureFlag,
 } from "../runtime/rollout-safety.js"
+import type { AgentExecutionDecision } from "../orchestration/execution-decision-contract.js"
+import type { OrchestrationModeSnapshot } from "../orchestration/mode.js"
 import {
   createEnterpriseTopologyRegistry,
+  type EnterpriseTopologyRegistryRecord,
   type EnterpriseTopologyRegistryStore,
   type TopologyExportEnvelope,
 } from "../topology/registry.js"
@@ -20,6 +23,7 @@ import {
   buildWorkOrder,
   createWorkOrderRuntimeEnvelope,
 } from "./work-order.js"
+import type { CompiledTopologySnapshot } from "../topology/compiler.js"
 import {
   runNodeRuntime,
   type NodeRuntimeExecutionResult,
@@ -45,10 +49,13 @@ export type TopologyRootRunFallbackReasonCode =
   | "topology_validation_blocked"
   | "compiled_snapshot_missing"
   | "entry_node_missing"
+  | "selected_executor_missing"
+  | "selected_executor_not_direct_child"
+  | "selected_executor_path_invalid"
 
 export type TopologyRootRunRouteReasonCode =
   | "explicit_topology_target"
-  | "active_default_workflow_candidate"
+  | "execution_decision_selected_executor"
 
 export type TopologyRootRunRoutingDecision =
   | {
@@ -69,6 +76,11 @@ export type TopologyRootRunRoutingDecision =
       topologyVersionId: string
       compiledTopologySnapshotId: string
       entryNodeId: string
+      selectedExecutorId?: string
+      selectedConnectionPath?: string[]
+      availableDirectChildExecutorIds: string[]
+      entrySelection?: "execution_decision"
+      executionDecision?: AgentExecutionDecision
       explicit: boolean
     }
 
@@ -110,6 +122,11 @@ export interface ResolveTopologyRootRunRoutingInput {
   isRootRequest: boolean
   registry?: EnterpriseTopologyRegistryStore
   featureFlag?: RuntimeFeatureFlag
+  executionDecision?: AgentExecutionDecision
+  orchestrationModeSnapshot?: Pick<
+    OrchestrationModeSnapshot,
+    "mode" | "activeSubAgentCount"
+  >
 }
 
 export interface RunTopologyRootRunInput {
@@ -129,8 +146,24 @@ export function resolveTopologyRootRunRouting(
   const featureFlag = input.featureFlag ?? getFeatureFlag(TOPOLOGY_RUNTIME_FEATURE_KEY)
   const featureFlagMode = featureFlag.mode
   const explicitTopologyId = explicitTopologyIdFromInput(input.targetId, input.message)
+  if (explicitTopologyId === undefined && isExplicitDirectExecutionTarget(input.targetId)) {
+    return {
+      mode: "fallback",
+      reasonCode: "topology_routing_not_opted_in",
+      featureFlagMode,
+    }
+  }
+  const orchestrationSnapshotAllowsTopology = topologyExecutionAllowedByOrchestrationSnapshot(
+    input.orchestrationModeSnapshot,
+  )
+  const featureFlagAllowsTopology = shouldUseNewPath(featureFlag)
+  const explicitlyDisabledByAdmin =
+    featureFlag.source === "db" && (featureFlag.mode === "off" || featureFlag.mode === "rollback")
 
-  if (!shouldUseNewPath(featureFlag)) {
+  if (
+    explicitlyDisabledByAdmin ||
+    (!featureFlagAllowsTopology && !orchestrationSnapshotAllowsTopology)
+  ) {
     return {
       mode: "fallback",
       reasonCode: "feature_flag_off",
@@ -148,22 +181,17 @@ export function resolveTopologyRootRunRouting(
     }
   }
 
-  const workflowCandidate = explicitTopologyId !== undefined || isWorkflowRoutingCandidate(input.message, input.taskProfile)
-  if (!workflowCandidate) {
-    return {
-      mode: "fallback",
-      reasonCode: "topology_routing_not_opted_in",
-      featureFlagMode,
-    }
-  }
-
   const registry = input.registry ?? createEnterpriseTopologyRegistry()
-  const activeTopologies = registry.listTopologies().filter((topology) => (
+  const topologies = registry.listTopologies()
+  const activeTopologies = topologies.filter((topology) => (
     topology.status === "active" && topology.activeVersion !== undefined
   ))
+  const routableTopologies = orchestrationSnapshotAllowsTopology
+    ? savedTopologyRoutingCandidates(topologies)
+    : activeTopologies
   const topologyRecord = explicitTopologyId !== undefined
     ? registry.getTopology(explicitTopologyId)
-    : activeTopologies[0] ?? null
+    : routableTopologies[0] ?? null
 
   if (topologyRecord === null) {
     return {
@@ -174,7 +202,14 @@ export function resolveTopologyRootRunRouting(
       activeTopologyCount: activeTopologies.length,
     }
   }
-  if (topologyRecord.status !== "active" || topologyRecord.activeVersion === undefined) {
+  const activeTopologyRequired = featureFlagAllowsTopology && !orchestrationSnapshotAllowsTopology
+  if (
+    topologyRecord.status === "archived" ||
+    (
+      activeTopologyRequired &&
+      (topologyRecord.status !== "active" || topologyRecord.activeVersion === undefined)
+    )
+  ) {
     return {
       mode: "fallback",
       reasonCode: "topology_not_active",
@@ -184,13 +219,46 @@ export function resolveTopologyRootRunRouting(
     }
   }
 
-  const exported = registry.exportTopology(topologyRecord.topologyId, topologyRecord.activeVersion)
+  const exported = registry.exportTopology(
+    topologyRecord.topologyId,
+    activeTopologyRequired ? topologyRecord.activeVersion : undefined,
+  )
   return exportedToRoutingDecision({
     exported,
     featureFlagMode,
     explicit: explicitTopologyId !== undefined,
     activeTopologyCount: activeTopologies.length,
+    ...(input.executionDecision !== undefined ? { executionDecision: input.executionDecision } : {}),
   })
+}
+
+function topologyExecutionAllowedByOrchestrationSnapshot(
+  snapshot: ResolveTopologyRootRunRoutingInput["orchestrationModeSnapshot"],
+): boolean {
+  return Boolean(
+    snapshot?.mode === "orchestration" &&
+    snapshot.activeSubAgentCount > 0,
+  )
+}
+
+function savedTopologyRoutingCandidates(
+  topologies: EnterpriseTopologyRegistryRecord[],
+): EnterpriseTopologyRegistryRecord[] {
+  return topologies
+    .filter((topology) => topology.status !== "archived")
+    .sort((left, right) => {
+      return timestampMs(right.updatedAt) - timestampMs(left.updatedAt) ||
+        left.topologyId.localeCompare(right.topologyId)
+    })
+}
+
+function timestampMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
 }
 
 export async function runTopologyRootRun(
@@ -208,7 +276,7 @@ export async function runTopologyRootRun(
   const now = input.now ?? Date.now
   const topology = exported.version.topology
   const snapshot = exported.compiledSnapshot.snapshot
-  const entryNodeId = snapshot.runtimeExecutionContext.entryNodeId
+  const entryNodeId = input.decision.entryNodeId
   if (entryNodeId === null) return fallbackExecution("entry_node_missing", ["entry_node_missing"])
   const entryNode = topology.nodes.find((node) => node.id === entryNodeId)
   if (entryNode === undefined) return fallbackExecution("entry_node_missing", [`missing_node:${entryNodeId}`])
@@ -232,6 +300,13 @@ export async function runTopologyRootRun(
       rootRunId: input.runId,
       sessionId: input.sessionId,
       source: input.source,
+      routingReasonCode: input.decision.reasonCode,
+      entrySelection: input.decision.entrySelection ?? "execution_decision",
+      selectedExecutorId: input.decision.selectedExecutorId,
+      selectedConnectionPath: input.decision.selectedConnectionPath ?? [entryNode.id],
+      ...(input.decision.executionDecision !== undefined
+        ? { executionDecision: input.decision.executionDecision as unknown as EnterpriseMetadata }
+        : {}),
     },
     expectedOutputSchema: {
       type: "object",
@@ -292,6 +367,13 @@ export async function runTopologyRootRun(
       childNodeContractsById,
       recursive: true,
     },
+    aggregation: {
+      enabled: true,
+      strategy: "parent_decides",
+      expectedChildNodeIds: snapshot.parentChildTree.edges[entryNode.id] ?? [],
+      requireAllChildResults: false,
+      allowPartialSuccess: true,
+    },
     recovery: {
       enabled: true,
       childDelegationAttempted: true,
@@ -300,7 +382,7 @@ export async function runTopologyRootRun(
       fallbackAttempted: true,
       partialSuccessChecked: true,
       parentRecoveryPossibleChecked: true,
-      recommendedAction: "Fallback to the existing single Nobie root-run path if topology execution cannot produce a final answer.",
+      recommendedAction: "Use the current-agent fallback contract if topology execution cannot produce a final answer.",
     },
   })
   const persistence = recordTopologyRuntimeExecution({
@@ -312,8 +394,15 @@ export async function runTopologyRootRun(
     metadata: {
       source: "root_run_topology_runtime",
       routingReasonCode: input.decision.reasonCode,
+      entrySelection: input.decision.entrySelection ?? "execution_decision",
       sessionId: input.sessionId,
       sourceChannel: input.source,
+      ...(input.decision.selectedExecutorId !== undefined
+        ? { selectedExecutorId: input.decision.selectedExecutorId }
+        : {}),
+      ...(input.decision.selectedConnectionPath !== undefined
+        ? { selectedConnectionPath: input.decision.selectedConnectionPath }
+        : {}),
     },
     now,
   })
@@ -322,7 +411,7 @@ export async function runTopologyRootRun(
     return {
       ok: false,
       reasonCode: "topology_runtime_failed",
-      fallbackSummary: "Topology runtime did not produce a completed result; falling back to the existing root-run path.",
+      fallbackSummary: "Topology runtime did not produce a completed result; use the current-agent fallback contract.",
       issues: runtimeResult.nodeResultReport.risksOrGaps,
       runtimeResult,
       persistence,
@@ -353,6 +442,7 @@ function exportedToRoutingDecision(input: {
   featureFlagMode: FeatureFlagMode
   explicit: boolean
   activeTopologyCount: number
+  executionDecision?: AgentExecutionDecision
 }): TopologyRootRunRoutingDecision {
   if (input.exported === null) {
     return {
@@ -362,49 +452,229 @@ function exportedToRoutingDecision(input: {
       activeTopologyCount: input.activeTopologyCount,
     }
   }
-  if (!input.exported.validationSnapshot.executable) {
+  const exported = input.exported
+  if (!exported.validationSnapshot.executable) {
     return {
       mode: "fallback",
       reasonCode: "topology_validation_blocked",
       featureFlagMode: input.featureFlagMode,
-      explicitTopologyId: input.exported.topologyRecord.topologyId,
+      explicitTopologyId: exported.topologyRecord.topologyId,
       activeTopologyCount: input.activeTopologyCount,
-      issues: input.exported.validationSnapshot.validation.issues
+      issues: exported.validationSnapshot.validation.issues
         .filter((issue) => issue.severity === "blocked" || issue.severity === "invalid")
         .map((issue) => issue.reasonCode),
     }
   }
-  if (input.exported.compiledSnapshot === undefined) {
+  if (exported.compiledSnapshot === undefined) {
     return {
       mode: "fallback",
       reasonCode: "compiled_snapshot_missing",
       featureFlagMode: input.featureFlagMode,
-      explicitTopologyId: input.exported.topologyRecord.topologyId,
+      explicitTopologyId: exported.topologyRecord.topologyId,
       activeTopologyCount: input.activeTopologyCount,
     }
   }
-  const entryNodeId = input.exported.compiledSnapshot.snapshot.runtimeExecutionContext.entryNodeId
-  if (entryNodeId === null) {
+  const snapshot = exported.compiledSnapshot.snapshot
+  const entrySelection = selectEntryNodeFromExecutionDecision({
+    topologyId: exported.topologyRecord.topologyId,
+    snapshot,
+    ...(input.executionDecision !== undefined ? { executionDecision: input.executionDecision } : {}),
+  })
+  if (!entrySelection.ok) {
     return {
       mode: "fallback",
-      reasonCode: "entry_node_missing",
+      reasonCode: entrySelection.reasonCode,
       featureFlagMode: input.featureFlagMode,
-      explicitTopologyId: input.exported.topologyRecord.topologyId,
+      explicitTopologyId: exported.topologyRecord.topologyId,
       activeTopologyCount: input.activeTopologyCount,
+      issues: entrySelection.issues,
     }
   }
   return {
     mode: "route",
-    reasonCode: input.explicit ? "explicit_topology_target" : "active_default_workflow_candidate",
+    reasonCode: input.explicit ? "explicit_topology_target" : "execution_decision_selected_executor",
     featureFlagMode: input.featureFlagMode,
-    topologyId: input.exported.topologyRecord.topologyId,
-    topologyName: input.exported.topologyRecord.name,
-    topologyVersion: input.exported.version.version,
-    topologyVersionId: input.exported.version.versionId,
-    compiledTopologySnapshotId: input.exported.compiledSnapshot.snapshotId,
-    entryNodeId,
+    topologyId: exported.topologyRecord.topologyId,
+    topologyName: exported.topologyRecord.name,
+    topologyVersion: exported.version.version,
+    topologyVersionId: exported.version.versionId,
+    compiledTopologySnapshotId: exported.compiledSnapshot.snapshotId,
+    entryNodeId: entrySelection.entryNodeId,
+    entrySelection: entrySelection.selectionKind,
+    availableDirectChildExecutorIds: rootChildEntryNodeIds(exported.compiledSnapshot.snapshot)
+      .map((nodeId) => `${exported.topologyRecord.topologyId}:${nodeId}`),
+    ...(entrySelection.selectedExecutorId !== undefined
+      ? { selectedExecutorId: entrySelection.selectedExecutorId }
+      : {}),
+    ...(entrySelection.selectedConnectionPath !== undefined
+      ? { selectedConnectionPath: entrySelection.selectedConnectionPath }
+      : {}),
+    ...(input.executionDecision !== undefined ? { executionDecision: input.executionDecision } : {}),
     explicit: input.explicit,
   }
+}
+
+function selectEntryNodeFromExecutionDecision(input: {
+  topologyId: string
+  executionDecision?: AgentExecutionDecision
+  snapshot: CompiledTopologySnapshot
+}): {
+  ok: true
+  entryNodeId: string
+  selectionKind: "execution_decision"
+  selectedExecutorId?: string
+  selectedConnectionPath?: string[]
+} | {
+  ok: false
+  reasonCode: Extract<
+    TopologyRootRunFallbackReasonCode,
+    "selected_executor_missing" | "selected_executor_not_direct_child" | "selected_executor_path_invalid"
+  >
+  issues: string[]
+} {
+  const selectedExecutorId = input.executionDecision?.selected_executor_id
+  if (selectedExecutorId === undefined || selectedExecutorId.trim().length === 0) {
+    return {
+      ok: false,
+      reasonCode: "selected_executor_missing",
+      issues: ["selected_executor_missing"],
+    }
+  }
+
+  const normalizedSelected = normalizeDecisionNodeId({
+    value: selectedExecutorId,
+    topologyId: input.topologyId,
+    snapshot: input.snapshot,
+  })
+  if (normalizedSelected === undefined) {
+    return {
+      ok: false,
+      reasonCode: "selected_executor_missing",
+      issues: [`missing_selected_executor:${selectedExecutorId}`],
+    }
+  }
+  const rootChildNodeIds = rootChildEntryNodeIds(input.snapshot)
+  const rootChildNodeIdSet = new Set(rootChildNodeIds)
+
+  const normalizedPath = normalizeDecisionConnectionPath({
+    path: input.executionDecision?.selected_connection_path ?? [],
+    topologyId: input.topologyId,
+    snapshot: input.snapshot,
+  })
+  if (!normalizedPath.ok) {
+    return {
+      ok: false,
+      reasonCode: "selected_executor_path_invalid",
+      issues: normalizedPath.issues,
+    }
+  }
+  if (normalizedPath.nodeIds.length === 0) {
+    if (rootChildNodeIdSet.has(normalizedSelected)) {
+      return {
+        ok: true,
+        entryNodeId: normalizedSelected,
+        selectionKind: "execution_decision",
+        selectedExecutorId: normalizedSelected,
+        selectedConnectionPath: [normalizedSelected],
+      }
+    }
+    return {
+      ok: false,
+      reasonCode: "selected_executor_not_direct_child",
+      issues: [`selected_executor_not_direct_child:${normalizedSelected}`],
+    }
+  }
+  const firstNodeId = normalizedPath.nodeIds[0] ?? ""
+  const lastNodeId = normalizedPath.nodeIds[normalizedPath.nodeIds.length - 1] ?? ""
+  const pathIssues: string[] = []
+  if (!rootChildNodeIdSet.has(firstNodeId)) {
+    pathIssues.push(`selected_path_must_start_at_root_child:${rootChildNodeIds.join(",")}`)
+  }
+  if (lastNodeId !== normalizedSelected) {
+    pathIssues.push(`selected_path_must_end_at_executor:${normalizedSelected}`)
+  }
+  for (let index = 0; index < normalizedPath.nodeIds.length - 1; index += 1) {
+    const from = normalizedPath.nodeIds[index]
+    const to = normalizedPath.nodeIds[index + 1]
+    if (from === undefined || to === undefined) {
+      pathIssues.push("selected_connection_path_contains_empty_node")
+      continue
+    }
+    if (!input.snapshot.parentChildTree.edges[from]?.includes(to)) {
+      pathIssues.push(`missing_topology_edge:${from}->${to}`)
+    }
+  }
+  if (pathIssues.length > 0) {
+    return {
+      ok: false,
+      reasonCode: "selected_executor_path_invalid",
+      issues: pathIssues,
+    }
+  }
+
+  return {
+    ok: true,
+    entryNodeId: firstNodeId,
+    selectionKind: "execution_decision",
+    selectedExecutorId: normalizedSelected,
+    selectedConnectionPath: normalizedPath.nodeIds,
+  }
+}
+
+function rootChildEntryNodeIds(snapshot: CompiledTopologySnapshot): string[] {
+  const runtimeRootChildren = snapshot.runtimeExecutionContext.rootChildNodeIds
+  if (Array.isArray(runtimeRootChildren) && runtimeRootChildren.length > 0) {
+    return [...runtimeRootChildren]
+  }
+  const treeRootChildren = snapshot.parentChildTree.rootChildNodeIds
+  if (Array.isArray(treeRootChildren) && treeRootChildren.length > 0) {
+    return [...treeRootChildren]
+  }
+  return [...snapshot.parentChildTree.rootNodeIds]
+}
+
+function normalizeDecisionConnectionPath(input: {
+  path: string[]
+  topologyId: string
+  snapshot: CompiledTopologySnapshot
+}): { ok: true; nodeIds: string[] } | { ok: false; issues: string[] } {
+  const nodeIds: string[] = []
+  const issues: string[] = []
+  for (const raw of input.path) {
+    const normalized = normalizeDecisionNodeId({
+      value: raw,
+      topologyId: input.topologyId,
+      snapshot: input.snapshot,
+    })
+    if (normalized === undefined) {
+      issues.push(`missing_connection_path_node:${raw}`)
+      continue
+    }
+    nodeIds.push(normalized)
+  }
+  return issues.length === 0 ? { ok: true, nodeIds } : { ok: false, issues }
+}
+
+function normalizeDecisionNodeId(input: {
+  value: string
+  topologyId: string
+  snapshot: CompiledTopologySnapshot
+}): string | undefined {
+  const trimmed = input.value.trim()
+  if (!trimmed) return undefined
+  if (input.snapshot.nodeIndex[trimmed] !== undefined) return trimmed
+  const topologyPrefix = `${input.topologyId}:`
+  if (trimmed.startsWith(topologyPrefix)) {
+    const stripped = trimmed.slice(topologyPrefix.length)
+    if (input.snapshot.nodeIndex[stripped] !== undefined) return stripped
+  }
+  const nodeMarker = ":node:"
+  const markerIndex = trimmed.indexOf(nodeMarker)
+  if (markerIndex >= 0) {
+    const nodeId = trimmed.slice(markerIndex + 1)
+    if (input.snapshot.nodeIndex[nodeId] !== undefined) return nodeId
+  }
+  return undefined
 }
 
 function explicitTopologyIdFromInput(targetId: string | undefined, message: string): string | undefined {
@@ -418,14 +688,18 @@ function explicitTopologyIdFromInput(targetId: string | undefined, message: stri
 function normalizeTopologyIdCandidate(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   if (!trimmed) return undefined
-  if (trimmed.startsWith("topology:")) return trimmed
-  if (trimmed.startsWith("enterprise-topology:")) return `topology:${trimmed.slice("enterprise-topology:".length)}`
+  const nodeMarker = ":node:"
+  const nodeMarkerIndex = trimmed.indexOf(nodeMarker)
+  const topologyScopedValue = nodeMarkerIndex >= 0 ? trimmed.slice(0, nodeMarkerIndex) : trimmed
+  if (topologyScopedValue.startsWith("topology:")) return topologyScopedValue
+  if (topologyScopedValue.startsWith("enterprise-topology:")) return `topology:${topologyScopedValue.slice("enterprise-topology:".length)}`
   return undefined
 }
 
-function isWorkflowRoutingCandidate(message: string, taskProfile: string | undefined): boolean {
-  if (taskProfile === "operations" || taskProfile === "planning") return true
-  return /(?:업무|워크플로|프로세스|승인|위임|담당|조직|workflow|process|approval|delegate|delegation|operations)/iu.test(message)
+function isExplicitDirectExecutionTarget(value: string | undefined): boolean {
+  const trimmed = value?.trim().toLowerCase()
+  if (!trimmed) return false
+  return trimmed.startsWith("provider:") || trimmed.startsWith("worker:") || trimmed.startsWith("model:")
 }
 
 function fallbackExecution(

@@ -68,7 +68,7 @@ describe("execution chunk pass", () => {
       applyExecutionRecoveryAttempt: vi.fn().mockReturnValue({
         kind: "stop",
         stop: {
-          summary: "실행 복구 한도",
+          summary: "실행 복구를 자동으로 계속할 수 없습니다.",
           reason: "missing permission",
           remainingItems: ["manual action"],
         },
@@ -79,7 +79,7 @@ describe("execution chunk pass", () => {
     expect(result).toEqual({
       handled: true,
       executionRecoveryLimitStop: {
-        summary: "실행 복구 한도",
+        summary: "실행 복구를 자동으로 계속할 수 없습니다.",
         reason: "missing permission",
         remainingItems: ["manual action"],
       },

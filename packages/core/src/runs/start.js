@@ -1,7 +1,7 @@
 import { getConfig } from "../config/index.js";
 import { intentContractFromTaskIntentEnvelope } from "../contracts/intake-adapter.js";
 import { insertDiagnosticEvent } from "../db/index.js";
-import { detectAvailableProvider, formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js";
+import { formatProviderAuditTrace, resolveProviderResolutionSnapshot } from "../ai/index.js";
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { createLogger } from "../logger/index.js";
 import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/latency.js";
@@ -14,6 +14,7 @@ import { buildStartRootRunDriverDependencies, } from "./start-driver-dependencie
 import { rememberRunFailure } from "./start-support.js";
 import { resolveStartContextPlan } from "./preflight.js";
 import { dispatchDelegatedSubAgentTasks } from "./orchestration-dispatch.js";
+import { recordTopologyDispatchFollowupTrace, resolveTopologyDispatchFollowupDecision, } from "./topology-dispatch-fallback.js";
 const log = createLogger("runs:start");
 const syntheticApprovalScopes = new Set();
 async function failStartPreflight(params) {
@@ -46,7 +47,7 @@ export function startRootRun(params) {
     const sessionId = params.sessionId ?? crypto.randomUUID();
     const runId = params.runId ?? crypto.randomUUID();
     const controller = new AbortController();
-    const targetId = params.targetId ?? (params.model ? detectAvailableProvider() : undefined);
+    const targetId = params.targetId?.trim() ? params.targetId : undefined;
     const now = Date.now();
     const workDir = params.workDir ?? process.cwd();
     const incomingIntentContract = params.intentEnvelope
@@ -80,6 +81,10 @@ export function startRootRun(params) {
             ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
             ...(params.orchestrationPlannerIntent
                 ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
+                : {}),
+            ...(params.agentExecutionDecision ? { agentExecutionDecision: params.agentExecutionDecision } : {}),
+            ...(params.agentExecutionDecisionTrace
+                ? { agentExecutionDecisionTrace: params.agentExecutionDecisionTrace }
                 : {}),
             ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
             hasRequestGroupExecutionQueue,
@@ -126,6 +131,7 @@ export function startRootRun(params) {
         for (const latencyEvent of startPlan.latencyEvents)
             appendRunEvent(runId, latencyEvent);
         const { entrySemantics, reconnectTarget, reconnectNeedsClarification, requestGroupId, isRootRequest, effectiveTaskProfile, effectiveContextMode, workerSessionId, topologyRouting, } = startPlan;
+        const suppressFinalDelivery = params.runScope === "child" || Boolean(params.parentRunId);
         const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun;
         const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
             runId,
@@ -135,8 +141,11 @@ export function startRootRun(params) {
             onChunk: params.onChunk,
             message: params.message,
             model: params.model,
+            ...(params.providerId ? { providerId: params.providerId } : {}),
+            ...(params.provider ? { provider: params.provider } : {}),
             workDir,
             reuseConversationContext: entrySemantics.reuse_conversation_context,
+            ...(suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
             activeQueueCancellationMode: entrySemantics.active_queue_cancellation_mode,
             startNestedRootRun: startRootRun,
             syntheticApprovalScopes,
@@ -157,7 +166,7 @@ export function startRootRun(params) {
                 : {}),
             ...(params.toolsEnabled === false ? { toolsEnabled: params.toolsEnabled } : {}),
             ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
-            ...(params.targetId ? { targetId: params.targetId } : {}),
+            ...(targetId ? { targetId } : {}),
             ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
             ...(params.contextMode ? { contextMode: params.contextMode } : {}),
             ...(params.runScope ? { runScope: params.runScope } : {}),
@@ -181,6 +190,12 @@ export function startRootRun(params) {
             task: async () => {
                 const executionStartedAt = Date.now();
                 let executionMessage = params.message;
+                let topologyDelegatedDispatchAttempted = false;
+                let topologyDispatchFollowupDecision;
+                const topologyAgentIds = new Set(startPlan.orchestrationRegistrySnapshot.activeSubAgents
+                    .filter((agent) => agent.source === "topology")
+                    .map((agent) => agent.agentId));
+                const hasTopologyDelegatedTasks = startPlan.orchestrationPlanSnapshot.delegatedTasks.some((task) => task.assignedAgentId !== undefined && topologyAgentIds.has(task.assignedAgentId));
                 try {
                     if (isRootRequest &&
                         !params.parentRunId &&
@@ -205,11 +220,40 @@ export function startRootRun(params) {
                                 updateParentSummary: updateRunSummary,
                             });
                             appendRunEvent(runId, `sub_agent_dispatch_summary:attempted=${dispatchResult.attempted};completed=${dispatchResult.completed};failed=${dispatchResult.failed};skipped=${dispatchResult.skipped}`);
+                            if (hasTopologyDelegatedTasks && dispatchResult.attempted > 0) {
+                                topologyDelegatedDispatchAttempted = true;
+                                topologyDispatchFollowupDecision = resolveTopologyDispatchFollowupDecision({
+                                    dispatchResult,
+                                    plan: startPlan.orchestrationPlanSnapshot,
+                                    currentExecutorId: "agent:nobie",
+                                    availableDirectChildExecutorIds: topologyRouting.mode === "route"
+                                        ? topologyRouting.availableDirectChildExecutorIds
+                                        : [],
+                                });
+                                if (topologyDispatchFollowupDecision && topologyRouting.mode === "route") {
+                                    const traceResult = recordTopologyDispatchFollowupTrace({
+                                        decision: topologyDispatchFollowupDecision,
+                                        dispatchResult,
+                                        plan: startPlan.orchestrationPlanSnapshot,
+                                        runId,
+                                        requestGroupId,
+                                        sessionId,
+                                        source: params.source,
+                                        topologyId: topologyRouting.topologyId,
+                                        entryNodeId: topologyRouting.selectedExecutorId ?? topologyRouting.entryNodeId,
+                                    });
+                                    appendRunEvent(runId, `topology_dispatch_followup_trace:${traceResult.topologyRunId};decision_trace=${traceResult.decisionTraceId};events=${traceResult.traceEventCount}`);
+                                }
+                            }
                             const subAgentContext = dispatchResult.outcomes
                                 .filter((outcome) => outcome.status !== "skipped")
                                 .map((outcome) => [
                                 `- task=${outcome.taskId}`,
+                                outcome.agentDisplayName ? `executor=${outcome.agentDisplayName}` : undefined,
+                                outcome.agentSource ? `source=${outcome.agentSource}` : undefined,
                                 outcome.agentId ? `agent=${outcome.agentId}` : undefined,
+                                outcome.topologyId ? `topology=${outcome.topologyId}` : undefined,
+                                outcome.topologyExecutorId ? `topologyExecutor=${outcome.topologyExecutorId}` : undefined,
                                 outcome.subSessionId ? `subSession=${outcome.subSessionId}` : undefined,
                                 outcome.childRunId ? `childRun=${outcome.childRunId}` : undefined,
                                 `status=${outcome.status}`,
@@ -229,6 +273,25 @@ export function startRootRun(params) {
                             });
                         }
                     }
+                    if (topologyDelegatedDispatchAttempted && topologyRouting.mode === "route") {
+                        appendRunEvent(runId, `topology_runtime_deferred_to_sub_agent_dispatch:${topologyRouting.topologyId}:selected=${topologyRouting.selectedExecutorId ?? "unselected"}`);
+                    }
+                    if (topologyDispatchFollowupDecision) {
+                        appendRunEvent(runId, `topology_dispatch_followup_decision:${topologyDispatchFollowupDecision.action};reason=${topologyDispatchFollowupDecision.reasonCode};failed=${topologyDispatchFollowupDecision.failedExecutorIds.join(",") || "none"}`);
+                        if (topologyDispatchFollowupDecision.action === "self_solve") {
+                            appendRunEvent(runId, "delegated_executor_runtime_failure_direct_current_agent:self_solve_after_delegation_failure");
+                        }
+                        else {
+                            const summary = topologyDispatchFollowupDecision.summary;
+                            updateRunSummary(runId, summary);
+                            setRunStepStatus(runId, "executing", topologyDispatchFollowupDecision.action === "fail_with_reason" ? "failed" : "pending", summary);
+                            updateRunStatus(runId, topologyDispatchFollowupDecision.action === "fail_with_reason" ? "failed" : "awaiting_user", summary, false);
+                            appendRunEvent(runId, `topology_dispatch_followup_blocked_root_loop:${topologyDispatchFollowupDecision.action};reason=${topologyDispatchFollowupDecision.reasonCode}`);
+                            return getRootRun(runId);
+                        }
+                    }
+                    const skipIntakeForTopologyDispatch = params.skipIntake === true || topologyDelegatedDispatchAttempted;
+                    const driverTopologyRouting = topologyDelegatedDispatchAttempted ? undefined : topologyRouting;
                     await executeRootRunDriver({
                         runId,
                         sessionId,
@@ -246,10 +309,10 @@ export function startRootRun(params) {
                         currentModel: params.model,
                         currentProviderId: params.providerId,
                         currentProvider: params.provider,
-                        currentTargetId: params.targetId,
+                        currentTargetId: targetId,
                         currentTargetLabel: params.targetLabel,
                         workDir,
-                        ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
+                        ...(skipIntakeForTopologyDispatch ? { skipIntake: true } : {}),
                         ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
                         reconnectNeedsClarification,
                         ...(reconnectTarget ? { reconnectTargetTitle: reconnectTarget.title } : {}),
@@ -258,9 +321,10 @@ export function startRootRun(params) {
                         ...(workerSessionId ? { workerSessionId } : {}),
                         ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
                         isRootRequest,
+                        ...(suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
                         contextMode: effectiveContextMode,
                         taskProfile: effectiveTaskProfile,
-                        topologyRouting,
+                        ...(driverTopologyRouting ? { topologyRouting: driverTopologyRouting } : {}),
                         syntheticApprovalRuntimeDependencies,
                         defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
                     }, driverDependencies);

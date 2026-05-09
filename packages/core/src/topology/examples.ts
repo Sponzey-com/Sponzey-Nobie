@@ -36,7 +36,6 @@ export function buildExampleEnterpriseTopology(now = Date.UTC(2026, 3, 29, 0, 0,
         failurePolicy: {
           failureReportRequired: true,
           allowPartialSuccess: true,
-          maxRetryAttempts: 1,
           fallbackNodeIds: ["node:triage"],
         },
         recoveryPolicy: {
@@ -62,7 +61,6 @@ export function buildExampleEnterpriseTopology(now = Date.UTC(2026, 3, 29, 0, 0,
         failurePolicy: {
           failureReportRequired: true,
           allowPartialSuccess: true,
-          maxRetryAttempts: 0,
           fallbackNodeIds: [],
         },
         recoveryPolicy: {

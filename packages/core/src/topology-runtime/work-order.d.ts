@@ -37,7 +37,6 @@ export interface WorkOrderRuntimeEnvelopeInput {
     targetAgentId?: string;
     targetNicknameSnapshot?: string;
     contextPackageId?: string;
-    retryBudget?: number;
     now?: () => number;
     authorityPreflight?: WorkOrderAuthorityPreflightInput;
     baseCapabilityPolicy?: CapabilityPolicy;
@@ -87,7 +86,6 @@ export interface WorkOrderPromptBridge {
 }
 export interface WorkOrderResultReviewBridge {
     expectedOutputs: ExpectedOutputContract[];
-    retryBudgetRemaining: number;
     additionalContextRefs: string[];
     successCriterionIds: string[];
 }

@@ -12,6 +12,7 @@ import { getDb, listMessageLedgerEvents, } from "../../db/index.js";
 import { eventBus } from "../../events/index.js";
 import { getApprovalRegistryRow, resolveApprovalRegistryDecision } from "../../runs/approval-registry.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
+import { getRuntimeBuildStatus } from "../../runtime/build-status.js";
 import { authMiddleware } from "../middleware/auth.js";
 const SECRET_KEY_PATTERN = /(?:api[_-]?key|token|secret|password|credential|authorization|cookie|raw[_-]?(?:body|payload|response)|signature)/i;
 const FINAL_DELIVERY_EVENT_KINDS = new Set([
@@ -188,17 +189,30 @@ function requireConnection(channelId) {
         throw new Error(`Unknown channel connection: ${channelId}`);
     return connection;
 }
+function runtimeBuildDiagnostic() {
+    const status = getRuntimeBuildStatus();
+    return {
+        buildId: status.buildId,
+        checkedAt: status.checkedAt,
+        processStartedAt: status.processStartedAt,
+        buildRequired: status.buildRequired,
+        restartRequired: status.restartRequired,
+        warnings: status.warnings,
+    };
+}
 function providerRuntimeStatus(provider) {
+    const runtimeBuild = runtimeBuildDiagnostic();
     if (provider === "telegram")
-        return getTelegramRuntimeStatus();
+        return { ...getTelegramRuntimeStatus(), runtimeBuild };
     if (provider === "slack")
-        return getSlackRuntimeStatus();
+        return { ...getSlackRuntimeStatus(), runtimeBuild };
     return {
         isRunning: false,
         lastStartedAt: null,
         lastStoppedAt: null,
         lastError: null,
         lastErrorAt: null,
+        runtimeBuild,
     };
 }
 function connectionValidation(connection) {
@@ -225,6 +239,21 @@ function connectionValidation(connection) {
         });
     }
     const runtime = providerRuntimeStatus(connection.provider);
+    const runtimeBuild = runtime.runtimeBuild;
+    if (runtimeBuild?.buildRequired) {
+        issues.push({
+            code: "runtime_build_required",
+            severity: "warning",
+            message: "Source files are newer than dist. Build the workspace before relying on this channel runtime.",
+        });
+    }
+    if (runtimeBuild?.restartRequired) {
+        issues.push({
+            code: "runtime_restart_required",
+            severity: "warning",
+            message: "Built files are newer than the Gateway process. Restart the Gateway before relying on this channel runtime.",
+        });
+    }
     if (connection.enabled && connection.configured && !runtime.isRunning) {
         issues.push({
             code: "runtime_stopped",

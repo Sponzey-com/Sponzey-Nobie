@@ -82,9 +82,9 @@ describe("execution post-pass application", () => {
       preview: "preview",
       decision: {
         kind: "stop",
-        summary: "실행 복구 재시도 한도(2회)에 도달했습니다.",
+        summary: "실행 복구를 자동으로 계속할 수 없습니다.",
         reason: "invalid schedule registration path",
-        remainingItems: ["실패한 도구에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
+        remainingItems: ["실패한 도구에 대한 다른 방법 탐색이 더 필요하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
       },
       recoveryBudgetUsage: {
         interpretation: 0,

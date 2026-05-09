@@ -24,6 +24,7 @@ import {
   type AgentCapabilityModelSummary,
   resolveAgentCapabilityModelSummary,
 } from "./capability-model.js"
+import type { ExecutorProfile } from "./registry.js"
 
 export const AGENT_PROMPT_BUNDLE_VERSION = "agent-prompt-bundle-v1"
 
@@ -33,7 +34,14 @@ const LINKED_PROMPT_SOURCE_IDS = new Set([
   "user",
   "soul",
   "planner",
-  "bootstrap",
+  "nobie_execution",
+  "memory_policy",
+  "tool_policy",
+  "recovery_policy",
+  "topology_executor_policy",
+  "completion_policy",
+  "output_policy",
+  "channel",
 ])
 
 const DEFAULT_SAFETY_RULES = [
@@ -65,11 +73,168 @@ export interface AgentPromptBundleBuildInput {
   importedFragments?: ImportedPromptFragmentInput[]
   memoryRefs?: PromptBundleContextMemoryRef[]
   dataExchangePackages?: DataExchangePackage[]
+  executorProfileProjection?: ExecutorProfilePromptProjection
   parentRunId?: string
   parentRequestId?: string
   auditCorrelationId?: string
   now?: () => number
   idProvider?: () => string
+}
+
+export interface ExecutorProfilePromptConnection {
+  fromExecutorId: string
+  toExecutorId: string
+  relation?: string
+}
+
+export interface ExecutorProfilePromptItem extends ExecutorProfile {
+  connectedNextExecutorIds: string[]
+}
+
+export interface ExecutorProfilePromptProjection {
+  currentExecutorId: string
+  graphSource?: string
+  selectableExecutors: ExecutorProfilePromptItem[]
+  diagnosticExecutors?: ExecutorProfilePromptItem[]
+  connections?: ExecutorProfilePromptConnection[]
+}
+
+export type PromptContextIsolationMode = "root" | "explicit_continuation" | "handoff"
+
+export type PromptContextBlockId =
+  | "latest_user_message"
+  | "channel_metadata"
+  | "execution_graph"
+  | "request_group_context"
+  | "parent_work_order"
+  | "required_outputs"
+  | "verification_notes"
+  | "return_to_parent_contract"
+
+export interface PromptContextBlockInclusion {
+  blockId: PromptContextBlockId
+  included: boolean
+  reason: string
+}
+
+export interface PromptContextBlockPlan {
+  mode: PromptContextIsolationMode
+  includedContextBlocks: PromptContextBlockInclusion[]
+}
+
+export function buildPromptContextBlockPlan(input: {
+  mode: PromptContextIsolationMode
+  hasLatestUserMessage?: boolean
+  hasChannelMetadata?: boolean
+  hasExecutionGraph?: boolean
+  hasRequestGroupContext?: boolean
+  hasParentWorkOrder?: boolean
+  hasRequiredOutputs?: boolean
+  hasVerificationNotes?: boolean
+  hasReturnToParentContract?: boolean
+}): PromptContextBlockPlan {
+  const includeLatest = input.hasLatestUserMessage !== false
+  const includeChannel = input.hasChannelMetadata !== false
+  const includeGraph = input.hasExecutionGraph !== false
+  const continuation = input.mode === "explicit_continuation"
+  const handoff = input.mode === "handoff"
+
+  return {
+    mode: input.mode,
+    includedContextBlocks: [
+      {
+        blockId: "latest_user_message",
+        included: includeLatest,
+        reason: includeLatest ? "current_request_input" : "not_available",
+      },
+      {
+        blockId: "channel_metadata",
+        included: includeChannel,
+        reason: includeChannel ? "current_channel_boundary" : "not_available",
+      },
+      {
+        blockId: "execution_graph",
+        included: includeGraph,
+        reason: includeGraph ? "current_execution_graph" : "not_available",
+      },
+      {
+        blockId: "request_group_context",
+        included: continuation && input.hasRequestGroupContext === true,
+        reason: continuation && input.hasRequestGroupContext === true
+          ? "explicit_continuation_only"
+          : "excluded_without_explicit_continuation",
+      },
+      {
+        blockId: "parent_work_order",
+        included: handoff && input.hasParentWorkOrder === true,
+        reason: handoff && input.hasParentWorkOrder === true
+          ? "handoff_parent_scope"
+          : "not_handoff_context",
+      },
+      {
+        blockId: "required_outputs",
+        included: handoff && input.hasRequiredOutputs === true,
+        reason: handoff && input.hasRequiredOutputs === true
+          ? "handoff_output_contract"
+          : "not_handoff_context",
+      },
+      {
+        blockId: "verification_notes",
+        included: handoff && input.hasVerificationNotes === true,
+        reason: handoff && input.hasVerificationNotes === true
+          ? "handoff_verification_contract"
+          : "not_handoff_context",
+      },
+      {
+        blockId: "return_to_parent_contract",
+        included: handoff && input.hasReturnToParentContract === true,
+        reason: handoff && input.hasReturnToParentContract === true
+          ? "child_returns_to_parent"
+          : "not_handoff_context",
+      },
+    ],
+  }
+}
+
+export function buildExecutorProfilePromptProjection(input: {
+  currentExecutorId: string
+  executorProfiles: ExecutorProfile[]
+  connections: ExecutorProfilePromptConnection[]
+}): ExecutorProfilePromptProjection {
+  const profileById = new Map(input.executorProfiles.map((profile) => [profile.executorId, profile]))
+  const selectableIds = uniqueStrings(
+    input.connections
+      .filter((connection) => connection.fromExecutorId === input.currentExecutorId)
+      .map((connection) => connection.toExecutorId),
+  )
+  const selectableExecutors = selectableIds.flatMap((executorId): ExecutorProfilePromptItem[] => {
+    const profile = profileById.get(executorId)
+    if (!profile) return []
+    return [{
+      ...profile,
+      connectedNextExecutorIds: uniqueStrings(
+        input.connections
+          .filter((connection) => connection.fromExecutorId === executorId)
+          .map((connection) => connection.toExecutorId),
+      ),
+    }]
+  })
+  return {
+    currentExecutorId: input.currentExecutorId,
+    graphSource: "provided_connections",
+    selectableExecutors,
+    diagnosticExecutors: input.executorProfiles
+      .filter((profile) => !selectableIds.includes(profile.executorId) && profile.executorId !== input.currentExecutorId)
+      .map((profile) => ({
+        ...profile,
+        connectedNextExecutorIds: uniqueStrings(
+          input.connections
+            .filter((connection) => connection.fromExecutorId === profile.executorId)
+            .map((connection) => connection.toExecutorId),
+        ),
+      })),
+    connections: [...input.connections],
+  }
 }
 
 export interface AgentPromptBundleBuildResult {
@@ -227,6 +392,7 @@ export function buildAgentPromptBundle(
       scopeVersion(input.taskScope),
       "active",
     ),
+    ...makeExecutorProfileProjectionFragments(input.executorProfileProjection),
     ...linkedSources.map((source) => makePromptSourceFragment(source)),
     ...(input.importedFragments ?? []).map((fragment) => makeImportedFragment(fragment)),
   ].filter((fragment) => fragment.content.trim())
@@ -512,6 +678,8 @@ function makePromptSourceFragment(source: LoadedPromptSource): AgentPromptFragme
         `usageScope: ${source.usageScope}`,
         `path: ${source.path}`,
         `checksum: ${source.checksum}`,
+        "",
+        source.content,
       ].join("\n"),
       `prompt:${source.sourceId}:${source.locale}`,
       source.version,
@@ -519,6 +687,63 @@ function makePromptSourceFragment(source: LoadedPromptSource): AgentPromptFragme
     ),
     ...(issueCodes ? { issueCodes } : {}),
   }
+}
+
+function makeExecutorProfileProjectionFragments(
+  projection: ExecutorProfilePromptProjection | undefined,
+): AgentPromptFragment[] {
+  if (!projection || projection.selectableExecutors.length === 0) return []
+  return [
+    makeFragment(
+      "executor_profile_projection",
+      "Available direct executors for current agent",
+      formatExecutorProfileProjection(projection),
+      `executor-profile-projection:${projection.currentExecutorId}`,
+      `executorProfileProjection:${hashValue(projection)}`,
+      "active",
+    ),
+  ]
+}
+
+function formatExecutorProfileProjection(projection: ExecutorProfilePromptProjection): string {
+  return [
+    "Projection policy: this section is structured context for model judgment. Runtime code must not route by scanning this text or executor names.",
+    "Selection policy: selectable executors are only direct children of the current agent. Diagnostic executors are reference-only and must not be selected without a valid connection path validated by runtime code.",
+    "Do not invent or select executor ids that are not listed under Available direct executors for current agent.",
+    `currentExecutorId: ${projection.currentExecutorId}`,
+    projection.graphSource ? `graphSource: ${projection.graphSource}` : "",
+    "",
+    "[Available direct executors for current agent]",
+    ...projection.selectableExecutors.flatMap((executor, index) => [
+      `executor ${index + 1}`,
+      `id: ${executor.executorId}`,
+      `name: ${executor.displayName}`,
+      `roleName: ${executor.roleName}`,
+      `definition: ${executor.definition}`,
+      `does: ${formatList(executor.does)}`,
+      `delegationScope: ${formatList(executor.delegationScope)}`,
+      `expectedOutputs: ${formatList(executor.expectedOutputs)}`,
+      `handoffStyle: ${executor.handoffStyle}`,
+      `declineCriteria: ${formatList(executor.declineCriteria)}`,
+      `riskBoundary: ${formatList(executor.riskBoundary)}`,
+      `connectedNextExecutors: ${formatList(executor.connectedNextExecutorIds)}`,
+      "",
+    ]),
+    projection.diagnosticExecutors?.length ? "[Diagnostic executors - not selectable here]" : "",
+    ...(projection.diagnosticExecutors ?? []).flatMap((executor, index) => [
+      `diagnostic executor ${index + 1}`,
+      `id: ${executor.executorId}`,
+      `name: ${executor.displayName}`,
+      `roleName: ${executor.roleName}`,
+      `definition: ${executor.definition}`,
+      `connectedNextExecutors: ${formatList(executor.connectedNextExecutorIds)}`,
+      "",
+    ]),
+    projection.connections?.length ? "[Allowed graph edges]" : "",
+    ...(projection.connections ?? []).map((connection) =>
+      `${connection.fromExecutorId} -> ${connection.toExecutorId}${connection.relation ? ` (${connection.relation})` : ""}`,
+    ),
+  ].join("\n")
 }
 
 function resolveCapabilityModelSummary(
@@ -570,7 +795,7 @@ function makeImportedFragment(input: ImportedPromptFragmentInput): AgentPromptFr
 function applyFragmentValidation(fragment: AgentPromptFragment): AgentPromptFragment {
   const issueCodes = uniqueStrings([
     ...(fragment.issueCodes ?? []),
-    ...detectUnsafePromptFragment(fragment.content),
+    ...detectUnsafePromptFragmentForKind(fragment),
   ])
   if (issueCodes.length === 0) return fragment
   const unsafe = issueCodes.some(
@@ -581,6 +806,18 @@ function applyFragmentValidation(fragment: AgentPromptFragment): AgentPromptFrag
     status: unsafe ? "blocked" : fragment.status,
     issueCodes,
   }
+}
+
+function detectUnsafePromptFragmentForKind(fragment: AgentPromptFragment): string[] {
+  if (!shouldScanFragmentForUnsafeInstruction(fragment)) return []
+  return detectUnsafePromptFragment(fragment.content)
+}
+
+function shouldScanFragmentForUnsafeInstruction(fragment: AgentPromptFragment): boolean {
+  // Runtime prompt sources and generated policy fragments are trusted policy inputs.
+  // Imported profile text is external profile material and must be isolated by the
+  // prompt-bundle safety preflight before it can affect an executor.
+  return fragment.kind === "imported_profile"
 }
 
 function detectUnsafePromptFragment(content: string): string[] {
@@ -903,8 +1140,6 @@ function formatModelProfile(
       `availability: ${model.availability}`,
       model.providerId ? `providerId: ${model.providerId}` : "providerId: none",
       model.modelId ? `modelId: ${model.modelId}` : "modelId: none",
-      model.timeoutMs !== undefined ? `timeoutMs: ${model.timeoutMs}` : "timeoutMs: none",
-      model.retryCount !== undefined ? `retryCount: ${model.retryCount}` : "retryCount: none",
       model.costBudget !== undefined ? `costBudget: ${model.costBudget}` : "costBudget: none",
       `reasonCodes: ${formatList(model.diagnosticReasonCodes)}`,
     ].join("\n")
@@ -914,8 +1149,6 @@ function formatModelProfile(
     `configured: ${Boolean(profile)}`,
     profile?.providerId ? `providerId: ${profile.providerId}` : "providerId: none",
     profile?.modelId ? `modelId: ${profile.modelId}` : "modelId: none",
-    profile?.timeoutMs !== undefined ? `timeoutMs: ${profile.timeoutMs}` : "timeoutMs: none",
-    profile?.retryCount !== undefined ? `retryCount: ${profile.retryCount}` : "retryCount: none",
     profile?.costBudget !== undefined ? `costBudget: ${profile.costBudget}` : "costBudget: none",
   ].join("\n")
 }

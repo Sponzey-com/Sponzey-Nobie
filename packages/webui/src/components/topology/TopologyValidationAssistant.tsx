@@ -225,7 +225,6 @@ function fallbackOperations(input: {
         failurePolicy: {
           failureReportRequired: node?.failurePolicy?.failureReportRequired ?? true,
           allowPartialSuccess: node?.failurePolicy?.allowPartialSuccess ?? true,
-          maxRetryAttempts: node?.failurePolicy?.maxRetryAttempts ?? 0,
           fallbackNodeIds: [...new Set([...(node?.failurePolicy?.fallbackNodeIds ?? []), fallbackNodeId])],
         },
         recoveryPolicy: {
@@ -285,66 +284,6 @@ export function buildTopologyQuickFixPlans(
       name: "시작 업무",
       nodeType: "function",
     }])]
-  }
-
-  if (issue.reasonCode === "tool_permission_missing" && issue.entityId && issue.refId) {
-    const node = nodeById(topology, issue.entityId)
-    return [quickFixPlan("add_tool_permission", [{
-      ...createGuiDraftOperationBase("updateNode", {
-        operationId: `quickfix:tool-permission:${issue.entityId}:${issue.refId}`,
-        at,
-        label: "도구 권한 추가",
-      }),
-      nodeId: issue.entityId,
-      patch: {
-        allowedToolIds: [...new Set([...(node?.allowedToolIds ?? []), issue.refId])],
-      },
-    }])]
-  }
-
-  if (issue.reasonCode === "system_permission_missing" && issue.entityId && issue.refId) {
-    const node = nodeById(topology, issue.entityId)
-    return [quickFixPlan("add_tool_permission", [{
-      ...createGuiDraftOperationBase("updateNode", {
-        operationId: `quickfix:system-permission:${issue.entityId}:${issue.refId}`,
-        at,
-        label: "시스템 권한 추가",
-      }),
-      nodeId: issue.entityId,
-      patch: {
-        allowedSystemIds: [...new Set([...(node?.allowedSystemIds ?? []), issue.refId])],
-      },
-    }], "시스템 권한 추가")]
-  }
-
-  if (issue.reasonCode === "declared_tool_relation_missing" && issue.entityId && issue.refId) {
-    return [quickFixPlan("connect_selected_nodes", [{
-      ...createGuiDraftOperationBase("createRelation", {
-        operationId: `quickfix:declared-tool-relation:${issue.entityId}:${issue.refId}`,
-        at,
-        label: "도구 사용 관계 추가",
-      }),
-      relationId: relationId("uses_tool", issue.entityId, issue.refId),
-      relationType: "uses_tool",
-      from: { entityType: "node", id: issue.entityId },
-      to: { entityType: "enterprise_tool", id: issue.refId },
-      label: "도구 사용",
-    }], "선택 노드 연결")]
-  }
-
-  if (issue.reasonCode === "declared_system_relation_missing" && issue.entityId && issue.refId) {
-    return [quickFixPlan("connect_selected_nodes", [{
-      ...createGuiDraftOperationBase("createRelation", {
-        operationId: `quickfix:declared-system-relation:${issue.entityId}:${issue.refId}`,
-        at,
-        label: "시스템 사용 관계 추가",
-      }),
-      relationId: relationId("uses_system", issue.entityId, issue.refId),
-      relationType: "uses_system",
-      from: { entityType: "node", id: issue.entityId },
-      to: { entityType: "enterprise_system", id: issue.refId },
-      label: "시스템 사용",
-    }], "선택 노드 연결")]
   }
 
   if (issue.reasonCode === "connect_selected_nodes" && issue.sourceEntityId && issue.targetEntityId) {

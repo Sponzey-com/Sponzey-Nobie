@@ -390,13 +390,11 @@ function buildStreamStatus() {
     const manifest = buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false });
     const queues = buildQueueBackpressureSnapshot();
     const affected = queues.filter((queue) => queue.status !== "ok");
-    const aggregateStatus = affected.some((queue) => queue.status === "stopped")
-        ? "stopped"
-        : affected.some((queue) => queue.status === "recovering")
-            ? "recovering"
-            : affected.some((queue) => queue.status === "waiting")
-                ? "waiting"
-                : "ok";
+    const aggregateStatus = affected.some((queue) => queue.status === "recovering")
+        ? "recovering"
+        : affected.some((queue) => queue.status === "waiting")
+            ? "waiting"
+            : "ok";
     return {
         status: affected.length > 0 ? "backpressure" : manifest.adminUi.subscriptionCount > 0 ? "connected" : "waiting_for_subscriber",
         subscriptionCount: manifest.adminUi.subscriptionCount,

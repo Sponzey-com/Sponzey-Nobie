@@ -50,7 +50,7 @@ export interface AgentHierarchyAgentSummary {
   displayName: string
   nickname?: string
   status: AgentStatus
-  source: "db" | "config" | "synthetic"
+  source: "db" | "config" | "topology" | "synthetic"
 }
 
 export interface DirectChildProjection {
@@ -181,7 +181,7 @@ function relationshipSort(left: AgentRelationship, right: AgentRelationship): nu
   )
 }
 
-function agentFromConfig(config: AgentConfig, source: "db" | "config"): AgentHierarchyAgentSummary {
+function agentFromConfig(config: AgentConfig, source: "db" | "config" | "topology"): AgentHierarchyAgentSummary {
   return {
     agentId: config.agentId,
     agentType: config.agentType,
@@ -359,6 +359,7 @@ function configFromDependencies(
 }
 
 function positiveIntegerOrDefault(value: unknown, fallback: number): number {
+  if (value === 0) return Number.MAX_SAFE_INTEGER
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback
 }
 

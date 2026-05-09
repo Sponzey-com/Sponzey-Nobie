@@ -29,6 +29,34 @@ describe("run completion application", () => {
     }
   })
 
+  it("continues empty-result recovery when only the old turn count is exhausted", () => {
+    const decision = decideCompletionApplication({
+      decision: {
+        kind: "recover_empty_result",
+        summary: "실행 결과가 비어 있어 다시 시도합니다.",
+        reason: "완료 근거가 없습니다.",
+        remainingItems: ["다른 방법으로 재시도"],
+      },
+      originalRequest: "파일을 만들어줘",
+      previousResult: "",
+      successfulTools: [],
+      sawRealFilesystemMutation: false,
+      usedTurns: 5,
+      maxTurns: 3,
+      interpretationBudgetLimit: 3,
+      executionBudgetLimit: 0,
+      canRetryInterpretation: true,
+      canRetryExecution: true,
+      followupAlreadySeen: false,
+    })
+
+    expect(decision.kind).toBe("retry")
+    if (decision.kind === "retry") {
+      expect(decision.budgetKind).toBe("execution")
+      expect(decision.nextMessage).toContain("[Empty Result Recovery]")
+    }
+  })
+
   it("returns interpretation retry for fresh followup prompts", () => {
     const decision = decideCompletionApplication({
       decision: {
@@ -90,7 +118,7 @@ describe("run completion application", () => {
     const decision = decideCompletionApplication({
       decision: {
         kind: "retry_truncated",
-        summary: "중간에 끊긴 작업을 자동으로 다시 시도합니다.",
+        summary: "중간에 끊긴 작업을 다른 방식으로 이어갑니다.",
         reason: "출력이 중간에 끊겼습니다.",
         remainingItems: ["남은 항목 처리"],
       },

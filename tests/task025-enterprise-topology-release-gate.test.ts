@@ -184,7 +184,7 @@ describe("task025 Enterprise Topology release gate", () => {
       "webui_build_gate",
       "topology_workspace_route_compatibility",
       "topology_workspace_layer_gate",
-      "topology_workspace_no_typing_usability",
+      "topology_workspace_executor_first_usability",
       "topology_workspace_usability_gate",
       "topology_runtime_smoke",
       "topology_rollback_smoke",
@@ -206,7 +206,11 @@ describe("task025 Enterprise Topology release gate", () => {
         }),
         expect.objectContaining({
           id: "topology_workspace_usability_gate",
-          command: expect.arrayContaining(["tests/task012-topology-workspace-release-gate.test.ts"]),
+          command: expect.arrayContaining([
+            "tests/task013-executor-first-usability.test.tsx",
+            "tests/task013-executor-first-release-gate.test.ts",
+            "tests/task012-topology-workspace-release-gate.test.ts",
+          ]),
         }),
         expect.objectContaining({
           id: "topology_runtime_smoke",
@@ -310,6 +314,8 @@ describe("task025 Enterprise Topology release gate", () => {
       "pnpm",
       "test",
       "tests/task025-enterprise-topology-release-gate.test.ts",
+      "tests/task013-executor-first-release-gate.test.ts",
+      "tests/task013-executor-first-usability.test.tsx",
       "tests/task012-topology-workspace-release-gate.test.ts",
     ])
     expect(runbook).toContain("## Enterprise Topology Rollout Gate")

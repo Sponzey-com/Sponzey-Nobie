@@ -39,7 +39,7 @@ describe("delivery application helpers", () => {
   it("passes stop outcomes through unchanged", () => {
     const result = decideDirectArtifactDeliveryApplication({
       kind: "stop",
-      summary: "전달 복구 재시도 한도에 도달했습니다.",
+      summary: "전달 복구를 자동으로 계속할 수 없습니다.",
       reason: "사용자가 결과물 자체 전달을 요청했습니다.",
       remainingItems: ["결과물 자체를 메신저로 전달"],
     })

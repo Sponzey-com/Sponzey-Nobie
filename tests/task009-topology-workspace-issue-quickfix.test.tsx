@@ -2,9 +2,7 @@ import { createElement } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { describe, expect, it } from "vitest"
 import {
-  applyEnterpriseTopologyGuiCommands,
   buildExampleEnterpriseTopology,
-  createEnterpriseTopologyGuiDraft,
   validateTopology,
   type EnterpriseTopology,
 } from "../packages/core/src/index.ts"
@@ -135,7 +133,7 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
     expect(html).toContain("fallback path 추가")
   })
 
-  it("shows quick fix preview before applying operations", () => {
+  it("does not expose tool permission quick fixes in the default validation assistant", () => {
     const html = renderToStaticMarkup(
       createElement(TopologyValidationAssistant, {
         issues: [issue({ reasonCode: "tool_permission_missing" })],
@@ -143,10 +141,9 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
       }),
     )
 
-    expect(html).toContain('data-testid="topology-quickfix-preview-tool_permission_missing"')
-    expect(html).toContain("미리보기")
-    expect(html).toContain("node 수정: node:intake")
-    expect(html).toContain('data-testid="topology-validation-quickfix-tool_permission_missing"')
+    expect(html).toContain('data-testid="topology-validation-issue-tool_permission_missing"')
+    expect(html).not.toContain('data-testid="topology-quickfix-preview-tool_permission_missing"')
+    expect(html).not.toContain('data-testid="topology-validation-quickfix-tool_permission_missing"')
   })
 
   it("builds representative quick fixes as GUI operations", () => {
@@ -168,10 +165,7 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
       relationId: undefined,
     }), topology)[0]
 
-    expect(toolPermission).toEqual(expect.objectContaining({
-      quickFixId: "add_tool_permission",
-      operations: [expect.objectContaining({ op: "updateNode" })],
-    }))
+    expect(toolPermission).toBeUndefined()
     expect(approvalStep).toEqual(expect.objectContaining({
       quickFixId: "add_approval_step",
       operations: [expect.objectContaining({ op: "createRelation", relationType: "approves" })],
@@ -187,7 +181,7 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
     }))
   })
 
-  it("applies quick fixes through GUI operations and reduces validation issues", () => {
+  it("does not build GUI operations for legacy tool permission quick fixes", () => {
     const topology = topologyWithMissingToolPermission()
     const validationBefore = validateTopology(topology)
     const missingPermissionIssue = validationBefore.issues.find((candidate) =>
@@ -196,16 +190,8 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
     expect(missingPermissionIssue).toBeTruthy()
 
     const operations = buildTopologyQuickFixOperations(missingPermissionIssue as EnterpriseTopologyValidationIssue, topology)
-    const draft = createEnterpriseTopologyGuiDraft({ topology, now })
-    const applied = applyEnterpriseTopologyGuiCommands(draft, operations)
-    const validationAfter = validateTopology(applied.draft.topology)
 
-    expect(operations[0]).toEqual(expect.objectContaining({
-      op: "updateNode",
-      nodeId: "node:intake",
-    }))
-    expect(applied.applied).toEqual(operations)
+    expect(operations).toEqual([])
     expect(validationBefore.issues.filter((item) => item.reasonCode === "tool_permission_missing")).toHaveLength(1)
-    expect(validationAfter.issues.filter((item) => item.reasonCode === "tool_permission_missing")).toHaveLength(0)
   })
 })

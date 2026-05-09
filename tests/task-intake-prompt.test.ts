@@ -31,11 +31,21 @@ describe("buildTaskIntakeSystemPrompt", () => {
     expect(prompt).toContain("review_required")
   })
 
-  it("uses 5 delegation turns by default", () => {
+  it("documents the default execution decision order", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("max_delegation_turns = 5")
-    expect(prompt).toContain('"max_delegation_turns": 5')
+    expect(prompt).toContain("sub_agent/delegate_to_child -> yeonjang -> self_solve")
+    expect(prompt).toContain("root_nobie_direct")
+    expect(prompt).toContain("not as a delegation trigger by itself")
+    expect(prompt).toContain("small clearly scoped change")
+  })
+
+  it("uses unbounded delegation turns by default", () => {
+    const prompt = buildTaskIntakeSystemPrompt()
+
+    expect(prompt).toContain("max_delegation_turns = 0")
+    expect(prompt).toContain('"max_delegation_turns": 0')
+    expect(prompt).toContain("signals to search for a different method")
   })
 
   it("allows delegation turn override in the generated prompt", () => {

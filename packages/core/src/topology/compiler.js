@@ -97,7 +97,8 @@ export function compileTopology(topology, options = {}) {
         responsibilityIndex: buildResponsibilityIndex(topology),
         runtimeExecutionContext: {
             topologyId: topology.id,
-            entryNodeId: parentChildTree.entryNodeId,
+            entryNodeId: null,
+            rootChildNodeIds: [...parentChildTree.rootChildNodeIds],
             exitNodeIds: [...parentChildTree.exitNodeIds],
             nodeCount: topology.nodes.length,
             delegationEdgeCount: Object.values(parentChildTree.edges).reduce((count, children) => count + children.length, 0),
@@ -162,14 +163,15 @@ function buildDelegationGraph(topology) {
     const edges = Object.fromEntries(topology.nodes.map((node) => [node.id, []]));
     const parents = Object.fromEntries(topology.nodes.map((node) => [node.id, []]));
     const relationIdsByPair = new Map();
-    topology.nodes.forEach((node) => {
-        node.children.forEach((childNodeId) => addDelegationEdge(edges, parents, relationIdsByPair, node.id, childNodeId));
-    });
-    topology.relations.forEach((relation) => {
-        if (relation.relationType !== "delegates_to")
-            return;
-        if (relation.from.entityType !== "node" || relation.to.entityType !== "node")
-            return;
+    const delegationRelations = topology.relations.filter((relation) => (relation.relationType === "delegates_to" &&
+        relation.from.entityType === "node" &&
+        relation.to.entityType === "node"));
+    if (delegationRelations.length === 0) {
+        topology.nodes.forEach((node) => {
+            node.children.forEach((childNodeId) => addDelegationEdge(edges, parents, relationIdsByPair, node.id, childNodeId));
+        });
+    }
+    delegationRelations.forEach((relation) => {
         addDelegationEdge(edges, parents, relationIdsByPair, relation.from.id, relation.to.id, relation.id);
     });
     return { edges, parents, relationIdsByPair };
@@ -179,12 +181,15 @@ function buildCompiledDelegationTree(topology, graph) {
     const childIds = new Set(Object.values(graph.edges).flat());
     const rootNodeIds = nodeIds.filter((nodeId) => !childIds.has(nodeId));
     const exitNodeIds = nodeIds.filter((nodeId) => (graph.edges[nodeId] ?? []).length === 0);
+    const incomingEdgeCountByNodeId = Object.fromEntries(nodeIds.map((nodeId) => [nodeId, graph.parents[nodeId]?.length ?? 0]));
     return {
         rootNodeIds,
-        entryNodeId: rootNodeIds[0] ?? nodeIds[0] ?? null,
+        rootChildNodeIds: [...rootNodeIds],
+        entryNodeId: null,
         exitNodeIds,
         edges: graph.edges,
         parents: graph.parents,
+        incomingEdgeCountByNodeId,
     };
 }
 function addDelegationEdge(edges, parents, relationIdsByPair, parentNodeId, childNodeId, relationId) {

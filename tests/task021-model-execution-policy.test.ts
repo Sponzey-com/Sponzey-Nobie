@@ -129,7 +129,7 @@ function agentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
       rateLimit: { maxConcurrentCalls: 1 },
     },
     teamIds: [],
-    delegation: { enabled: false, maxParallelSessions: 1, retryBudget: 1 },
+    delegation: { enabled: false, maxParallelSessions: 1 },
     profileVersion: 1,
     createdAt: now,
     updatedAt: now,
@@ -164,7 +164,7 @@ function promptBundle(profile = modelProfile()): AgentPromptBundle {
   }
 }
 
-function command(id: string, retryBudget = 2): CommandRequest {
+function command(id: string): CommandRequest {
   return {
     identity: identity("sub_session", id),
     commandRequestId: `command:${id}`,
@@ -175,7 +175,6 @@ function command(id: string, retryBudget = 2): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget,
   }
 }
 
@@ -337,7 +336,7 @@ describe("task021 model execution policy and cost performance audit", () => {
     )
   })
 
-  it("applies timeout fallback in the sub-session runner and records model audit", async () => {
+  it("does not use profile timeout or retry count as sub-session execution limits", async () => {
     const { dependencies, sessions, events, ledger } = makeMemoryDependencies()
     const runner = new SubSessionRunner(dependencies)
     const attempts: string[] = []
@@ -349,35 +348,31 @@ describe("task021 model execution policy and cost performance audit", () => {
         parentSessionId: "session-parent",
         promptBundle: promptBundle(modelProfile({ timeoutMs: 1, retryCount: 1 })),
       },
-      async (input, controls) => {
+      (input, controls) => {
         attempts.push(controls.modelExecution.modelId)
-        if (controls.modelExecution.modelId === "gpt-5.4") {
-          await new Promise(() => undefined)
-        }
-        return createTextResultReport({ command: input.command, text: "fallback result" })
+        return createTextResultReport({ command: input.command, text: "primary result" })
       },
     )
 
     expect(outcome.status).toBe("completed")
-    expect(attempts).toEqual(["gpt-5.4", "gpt-5.4-mini"])
+    expect(attempts).toEqual(["gpt-5.4"])
     expect(outcome.modelExecution).toEqual(
       expect.objectContaining({
-        modelId: "gpt-5.4-mini",
-        fallbackApplied: true,
-        fallbackReasonCode: "sub_session_timeout",
-        attemptCount: 2,
+        modelId: "gpt-5.4",
+        fallbackApplied: false,
+        attemptCount: 1,
       }),
     )
     expect(outcome.modelExecution?.tokenUsage.totalTokens).toBeGreaterThan(0)
     expect(sessions.get("sub:timeout-fallback")?.modelExecutionSnapshot).toEqual(
-      expect.objectContaining({ modelId: "gpt-5.4-mini" }),
+      expect.objectContaining({ modelId: "gpt-5.4", fallbackApplied: false }),
     )
     expect(events).toEqual(
       expect.arrayContaining([
         expect.stringContaining("sub_session_model_resolved:sub:timeout-fallback"),
-        expect.stringContaining("sub_session_model_fallback:sub:timeout-fallback:gpt-5.4-mini"),
       ]),
     )
+    expect(events.some((event) => event.includes("sub_session_model_fallback"))).toBe(false)
     expect(ledger.some((entry) => JSON.stringify(entry.detail).includes("modelExecution"))).toBe(
       true,
     )
@@ -386,15 +381,15 @@ describe("task021 model execution policy and cost performance audit", () => {
         expect.objectContaining({
           name: "model_execution_latency_ms",
           detail: expect.objectContaining({
-            modelId: "gpt-5.4-mini",
-            fallbackApplied: true,
+            modelId: "gpt-5.4",
+            fallbackApplied: false,
           }),
         }),
       ]),
     )
   })
 
-  it("uses per-agent retry count without escalating beyond the model policy", async () => {
+  it("does not retry handler failures from per-agent retry count", async () => {
     const { dependencies, events } = makeMemoryDependencies()
     const runner = new SubSessionRunner(dependencies)
     let attempts = 0
@@ -410,17 +405,16 @@ describe("task021 model execution policy and cost performance audit", () => {
       },
       (input) => {
         attempts += 1
-        if (attempts === 1) throw new Error("transient")
+        throw new Error("transient")
         return createTextResultReport({ command: input.command, text: "retried result" })
       },
     )
 
-    expect(outcome.status).toBe("completed")
-    expect(attempts).toBe(2)
-    expect(outcome.modelExecution?.attemptCount).toBe(2)
-    expect(events).toEqual(
-      expect.arrayContaining(["sub_session_model_retry:sub:retry:1:sub_session_handler_error"]),
-    )
+    expect(outcome.status).toBe("failed")
+    expect(attempts).toBe(1)
+    expect(outcome.modelExecution?.attemptCount).toBe(1)
+    expect(outcome.errorReport?.reasonCode).toBe("sub_session_handler_error")
+    expect(events.some((event) => event.includes("sub_session_model_retry"))).toBe(false)
   })
 
   it("wires model execution policy regression into the release gate", () => {

@@ -169,7 +169,6 @@ function review(): SubAgentResultReview {
     requiredChanges: ["Add cited source evidence."],
     risksOrGaps: ["missing citation"],
     retryBudgetLimit: 2,
-    retryBudgetRemaining: 2,
     repeatedFailure: false,
     canRetry: true,
   }

@@ -294,6 +294,7 @@ export {
   type ChannelSmokeCorrelationKey,
   type ChannelSmokeReadiness,
   type ChannelSmokeReleaseGateMode,
+  type ChannelSmokeRequestFlowTrace,
   type ChannelSmokeRunMode,
   type ChannelSmokeRunResult,
   type ChannelSmokeRunnerOptions,

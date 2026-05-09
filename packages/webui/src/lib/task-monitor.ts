@@ -3,6 +3,7 @@ import type {
   TaskActivityKind,
   TaskActivityModel,
   TaskArtifactModel,
+  TaskAttemptExecutionKind,
   TaskAttemptKind,
   TaskAttemptModel,
   TaskChecklistItemKey,
@@ -14,6 +15,8 @@ import type {
   TaskDiagnosticsModel,
   TaskFailureModel,
   TaskModel,
+  TaskRequestIdentityModel,
+  TaskRunRelationshipKind,
 } from "../contracts/tasks"
 
 type TextFn = (ko: string, en: string) => string
@@ -21,6 +24,12 @@ type TextFn = (ko: string, en: string) => string
 export interface TaskMonitorAttempt {
   id: string
   kind: TaskAttemptKind
+  executionKind?: TaskAttemptExecutionKind
+  relationshipKind?: TaskRunRelationshipKind
+  rootRunId?: string
+  originRunId?: string
+  userMessageKey?: string
+  augmentationOfRunId?: string
   label: string
   prompt: string
   status: RootRun["status"]
@@ -75,6 +84,10 @@ export interface TaskMonitorFailure extends TaskFailureModel {
 
 export interface TaskMonitorCard {
   key: string
+  requestIdentity?: TaskRequestIdentityModel
+  rootRunId?: string
+  originRunId?: string
+  userMessageKey?: string
   representative: RootRun
   runs: RootRun[]
   requestText: string
@@ -99,24 +112,41 @@ function truncateText(value: string, maxLength = 120): string {
   return `${normalized.slice(0, maxLength - 1)}…`
 }
 
-function describeAttemptLabel(attempt: TaskAttemptModel, text: TextFn): string {
-  switch (attempt.kind) {
+function fallbackExecutionKind(kind: TaskAttemptKind): TaskAttemptExecutionKind {
+  switch (kind) {
     case "primary":
-      return text("사용자 요청", "User request")
+      return "new_request"
     case "followup":
-      return text("자동 보강", "Automatic follow-up")
+    case "approval_continuation":
+      return "followup_execution"
+    case "verification":
+      return "augmentation_verification"
+    case "filesystem_retry":
+    case "truncated_recovery":
+      return "recovery_execution"
     case "intake_bridge":
+      return "system_intake"
+    case "scheduled_execution":
+      return "scheduled_execution"
+  }
+}
+
+function describeAttemptLabel(attempt: TaskAttemptModel, text: TextFn): string {
+  switch (attempt.executionKind ?? fallbackExecutionKind(attempt.kind)) {
+    case "new_request":
+      return text("새 요청", "New request")
+    case "followup_execution":
+      return text("후속 실행", "Follow-up execution")
+    case "system_intake":
       return text("요청 정리 및 대상 선택", "Request triage and target selection")
     case "scheduled_execution":
       return attempt.title || text("예약 실행", "Scheduled run")
-    case "approval_continuation":
-      return text("승인 후 작업 계속 진행", "Continue after approval")
-    case "verification":
-      return text("결과 검증", "Result verification")
-    case "filesystem_retry":
-      return text("실제 파일·폴더 작업 보강", "Real file or folder work follow-up")
-    case "truncated_recovery":
-      return text("중간 절단 복구", "Truncated output recovery")
+    case "augmentation_verification":
+      return text("보강 검증", "Augmentation verification")
+    case "recovery_execution":
+      return attempt.kind === "truncated_recovery"
+        ? text("중간 절단 복구", "Truncated output recovery")
+        : text("복구 실행", "Recovery execution")
   }
 }
 
@@ -176,10 +206,19 @@ function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMo
   }
 }
 
+function runAgentLabel(attempt: TaskMonitorAttempt): string | undefined {
+  const run = attempt.run
+  return [
+    run?.agentNickname,
+    run?.agentDisplayName,
+    run?.targetLabel,
+  ].find((value) => value?.trim())?.trim()
+}
+
 function describeRunScopeLabel(attempt: TaskMonitorAttempt, text: TextFn): string {
   switch (attempt.run?.runScope) {
     case "child":
-      return text("서브 에이전트", "Sub-agent")
+      return runAgentLabel(attempt) ?? text("서브 에이전트", "Sub-agent")
     case "analysis":
       return text("분석", "Analysis")
     default:
@@ -235,7 +274,7 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
       taskProfile: sourceRun?.taskProfile ?? identityRun?.taskProfile ?? "general_chat",
       contextMode: sourceRun?.contextMode ?? identityRun?.contextMode ?? "full",
       delegationTurnCount: sourceRun?.delegationTurnCount ?? identityRun?.delegationTurnCount ?? 0,
-      maxDelegationTurns: sourceRun?.maxDelegationTurns ?? identityRun?.maxDelegationTurns ?? 5,
+      maxDelegationTurns: sourceRun?.maxDelegationTurns ?? identityRun?.maxDelegationTurns ?? 0,
       currentStepKey: sourceRun?.currentStepKey ?? identityRun?.currentStepKey ?? "executing",
       currentStepIndex: sourceRun?.currentStepIndex ?? identityRun?.currentStepIndex ?? 4,
       totalSteps: sourceRun?.totalSteps ?? identityRun?.totalSteps ?? 9,
@@ -279,6 +318,12 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
     const attempts = task.attempts.map((attempt) => ({
       id: attempt.id,
       kind: attempt.kind,
+      executionKind: attempt.executionKind ?? fallbackExecutionKind(attempt.kind),
+      ...(attempt.relationshipKind ? { relationshipKind: attempt.relationshipKind } : {}),
+      ...(attempt.rootRunId ? { rootRunId: attempt.rootRunId } : {}),
+      ...(attempt.originRunId ? { originRunId: attempt.originRunId } : {}),
+      ...(attempt.userMessageKey ? { userMessageKey: attempt.userMessageKey } : {}),
+      ...(attempt.augmentationOfRunId ? { augmentationOfRunId: attempt.augmentationOfRunId } : {}),
       label: describeAttemptLabel(attempt, text),
       prompt: attempt.prompt,
       status: attempt.status,
@@ -291,6 +336,10 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
 
     cards.push({
       key: task.id,
+      ...(task.requestIdentity ? { requestIdentity: task.requestIdentity } : {}),
+      ...(task.rootRunId ? { rootRunId: task.rootRunId } : {}),
+      ...(task.originRunId ? { originRunId: task.originRunId } : {}),
+      ...(task.userMessageKey ? { userMessageKey: task.userMessageKey } : {}),
       representative,
       runs: groupRuns,
       requestText: task.requestText,
@@ -322,7 +371,10 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
     })
   }
 
-  return cards.sort((a, b) => b.representative.updatedAt - a.representative.updatedAt)
+  return cards.sort((a, b) =>
+    (b.representative.createdAt - a.representative.createdAt) ||
+    (b.representative.updatedAt - a.representative.updatedAt),
+  )
 }
 
 export function filterActiveTaskMonitorCards(cards: TaskMonitorCard[]): TaskMonitorCard[] {

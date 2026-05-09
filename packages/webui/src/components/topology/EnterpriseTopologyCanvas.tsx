@@ -31,6 +31,10 @@ import type {
   EnterpriseTopologyObservedEdgeRecord,
 } from "../../lib/enterprise-topology-operations"
 import type { TopologyWorkspaceLayer } from "../../lib/topology-workspace"
+import {
+  shouldShowTopologyWorkspaceAdvancedSurface,
+  type TopologyWorkspaceExposureMode,
+} from "../../lib/topology-workspace-copy"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { EnterpriseTopologyInspector } from "./EnterpriseTopologyInspector"
 import type { TopologyWorkspaceExecutorMapping } from "./TopologyWorkspaceInspector"
@@ -133,13 +137,13 @@ function EnterpriseTopologyNodeView(props: NodeProps) {
 
   return (
     <div className={`min-w-44 rounded-lg border px-3 py-2 shadow-sm ${nodeToneClassName(data.kind)} ${traceNodeClassName(data.traceState, data.runTarget)}`}>
-      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-stone-400 !bg-white" />
+      <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-stone-400 !bg-white" />
       <div className="text-[11px] font-semibold uppercase text-stone-500">
         {text(kindLabel.ko, kindLabel.en)}
       </div>
       <div className="mt-1 text-sm font-semibold leading-5">{data.label}</div>
       <div className="mt-1 max-w-52 truncate text-xs text-stone-500">{data.detail}</div>
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-stone-400 !bg-white" />
+      <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-stone-400 !bg-white" />
     </div>
   )
 }
@@ -248,6 +252,58 @@ function sampleModel(): EnterpriseTopologyCanvasModel {
       },
     ],
   }
+}
+
+function TopologyWorkspaceSimpleCreatePanel({
+  onAddExecutor,
+  onAddSection,
+}: {
+  onAddExecutor?: () => void
+  onAddSection?: () => void
+}) {
+  const { text } = useUiI18n()
+  return (
+    <aside
+      className="min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-white p-4"
+      data-testid="topology-simple-create-panel"
+    >
+      <div className="text-sm font-semibold text-stone-950">
+        {text("실행자 흐름", "Executor flow")}
+      </div>
+      <div className="mt-1 text-xs leading-5 text-stone-500">
+        {text(
+          "실행자를 추가하고 연결하면 내부 구조는 노비가 정리합니다.",
+          "Add executors and connect them; Nobie organizes the internal structure.",
+        )}
+      </div>
+      <div className="mt-4 grid gap-2">
+        <button
+          type="button"
+          onClick={onAddExecutor}
+          disabled={!onAddExecutor}
+          className="h-10 rounded-lg bg-stone-900 px-3 text-left text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          data-testid="topology-simple-add-executor"
+        >
+          {text("+ 실행자 추가", "+ Add executor")}
+        </button>
+        <button
+          type="button"
+          onClick={onAddSection}
+          disabled={!onAddSection}
+          className="h-10 rounded-lg border border-stone-200 bg-white px-3 text-left text-sm font-semibold text-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
+          data-testid="topology-simple-add-section"
+        >
+          {text("+ 영역 추가", "+ Add section")}
+        </button>
+      </div>
+      <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
+        {text(
+          "토폴로지 화면은 실행자 추가와 연결 중심으로 정리되었습니다.",
+          "The topology screen is organized around adding and connecting executors.",
+        )}
+      </div>
+    </aside>
+  )
 }
 
 function canvasKindForNode(node: NodeContract): EnterpriseTopologyCanvasKind {
@@ -397,6 +453,8 @@ export function EnterpriseTopologyCanvasShell({
   onSelectedRunnableTargetChange,
   runtimeResources,
   workspaceLayer = "build",
+  exposureMode = "advanced",
+  showSimpleCreatePanel = true,
   gapFindings = [],
   observedEdges = [],
   onRunLayerRequest,
@@ -426,6 +484,8 @@ export function EnterpriseTopologyCanvasShell({
   onSelectedRunnableTargetChange?: (nodeId: string) => void
   runtimeResources?: AgentTopologyProjection | null
   workspaceLayer?: TopologyWorkspaceLayer
+  exposureMode?: TopologyWorkspaceExposureMode
+  showSimpleCreatePanel?: boolean
   gapFindings?: unknown[]
   observedEdges?: EnterpriseTopologyObservedEdgeRecord[]
   onRunLayerRequest?: () => void
@@ -445,6 +505,7 @@ export function EnterpriseTopologyCanvasShell({
     ? selectedData.entityId
     : null
   const overlayState = React.useMemo(() => buildTopologyRunOverlayState(traceOverlay), [traceOverlay])
+  const showAdvancedSurface = shouldShowTopologyWorkspaceAdvancedSurface(exposureMode)
   const flowNodes = React.useMemo(
     () => model.nodes.map((node) => ({
       ...node,
@@ -515,24 +576,45 @@ export function EnterpriseTopologyCanvasShell({
 
   return (
     <div
-      className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[220px_minmax(0,1fr)_320px]"
+      className={`grid min-h-0 flex-1 gap-4 p-4 ${
+        showAdvancedSurface || showSimpleCreatePanel
+          ? "lg:grid-cols-[220px_minmax(0,1fr)_320px]"
+          : "lg:grid-cols-[minmax(0,1fr)_320px]"
+      }`}
       data-testid="enterprise-topology-canvas"
+      data-exposure-mode={exposureMode}
     >
-      <EnterpriseTopologyPalette
-        items={model.palette}
-        templateCatalog={templateCatalog}
-        onCreateEntity={onCreateEntity}
-      />
+      {showAdvancedSurface ? (
+        <EnterpriseTopologyPalette
+          items={model.palette}
+          templateCatalog={templateCatalog}
+          onCreateEntity={onCreateEntity}
+        />
+      ) : showSimpleCreatePanel ? (
+        <TopologyWorkspaceSimpleCreatePanel
+          onAddExecutor={() => onCreateEntity?.("work_node")}
+          onAddSection={() => onCreateEntity?.("group")}
+        />
+      ) : null}
 
       <section className="flex min-h-[560px] flex-col overflow-hidden rounded-lg border border-stone-200 bg-white">
-        <RelationModeToolbar
-          catalog={relationCatalog}
-          selectedRelationType={selectedRelationType}
-          selectedRelationMode={selectedRelationMode}
-          onSelectRelationType={onSelectRelationType}
-          onSelectRelationMode={onSelectRelationMode}
-          issue={relationIssue}
-        />
+        {showAdvancedSurface ? (
+          <RelationModeToolbar
+            catalog={relationCatalog}
+            selectedRelationType={selectedRelationType}
+            selectedRelationMode={selectedRelationMode}
+            onSelectRelationType={onSelectRelationType}
+            onSelectRelationMode={onSelectRelationMode}
+            issue={relationIssue}
+          />
+        ) : (
+          <div
+            className="border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs font-medium text-stone-600"
+            data-testid="topology-simple-relation-policy"
+          >
+            {text("연결 의미는 노비가 자동으로 추천합니다.", "Nobie recommends connection meaning automatically.")}
+          </div>
+        )}
         <div className="min-h-0 flex-1">
           <ReactFlow
             nodes={flowNodes}
@@ -592,31 +674,35 @@ export function EnterpriseTopologyCanvasShell({
           />
         ) : null}
 
-        <section className="rounded-lg border border-stone-200 bg-white p-4" data-testid="topology-run-target-panel">
-          <div className="text-sm font-semibold text-stone-950">
-            {text("Run Target", "Run Target")}
-          </div>
-          <div className="mt-1 text-xs text-stone-500">
-            {selectedData?.entityType === "node"
-              ? selectedData.entityId
-              : text("업무 node를 선택합니다.", "Select a work node.")}
-          </div>
-          <button
-            type="button"
-            disabled={selectedData?.entityType !== "node"}
-            onClick={() => {
-              if (selectedData?.entityType === "node") onRunTargetChange?.(selectedData.entityId)
-            }}
-            className="mt-3 h-9 w-full rounded-lg bg-stone-900 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-            data-testid="topology-run-target-select"
-          >
-            {text("선택 node를 Entry로 지정", "Set selected node as entry")}
-          </button>
-        </section>
+        {showAdvancedSurface ? (
+          <section className="rounded-lg border border-stone-200 bg-white p-4" data-testid="topology-run-target-panel">
+            <div className="text-sm font-semibold text-stone-950">
+              {text("Run Target", "Run Target")}
+            </div>
+            <div className="mt-1 text-xs text-stone-500">
+              {selectedData?.entityType === "node"
+                ? selectedData.entityId
+                : text("업무 node를 선택합니다.", "Select a work node.")}
+            </div>
+            <button
+              type="button"
+              disabled={selectedData?.entityType !== "node"}
+              onClick={() => {
+                if (selectedData?.entityType === "node") onRunTargetChange?.(selectedData.entityId)
+              }}
+              className="mt-3 h-9 w-full rounded-lg bg-stone-900 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="topology-run-target-select"
+            >
+              {text("선택 node를 Entry로 지정", "Set selected node as entry")}
+            </button>
+          </section>
+        ) : null}
 
         <TopologyRunTraceOverlay overlay={traceOverlay} />
 
-        <TopologyCompilePreview preview={compilePreview} loading={compilePreviewLoading} />
+        {showAdvancedSurface ? (
+          <TopologyCompilePreview preview={compilePreview} loading={compilePreviewLoading} />
+        ) : null}
 
         <EnterpriseTopologyInspector
           selectedData={selectedData}
@@ -652,6 +738,8 @@ export function EnterpriseTopologyCanvas({
   onSelectedRunnableTargetChange,
   runtimeResources,
   workspaceLayer,
+  exposureMode,
+  showSimpleCreatePanel,
   gapFindings,
   observedEdges,
   onRunLayerRequest,
@@ -677,6 +765,8 @@ export function EnterpriseTopologyCanvas({
   onSelectedRunnableTargetChange?: (nodeId: string) => void
   runtimeResources?: AgentTopologyProjection | null
   workspaceLayer?: TopologyWorkspaceLayer
+  exposureMode?: TopologyWorkspaceExposureMode
+  showSimpleCreatePanel?: boolean
   gapFindings?: unknown[]
   observedEdges?: EnterpriseTopologyObservedEdgeRecord[]
   onRunLayerRequest?: () => void
@@ -722,6 +812,8 @@ export function EnterpriseTopologyCanvas({
         onSelectedRunnableTargetChange={onSelectedRunnableTargetChange}
         runtimeResources={runtimeResources}
         workspaceLayer={workspaceLayer}
+        exposureMode={exposureMode}
+        showSimpleCreatePanel={showSimpleCreatePanel}
         gapFindings={gapFindings}
         observedEdges={observedEdges}
         onRunLayerRequest={onRunLayerRequest}

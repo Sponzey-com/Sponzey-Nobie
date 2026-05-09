@@ -353,7 +353,7 @@ export const DEFAULT_CONFIG: NobieConfig = {
     sessionRetentionDays: 30,
   },
   orchestration: {
-    maxDelegationTurns: 5,
+    maxDelegationTurns: 0,
     mode: "single_nobie",
     featureFlagEnabled: false,
     subAgents: [],

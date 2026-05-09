@@ -124,7 +124,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
     ],
     status: "redirect",
     replacementPath: "/advanced/topology",
-    notes: "Legacy runtime topology URL now opens the unified topology workspace; use mode=resources for the runtime resources layer.",
+    notes: "Legacy runtime topology URL now opens the simple topology workspace.",
   },
   {
     path: "/enterprise-topology",
@@ -282,7 +282,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
     ],
     status: "kept",
     replacementPath: null,
-    notes: "Unified topology workspace for build, run, trace, improve, and resources layers.",
+    notes: "Unified simple topology workspace for build, run, trace, and improve layers.",
   },
   {
     path: "/advanced/enterprise-topology",

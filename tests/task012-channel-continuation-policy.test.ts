@@ -50,7 +50,7 @@ afterEach(() => {
 })
 
 describe("task012 channel continuation, identity, and policy", () => {
-  it("resolves Telegram reply_to_message and Slack thread_ts through the common continuation lookup", () => {
+  it("resolves Telegram reply_to_message but does not treat Slack thread_ts as continuation by itself", () => {
     insertChannelMessageRef({
       source: "telegram",
       session_id: "session-telegram",
@@ -108,15 +108,13 @@ describe("task012 channel continuation, identity, and policy", () => {
       },
     })
     expect(resolveChannelContinuation({ envelope: slackReply! })).toMatchObject({
-      status: "resolved",
-      selected: {
-        runId: "run-slack",
-        requestGroupId: "request-slack",
-      },
+      status: "not_found",
+      confirmationRequired: false,
+      reasonCode: "no_candidates",
     })
   })
 
-  it("requires confirmation instead of randomly attaching ambiguous room window candidates", () => {
+  it("does not attach room-window candidates without an explicit continuation target", () => {
     insertChannelMessageRef({
       source: "telegram",
       session_id: "session-a",
@@ -151,13 +149,9 @@ describe("task012 channel continuation, identity, and policy", () => {
     })
     const result = resolveChannelContinuation({ envelope: message!, lookupWindowMs: 30_000 })
 
-    expect(result.status).toBe("ambiguous")
-    expect(result.confirmationRequired).toBe(true)
-    expect(result.candidates.map((candidate) => candidate.requestGroupId).sort()).toEqual([
-      "request-a",
-      "request-b",
-    ])
-    expect(result.confirmationPrompt).toContain("2")
+    expect(result.status).toBe("not_found")
+    expect(result.confirmationRequired).toBe(false)
+    expect(result.candidates).toEqual([])
   })
 
   it("namespaces provider identities with optional team scope and ignores display name changes", () => {

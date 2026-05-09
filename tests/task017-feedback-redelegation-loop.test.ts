@@ -173,7 +173,6 @@ function command(id = "feedback", targetAgentId = "agent:researcher"): CommandRe
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [evidenceOutput],
-    retryBudget: 2,
   }
 }
 
@@ -231,10 +230,9 @@ function parseSubSession(id: string): SubSessionContract {
   return JSON.parse(row.contract_json) as SubSessionContract
 }
 
-function markNeedsRevision(id = "sub:feedback", retryBudgetRemaining = 2): void {
+function markNeedsRevision(id = "sub:feedback"): void {
   const subSession = parseSubSession(id)
   subSession.status = "needs_revision"
-  subSession.retryBudgetRemaining = retryBudgetRemaining
   updateRunSubSession(subSession)
 }
 
@@ -262,7 +260,6 @@ describe("task017 feedback request and redelegation loop", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport(),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
       idProvider: () => "feedback-inner",
       now: () => now,
     })
@@ -288,7 +285,6 @@ describe("task017 feedback request and redelegation loop", () => {
       targetAgentId: "agent:researcher",
       missingItems: ["missing_evidence:answer:source"],
       conflictItems: ["draft_without_source"],
-      retryBudgetRemaining: 1,
       synthesizedContextExchangeId: "exchange:feedback:feedback-1",
     })
     expect(pkg.feedbackRequest.carryForwardOutputs).toEqual([
@@ -305,11 +301,10 @@ describe("task017 feedback request and redelegation loop", () => {
     expect(pkg.directive.followupPrompt).toContain("Missing items")
   })
 
-  it("guards repeated failures, exhausted budget, and limited success", () => {
+  it("guards repeated failures and limited success without numeric budget stop", () => {
     const missingEvidence = reviewSubAgentResult({
       resultReport: resultReport(),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 1,
     })
     const limited = reviewSubAgentResult({
       resultReport: resultReport({
@@ -317,26 +312,22 @@ describe("task017 feedback request and redelegation loop", () => {
         risksOrGaps: ["source is stale"],
       }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 1,
     })
 
     expect(
       decideFeedbackLoopContinuation({
         review: missingEvidence,
-        retryBudgetRemaining: 1,
         previousFailureKeys: [missingEvidence.normalizedFailureKey ?? ""],
       }),
     ).toMatchObject({ action: "blocked_repeated_failure" })
     expect(
       decideFeedbackLoopContinuation({
         review: missingEvidence,
-        retryBudgetRemaining: 0,
       }),
-    ).toMatchObject({ action: "blocked_retry_budget_exhausted" })
+    ).toMatchObject({ action: "feedback_request" })
     expect(
       decideFeedbackLoopContinuation({
         review: limited,
-        retryBudgetRemaining: 1,
       }),
     ).toMatchObject({ action: "limited_success_finalized" })
   })
@@ -394,7 +385,6 @@ describe("task017 feedback request and redelegation loop", () => {
           feedbackRequestId: "api-feedback",
           targetAgentPolicy: "same_agent",
           missingItems: ["missing_evidence:answer:source"],
-          retryBudgetRemaining: 1,
         },
         synthesizedContextExchangeId: "exchange:feedback:api-feedback",
       })
@@ -451,7 +441,6 @@ describe("task017 feedback request and redelegation loop", () => {
       expect(redelegated).toMatchObject({
         status: "queued",
         agentId: "agent:alternate",
-        retryBudgetRemaining: 1,
       })
       expect(redelegated.promptBundleSnapshot?.completionCriteria?.[0]?.outputId).toBe("answer")
       expect(listRunSubSessionsForParentRun("run:task017")).toHaveLength(2)

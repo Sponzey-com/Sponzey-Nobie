@@ -39,6 +39,8 @@ describe("task001 local runtime scripts", () => {
     const text = scriptText("status-local.sh")
     expect(text).toContain("pid_belongs_to_repo")
     expect(text).toContain("Gateway health")
+    expect(text).toContain("buildRequired")
+    expect(text).toContain("restartRequired")
     expect(text).toContain("yeonjangExtensions")
     expect(text).toContain("Channel config")
   })

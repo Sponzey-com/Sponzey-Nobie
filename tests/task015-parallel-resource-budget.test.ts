@@ -133,7 +133,7 @@ function promptBundle(): AgentPromptBundle {
   }
 }
 
-function command(id: string, retryBudget = 2): CommandRequest {
+function command(id: string): CommandRequest {
   return {
     identity: identity("sub_session", id, `idem:${id}`),
     commandRequestId: `command:${id}`,
@@ -144,7 +144,6 @@ function command(id: string, retryBudget = 2): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget,
   }
 }
 
@@ -179,7 +178,6 @@ function outcome(taskId: string, status: SubSessionStatus = "completed"): SubSes
       agentNickname: "Res",
       commandRequestId: `command:${taskId}`,
       status,
-      retryBudgetRemaining: 1,
       promptBundleId: "prompt-bundle:task015",
     },
     status,
@@ -401,21 +399,19 @@ describe("task015 parallel resource lock and budget control", () => {
     ])
   })
 
-  it("decrements retry budget and records timeout reason on sub-session timeout", async () => {
+  it("ignores profile timeout as a workload failure condition", async () => {
     const { dependencies, sessions } = makeMemoryDependencies()
     const runner = new SubSessionRunner(dependencies)
 
     const result = await runner.runSubSession(
       runInput("timeout", { timeoutMs: 1 }),
-      async (input) => {
-        await new Promise(() => undefined)
-        return createTextResultReport({ command: input.command, text: "too late" })
-      },
+      (input) => createTextResultReport({ command: input.command, text: "completed despite profile timeout" }),
     )
 
-    expect(result.status).toBe("failed")
-    expect(result.errorReport?.reasonCode).toBe("sub_session_timeout")
-    expect(sessions.get("sub:timeout")?.retryBudgetRemaining).toBe(1)
+    expect(result.status).toBe("completed")
+    expect(result.errorReport).toBeUndefined()
+    expect(result.modelExecution?.attemptCount).toBe(1)
+    expect(sessions.get("sub:timeout")).toMatchObject({ status: "completed" })
   })
 
   it("cascade-stops active direct children and forwards abort to signal-aware work", async () => {

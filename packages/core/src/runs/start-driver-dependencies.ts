@@ -20,6 +20,7 @@ import {
   clearActiveRunController,
   getRootRun,
   incrementDelegationTurnCount,
+  mergeRunPromptSourceSnapshot,
   setRunStepStatus,
   updateRunStatus,
   updateRunSummary,
@@ -41,6 +42,10 @@ import { enqueueSessionIntake } from "./intake-queue.js"
 import { scheduleDelayedRootRun } from "./run-queueing.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type {
+  AgentExecutionDecision,
+  AgentExecutionDecisionTraceSnapshot,
+} from "../orchestration/execution-decision-contract.js"
 
 export function buildStartRootRunDriverDependencies(params: {
   runId: string
@@ -50,8 +55,11 @@ export function buildStartRootRunDriverDependencies(params: {
   onChunk: RunChunkDeliveryHandler | undefined
   message: string
   model: string | undefined
+  providerId?: string | undefined
+  provider?: AIProvider | undefined
   workDir: string
   reuseConversationContext: boolean
+  suppressFinalDelivery?: boolean
   activeQueueCancellationMode: ActiveQueueCancellationMode | null
   startNestedRootRun: (params: {
     message: string
@@ -64,6 +72,8 @@ export function buildStartRootRunDriverDependencies(params: {
     provider?: AIProvider | undefined
     targetId?: string | undefined
     targetLabel?: string | undefined
+    agentExecutionDecision?: AgentExecutionDecision | undefined
+    agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
     workDir?: string | undefined
     source: FinalizationSource
@@ -158,6 +168,10 @@ export function buildStartRootRunDriverDependencies(params: {
       onChunk: params.onChunk,
       directive,
       finalizationDependencies,
+      ...(params.suppressFinalDelivery ? {
+        suppressFinalDelivery: true,
+        suppressFinalDeliveryReasonCode: "child_result_parent_aggregation_required",
+      } : {}),
     }),
     tryHandleActiveQueueCancellation: () => tryHandleActiveQueueCancellation({
       runId: params.runId,
@@ -175,6 +189,8 @@ export function buildStartRootRunDriverDependencies(params: {
         sessionId: params.sessionId,
         requestGroupId: params.requestGroupId,
         model: params.model,
+        ...(params.providerId ? { providerId: params.providerId } : {}),
+        ...(params.provider ? { provider: params.provider } : {}),
         workDir: params.workDir,
         source: params.source,
         runId: params.runId,
@@ -187,7 +203,7 @@ export function buildStartRootRunDriverDependencies(params: {
           logError: params.logError,
         }),
         startDelegatedRun: (startParams) => {
-          params.startNestedRootRun({
+          return params.startNestedRootRun({
             ...startParams,
             model: startParams.model,
           })
@@ -199,6 +215,13 @@ export function buildStartRootRunDriverDependencies(params: {
         emitScheduleCreated: (payload) => eventBus.emit("schedule.created", payload),
         emitScheduleCancelled: (payload) => eventBus.emit("schedule.cancelled", payload),
         normalizeTaskProfile,
+        recordExecutionDecisionTrace: ({ runId, agentExecutionDecision, executionDecisionTrace }) => {
+          mergeRunPromptSourceSnapshot(runId, {
+            agentExecutionDecision,
+            executionDecisionSource: executionDecisionTrace.decision_source,
+            executionDecisionTrace,
+          })
+        },
         logInfo: (message, payload) => {
           params.logInfo(message, payload)
         },

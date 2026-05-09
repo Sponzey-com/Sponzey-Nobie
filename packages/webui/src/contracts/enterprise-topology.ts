@@ -295,6 +295,28 @@ export type AttemptKind =
   | "partial_success_review"
   | "parent_recovery"
 export type AttemptStatus = "attempted" | "skipped" | "blocked" | "succeeded" | "failed"
+export type FailureIssueKind =
+  | "success_criteria_unmet"
+  | "runtime_risk"
+  | "execution_incomplete"
+  | "permission_or_tool_blocked"
+  | "unknown"
+export type FailureRecoveryActionKind =
+  | "retry"
+  | "delegate_to_next_executor"
+  | "add_tool_permission"
+  | "add_fallback_path"
+  | "pass_partial_result"
+  | "return_to_parent"
+  | "review_trace"
+  | "none"
+export type FailureNextActionKind =
+  | "add_permission"
+  | "pass_partial"
+  | "add_fallback"
+  | "revise_description"
+  | "review_trace"
+  | "user_review"
 export type TracePhase =
   | "topology_run"
   | "work_order"
@@ -417,6 +439,9 @@ export interface FailureReport {
   organizationalCause?: string
   processCause?: string
   authorityCause?: string
+  issueKind?: FailureIssueKind
+  recoveryActionKind?: FailureRecoveryActionKind
+  nextActionKind?: FailureNextActionKind
   recommendedAction: string
   createdAt: EnterpriseTimestamp
 }
@@ -439,7 +464,6 @@ export interface TraceEvent {
 export interface FailurePolicy {
   failureReportRequired: boolean
   allowPartialSuccess: boolean
-  maxRetryAttempts: number
   fallbackNodeIds: string[]
 }
 

@@ -71,7 +71,7 @@ export function decideCompletionApplication(params: {
   }
 
   if (decision.kind === "recover_empty_result") {
-    if (!params.canRetryExecution || (params.maxTurns > 0 && params.usedTurns >= params.maxTurns)) {
+    if (!params.canRetryExecution) {
       return {
         kind: "stop",
         summary: `실행 결과가 비어 있고 완료 근거가 없어 자동 진행을 멈췄습니다.`,
@@ -86,7 +86,7 @@ export function decideCompletionApplication(params: {
       summary: decision.summary,
       detail: decision.reason,
       title: "empty_result_recovery",
-      eventLabel: "빈 결과 복구 재시도",
+      eventLabel: "빈 결과 복구",
       nextMessage: buildEmptyResultRecoveryPrompt({
         originalRequest: params.originalRequest,
         previousResult: params.previousResult,
@@ -112,14 +112,14 @@ export function decideCompletionApplication(params: {
       }
     }
 
-    if (!params.canRetryInterpretation || (params.maxTurns > 0 && params.usedTurns >= params.maxTurns)) {
-    return {
-      kind: "stop",
-      summary: `해석/후속 처리 한도(${params.interpretationBudgetLimit > 0 ? params.interpretationBudgetLimit : params.maxTurns}회)에 도달했습니다.`,
-      reason: decision.reason || "최대 자동 후속 처리 횟수 초과",
-      ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
+    if (!params.canRetryInterpretation) {
+      return {
+        kind: "stop",
+        summary: "해석/후속 처리를 자동으로 계속할 수 없습니다.",
+        reason: decision.reason || "새 안전 대안이나 필요한 결정 정보가 부족합니다.",
+        ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
+      }
     }
-  }
 
     return {
       kind: "retry",
@@ -134,11 +134,11 @@ export function decideCompletionApplication(params: {
   }
 
   if (decision.kind === "retry_truncated") {
-    if (!params.canRetryExecution || (params.maxTurns > 0 && params.usedTurns >= params.maxTurns)) {
+    if (!params.canRetryExecution) {
       return {
         kind: "stop",
-        summary: `실행 복구 재시도 한도(${params.executionBudgetLimit > 0 ? params.executionBudgetLimit : params.maxTurns}회)에 도달했습니다.`,
-        reason: decision.reason || "최대 자동 후속 처리 횟수 초과",
+        summary: "실행 복구를 자동으로 계속할 수 없습니다.",
+        reason: decision.reason || "새 안전 대안이나 필요한 결정 정보가 부족합니다.",
         ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
       }
     }
@@ -147,7 +147,7 @@ export function decideCompletionApplication(params: {
       kind: "retry",
       budgetKind: "execution",
       summary: decision.summary,
-      eventLabel: "중간 절단 복구 재시도",
+      eventLabel: "중간 절단 복구",
       nextMessage: buildTruncatedOutputRecoveryPrompt({
         originalRequest: params.originalRequest,
         previousResult: params.previousResult,
@@ -156,8 +156,8 @@ export function decideCompletionApplication(params: {
         ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
       }),
       reviewStepStatus: "completed",
-      executingStepSummary: "중간에 끊긴 작업을 자동으로 다시 시도합니다.",
-      updateRunStatusSummary: "중간에 끊긴 작업을 자동으로 다시 시도합니다.",
+      executingStepSummary: "중간에 끊긴 작업을 다른 방식으로 이어갑니다.",
+      updateRunStatusSummary: "중간에 끊긴 작업을 다른 방식으로 이어갑니다.",
       markTruncatedOutputRecoveryAttempted: true,
       clearWorkerRuntime: true,
     }

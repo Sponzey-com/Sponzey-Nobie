@@ -119,6 +119,7 @@ export async function executeRootRunDriver(
     workerSessionId?: string
     toolsEnabled?: boolean
     isRootRequest: boolean
+    suppressFinalDelivery?: boolean
     contextMode: AgentContextMode
     taskProfile: TaskProfile
     topologyRouting?: TopologyRootRunRoutingDecision
@@ -175,6 +176,7 @@ export async function executeRootRunDriver(
         onChunk: params.onChunk,
         message: params.message,
         topologyRouting: params.topologyRouting,
+        ...(params.suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
       }, dependencies, moduleDependencies)
       if (topologyExecution.ok) return
     }
@@ -209,13 +211,15 @@ async function executeTopologyRuntimeOrFallback(
     onChunk: RunChunkDeliveryHandler | undefined
     message: string
     topologyRouting: Extract<TopologyRootRunRoutingDecision, { mode: "route" }>
+    suppressFinalDelivery?: boolean
   },
   dependencies: RootRunDriverDependencies,
   moduleDependencies: RootRunDriverModuleDependencies,
 ): Promise<TopologyRootRunExecutionResult> {
+  const selectedExecutorLabel = params.topologyRouting.selectedExecutorId ?? "unselected"
   dependencies.appendRunEvent(
     params.runId,
-    `topology_runtime_selected:${params.topologyRouting.topologyId}@${params.topologyRouting.topologyVersion}:${params.topologyRouting.entryNodeId}`,
+    `topology_runtime_selected:${params.topologyRouting.topologyId}@${params.topologyRouting.topologyVersion}:selected=${selectedExecutorLabel}`,
   )
   dependencies.setRunStepStatus(
     params.runId,
@@ -239,7 +243,7 @@ async function executeTopologyRuntimeOrFallback(
 
   dependencies.appendRunEvent(
     params.runId,
-    `topology_runtime_completed:${execution.topologyRunId}:${execution.entryNodeId}`,
+    `topology_runtime_completed:${execution.topologyRunId}:selected=${selectedExecutorLabel}`,
   )
   await completeRunWithAssistantMessage({
     runId: params.runId,
@@ -247,6 +251,10 @@ async function executeTopologyRuntimeOrFallback(
     text: execution.finalAnswer,
     source: params.source,
     onChunk: params.onChunk,
+    ...(params.suppressFinalDelivery ? {
+      suppressFinalDelivery: true,
+      suppressFinalDeliveryReasonCode: "child_result_parent_aggregation_required",
+    } : {}),
     dependencies: dependencies.getFinalizationDependencies(),
   })
   return execution

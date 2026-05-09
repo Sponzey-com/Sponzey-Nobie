@@ -318,6 +318,18 @@ describe("task017 enterprise topology GUI draft operations", () => {
       })
       expect(imported.statusCode).toBe(201)
 
+      const emptyDraft = await app.inject({
+        method: "GET",
+        url: "/api/topologies/workspace%3Adraft/gui-draft",
+      })
+      expect(emptyDraft.statusCode).toBe(200)
+      expect(emptyDraft.json()).toEqual({
+        ok: true,
+        draft: null,
+        reused: false,
+        source: "empty",
+      })
+
       const started = await app.inject({
         method: "POST",
         url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
@@ -325,6 +337,40 @@ describe("task017 enterprise topology GUI draft operations", () => {
       })
       expect(started.statusCode).toBe(201)
       expect(started.json().draft.operationLog).toHaveLength(0)
+
+      const transientTopology = structuredClone(topology)
+      transientTopology.nodes[0] = {
+        ...transientTopology.nodes[0]!,
+        name: "",
+      }
+      const transientDraft = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+        payload: { topology: transientTopology, reset: true },
+      })
+      expect(transientDraft.statusCode).toBe(201)
+      expect(transientDraft.json().draft.validation.ok).toBe(false)
+      expect(transientDraft.json().draft.validation.issues.map((issue: { reasonCode: string }) => issue.reasonCode)).toContain("missing_required_field")
+
+      const invalidSave = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+        payload: { topology: transientTopology, reset: true, persist: true },
+      })
+      expect(invalidSave.statusCode).toBe(201)
+      expect(invalidSave.json()).toEqual(expect.objectContaining({
+        ok: true,
+        persisted: false,
+        persistError: "invalid_enterprise_topology",
+      }))
+      expect(invalidSave.json().persistIssues.map((issue: { reasonCode: string }) => issue.reasonCode)).toContain("missing_required_field")
+
+      const restarted = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+        payload: { topology, reset: true },
+      })
+      expect(restarted.statusCode).toBe(201)
 
       const patched = await app.inject({
         method: "PATCH",
@@ -359,7 +405,47 @@ describe("task017 enterprise topology GUI draft operations", () => {
       }))
       expect(Array.isArray(issues.json().issues)).toBe(true)
 
+      const saved = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+        payload: {
+          topology: patched.json().draft.topology,
+          reset: true,
+          persist: true,
+          createdBy: "task017-test",
+          importSource: "task017-gui-save",
+        },
+      })
+      expect(saved.statusCode).toBe(201)
+      expect(saved.json().persisted).toBe(true)
+      expect(saved.json().persistedVersion).toEqual(expect.objectContaining({
+        topologyId: topology.id,
+        version: 2,
+        importSource: "task017-gui-save",
+      }))
+
+      const activatedFirstVersion = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/versions/1/activate`,
+      })
+      expect(activatedFirstVersion.statusCode).toBe(200)
+
+      resetTopologyGuiDraftStoreForTest()
+      const restored = await app.inject({
+        method: "GET",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+      })
+      expect(restored.statusCode).toBe(200)
+      expect(restored.json()).toEqual(expect.objectContaining({
+        ok: true,
+        reused: false,
+        source: "registry",
+        version: 2,
+      }))
+      expect(restored.json().draft.topology.nodes.map((node: { id: string }) => node.id)).toContain("node:api-created")
+
       const clientSource = readFileSync(new URL("../packages/webui/src/api/client.ts", import.meta.url), "utf-8")
+      expect(clientSource).toContain("enterpriseTopologyGuiDraft:")
       expect(clientSource).toContain("/gui-draft")
       expect(clientSource).toContain("/gui-draft/operations")
       expect(clientSource).toContain("/gui-draft/issues")

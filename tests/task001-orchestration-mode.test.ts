@@ -17,6 +17,8 @@ import {
   orchestrationCapabilityStatus,
   resolveOrchestrationModeSnapshotSync,
 } from "../packages/core/src/orchestration/mode.ts"
+import { buildExampleEnterpriseTopology } from "../packages/core/src/topology/examples.js"
+import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
 
 const tempDirs: string[] = []
 const previousStateDir = process.env["NOBIE_STATE_DIR"]
@@ -118,7 +120,6 @@ function subAgent(input: {
     delegation: {
       enabled: input.delegationEnabled ?? true,
       maxParallelSessions: 1,
-      retryBudget: 1,
     },
   }
 }
@@ -191,6 +192,48 @@ describe("task001 orchestration mode baseline", () => {
       totalSubAgentCount: 1,
       disabledSubAgentCount: 1,
     })
+  })
+
+  it("uses saved topology nodes as active orchestration agents", () => {
+    const topology = buildExampleEnterpriseTopology(now)
+    createEnterpriseTopologyRegistry({ now: () => now }).appendTopologyVersion({
+      topology,
+      createdBy: "task001-test",
+    })
+
+    const snapshot = resolveOrchestrationModeSnapshotSync({
+      getConfig: () => ({
+        orchestration: orchestrationConfig({
+          mode: "orchestration",
+          featureFlagEnabled: true,
+        }),
+      }),
+      now: () => now,
+    })
+
+    expect(snapshot).toMatchObject({
+      mode: "orchestration",
+      status: "ready",
+      reasonCode: "orchestration_ready",
+      activeSubAgentCount: 2,
+      totalSubAgentCount: 2,
+      disabledSubAgentCount: 0,
+    })
+    expect(snapshot.reason).toContain("토폴로지 실행자 2개")
+    expect(snapshot.activeSubAgents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayName: "Customer Request Intake",
+        source: "topology",
+        topologyId: topology.id,
+        executorId: "node:intake",
+      }),
+      expect.objectContaining({
+        displayName: "Customer Request Triage",
+        source: "topology",
+        topologyId: topology.id,
+        executorId: "node:triage",
+      }),
+    ]))
   })
 
   it("returns a degraded single_nobie snapshot when registry loading fails", () => {

@@ -174,7 +174,7 @@ function createInitialSetupDraft(): SetupDraft {
       approvalMode: "on-miss",
       approvalTimeout: 60,
       approvalTimeoutFallback: "deny",
-      maxDelegationTurns: 5,
+      maxDelegationTurns: 0,
     },
     channels: {
       telegramEnabled: false,

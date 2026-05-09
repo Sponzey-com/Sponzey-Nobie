@@ -135,7 +135,6 @@ function subAgentConfig(status: SubAgentConfig["status"] = "enabled"): SubAgentC
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
   }
 }
@@ -167,7 +166,6 @@ function subSession(): SubSessionContract {
     agentNickname: "Researcher",
     commandRequestId: "command:1",
     status: "queued",
-    retryBudgetRemaining: 2,
     promptBundleId: "bundle:1",
   }
 }

@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { resolveProviderForConnection, type ResolvedAiProvider } from "../../ai/index.js"
+import { getConfig } from "../../config/index.js"
 import {
   validateEnterpriseTopology,
   type EnterpriseMetadata,
@@ -28,6 +30,16 @@ import {
 import { TOPOLOGY_RELATION_TEMPLATE_CATALOG } from "../../topology/relation-templates.js"
 import { TOPOLOGY_TEMPLATE_CATALOG } from "../../topology/templates.js"
 import { validateTopology, type TopologyValidationResult } from "../../topology/validator.js"
+import { buildExecutorRunObservabilityMetadata } from "../../topology/executor-observability.js"
+import { buildExecutorGraphFromEnterpriseTopology } from "../../topology/executor-graph.js"
+import {
+  createNodeDefinitionSuggestion,
+  normalizeNodeDefinitionSuggestionRequest,
+  type NodeDefinitionSuggestionRequest,
+  type NodeDefinitionSuggestionResult,
+} from "../../topology/node-definition-suggestion.js"
+import { buildGraphExecutionPlan } from "../../topology/graph-execution-plan.js"
+import { persistGraphExecutionPlan } from "../../topology/graph-execution-store.js"
 import { runNodeRuntime } from "../../topology-runtime/node-runtime.js"
 import { getTopologyRunTraceProjection, recordTopologyRuntimeExecution } from "../../topology-runtime/trace.js"
 import { buildWorkOrder, createWorkOrderRuntimeEnvelope } from "../../topology-runtime/work-order.js"
@@ -74,6 +86,9 @@ interface GuiDraftBody {
   topology?: unknown
   version?: unknown
   reset?: unknown
+  persist?: unknown
+  createdBy?: unknown
+  importSource?: unknown
 }
 
 interface GuiDraftOperationsBody {
@@ -89,6 +104,8 @@ interface GuiDraftRunBody {
   simulationMode?: unknown
   rootRunId?: unknown
 }
+
+type NodeDefinitionSuggestionBody = Partial<NodeDefinitionSuggestionRequest>
 
 const guiDrafts = new Map<string, EnterpriseTopologyGuiDraft>()
 
@@ -194,8 +211,27 @@ function getTopologyDraftSource(
 ): { ok: true; topology: EnterpriseTopology } | { ok: false; statusCode: number; error: string; issues?: unknown } {
   if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "topology")) {
     const parsed = parseTopology(body)
-    if (!parsed.ok) return { ok: false, statusCode: 400, error: "invalid_enterprise_topology", issues: parsed.issues }
-    if (parsed.topology.id !== topologyId) {
+    if (parsed.ok) {
+      if (parsed.topology.id !== topologyId) {
+        return {
+          ok: false,
+          statusCode: 400,
+          error: "topology_id_mismatch",
+          issues: [{
+            path: "$.topology.id",
+            reasonCode: "topology_id_mismatch",
+            message: "Topology id must match route topologyId.",
+          }],
+        }
+      }
+      return { ok: true, topology: parsed.topology }
+    }
+
+    if (!isRecord(body.topology)) {
+      return { ok: false, statusCode: 400, error: "invalid_enterprise_topology", issues: parsed.issues }
+    }
+
+    if (body.topology.id !== topologyId) {
       return {
         ok: false,
         statusCode: 400,
@@ -207,17 +243,59 @@ function getTopologyDraftSource(
         }],
       }
     }
-    return { ok: true, topology: parsed.topology }
+
+    return { ok: true, topology: structuredClone(body.topology) as unknown as EnterpriseTopology }
   }
 
   const registry = createEnterpriseTopologyRegistry()
   const topologyRecord = registry.getTopology(topologyId)
   if (topologyRecord === null) return { ok: false, statusCode: 404, error: "topology_not_found" }
-  const version = (isRecord(body) ? asVersion(body.version) : undefined) ?? topologyRecord.activeVersion ?? registry.listVersions(topologyId)[0]?.version
+  const version = (isRecord(body) ? asVersion(body.version) : undefined) ?? registry.listVersions(topologyId)[0]?.version ?? topologyRecord.activeVersion
   if (version === undefined) return { ok: false, statusCode: 404, error: "topology_version_not_found" }
   const versionRecord = registry.getVersion(topologyId, version)
   if (versionRecord === null) return { ok: false, statusCode: 404, error: "topology_version_not_found" }
   return { ok: true, topology: versionRecord.topology }
+}
+
+function persistGuiDraftTopology(
+  topology: EnterpriseTopology,
+  body: GuiDraftBody | undefined,
+): { ok: true; version: ReturnType<ReturnType<typeof createEnterpriseTopologyRegistry>["appendTopologyVersion"]>["version"] } | { ok: false; error: string; issues: unknown } | undefined {
+  if (!isRecord(body) || body.persist !== true) return undefined
+  const validation = validateEnterpriseTopology(topology)
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: "invalid_enterprise_topology",
+      issues: validation.issues,
+    }
+  }
+  const registry = createEnterpriseTopologyRegistry()
+  const createdBy = asString(body.createdBy)
+  const importSource = asString(body.importSource) ?? "enterprise_topology_gui_draft"
+  const persisted = registry.appendTopologyVersion({
+    topology,
+    ...(createdBy !== undefined ? { createdBy } : {}),
+    importSource,
+  })
+  return { ok: true, version: persisted.version }
+}
+
+function guiDraftPersistencePayload(
+  persisted: ReturnType<typeof persistGuiDraftTopology>,
+): Record<string, unknown> {
+  if (persisted === undefined) return {}
+  if (persisted.ok) {
+    return {
+      persisted: true,
+      persistedVersion: persisted.version,
+    }
+  }
+  return {
+    persisted: false,
+    persistError: persisted.error,
+    persistIssues: persisted.issues,
+  }
 }
 
 function buildWorkOrderPreview(draft: EnterpriseTopologyGuiDraft, result: Extract<CompileTopologyResult, { ok: true }>) {
@@ -418,8 +496,21 @@ async function runManualGuiDraftTopology(input: {
   const topologyRunId = createManualTopologyRunId(updated.topologyId, startedAt)
   const requestInput = asMetadata(body.input)
   const advancedInstruction = asString(body.advancedInstruction)
+  const workOrderId = `work-order:${topologyRunId}:${entryNodeId}`
+  const requestText = asString(requestInput.requestText) ?? advancedInstruction
+  const observabilityMetadata = buildExecutorRunObservabilityMetadata({
+    topology: updated.topology,
+    topologyRunId,
+    entryNodeId,
+    templateId: template.templateId,
+    contextPresetId: contextPreset.id,
+    ...(requestText !== undefined ? { requestText } : {}),
+    source: requestInput.launchedFrom === "executor_run_panel" ? "executor_run_panel" : "enterprise_topology_gui",
+    workOrderId,
+    generatedAt: startedAt,
+  })
   const workOrder = buildWorkOrder({
-    workOrderId: `work-order:${topologyRunId}:${entryNodeId}`,
+    workOrderId,
     topologyRunId,
     parentWorkOrderId: null,
     fromNodeId: entryNodeId,
@@ -432,6 +523,7 @@ async function runManualGuiDraftTopology(input: {
     input: {
       ...structuredClone(contextPreset.input),
       ...requestInput,
+      ...observabilityMetadata,
       templateId: template.templateId,
       contextPresetId: contextPreset.id,
       ...(advancedInstruction !== undefined ? { advancedInstruction } : {}),
@@ -543,6 +635,7 @@ async function runManualGuiDraftTopology(input: {
       contextPresetId: contextPreset.id,
       simulationMode,
       entryNodeId,
+      ...observabilityMetadata,
     },
     now: () => Date.now(),
   })
@@ -719,7 +812,13 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
       const body = isRecord(req.body) ? req.body : {}
       const existing = guiDrafts.get(req.params.topologyId)
       if (existing && body.reset !== true) {
-        return { ok: true, draft: existing, reused: true }
+        const persisted = persistGuiDraftTopology(existing.topology, body)
+        return {
+          ok: true,
+          draft: existing,
+          reused: true,
+          ...guiDraftPersistencePayload(persisted),
+        }
       }
 
       const source = getTopologyDraftSource(req.params.topologyId, body)
@@ -734,7 +833,39 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
 
       const draft = createEnterpriseTopologyGuiDraft({ topology: source.topology })
       guiDrafts.set(req.params.topologyId, draft)
-      return reply.status(201).send({ ok: true, draft, reused: false })
+      const persisted = persistGuiDraftTopology(draft.topology, body)
+      return reply.status(201).send({
+        ok: true,
+        draft,
+        reused: false,
+        ...guiDraftPersistencePayload(persisted),
+      })
+    },
+  )
+
+  app.get<{ Params: { topologyId: string } }>(
+    "/api/topologies/:topologyId/gui-draft",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const existing = guiDrafts.get(req.params.topologyId)
+      if (existing) return { ok: true, draft: existing, reused: true, source: "memory" }
+
+      const registry = createEnterpriseTopologyRegistry()
+      const latestVersion = registry.listVersions(req.params.topologyId)[0]?.version
+      const exported = registry.exportTopology(req.params.topologyId, latestVersion)
+      if (exported === null) {
+        return { ok: true, draft: null, reused: false, source: "empty" }
+      }
+
+      const draft = createEnterpriseTopologyGuiDraft({ topology: exported.version.topology })
+      guiDrafts.set(req.params.topologyId, draft)
+      return {
+        ok: true,
+        draft,
+        reused: false,
+        source: "registry",
+        version: exported.version.version,
+      }
     },
   )
 
@@ -829,6 +960,172 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
       const draft = guiDrafts.get(req.params.topologyId)
       if (!draft) return reply.status(404).send({ ok: false, error: "gui_draft_not_found" })
       return buildCompiledPreviewPayload(draft, compileTopology(draft.topology))
+    },
+  )
+
+  app.post<{
+    Params: { workspaceId: string; topologyId: string }
+    Body: NodeDefinitionSuggestionBody
+  }>(
+    "/api/topologies/:workspaceId/:topologyId/executor-nodes/suggest-definition",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const workspaceId = decodeURIComponent(req.params.workspaceId).trim()
+      const topologyId = decodeURIComponent(req.params.topologyId).trim()
+      if (!workspaceId || !topologyId) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_topology_context",
+          message: "워크스페이스와 토폴로지 ID가 필요합니다.",
+          warnings: [],
+        })
+      }
+      if (!isRecord(req.body)) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_request_body",
+          message: "AI 제안 요청 본문이 올바르지 않습니다.",
+          warnings: [],
+        })
+      }
+      const request = normalizeNodeDefinitionSuggestionRequest({
+        ...req.body,
+        workspaceId,
+        topologyId,
+      })
+      if (request.targetFields.length === 0) {
+        return reply.status(400).send({
+          ok: false,
+          error: "no_target_fields",
+          message: "갱신할 수 있는 항목이 없습니다. Lock을 해제한 뒤 다시 시도하세요.",
+          warnings: [],
+        })
+      }
+
+      const config = getConfig()
+      const provider = resolveProviderForConnection(config.ai.connection, request.modelPreference?.providerId)
+      if (!provider) {
+        return reply.status(503).send({
+          ok: false,
+          error: "llm_not_configured",
+          message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
+          warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
+        })
+      }
+
+      const result = await createNodeDefinitionSuggestion(
+        {
+          request,
+          modelConfig: config.ai.connection,
+        },
+        {
+          generateStructured: async ({ prompt, modelInfo }) => generateNodeDefinitionSuggestionJson({
+            prompt,
+            modelId: modelInfo.modelId,
+            provider,
+          }),
+        },
+      )
+      return sendNodeDefinitionSuggestionResult(reply, result)
+    },
+  )
+
+  app.post<{
+    Params: { topologyId: string }
+    Body: NodeDefinitionSuggestionBody
+  }>(
+    "/api/topologies/:topologyId/executor-nodes/suggest-definition",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const topologyId = decodeURIComponent(req.params.topologyId).trim()
+      if (!topologyId) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_topology_context",
+          message: "토폴로지 ID가 필요합니다.",
+          warnings: [],
+        })
+      }
+      if (!isRecord(req.body)) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_request_body",
+          message: "AI 제안 요청 본문이 올바르지 않습니다.",
+          warnings: [],
+        })
+      }
+      const request = normalizeNodeDefinitionSuggestionRequest({
+        ...req.body,
+        workspaceId: topologyId,
+        topologyId,
+      })
+      if (request.targetFields.length === 0) {
+        return reply.status(400).send({
+          ok: false,
+          error: "no_target_fields",
+          message: "갱신할 수 있는 항목이 없습니다. Lock을 해제한 뒤 다시 시도하세요.",
+          warnings: [],
+        })
+      }
+
+      const config = getConfig()
+      const provider = resolveProviderForConnection(config.ai.connection, request.modelPreference?.providerId)
+      if (!provider) {
+        return reply.status(503).send({
+          ok: false,
+          error: "llm_not_configured",
+          message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
+          warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
+        })
+      }
+
+      const result = await createNodeDefinitionSuggestion(
+        {
+          request,
+          modelConfig: config.ai.connection,
+        },
+        {
+          generateStructured: async ({ prompt, modelInfo }) => generateNodeDefinitionSuggestionJson({
+            prompt,
+            modelId: modelInfo.modelId,
+            provider,
+          }),
+        },
+      )
+      return sendNodeDefinitionSuggestionResult(reply, result)
+    },
+  )
+
+  app.post<{ Params: { topologyId: string } }>(
+    "/api/topologies/:topologyId/gui-draft/executor-graph/plan",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const draft = guiDrafts.get(req.params.topologyId)
+      if (!draft) return reply.status(404).send({ ok: false, error: "gui_draft_not_found" })
+      const graph = buildExecutorGraphFromEnterpriseTopology(draft.topology, {
+        mode: "simple",
+        now: Date.now(),
+      })
+      const plan = buildGraphExecutionPlan({
+        workspaceId: draft.draftId,
+        graph,
+        now: new Date().toISOString(),
+      })
+      const record = persistGraphExecutionPlan({ plan })
+      return {
+        ok: true,
+        topologyId: req.params.topologyId,
+        draftId: draft.draftId,
+        graphExecutionPlanId: plan.graphExecutionPlanId,
+        plan,
+        validationWarnings: plan.validationWarnings,
+        record: {
+          graphExecutionPlanId: record.graphExecutionPlanId,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      }
     },
   )
 
@@ -937,4 +1234,71 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
       }
     },
   )
+}
+
+async function generateNodeDefinitionSuggestionJson(input: {
+  prompt: string
+  modelId: string
+  provider: ResolvedAiProvider
+}): Promise<unknown> {
+  let text = ""
+  for await (const chunk of input.provider.provider.chat({
+    model: input.modelId,
+    system: [
+      "You return JSON only.",
+      "The JSON shape is {\"alternatives\":[{\"alternativeId\":\"...\",\"title\":\"...\",\"summary\":\"...\",\"patch\":{},\"rationale\":\"...\",\"riskNotes\":[],\"confidence\":0.7}]}",
+      "Use Korean user-facing text and avoid internal runtime terminology.",
+      "For every alternative, include patch.name as a short, explicit Korean role name that users can understand immediately.",
+      "Use the selected roles, selected styles, and node overview together when writing patch.description.",
+      "Before returning JSON, review each proposed description for missing responsibilities, decision criteria, work steps, handoff details, completion criteria, and risk or clarification points, then revise the description with any missing details.",
+      "Return only the final reviewed JSON. Do not include a separate checklist or prose outside JSON.",
+    ].join("\n"),
+    messages: [{ role: "user", content: input.prompt }],
+    maxTokens: 2800,
+  })) {
+    if (chunk.type === "text_delta") text += chunk.delta
+  }
+  return extractJsonPayload(text)
+}
+
+function extractJsonPayload(text: string): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) return {}
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed)?.[1]?.trim()
+    if (fenced) {
+      try {
+        return JSON.parse(fenced)
+      } catch {
+        // fall through to brace extraction
+      }
+    }
+    const start = trimmed.indexOf("{")
+    const end = trimmed.lastIndexOf("}")
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1))
+      } catch {
+        return {}
+      }
+    }
+    return {}
+  }
+}
+
+function sendNodeDefinitionSuggestionResult(
+  reply: FastifyReply,
+  result: NodeDefinitionSuggestionResult,
+): NodeDefinitionSuggestionResult | FastifyReply {
+  if (result.ok) return result
+  const statusCode = result.error === "no_target_fields"
+    ? 400
+    : result.error === "llm_not_configured"
+      ? 503
+      : result.error === "rate_limited"
+        ? 429
+        : 502
+  return reply.status(statusCode).send(result)
 }

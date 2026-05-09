@@ -1260,7 +1260,6 @@ export const MIGRATIONS: Migration[] = [
           request_group_id TEXT,
           pending_count INTEGER NOT NULL DEFAULT 0,
           retry_count INTEGER NOT NULL DEFAULT 0,
-          retry_budget_remaining INTEGER,
           recovery_key TEXT,
           action_taken TEXT NOT NULL,
           detail_json TEXT
@@ -1604,7 +1603,6 @@ export const MIGRATIONS: Migration[] = [
           agent_nickname TEXT,
           command_request_id TEXT NOT NULL,
           status TEXT NOT NULL CHECK(status IN ('created', 'queued', 'running', 'waiting_for_input', 'awaiting_approval', 'completed', 'needs_revision', 'failed', 'cancelled')),
-          retry_budget_remaining INTEGER NOT NULL,
           prompt_bundle_id TEXT NOT NULL,
           contract_json TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
@@ -2057,7 +2055,6 @@ export const MIGRATIONS: Migration[] = [
             ? {
                 enabled: asBoolean(config["delegation"]["enabled"]) ?? false,
                 maxParallelSessions: asNumber(config["delegation"]["maxParallelSessions"]) ?? 1,
-                retryBudget: asNumber(config["delegation"]["retryBudget"]) ?? 0,
               }
             : null
         updateAgentConfig.run(
@@ -2744,6 +2741,112 @@ export const MIGRATIONS: Migration[] = [
 
         CREATE INDEX IF NOT EXISTS idx_topology_gap_findings_topology
           ON topology_gap_findings(topology_id, updated_at DESC);
+      `)
+    },
+  },
+  {
+    version: 43,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS graph_execution_plans (
+          graph_execution_plan_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('planned', 'completed', 'cancelled', 'failed', 'waiting_for_user')),
+          entry_executor_ids_json TEXT NOT NULL,
+          plan_json TEXT NOT NULL,
+          outcome_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_graph_execution_plans_topology
+          ON graph_execution_plans(topology_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_graph_execution_plans_status
+          ON graph_execution_plans(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS node_task_analyses (
+          analysis_id TEXT PRIMARY KEY,
+          graph_execution_plan_id TEXT NOT NULL,
+          executor_id TEXT NOT NULL,
+          source TEXT NOT NULL CHECK(source IN ('rule_based', 'llm_assisted', 'user_confirmed', 'runtime_refined')),
+          analysis_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (graph_execution_plan_id) REFERENCES graph_execution_plans(graph_execution_plan_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_node_task_analyses_plan
+          ON node_task_analyses(graph_execution_plan_id, executor_id);
+
+        CREATE TABLE IF NOT EXISTS node_delegation_resolutions (
+          resolution_id TEXT PRIMARY KEY,
+          graph_execution_plan_id TEXT NOT NULL,
+          executor_id TEXT NOT NULL,
+          node_contract_id TEXT NOT NULL,
+          selected_route TEXT NOT NULL CHECK(selected_route IN ('sub_agent', 'yeonjang', 'nobie_direct', 'manual_approval', 'external')),
+          selected_target_id TEXT NOT NULL,
+          visibility TEXT NOT NULL CHECK(visibility IN ('visible_node', 'system_preparation')),
+          resolution_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (graph_execution_plan_id) REFERENCES graph_execution_plans(graph_execution_plan_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_node_delegation_resolutions_plan
+          ON node_delegation_resolutions(graph_execution_plan_id, executor_id);
+
+        CREATE TABLE IF NOT EXISTS graph_execution_events (
+          event_id TEXT PRIMARY KEY,
+          graph_execution_plan_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          executor_id TEXT,
+          edge_id TEXT,
+          status TEXT,
+          terminal_reason TEXT CHECK(
+            terminal_reason IS NULL OR terminal_reason IN (
+              'no_safe_alternative',
+              'privacy_or_permission_boundary',
+              'permission_required',
+              'out_of_scope',
+              'external_system_unavailable_without_alternative',
+              'cancelled_by_user',
+              'explicit_user_limit_reached',
+              'manual_approval_required'
+            )
+          ),
+          recovery_reason TEXT,
+          cancellation_reason TEXT,
+          user_work INTEGER NOT NULL DEFAULT 0 CHECK(user_work IN (0, 1)),
+          event_json TEXT NOT NULL,
+          at INTEGER NOT NULL,
+          sequence INTEGER NOT NULL,
+          FOREIGN KEY (graph_execution_plan_id) REFERENCES graph_execution_plans(graph_execution_plan_id) ON DELETE CASCADE,
+          CHECK(user_work = 0 OR executor_id IS NOT NULL)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_graph_execution_events_plan
+          ON graph_execution_events(graph_execution_plan_id, sequence ASC, at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_graph_execution_events_executor
+          ON graph_execution_events(executor_id, at DESC);
+
+        CREATE TABLE IF NOT EXISTS recovery_strategy_ledger (
+          attempt_id TEXT PRIMARY KEY,
+          graph_execution_plan_id TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          strategy_fingerprint TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          accepted INTEGER NOT NULL CHECK(accepted IN (0, 1)),
+          attempt_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (graph_execution_plan_id) REFERENCES graph_execution_plans(graph_execution_plan_id) ON DELETE CASCADE,
+          UNIQUE(graph_execution_plan_id, scope_id, strategy_fingerprint)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recovery_strategy_ledger_plan
+          ON recovery_strategy_ledger(graph_execution_plan_id, scope_id, created_at DESC);
       `)
     },
   },

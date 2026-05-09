@@ -6,6 +6,10 @@ import type {
   WorkOrderTemplatePreset,
   WorkOrderTemplateSimulationMode,
 } from "../../lib/enterprise-topology-operations"
+import {
+  shouldShowTopologyWorkspaceAdvancedSurface,
+  type TopologyWorkspaceExposureMode,
+} from "../../lib/topology-workspace-copy"
 import { useUiI18n } from "../../lib/ui-i18n"
 import type { TopologyRunTraceOverlayInput } from "./TopologyRunTraceOverlay"
 
@@ -136,6 +140,7 @@ function targetIssueText(
 }
 
 export function TopologyRunStrip({
+  exposureMode = "simple",
   templates,
   selectedTemplateId,
   selectedContextPresetId,
@@ -156,6 +161,7 @@ export function TopologyRunStrip({
   onTraceLayerRequest,
   onStartNodeQuickFix,
 }: {
+  exposureMode?: TopologyWorkspaceExposureMode
   templates: WorkOrderTemplatePreset[]
   selectedTemplateId?: string
   selectedContextPresetId?: string
@@ -184,6 +190,105 @@ export function TopologyRunStrip({
   const targetIssue = targetState?.issue ?? (effectiveTargetNodeId ? null : "missing_target")
   const canRun = Boolean(effectiveTargetNodeId && selectedTemplate && !loading)
   const latestRun = recentRuns[0] ?? traceOverlay?.run ?? null
+
+  if (!shouldShowTopologyWorkspaceAdvancedSurface(exposureMode)) {
+    return (
+      <section
+        className="rounded-lg border border-stone-200 bg-white px-3 py-2.5"
+        data-testid="topology-run-launcher"
+        data-exposure-mode="simple"
+      >
+        <div
+          className="grid gap-2 md:grid-cols-[minmax(140px,0.7fr)_minmax(220px,1fr)_auto]"
+          data-testid="topology-run-simple-panel"
+        >
+          <div>
+            <div className="text-sm font-semibold text-stone-950">
+              {text("실행", "Run")}
+            </div>
+            <div
+              className={`mt-1 flex h-9 items-center rounded-lg border px-2 text-xs font-semibold ${
+                effectiveTargetNodeId
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-stone-200 bg-stone-50 text-stone-600"
+              }`}
+              data-testid="topology-run-target"
+            >
+              <span className="max-w-48 truncate">
+                {effectiveTargetNodeId ?? text("시작 실행자 자동 선택 대기", "Waiting for start executor")}
+              </span>
+            </div>
+          </div>
+
+          <label className="grid gap-1 text-xs font-semibold text-stone-500">
+            <span>{text("입력", "Input")}</span>
+            <textarea
+              value={advancedInstruction}
+              onChange={(event) => onAdvancedInstructionChange?.(event.currentTarget.value)}
+              rows={1}
+              className="min-h-9 resize-none rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-800"
+              placeholder={text("실행할 요청을 넣으세요.", "Enter the request to run.")}
+              data-testid="topology-run-simple-input"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={onRun}
+            disabled={!canRun}
+            className="h-9 self-end rounded-lg bg-stone-900 px-4 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="topology-run-submit"
+          >
+            {loading ? text("실행 중", "Running") : text("실행", "Run")}
+          </button>
+        </div>
+
+        {targetIssue ? (
+          <div
+            className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            data-testid="topology-run-entry-quick-fix"
+          >
+            <span>{targetIssueText(targetIssue, text)}</span>
+            <button
+              type="button"
+              onClick={onStartNodeQuickFix}
+              className="h-7 rounded-md border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900"
+            >
+              {text("시작 실행자 지정", "Set start executor")}
+            </button>
+          </div>
+        ) : null}
+
+        {latestRun ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="topology-run-history">
+            <button
+              type="button"
+              onClick={onTraceLayerRequest}
+              className="h-8 rounded-lg border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-800"
+              data-testid="topology-run-trace-cta"
+            >
+              {text("기록 보기", "View history")}
+            </button>
+            {recentRuns.slice(0, 5).map((run) => (
+              <button
+                key={run.topologyRunId}
+                type="button"
+                onClick={() => onSelectRunHistory?.(run.topologyRunId)}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                  run.topologyRunId === selectedRunId
+                    ? "bg-stone-900 text-white"
+                    : runStatusTone(run.status)
+                }`}
+                data-testid="topology-run-history-item"
+              >
+                {run.entryNodeId ?? text("실행", "Run")} · {formatRunTime(run.startedAt)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    )
+  }
 
   return (
     <section

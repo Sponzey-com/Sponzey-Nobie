@@ -6,7 +6,7 @@ import type {
   TaskStructuredRequest,
 } from "../agent/intake.js"
 import type { AIProvider } from "../ai/index.js"
-import { resolveRunRoute } from "./routing.js"
+import { isExplicitProviderRouteTarget, resolveRunRoute, type ResolvedRunRoute } from "./routing.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
@@ -139,11 +139,14 @@ export function scheduleDelayedRootRun(
       sessionId: params.sessionId,
       jobId,
       task: async () => {
-        const route = resolveRouteImpl({
-          preferredTarget: params.preferredTarget,
-          taskProfile: params.taskProfile,
-          fallbackModel: params.model,
-        })
+        const explicitProviderTarget = isExplicitProviderRouteTarget(params.preferredTarget)
+        const route: ResolvedRunRoute = explicitProviderTarget
+          ? resolveRouteImpl({
+              preferredTarget: params.preferredTarget,
+              taskProfile: params.taskProfile,
+              fallbackModel: params.model,
+            })
+          : { reason: "routing:no-explicit-provider-target" }
         dependencies.logInfo("delayed run firing", {
           jobId,
           sessionId: params.sessionId,
@@ -154,6 +157,7 @@ export function scheduleDelayedRootRun(
           model: route.model ?? params.model ?? null,
           providerId: route.providerId ?? null,
           workerRuntime: route.workerRuntime?.kind ?? null,
+          providerRouteReason: route.reason,
           toolsEnabled: params.toolsEnabled ?? true,
           contextMode: params.contextMode ?? "full",
         })

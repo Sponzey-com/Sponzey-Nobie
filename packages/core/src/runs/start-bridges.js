@@ -28,6 +28,9 @@ export async function runStartIntakeBridge(params, dependencies, moduleDependenc
         startDelegatedRun: params.startDelegatedRun,
         normalizeTaskProfile: dependencies.normalizeTaskProfile,
         logInfo: dependencies.logInfo,
+        ...(dependencies.recordExecutionDecisionTrace
+            ? { recordExecutionDecisionTrace: dependencies.recordExecutionDecisionTrace }
+            : {}),
     });
 }
 //# sourceMappingURL=start-bridges.js.map

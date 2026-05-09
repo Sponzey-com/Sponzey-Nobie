@@ -27,11 +27,11 @@ interface RunsState {
 }
 
 function sortRuns(runs: RootRun[]): RootRun[] {
-  return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)
+  return [...runs].sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt))
 }
 
 function sortTasks(tasks: TaskModel[]): TaskModel[] {
-  return [...tasks].sort((a, b) => b.updatedAt - a.updatedAt)
+  return [...tasks].sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt))
 }
 
 function resolveSelectedRunId(params: {

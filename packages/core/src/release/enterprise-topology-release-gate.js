@@ -60,7 +60,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS = [
         defaultMode: "off",
         defaultCompatibilityMode: true,
         owner: "webui",
-        description: "Unified /advanced/topology workspace with Build, Run, Trace, Improve, and Resources layers.",
+        description: "Unified /advanced/topology workspace with the simple Build, Run, Trace, and Improve layers.",
     },
     {
         featureKey: "topology_runtime_enabled",
@@ -75,7 +75,6 @@ export const ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS = [
     "run",
     "trace",
     "improve",
-    "resources",
 ];
 export const ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH = [
     {
@@ -337,7 +336,7 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
         canonicalRoute: "/advanced/topology",
         enterpriseBuilderAlias: "/advanced/enterprise-topology",
         enterpriseBuilderReplacement: "/advanced/topology?mode=build",
-        runtimeResourcesRoute: "/advanced/topology?mode=resources",
+        runtimeResourcesRoute: null,
         legacyRuntimeMenuRemoved: true,
         ...input.routeCompatibility,
     };
@@ -370,8 +369,8 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
         routeCompatibility.enterpriseBuilderReplacement !== "/advanced/topology?mode=build") {
         blockingFailures.push("enterprise_topology_alias_not_preserved");
     }
-    if (routeCompatibility.runtimeResourcesRoute !== "/advanced/topology?mode=resources") {
-        blockingFailures.push("runtime_resources_route_missing");
+    if (routeCompatibility.runtimeResourcesRoute !== null) {
+        blockingFailures.push("runtime_resources_route_still_exposed");
     }
     if (!routeCompatibility.legacyRuntimeMenuRemoved) {
         blockingFailures.push("legacy_runtime_topology_menu_still_visible");
@@ -578,9 +577,9 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
             releaseModes: ["gated_mode", "opt_in_routing"],
             pass: workspaceUsability.routeCompatibility.canonicalRoute === "/advanced/topology" &&
                 workspaceUsability.routeCompatibility.enterpriseBuilderReplacement === "/advanced/topology?mode=build" &&
-                workspaceUsability.routeCompatibility.runtimeResourcesRoute === "/advanced/topology?mode=resources" &&
+                workspaceUsability.routeCompatibility.runtimeResourcesRoute === null &&
                 workspaceUsability.routeCompatibility.legacyRuntimeMenuRemoved,
-            summary: "The unified workspace owns /advanced/topology while old enterprise builder and runtime resources routes stay compatible.",
+            summary: "The unified workspace owns /advanced/topology while the old enterprise builder alias stays compatible and the resources route is not exposed.",
             evidence: workspaceUsability.routeCompatibility,
         }),
         gate({
@@ -588,7 +587,7 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
             title: "Topology Workspace layer gate",
             releaseModes: ["gated_mode", "opt_in_routing"],
             pass: ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS.every((layer) => workspaceUsability.requiredLayers.includes(layer)),
-            summary: "Build, Run, Trace, Improve, and Resources are one workspace release scope.",
+            summary: "Build, Run, Trace, and Improve are the visible workspace release scope.",
             evidence: {
                 requiredLayers: workspaceUsability.requiredLayers,
                 expectedLayers: ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS,

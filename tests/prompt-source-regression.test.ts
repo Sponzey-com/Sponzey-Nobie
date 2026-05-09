@@ -26,7 +26,7 @@ describe("prompt source regression suite", () => {
     const result = runPromptSourceRegression(process.cwd())
 
     expect(result.ok, JSON.stringify(result.issues, null, 2)).toBe(true)
-    expect(result.registry.sourceCount).toBeGreaterThanOrEqual(13)
+    expect(result.registry.sourceCount).toBeGreaterThanOrEqual(15)
     expect(result.responsibility.every((rule) => rule.ok)).toBe(true)
     expect(result.impact.every((scenario) => scenario.ok)).toBe(true)
   })

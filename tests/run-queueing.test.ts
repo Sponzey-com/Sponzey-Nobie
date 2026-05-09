@@ -4,7 +4,7 @@ import {
 } from "../packages/core/src/runs/run-queueing.js"
 
 describe("run queueing", () => {
-  it("fires overdue delayed runs immediately with routed target", async () => {
+  it("fires overdue delayed runs immediately with explicit provider target", async () => {
     const startRootRun = vi.fn(() => ({ finished: Promise.resolve(undefined) }))
     const logInfo = vi.fn()
 
@@ -17,7 +17,7 @@ describe("run queueing", () => {
       model: "gpt-test",
       source: "webui",
       onChunk: undefined,
-      preferredTarget: "preferred",
+      preferredTarget: "provider:preferred",
       taskProfile: "coding",
     }, {
       startRootRun,
@@ -58,6 +58,52 @@ describe("run queueing", () => {
     expect(logInfo.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
       originRunId: "origin-run-1",
       originRequestGroupId: "origin-group-1",
+    }))
+  })
+
+  it("does not route delayed runs to provider direct without an explicit provider target", async () => {
+    const startRootRun = vi.fn(() => ({ finished: Promise.resolve(undefined) }))
+    const logInfo = vi.fn()
+    const resolveRoute = vi.fn(() => ({
+      model: "gpt-routed",
+      targetId: "provider:routed",
+      targetLabel: "Routed Target",
+    }))
+
+    scheduleDelayedRootRun({
+      runAtMs: 999,
+      message: "say hello",
+      sessionId: "session-2",
+      model: "gpt-test",
+      source: "webui",
+      onChunk: undefined,
+      preferredTarget: "auto",
+      taskProfile: "coding",
+    }, {
+      startRootRun,
+      now: () => 1_000,
+      resolveRoute,
+      logInfo,
+      logWarn: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(resolveRoute).not.toHaveBeenCalled()
+    expect(startRootRun).toHaveBeenCalledWith(expect.objectContaining({
+      message: "say hello",
+      sessionId: "session-2",
+      model: "gpt-test",
+      skipIntake: true,
+      source: "webui",
+    }))
+    expect(startRootRun.mock.calls[0]?.[0]).not.toHaveProperty("targetId")
+    expect(startRootRun.mock.calls[0]?.[0]).not.toHaveProperty("providerId")
+    expect(logInfo.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      providerRouteReason: "routing:no-explicit-provider-target",
+      targetId: null,
     }))
   })
 })

@@ -318,8 +318,8 @@ WITH audit_events AS (
       ELSE 'contract'
     END AS timeline_kind,
     CASE
-      WHEN event_kind IN ('dead_letter', 'rejected', 'timeout') THEN 'failed'
-      WHEN event_kind = 'retry_scheduled' THEN 'degraded'
+      WHEN event_kind IN ('rejected', 'timeout') THEN 'failed'
+      WHEN event_kind = 'recovery_scheduled' THEN 'degraded'
       WHEN event_kind = 'queued' THEN 'pending'
       ELSE 'info'
     END AS status,
@@ -337,7 +337,7 @@ WITH audit_events AS (
     NULL AS approved_by,
     event_kind AS error_code,
     retry_count,
-    CASE WHEN event_kind IN ('dead_letter', 'rejected', 'timeout') THEN action_taken ELSE NULL END AS stop_reason,
+    CASE WHEN event_kind IN ('rejected', 'timeout') THEN action_taken ELSE NULL END AS stop_reason,
     detail_json
   FROM queue_backpressure_events
 )

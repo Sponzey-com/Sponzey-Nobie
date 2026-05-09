@@ -29,6 +29,31 @@ export const ENTERPRISE_RELATION_TYPES = [
 const ENTITY_STATUSES = new Set(["draft", "active", "inactive", "archived"]);
 const NODE_TYPES = new Set(ENTERPRISE_NODE_TYPES);
 const RELATION_TYPES = new Set(ENTERPRISE_RELATION_TYPES);
+const FAILURE_ISSUE_KINDS = new Set([
+    "success_criteria_unmet",
+    "runtime_risk",
+    "execution_incomplete",
+    "permission_or_tool_blocked",
+    "unknown",
+]);
+const FAILURE_RECOVERY_ACTION_KINDS = new Set([
+    "retry",
+    "delegate_to_next_executor",
+    "add_tool_permission",
+    "add_fallback_path",
+    "pass_partial_result",
+    "return_to_parent",
+    "review_trace",
+    "none",
+]);
+const FAILURE_NEXT_ACTION_KINDS = new Set([
+    "add_permission",
+    "pass_partial",
+    "add_fallback",
+    "revise_description",
+    "review_trace",
+    "user_review",
+]);
 const FIXED_ROLE_CATALOG_KEYS = new Set([
     "fixedRoleAgentCatalog",
     "roleAgentCatalog",
@@ -119,6 +144,13 @@ function validateRequiredBoolean(record, key, path, issues) {
         return;
     addIssue(issues, `${path}.${key}`, "missing_required_field", `${key} must be a boolean.`);
 }
+function validateOptionalEnumString(record, key, values, path, issues) {
+    if (!hasKey(record, key) || record[key] === undefined)
+        return;
+    if (typeof record[key] === "string" && values.has(record[key]))
+        return;
+    addIssue(issues, `${path}.${key}`, "enterprise_contract_validation_failed", `${key} has an unsupported value.`);
+}
 function validateRequiredNumber(record, key, path, issues) {
     if (typeof record[key] === "number" && Number.isFinite(record[key]))
         return;
@@ -144,7 +176,6 @@ function validateFailurePolicyContract(value, path, issues) {
         return;
     validateRequiredBoolean(value, "failureReportRequired", path, issues);
     validateRequiredBoolean(value, "allowPartialSuccess", path, issues);
-    validateRequiredNumber(value, "maxRetryAttempts", path, issues);
     validateStringArray(value.fallbackNodeIds, `${path}.fallbackNodeIds`, issues);
 }
 function validateRecoveryPolicyContract(value, path, issues) {
@@ -506,6 +537,9 @@ export function validateFailureReport(value) {
         addIssue(issues, "$.attempts", "missing_required_field", "attempts must be an array.");
     }
     validateStringArray(value.untriedOptions, "$.untriedOptions", issues);
+    validateOptionalEnumString(value, "issueKind", FAILURE_ISSUE_KINDS, "$", issues);
+    validateOptionalEnumString(value, "recoveryActionKind", FAILURE_RECOVERY_ACTION_KINDS, "$", issues);
+    validateOptionalEnumString(value, "nextActionKind", FAILURE_NEXT_ACTION_KINDS, "$", issues);
     validateRequiredString(value, "recommendedAction", "$", issues);
     validateTimestamp(value, "createdAt", "$", issues);
     return issues.length === 0 ? { ok: true, value: value, issues: [] } : { ok: false, issues };

@@ -355,7 +355,7 @@ function buildAiBackendsScene(
     {
       id: "node:ai:router",
       kind: "router",
-      label: "Nobie Core Router",
+      label: t("노비 실행 경로", "Nobie execution path"),
       status:
         enabledBackends.length === 1
           ? validation.valid
@@ -365,8 +365,8 @@ function buildAiBackendsScene(
             ? "warning"
             : sceneStatusFromStep(step, validation.valid),
       description: t(
-        "단일 AI 정책으로 한 번에 하나의 연결만 활성화됩니다. 라우팅 projection도 이 선택을 그대로 반영합니다.",
-        "Single-AI policy keeps exactly one live backend. The routing projection mirrors the same selection.",
+        "단일 AI 정책으로 한 번에 하나의 연결만 활성화됩니다. 실행 경로 보기도 이 선택을 그대로 반영합니다.",
+        "Single-AI policy keeps exactly one live backend. The execution path view mirrors the same selection.",
       ),
       badges: [
         `profiles:${input.draft.routingProfiles.length}`,
@@ -1517,7 +1517,7 @@ function buildAiRoutingScene(
 
   return {
     id: sceneId("ai_routing"),
-    label: t("AI 라우팅", "AI Routing"),
+    label: t("AI 실행 경로", "AI execution path"),
     mode: "advanced",
     semanticStepIds: ["ai_routing", "ai_backends"],
     featureGateKey: "setup.ai_routing",
@@ -1528,8 +1528,8 @@ function buildAiRoutingScene(
         label: primaryProfile?.label || t("기본 프로필", "Default profile"),
         status: routingTargets.length > 0 ? "ready" : "draft",
         description: t(
-          "현재 라우팅 프로필이 어떤 backend 순서로 요청을 전달하는지 보여줍니다.",
-          "Shows the order in which the current routing profile hands requests to backends.",
+          "현재 AI 실행 대상이 어떤 backend 순서로 요청을 전달하는지 보여줍니다.",
+          "Shows the order in which the current AI execution targets hand requests to backends.",
         ),
         badges: [
           `targets:${routingTargets.length}`,
@@ -1541,11 +1541,11 @@ function buildAiRoutingScene(
       {
         id: "node:routing:router",
         kind: "router",
-        label: "Nobie Core Router",
+        label: t("노비 실행 경로", "Nobie execution path"),
         status: baseStep?.completed ? "ready" : "draft",
         description: t(
-          "라우팅 화면은 연결 설정을 바꾸지 않고 현재 routingProfiles 의미만 시각적으로 보여줍니다.",
-          "This routing scene does not invent new persistence. It visualizes the current routingProfiles semantics.",
+          "실행 경로 보기는 연결 설정을 바꾸지 않고 현재 AI 실행 대상 순서만 시각적으로 보여줍니다.",
+          "This execution path view does not invent new persistence. It visualizes the current AI execution target order.",
         ),
         badges: ["advanced-only", activeTargets.length <= 1 ? "single-ai" : "multi-target"],
         semanticStepIds: ["ai_routing", "ai_backends"],
@@ -1559,7 +1559,7 @@ function buildAiRoutingScene(
         description: getAiBackendNodeDescription(backend, input.language),
         badges: [
           ...buildAiBackendBadges(backend).filter((badge) => badge !== "single-ai"),
-          ...(targetIndexByBackendId.has(backend.id) ? [`priority:${(targetIndexByBackendId.get(backend.id) ?? 0) + 1}`] : ["unrouted"]),
+          ...(targetIndexByBackendId.has(backend.id) ? [`priority:${(targetIndexByBackendId.get(backend.id) ?? 0) + 1}`] : ["not-selected"]),
         ],
         semanticStepIds: ["ai_routing", "ai_backends"],
         draftOwnedByStepIds: ["ai_backends"],
@@ -1586,7 +1586,7 @@ function buildAiRoutingScene(
       ...(routingTargets.length === 0 ? [{
         id: "alert:ai_routing:empty",
         tone: "warning" as const,
-        message: t("아직 라우팅 대상이 없습니다. 활성 backend를 선택하면 이 장면도 같이 채워집니다.", "No routing targets are assigned yet. Select an active backend to populate this scene."),
+        message: t("아직 실행 대상이 없습니다. 활성 backend를 선택하면 이 장면도 같이 채워집니다.", "No execution targets are assigned yet. Select an active backend to populate this scene."),
         semanticStepIds: ["ai_routing", "ai_backends"],
       }] : []),
       ...buildAiBackendAlerts(input.draft.aiBackends.filter((backend) => backend.enabled), input.language, "ai_routing"),

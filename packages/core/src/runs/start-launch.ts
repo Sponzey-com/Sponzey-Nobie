@@ -8,6 +8,12 @@ import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
 import { resolveTopologyRootRunRouting } from "../topology-runtime/harness.js"
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
+import { buildPromptContextBlockPlan } from "../orchestration/prompt-bundle.js"
+import type {
+  AgentExecutionDecision,
+  AgentExecutionDecisionTraceSnapshot,
+} from "../orchestration/execution-decision-contract.js"
+import { formatAgentExecutionDecisionTraceRunEvent } from "../orchestration/execution-harness.js"
 import { applyStartInitialization } from "./start-initialization.js"
 import {
   buildWorkerSessionId,
@@ -116,6 +122,8 @@ export async function prepareStartLaunch(
     model?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
+    agentExecutionDecision?: AgentExecutionDecision | undefined
+    agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined
     inboundMessage?: InboundMessageRecord | undefined
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
   },
@@ -138,6 +146,9 @@ export async function prepareStartLaunch(
     ...(params.orchestrationPlannerIntent
       ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
       : {}),
+    ...(params.agentExecutionDecision
+      ? { agentExecutionDecision: params.agentExecutionDecision }
+      : {}),
   }, {
     analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
     isReusableRequestGroup: dependencies.isReusableRequestGroup,
@@ -153,10 +164,36 @@ export async function prepareStartLaunch(
   } as Parameters<typeof buildStartPlan>[1])
 
   dependencies.ensureSessionExists(params.sessionId, params.source, params.now)
+  const promptContextPlan = buildPromptContextBlockPlan({
+    mode: startPlan.requestIsolation === "continuation" || !startPlan.isRootRequest
+      ? "explicit_continuation"
+      : "root",
+    hasLatestUserMessage: true,
+    hasChannelMetadata: true,
+    hasExecutionGraph: true,
+    hasRequestGroupContext: startPlan.requestIsolation === "continuation" || !startPlan.isRootRequest,
+  })
   const promptSourceSnapshot = {
     ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
     ...(startPlan.orchestrationRegistrySnapshot ? { orchestration: startPlan.orchestrationRegistrySnapshot } : {}),
     ...(startPlan.orchestrationPlanSnapshot ? { orchestrationPlan: startPlan.orchestrationPlanSnapshot } : {}),
+    ...(startPlan.agentExecutionDecision
+      ? {
+          agentExecutionDecision: startPlan.agentExecutionDecision,
+          executionDecisionSource: "nobie_harness",
+        }
+      : {}),
+    ...(params.agentExecutionDecisionTrace
+      ? { executionDecisionTrace: params.agentExecutionDecisionTrace }
+      : {}),
+    requestIsolation: {
+      mode: startPlan.requestIsolation,
+      continuationSource: startPlan.continuationSource,
+      contextMode: startPlan.effectiveContextMode,
+      shouldReconnectGroup: startPlan.shouldReconnectGroup,
+      reconnectCandidateCount: startPlan.reconnectCandidateCount,
+    },
+    included_context_blocks: promptContextPlan.includedContextBlocks,
     topologyRouting: startPlan.topologyRouting,
   }
 
@@ -209,6 +246,13 @@ export async function prepareStartLaunch(
     setRunStepStatus: dependencies.setRunStepStatus,
     updateRunStatus: dependencies.updateRunStatus,
   })
+
+  if (params.agentExecutionDecisionTrace) {
+    dependencies.appendRunEvent(
+      params.runId,
+      formatAgentExecutionDecisionTraceRunEvent(params.agentExecutionDecisionTrace),
+    )
+  }
 
   return {
     startPlan,

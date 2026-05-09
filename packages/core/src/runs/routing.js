@@ -4,8 +4,16 @@ import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../
 export function resolveRunRoute(input) {
     return resolveRunRouteFromDraft(buildSetupDraft(), input);
 }
+export function isExplicitProviderRouteTarget(value) {
+    return normalizeTargetId(value) !== undefined;
+}
 export function resolveRunRouteFromDraft(draft, input, options) {
     const candidates = buildConfiguredCandidateTargets(draft, input);
+    if (candidates.length === 0) {
+        return {
+            reason: "routing:no-explicit-provider-target",
+        };
+    }
     for (const targetId of candidates) {
         const backend = draft.aiBackends.find((item) => item.id === targetId);
         if (!backend || !backend.enabled)
@@ -16,7 +24,7 @@ export function resolveRunRouteFromDraft(draft, input, options) {
                 targetId: backend.id,
                 targetLabel: backend.label,
                 ...resolved,
-                reason: `routing:${backend.id}`,
+                reason: `explicit_provider:${backend.id}`,
             };
         }
     }
@@ -26,7 +34,6 @@ export function resolveRunRouteFromDraft(draft, input, options) {
 }
 function buildConfiguredCandidateTargets(draft, input) {
     const result = [];
-    const defaultTargets = draft.routingProfiles.find((item) => item.id === "default")?.targets ?? [];
     const avoided = new Set((input.avoidTargets ?? [])
         .flatMap((value) => expandAvoidTargetIds(normalizeTargetId(value) ?? value))
         .filter((value) => typeof value === "string" && value.trim().length > 0));
@@ -35,7 +42,7 @@ function buildConfiguredCandidateTargets(draft, input) {
             return;
         result.push(value);
     };
-    add(defaultTargets[0]);
+    add(normalizeTargetId(input.preferredTarget));
     return result;
 }
 function expandAvoidTargetIds(value) {
@@ -82,6 +89,9 @@ function normalizeTargetId(value) {
     if (!normalized || normalized === "auto" || normalized === "embedded" || normalized === "local_reasoner") {
         return undefined;
     }
+    if (normalized.startsWith("provider:") || normalized.startsWith("model:") || normalized.startsWith("worker:")) {
+        return normalized;
+    }
     if (normalized === "anthropic") {
         return "provider:anthropic";
     }
@@ -93,7 +103,7 @@ function normalizeTargetId(value) {
         return "provider:ollama";
     if (normalized === "llama" || normalized === "llama_cpp")
         return "provider:llama_cpp";
-    return normalized;
+    return undefined;
 }
 function resolveConfiguredModel(backend) {
     if (backend.defaultModel.trim())

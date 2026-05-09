@@ -92,7 +92,7 @@ describe("task016 enterprise topology UI shell", () => {
     expect(html).not.toContain("builder route content")
   })
 
-  it("renders the GUI-first builder shell with palette, canvas, inspector, and validation status", () => {
+  it("renders the GUI-first builder shell without the old advanced palette surface", () => {
     const model = buildEnterpriseTopologyCanvasModel()
     const html = renderToStaticMarkup(
       createElement(EnterpriseTopologyCanvasShell, {
@@ -102,26 +102,29 @@ describe("task016 enterprise topology UI shell", () => {
     )
 
     expect(model.palette.map((item) => item.id)).toEqual([
-      "work_node",
-      "team",
+      "task",
+      "decision",
+      "approval",
+      "tool",
+      "data",
+      "group",
       "org_unit",
       "position",
       "person",
       "process",
-      "system",
-      "tool",
       "authority",
       "responsibility",
     ])
+    expect(html).toContain('data-testid="topology-simple-create-panel"')
     expect(html).toContain('data-testid="enterprise-topology-canvas"')
-    expect(html).toContain('data-testid="enterprise-topology-palette"')
-    expect(html).toContain('data-testid="enterprise-topology-inspector"')
+    expect(html).not.toContain('data-testid="enterprise-topology-palette"')
+    expect(html).toContain('data-testid="topology-workspace-inspector"')
     expect(html).toContain('data-testid="enterprise-topology-validation"')
-    expect(html).toContain('data-testid="enterprise-topology-compile-preview"')
+    expect(html).not.toContain('data-testid="enterprise-topology-compile-preview"')
     expect(html).toContain('data-testid="topology-run-trace-overlay"')
     expect(html).toContain("Customer Intake")
     expect(html).toContain("CRM Search")
-    expect(html).not.toMatch(/JSON|YAML/i)
+    expect(html).not.toContain('data-testid="topology-advanced-import-export"')
   })
 
   it("keeps the existing TopologyPage scoped to runtime resources", () => {

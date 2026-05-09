@@ -54,7 +54,7 @@ export interface AgentTopologyAgentInspector {
     role: string;
     specialtyTags: string[];
     teamIds: string[];
-    source: "db" | "config" | "synthetic";
+    source: "db" | "config" | "topology" | "synthetic";
     model: {
         providerId?: string;
         modelId?: string;
@@ -98,7 +98,6 @@ export interface AgentTopologyAgentInspector {
     delegation: {
         enabled: boolean;
         maxParallelSessions: number;
-        retryBudget: number;
     };
     diagnostics: string[];
 }

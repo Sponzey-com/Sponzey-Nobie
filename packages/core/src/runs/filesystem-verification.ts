@@ -221,7 +221,11 @@ function isSafeFilesystemLiteral(value: string): boolean {
 function inferFilesystemBaseDir(originalRequest: string): string | undefined {
   const lowered = originalRequest.toLowerCase()
 
-  if (lowered.includes("downloads") || originalRequest.includes("\ub2e4\uc6b4\ub85c\ub4dc")) {
+  if (
+    lowered.includes("downloads")
+    || lowered.includes("download folder")
+    || /다운\s*로드|다운로드|다운\s*도르|다운도르/u.test(originalRequest)
+  ) {
     return join(homedir(), "Downloads")
   }
 

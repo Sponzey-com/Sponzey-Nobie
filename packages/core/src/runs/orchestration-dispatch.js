@@ -88,7 +88,6 @@ function commandRequestFor(input) {
         taskScope: input.task.scope,
         contextPackageIds: [],
         expectedOutputs: input.task.scope.expectedOutputs,
-        retryBudget: input.agent.retryBudget,
     };
 }
 function reportFor(input) {
@@ -156,6 +155,34 @@ function resultSummary(resultReport) {
 }
 function isDelegationDispatchEligible(params) {
     return params.plan.delegatedTasks.some((task) => task.assignedAgentId?.trim() || task.assignedTeamId?.trim());
+}
+function topologyAssignmentFromAgentId(agent) {
+    if (agent.source !== "topology")
+        return {};
+    const marker = ":node:";
+    const markerIndex = agent.agentId.indexOf(marker);
+    if (markerIndex < 0)
+        return {};
+    return {
+        topologyId: agent.agentId.slice(0, markerIndex),
+        topologyExecutorId: `node:${agent.agentId.slice(markerIndex + marker.length)}`,
+    };
+}
+function teamDispatchBlockReason(task) {
+    const reasonCodes = new Set([
+        ...task.scope.reasonCodes,
+        ...(task.planningTrace?.reasonCodes ?? []),
+    ]);
+    if (reasonCodes.has("inferred_team_target_from_capability")) {
+        return "inferred_team_target_from_capability_blocked";
+    }
+    if (reasonCodes.has("inferred_team_target_from_request")) {
+        return "inferred_team_target_from_request_blocked";
+    }
+    if (!reasonCodes.has("explicit_team_target")) {
+        return "team_dispatch_requires_explicit_target";
+    }
+    return undefined;
 }
 function teamTaskOrder(taskKind) {
     if (taskKind === "member")
@@ -289,10 +316,14 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
             });
         });
         const summary = resultSummary(outcome.resultReport);
+        const topologyAssignment = topologyAssignmentFromAgentId(agent);
         outcomes.push({
             taskId: task.taskId,
             subSessionId: outcome.subSession.subSessionId,
             agentId: agent.agentId,
+            agentDisplayName: agent.displayName,
+            agentSource: agent.source,
+            ...topologyAssignment,
             status: outcome.status === "completed" ? "completed" : "failed",
             ...(outcome.errorReport?.reasonCode ? { reasonCode: outcome.errorReport.reasonCode } : {}),
             ...(outcome.resultReport?.evidence[0]?.sourceRef
@@ -300,8 +331,29 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
                 : {}),
             ...(summary ? { summary } : {}),
         });
+        appendParentEvent(params.parentRunId, [
+            "delegated_task_result",
+            task.taskId,
+            agent.source,
+            agent.agentId,
+            agent.displayName,
+            outcome.status === "completed" ? "completed" : "failed",
+            topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+            topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+        ].filter(Boolean).join(":"));
     };
     const dispatchTeamTask = async (task, teamId) => {
+        const blockReason = teamDispatchBlockReason(task);
+        if (blockReason) {
+            outcomes.push({
+                taskId: task.taskId,
+                status: "skipped",
+                reasonCode: blockReason,
+                summary: `Skipped team dispatch for ${teamId} because the team was not explicitly selected.`,
+            });
+            appendParentEvent(params.parentRunId, `team_dispatch_skipped:${task.taskId}:${teamId}:${blockReason}`);
+            return;
+        }
         const teamPlan = buildTeamExecutionPlan({
             teamId,
             teamExecutionPlanId: `team-plan:${params.parentRunId}:${task.taskId}`,

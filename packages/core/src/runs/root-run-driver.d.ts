@@ -97,6 +97,7 @@ export declare function executeRootRunDriver(params: {
     workerSessionId?: string;
     toolsEnabled?: boolean;
     isRootRequest: boolean;
+    suppressFinalDelivery?: boolean;
     contextMode: AgentContextMode;
     taskProfile: TaskProfile;
     topologyRouting?: TopologyRootRunRoutingDecision;

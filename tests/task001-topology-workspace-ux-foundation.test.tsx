@@ -27,6 +27,13 @@ describe("task001 topology workspace UX foundation", () => {
       "개선",
       "리소스",
     ])
+    expect(TOPOLOGY_WORKSPACE_BEGINNER_COPY_SURFACE.layers.map((item) => item.labelKo)).toEqual([
+      "만들기",
+      "실행",
+      "기록",
+      "개선",
+    ])
+    expect(TOPOLOGY_WORKSPACE_BEGINNER_COPY_SURFACE.layers.map((item) => item.labelEn)).not.toContain("Resources")
     expect(TOPOLOGY_WORKSPACE_LAYER_COPY.map((item) => item.layer)).toEqual([
       "build",
       "run",
@@ -53,7 +60,7 @@ describe("task001 topology workspace UX foundation", () => {
     expect(TOPOLOGY_WORKSPACE_STARTER_TEMPLATES.filter((item) => item.id !== "blank-graph")).toHaveLength(5)
     expect(html).toContain('data-testid="topology-workspace-first-start"')
     expect(html).toContain('data-testid="topology-workspace-add-first-step"')
-    expect(html).toContain("첫 업무 단계 추가")
+    expect(html).toContain("첫 실행자 추가")
     expect(html).toContain("고객 요청 처리 흐름")
     expect(html).toContain("승인 요청 흐름")
     expect(html).toContain("조사 후 검토 흐름")
@@ -145,4 +152,3 @@ describe("task001 topology workspace UX foundation", () => {
     }))
   })
 })
-

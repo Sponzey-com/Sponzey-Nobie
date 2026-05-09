@@ -39,14 +39,14 @@ function createBaseParams() {
 }
 
 describe("recovery entry pass", () => {
-  it("breaks when execution recovery limit stop exists", async () => {
+  it("breaks when execution recovery cannot continue safely", async () => {
     const applyTerminalApplication = vi.fn()
 
     const result = await runRecoveryEntryPass({
       ...createBaseParams(),
       executionRecoveryLimitStop: {
-        summary: "실행 복구 한도",
-        reason: "limit",
+        summary: "실행 복구를 자동으로 계속할 수 없습니다.",
+        reason: "no safe alternative",
         remainingItems: ["manual action"],
       },
     }, {

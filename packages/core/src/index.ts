@@ -198,6 +198,7 @@ export {
   recoverInterruptedSubSessions,
   runParallelSubSessionGroup,
   transitionSubSessionStatus,
+  validateVisibleTopologySubSessionCommand,
 } from "./orchestration/sub-session-runner.js"
 export {
   buildFeedbackLoopPackage,
@@ -220,11 +221,37 @@ export {
   buildOrchestrationPlan,
 } from "./orchestration/planner.js"
 export {
+  AGENT_EXECUTION_BEHAVIOR_PATTERNS,
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+  AGENT_EXECUTION_FALLBACK_REASONS,
+  AGENT_EXECUTION_RISK_BOUNDARY_KINDS,
+  AGENT_EXECUTION_ROUTES,
+  AgentExecutionFallbackReason,
+  isAgentExecutionFallbackReason,
+  isAgentExecutionRoute,
+  normalizeAgentExecutionConfidence,
+  validateAgentExecutionDecisionShape,
+} from "./orchestration/execution-decision-contract.js"
+export {
+  buildAgentExecutionDecisionTraceSnapshot,
+  buildAgentExecutionDecisionPrompt,
+  createAgentExecutionDecision,
+  formatAgentExecutionDecisionTraceRunEvent,
+  parseAgentExecutionDecisionModelOutput,
+  runAgentExecutionHarness,
+  validateAgentExecutionDecisionAgainstContext,
+} from "./orchestration/execution-harness.js"
+export {
   buildOrchestrationRegistrySnapshot,
   clearAgentCapabilityIndexCache,
   createAgentRegistryService,
   createTeamRegistryService,
 } from "./orchestration/registry.js"
+export {
+  buildExecutionGraphSnapshot,
+  EXECUTION_GRAPH_ROOT_AGENT_ID,
+  WORKSPACE_DRAFT_TOPOLOGY_ID,
+} from "./orchestration/execution-graph-snapshot.js"
 export {
   buildAgentCapabilitySummary,
   buildAgentModelSummary,
@@ -244,8 +271,6 @@ export {
   validateOrchestrationEventInput,
 } from "./orchestration/event-ledger.js"
 export {
-  DEFAULT_MODEL_RETRY_COUNT,
-  DEFAULT_MODEL_TIMEOUT_MS,
   DEFAULT_PROVIDER_MODEL_CAPABILITY_MATRIX,
   buildModelAvailabilityDoctorSnapshot,
   buildModelExecutionAuditSummary,
@@ -406,6 +431,7 @@ export type {
   SubSessionRuntimeAgentSnapshot,
   SubSessionRuntimeDependencies,
   SubSessionWorkItem,
+  VisibleTopologySubSessionGuardResult,
 } from "./orchestration/sub-session-runner.js"
 export type {
   BuildFeedbackLoopPackageInput,
@@ -434,6 +460,54 @@ export type {
   OrchestrationPlannerIntent,
   OrchestrationPlannerLearningHint,
 } from "./orchestration/planner.js"
+export type {
+  AgentExecutionBehaviorPattern,
+  AgentExecutionConnection,
+  AgentExecutionContext,
+  AgentExecutionContextRequest,
+  AgentExecutionDecision,
+  AgentExecutionDecisionShapeValidation,
+  AgentExecutionDecisionTraceSnapshot,
+  AgentExecutionExecutorProfile,
+  AgentExecutionFallbackReason as AgentExecutionFallbackReasonValue,
+  AgentExecutionPermissionPolicy,
+  AgentExecutionRequester,
+  AgentExecutionRequiredOutput,
+  AgentExecutionRiskBoundary,
+  AgentExecutionRiskBoundaryKind,
+  AgentExecutionRiskPolicy,
+  AgentExecutionRoute,
+  AgentExecutionTaskProfile,
+  AgentExecutionTaskUnit,
+  AgentExecutionToolBinding,
+  AggregationResult as AgentExecutionAggregationResult,
+  DelegationDecision,
+  DelegationValidationIssue,
+  DelegationValidationResult,
+  SelfSolveAttempt,
+  WorkOrderSplit,
+} from "./orchestration/execution-decision-contract.js"
+export type {
+  AgentExecutionHarnessReasonCode,
+  AgentExecutionHarnessResult,
+  AgentExecutionHarnessTraceEvent,
+  AgentExecutionHarnessValidation,
+  AgentExecutionModelCallInput,
+  AgentExecutionModelCaller,
+  RunAgentExecutionHarnessInput,
+} from "./orchestration/execution-harness.js"
+export type {
+  BuildExecutionGraphSnapshotInput,
+  ExecutionGraphBuildMode,
+  ExecutionGraphEdgeProjection,
+  ExecutionGraphEdgeSource,
+  ExecutionGraphIssueSeverity,
+  ExecutionGraphSnapshot,
+  ExecutionGraphSource,
+  ExecutionGraphTraceFields,
+  ExecutionGraphValidationIssue,
+  ExecutorRuntimeProjection,
+} from "./orchestration/execution-graph-snapshot.js"
 export type {
   AgentFailureRateSnapshot,
   AgentCapabilityIndex,
@@ -645,14 +719,38 @@ export type {
   RunRuntimeInspectorProgressItem,
   RunRuntimeInspectorProjection,
   RunRuntimeInspectorProjectionOptions,
+  RunRuntimeInspectorRequestIdentity,
   RunRuntimeInspectorResult,
   RunRuntimeInspectorReview,
   RunRuntimeInspectorSubSession,
   RunRuntimeInspectorTimelineEvent,
+  RunRuntimeInspectorTopologyRouting,
+  RunRuntimeInspectorTopologyRun,
   RuntimeInspectorAllowedControlAction,
   RuntimeInspectorApprovalState,
   RuntimeInspectorControlAction,
 } from "./runs/runtime-inspector-projection.js"
+export {
+  buildFinancialInformationBoundaryNotice,
+  buildRetrievalVerificationPlan,
+  chooseNextRetrievalVerificationSource,
+  evaluateRetrievalVerificationPlan,
+  formatCurrentFactVerificationAnswer,
+  sourceCandidateFromEvidence,
+} from "./runs/current-fact-retrieval.js"
+export type {
+  CurrentFactAnswerSummary,
+  CurrentFactSourceCandidate,
+  CurrentFactSourceRole,
+  CurrentFactSourceState,
+  CurrentFactVerificationDecision,
+  CurrentFactVerificationDecisionKind,
+  CurrentFactVerificationResult,
+  CurrentFactVerificationStatus,
+  FinancialInformationBoundary,
+  FinancialInformationBoundaryNotice,
+  RetrievalVerificationPlan,
+} from "./runs/current-fact-retrieval.js"
 export {
   WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION,
   buildFixtureRegressionFromWorkspace,
@@ -691,15 +789,15 @@ export {
   buildQueueBackpressureSnapshot,
   enqueueBackpressureTask,
   recordQueueBackpressureEvent,
-  recordRetryBudgetAttempt,
+  recordQueueRecoveryAttempt,
   resetQueueBackpressureState,
-  resetRetryBudget,
+  resetQueueRecoveryAttempt,
 } from "./runs/queue-backpressure.js"
 export type {
   QueueBudget,
   QueueName,
   QueueSnapshotItem,
-  RetryBudgetDecision,
+  QueueRecoveryAttemptDecision,
 } from "./runs/queue-backpressure.js"
 export {
   ContextPreflightBlockedError,
@@ -724,14 +822,24 @@ export type {
   PromptBundleContextScopeValidation,
 } from "./runs/context-preflight.js"
 export {
+  aggregateSubSessionResultsForParent,
+  buildParentAggregationRuntimeEvent,
   buildFeedbackRequest,
   collectResultReviewIssues,
   decideSubSessionCompletionIntegration,
   getSubAgentResultRetryBudgetLimit,
   normalizeResultReviewFailureKey,
   reviewSubAgentResult,
+  summarizeChildResultForParent,
 } from "./agent/sub-agent-result-review.js"
 export type {
+  ParentAggregationChildInput,
+  ParentAggregationInput,
+  ParentAggregationNextAction,
+  ParentAggregationRuntimeEventInput,
+  ParentAggregationTrace,
+  ParentFacingChildResult,
+  ParentFacingChildResultStatus,
   SubAgentResultParentIntegrationStatus,
   SubAgentResultReview,
   SubAgentResultReviewInput,
@@ -1078,6 +1186,111 @@ export {
   buildAgentTeamTopologyImportPreview,
 } from "./topology/agent-team-import.js"
 export {
+  EXECUTOR_GRAPH_METADATA_KEY,
+  EXECUTOR_GRAPH_SCHEMA_VERSION,
+  EXECUTOR_GRAPH_SOURCE_OF_TRUTH,
+  attachExecutorGraphMetadata,
+  buildExecutorGraphFromEnterpriseTopology,
+  buildExecutorGraphGuiOperations,
+  buildExecutorGraphRollbackEvidence,
+  buildExecutorGraphTopologyMetadata,
+  compileExecutorGraphToEnterpriseTopology,
+  readExecutorGraphMetadata,
+} from "./topology/executor-graph.js"
+export {
+  EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
+  NOBIE_ROOT_AGENT_ID,
+  buildExecutorRuntimeGraphSnapshotV2,
+  buildExecutorTopologyV2RuntimeReadModelFromEnterpriseTopology,
+  enterpriseTopologyFromExecutorTopologyV2,
+  isExecutorTopologyV2,
+  loadExecutorTopologyV2ReadModelFromRegistry,
+  migrateEnterpriseTopologyToExecutorTopologyV2,
+  materializeExecutorTopologyV2ReadModelInRegistry,
+  previewExecutorTopologyV2RegistryMigration,
+  repairExecutorTopologyV2ForPersistence,
+  validateExecutorTopologyV2,
+} from "./topology/executor-topology-v2.js"
+export {
+  EXECUTOR_UNDERSTANDING_DRAFT_VERSION,
+  EXECUTOR_UNDERSTANDING_VERSION,
+  buildExecutorInferenceEvidence,
+  confirmExecutorUnderstanding,
+  createExecutorDraftFromInference,
+  inferExecutorFromDescription,
+  inferExecutorTaskAnalysis,
+} from "./topology/executor-inference.js"
+export {
+  EXECUTOR_FAILURE_OBSERVABILITY_METADATA_KEY,
+  EXECUTOR_OBSERVABILITY_METADATA_KEY,
+  EXECUTOR_OBSERVABILITY_SCHEMA_VERSION,
+  attachExecutorFailureEvidence,
+  buildExecutorRunObservabilityEvidence,
+  buildExecutorRunObservabilityMetadata,
+  buildExecutorTraceEventPayload,
+  executorInferenceEvidenceForNode,
+  executorObservabilityFromWorkOrder,
+} from "./topology/executor-observability.js"
+export {
+  EXECUTOR_CONNECTION_LABELS,
+  applyExecutorConnectionRecommendation,
+  createExecutorConnectionDraft,
+  enterpriseRelationTypeToExecutorConnectionRelation,
+  executorConnectionLabel,
+  executorConnectionRelationToEnterpriseRelationType,
+  executorConnectionToSafeEnterpriseRelationType,
+  recommendExecutorConnectionRelations,
+} from "./topology/executor-relation-inference.js"
+export {
+  buildNodeTaskAnalysis,
+} from "./topology/executor-task-analysis.js"
+export {
+  delegationCandidatesFromRegistry,
+  resolveNodeDelegation,
+} from "./topology/executor-delegation-resolution.js"
+export {
+  NODE_DEFINITION_FIELDS,
+  NODE_DEFINITION_OUTPUT_CHIPS,
+  NODE_DEFINITION_ROLE_CHIPS,
+  NODE_DEFINITION_STYLE_CHIPS,
+  applyNodeDefinitionAlternative,
+  buildNodeDefinitionGraphContext,
+  buildNodeDefinitionPromptInput,
+  createNodeDefinitionSuggestion,
+  defaultNodeDefinitionFieldLocks,
+  executorFromNodeDefinitionDraft,
+  fieldLocksForNodeDefinitionTrigger,
+  nodeDefinitionDraftFromExecutor,
+  normalizeNodeDefinitionSuggestionRequest,
+  targetFieldsForNodeDefinitionTrigger,
+  validateNodeDefinitionSuggestionPayload,
+} from "./topology/node-definition-suggestion.js"
+export {
+  redactNodeDefinitionSuggestionRequest,
+  redactNodeDefinitionText,
+} from "./topology/node-definition-redaction.js"
+export {
+  buildGraphExecutionPlan,
+  validateGraphExecutionPlan,
+} from "./topology/graph-execution-plan.js"
+export {
+  assertVisibleUserWorkOrder,
+  buildWorkOrderFromNodeExecutionPlan,
+  normalizeGraphExecutionOutcome,
+  readGraphWorkOrderMetadata,
+  simulateGraphExecutionPlan,
+} from "./topology/graph-execution-runner.js"
+export {
+  getGraphExecutionPlan,
+  listGraphExecutionEvents,
+  persistGraphExecutionEvents,
+  persistGraphExecutionPlan,
+  persistRecoveryStrategyAttempt,
+} from "./topology/graph-execution-store.js"
+export {
+  createGraphCancellationController,
+} from "./topology/graph-cancellation.js"
+export {
   inferTopologyDocumentFormat,
   normalizeTopologyDocumentFormat,
   parseTopologyImportDocument,
@@ -1230,9 +1443,11 @@ export {
 export {
   assertTopologyValidationExecutable,
   createTopologyValidatorIssue,
+  ENTERPRISE_TOPOLOGY_COMPATIBILITY_QUICK_FIX_CODES,
   isTopologyValidationExecutable,
   TopologyValidationGateError,
   TOPOLOGY_VALIDATOR_QUICK_FIX_CODES,
+  validateEnterpriseTopologyCompatibility,
   validateTopology,
 } from "./topology/validator.js"
 export type {
@@ -1274,6 +1489,129 @@ export type {
   EnterpriseTopologyGuiUpdateRelationOperation,
   EnterpriseTopologyGuiUpdateRelationPatch,
 } from "./topology/gui-operations.js"
+export type {
+  ExecutorAdvancedMapping,
+  ExecutorConnectionDraft,
+  ExecutorConnectionRelation,
+  ExecutorDraft,
+  ExecutorGraphCompileResult,
+  ExecutorGraphInferenceSummary,
+  ExecutorGraphIssue,
+  ExecutorGraphMode,
+  ExecutorGraphRollbackEvidence,
+  ExecutorGraphSchemaVersion,
+  ExecutorGraphSourceOfTruth,
+  ExecutorGraphTopologyMetadata,
+  ExecutorGraphWorkspace,
+  ExecutorInferenceEvidence,
+  ExecutorRuntimeMode,
+  ExecutorSectionDraft,
+} from "./topology/executor-graph.js"
+export type {
+  ApplyNodeDefinitionAlternativeInput,
+  ApplyNodeDefinitionAlternativeResult,
+  NodeContextSummary,
+  NodeDefinitionAlternative,
+  NodeDefinitionDialogState,
+  NodeDefinitionDraft,
+  NodeDefinitionDraftDiffItem,
+  NodeDefinitionField,
+  NodeDefinitionFieldLocks,
+  NodeDefinitionGraphContext,
+  NodeDefinitionSuggestionErrorCode,
+  NodeDefinitionSuggestionErrorResponse,
+  NodeDefinitionSuggestionHistoryItem,
+  NodeDefinitionSuggestionRequest,
+  NodeDefinitionSuggestionResponse,
+  NodeDefinitionSuggestionResult,
+  NodeDefinitionSuggestionWarning,
+  NodeDefinitionTriggerField,
+} from "./topology/node-definition-suggestion.js"
+export type {
+  NodeDefinitionRedactionMode,
+  NodeDefinitionRedactionReport,
+  NodeDefinitionRedactionResult,
+} from "./topology/node-definition-redaction.js"
+export type {
+  ExecutorEdgeV2,
+  ExecutorEdgeV2Status,
+  ExecutorNodeV2,
+  ExecutorNodeV2Status,
+  ExecutorRuntimeGraphSnapshotV2,
+  ExecutorTopologyV2,
+  ExecutorTopologyV2Metadata,
+  ExecutorTopologyV2MetadataValue,
+  ExecutorTopologyV2MigrationIssue,
+  ExecutorTopologyV2MigrationIssueSeverity,
+  ExecutorTopologyV2MigrationResult,
+  ExecutorTopologyV2PersistenceRepairResult,
+  ExecutorTopologyV2RegistryMaterializationResult,
+  ExecutorTopologyV2RegistryMigrationPreview,
+  ExecutorTopologyV2RegistryReadModelResult,
+  ExecutorTopologyV2SchemaVersion,
+  ExecutorTopologyV2Status,
+  ExecutorTopologyV2Timestamp,
+  ExecutorTopologyV2ValidationIssue,
+  ExecutorTopologyV2ValidationResult,
+  ExecutorTopologyV2ValidationSeverity,
+} from "./topology/executor-topology-v2.js"
+export type {
+  CreateExecutorDraftFromInferenceOptions,
+  ExecutorInferenceInput,
+  ExecutorInferenceKeywordHit,
+  ExecutorInferenceResult,
+  InferExecutorTaskAnalysisOptions,
+} from "./topology/executor-inference.js"
+export type {
+  ExecutorFailureObservabilityEvidence,
+  ExecutorRunObservabilityEvidence,
+} from "./topology/executor-observability.js"
+export type {
+  CreateExecutorConnectionDraftInput,
+  ExecutorRelationInferenceInput,
+  ExecutorRelationKeywordHit,
+  ExecutorRelationRecommendation,
+} from "./topology/executor-relation-inference.js"
+export type {
+  NodeTaskAnalysis,
+  NodeTaskAnalysisSource,
+  NodeTaskUnit,
+  RecoveryAlternative,
+} from "./topology/executor-task-analysis.js"
+export type {
+  DelegationCandidate,
+  DelegationFallbackRoute,
+  DelegationRegistryCandidateInput,
+  DelegationRoute,
+  NodeDelegationResolution,
+} from "./topology/executor-delegation-resolution.js"
+export type {
+  CancellationPolicySnapshot,
+  EdgeExecutionPlan,
+  GraphExecutionPlan,
+  NodeExecutionPlan,
+} from "./topology/graph-execution-plan.js"
+export type {
+  GraphEdgeHandoffEnvelope,
+  GraphExecutionEvent,
+  GraphExecutionEventType,
+  GraphExecutionOutcome,
+  GraphExecutionOutcomeStatus,
+  GraphExecutionRunResult,
+  GraphNodeExecutionStatus,
+  GraphWorkOrderMetadata,
+  VisibleUserWorkOrderGuardResult,
+} from "./topology/graph-execution-runner.js"
+export type {
+  GraphExecutionEventRecord,
+  GraphExecutionPlanRecord,
+  RecoveryStrategyLedgerRecord,
+} from "./topology/graph-execution-store.js"
+export type {
+  GraphCancellationController,
+  GraphCancellationToken,
+  NodeCancellationToken,
+} from "./topology/graph-cancellation.js"
 export type {
   CompileTopologyOptions,
   CompileTopologyResult,
@@ -2328,6 +2666,28 @@ export {
   runSoakProfile,
   shouldStopRepeatedFailure,
 } from "./runs/soak-retention.js"
+export {
+  FORBIDDEN_TERMINAL_FAILURE_REASONS,
+  NON_TERMINAL_RECOVERY_REASONS,
+  TERMINAL_FAILURE_REASONS,
+  createDefaultExecutionPolicySnapshot,
+  isForbiddenTerminalFailureReason,
+  isTerminalFailureReason,
+  normalizeFailureReason,
+} from "./runs/execution-policy.js"
+export {
+  assertTerminalFailureAllowed,
+  guardTerminalFailure,
+} from "./runs/terminal-failure-guard.js"
+export {
+  chooseRecoveryAlternative,
+} from "./runs/recovery-controller.js"
+export {
+  createRecoveryStrategyLedger,
+  hasRecoveryStrategyAttempt,
+  recordRecoveryStrategyAttempt,
+  recoveryStrategyFingerprint,
+} from "./runs/recovery-strategy-ledger.js"
 export type {
   RepeatedFailureStopDecision,
   RetentionCleanupApplyOptions,
@@ -2365,6 +2725,27 @@ export type {
   SoakRunSummary,
   SoakRunnerOptions,
 } from "./runs/soak-retention.js"
+export type {
+  ExecutionPolicySnapshot,
+  ExplicitLimit,
+  FailureReasonNormalizationInput,
+  FailureReasonNormalizationResult,
+  ForbiddenTerminalFailureReason,
+  NonTerminalRecoveryReason,
+  TerminalFailureReason,
+} from "./runs/execution-policy.js"
+export type {
+  TerminalFailureGuardDecision,
+} from "./runs/terminal-failure-guard.js"
+export type {
+  RecoveryControllerDecision,
+  RecoveryControllerResult,
+} from "./runs/recovery-controller.js"
+export type {
+  RecoveryStrategyAttempt,
+  RecoveryStrategyKey,
+  RecoveryStrategyLedger,
+} from "./runs/recovery-strategy-ledger.js"
 
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js"

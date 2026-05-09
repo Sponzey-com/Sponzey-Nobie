@@ -8,6 +8,7 @@ import {
   EnterpriseTopologyInspector,
 } from "../packages/webui/src/components/topology/EnterpriseTopologyInspector.tsx"
 import {
+  EnterpriseTopologyPalette,
   ENTERPRISE_TOPOLOGY_PALETTE,
   createEmptyEnterpriseTopologyForPalette,
   createEnterpriseTopologyPaletteEntity,
@@ -106,6 +107,18 @@ describe("task018 enterprise topology palette and inspector", () => {
 
     expect(core).toEqual(["task", "decision", "approval", "tool", "data", "group"])
     expect(advanced).toEqual(["org_unit", "position", "person", "process", "authority", "responsibility"])
+  })
+
+  it("keeps the Work blocks heading out of the visible palette", () => {
+    const html = renderToStaticMarkup(
+      createElement(EnterpriseTopologyPalette, {
+        items: ENTERPRISE_TOPOLOGY_PALETTE,
+      }),
+    )
+
+    expect(html).toContain('data-testid="enterprise-topology-palette"')
+    expect(html).not.toContain("업무 블록")
+    expect(html).not.toContain("Work blocks")
   })
 
   it("does not show execution permission fields in the Team inspector", () => {

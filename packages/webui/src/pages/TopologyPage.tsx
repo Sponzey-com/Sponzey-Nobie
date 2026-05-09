@@ -1718,13 +1718,6 @@ function TopologyPageInner() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <a
-              href="/advanced/topology?mode=resources"
-              className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800"
-              data-testid="runtime-topology-workspace-resources-link"
-            >
-              {text("통합 리소스 레이어로 열기", "Open unified resources layer")}
-            </a>
             <button
               type="button"
               onClick={() => void load()}

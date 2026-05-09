@@ -33,9 +33,10 @@ function compiledFixture(topology = topologyFixture()): CompiledTopologySnapshot
 }
 
 function entryNode(topology: EnterpriseTopology, compiled: CompiledTopologySnapshot): NodeContract {
-  const entry = getCompiledEntryNode(compiled)
-  if (entry === undefined) throw new Error("expected entry node")
-  const node = topology.nodes.find((candidate) => candidate.id === entry.id)
+  const entryId = compiled.runtimeExecutionContext.rootChildNodeIds[0]
+  if (entryId === undefined) throw new Error("expected root child node")
+  expect(getCompiledEntryNode(compiled)).toBeUndefined()
+  const node = topology.nodes.find((candidate) => candidate.id === entryId)
   if (node === undefined) throw new Error("expected entry node contract")
   return node
 }

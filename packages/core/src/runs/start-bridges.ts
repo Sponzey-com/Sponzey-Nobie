@@ -9,9 +9,15 @@ import type {
 import {
   runIntakeBridgePass,
   type DelegatedRunStartParams,
+  type DelegatedRunStartResult,
 } from "./intake-bridge-pass.js"
 import type { ScheduleDelayedRunRequest } from "./action-execution.js"
 import type { TaskProfile } from "./types.js"
+import type {
+  AgentExecutionDecision,
+  AgentExecutionDecisionTraceSnapshot,
+} from "../orchestration/execution-decision-contract.js"
+import type { AIProvider } from "../ai/index.js"
 
 interface StartBridgeModuleDependencies {
   applyLoopDirective: typeof applyLoopDirective
@@ -49,6 +55,8 @@ export async function executeStartLoopDirective(
     onChunk: RunChunkDeliveryHandler | undefined
     directive: LoopDirective
     finalizationDependencies: FinalizationDependencies
+    suppressFinalDelivery?: boolean
+    suppressFinalDeliveryReasonCode?: string
   },
   moduleDependencies: StartBridgeModuleDependencies = defaultModuleDependencies,
 ): Promise<"break"> {
@@ -62,13 +70,17 @@ export async function runStartIntakeBridge(
     sessionId: string
     requestGroupId: string
     model: string | undefined
+    providerId?: string | undefined
+    provider?: AIProvider | undefined
     workDir: string
     source: FinalizationSource
     runId: string
     onChunk: RunChunkDeliveryHandler | undefined
     reuseConversationContext: boolean
     scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void
-    startDelegatedRun: (params: DelegatedRunStartParams) => void
+    startDelegatedRun: (
+      params: DelegatedRunStartParams,
+    ) => void | DelegatedRunStartResult | Promise<void | DelegatedRunStartResult>
   },
   dependencies: {
     appendRunEvent: (runId: string, message: string) => void
@@ -78,6 +90,11 @@ export async function runStartIntakeBridge(
     emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
     logInfo: (message: string, payload: Record<string, unknown>) => void
+    recordExecutionDecisionTrace?: (params: {
+      runId: string
+      agentExecutionDecision: AgentExecutionDecision
+      executionDecisionTrace: AgentExecutionDecisionTraceSnapshot
+    }) => void
   },
   moduleDependencies: StartBridgeModuleDependencies = defaultModuleDependencies,
 ) {
@@ -91,5 +108,8 @@ export async function runStartIntakeBridge(
     startDelegatedRun: params.startDelegatedRun,
     normalizeTaskProfile: dependencies.normalizeTaskProfile,
     logInfo: dependencies.logInfo,
+    ...(dependencies.recordExecutionDecisionTrace
+      ? { recordExecutionDecisionTrace: dependencies.recordExecutionDecisionTrace }
+      : {}),
   })
 }

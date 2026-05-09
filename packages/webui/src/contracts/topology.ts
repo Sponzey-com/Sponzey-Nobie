@@ -104,7 +104,6 @@ export interface AgentTopologyAgentInspector {
   delegation: {
     enabled: boolean
     maxParallelSessions: number
-    retryBudget: number
   }
   diagnostics: string[]
 }

@@ -56,9 +56,8 @@ const defaultModuleDependencies: ReviewCyclePassModuleDependencies = {
 }
 
 export interface SubSessionFeedbackCycleDirective {
-  kind: "retry_sub_session" | "manual_action_required"
+  kind: "retry_sub_session"
   subSessionId: string
-  retryBudgetRemaining: number
   normalizedFailureKey: string
   followupPrompt: string
   missingItems: string[]
@@ -68,11 +67,9 @@ export interface SubSessionFeedbackCycleDirective {
 export function buildSubSessionFeedbackCycleDirective(
   feedback: FeedbackRequest,
 ): SubSessionFeedbackCycleDirective {
-  const canRetry = feedback.retryBudgetRemaining >= 0
   return {
-    kind: canRetry ? "retry_sub_session" : "manual_action_required",
+    kind: "retry_sub_session",
     subSessionId: feedback.subSessionId,
-    retryBudgetRemaining: feedback.retryBudgetRemaining,
     normalizedFailureKey: feedback.reasonCode,
     missingItems: [...feedback.missingItems],
     requiredChanges: [...feedback.requiredChanges],

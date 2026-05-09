@@ -33,6 +33,8 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.targetLabel ? { targetLabel: overrides.targetLabel } : {}),
     ...(overrides.workerRuntimeKind ? { workerRuntimeKind: overrides.workerRuntimeKind } : {}),
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
+    ...(overrides.agentDisplayName ? { agentDisplayName: overrides.agentDisplayName } : {}),
+    ...(overrides.agentNickname ? { agentNickname: overrides.agentNickname } : {}),
     ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
     ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
   }
@@ -186,8 +188,8 @@ describe("webui task monitor helper", () => {
     ])
     expect(cards[0]?.checklist.completedCount).toBe(1)
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "기본 실행 · 사용자 요청",
-      "기본 실행 · 자동 보강",
+      "기본 실행 · 새 요청",
+      "기본 실행 · 후속 실행",
     ])
   })
 
@@ -237,6 +239,7 @@ describe("webui task monitor helper", () => {
         summary: "서브 작업 실행 중",
         runScope: "child",
         parentRunId: "run-root",
+        targetLabel: "마당쇠",
         handoffSummary: "윈도우 장비 로그만 별도 확인",
         createdAt: 3,
         updatedAt: 4,
@@ -244,8 +247,8 @@ describe("webui task monitor helper", () => {
     ], text)
 
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
-      "기본 실행 · 사용자 요청",
-      "서브 에이전트 · 자동 보강",
+      "기본 실행 · 새 요청",
+      "마당쇠 · 후속 실행",
     ])
     expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })
@@ -319,7 +322,7 @@ describe("webui task monitor helper", () => {
 
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.delivery.status).toBe("delivered")
-    expect(cards[0]?.timeline[0]?.runLabel).toBe("사용자 요청")
+    expect(cards[0]?.timeline[0]?.runLabel).toBe("새 요청")
     expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 완료")
     expect(cards[0]?.checklist.completedCount).toBe(4)
   })
@@ -550,7 +553,7 @@ describe("webui task monitor helper", () => {
       summary: "텔레그램 응답 전달 실패: timeout",
       detailLines: ["텔레그램 세션이 연결되어 있지 않습니다."],
       sourceAttemptId: "run-delivery-failed",
-      sourceAttemptLabel: "사용자 요청",
+      sourceAttemptLabel: "새 요청",
     })
     expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 실패")
   })
@@ -691,6 +694,68 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.representative.id).toBe("run-missing")
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.representative.prompt).toBe("오래된 태스크")
+  })
+
+  it("orders task cards by request creation time instead of restart-updated time", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "old-restored-task",
+        requestGroupId: "old-restored-task",
+        anchorRunId: "run-old-restored",
+        latestAttemptId: "run-old-restored",
+        runIds: ["run-old-restored"],
+        title: "오래된 대기 요청",
+        status: "awaiting_user",
+        createdAt: 10,
+        updatedAt: 1_000,
+        attempts: [
+          {
+            id: "run-old-restored",
+            taskId: "old-restored-task",
+            requestGroupId: "old-restored-task",
+            kind: "primary",
+            title: "오래된 대기 요청",
+            prompt: "오래된 대기 요청",
+            status: "awaiting_user",
+            summary: "재시작 복구로 갱신됨",
+            userVisible: true,
+            createdAt: 10,
+            updatedAt: 1_000,
+          },
+        ],
+      }),
+      makeTask({
+        id: "new-task",
+        requestGroupId: "new-task",
+        anchorRunId: "run-new",
+        latestAttemptId: "run-new",
+        runIds: ["run-new"],
+        title: "방금 들어온 요청",
+        status: "completed",
+        createdAt: 100,
+        updatedAt: 200,
+        attempts: [
+          {
+            id: "run-new",
+            taskId: "new-task",
+            requestGroupId: "new-task",
+            kind: "primary",
+            title: "방금 들어온 요청",
+            prompt: "방금 들어온 요청",
+            status: "completed",
+            summary: "완료",
+            userVisible: true,
+            createdAt: 100,
+            updatedAt: 200,
+          },
+        ],
+      }),
+    ], [
+      makeRun({ id: "run-old-restored", requestGroupId: "old-restored-task", prompt: "오래된 대기 요청", status: "awaiting_user", createdAt: 10, updatedAt: 1_000 }),
+      makeRun({ id: "run-new", requestGroupId: "new-task", prompt: "방금 들어온 요청", status: "completed", createdAt: 100, updatedAt: 200 }),
+    ], text)
+
+    expect(cards.map((card) => card.key)).toEqual(["new-task", "old-restored-task"])
   })
 
   it("keeps timeline ordering stable and hides diagnostic-only events in normal mode", () => {

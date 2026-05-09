@@ -40,23 +40,23 @@ afterEach(() => {
 })
 
 describe("task002 topology workspace routing", () => {
-  it("renders the unified workspace route shell with simple layer tabs", () => {
+  it("renders the unified workspace route shell with visible simple layer tabs", () => {
     const html = renderToStaticMarkup(
       createElement(TopologyWorkspaceRouteShell, { initialLayer: "build" }, createElement("div", null, "workspace body")),
     )
 
     expect(html).toContain('data-testid="topology-workspace-route-shell"')
-    expect(html).toContain("Topology Workspace")
+    expect(html).toContain("업무 흐름 만들기")
     expect(html).toContain('data-testid="topology-workspace-layer-build"')
     expect(html).toContain('data-testid="topology-workspace-layer-run"')
     expect(html).toContain('data-testid="topology-workspace-layer-trace"')
     expect(html).toContain('data-testid="topology-workspace-layer-improve"')
-    expect(html).toContain('data-testid="topology-workspace-layer-resources"')
+    expect(html).not.toContain('data-testid="topology-workspace-layer-resources"')
     expect(html).toContain("만들기")
     expect(html).toContain("실행")
     expect(html).toContain("기록")
     expect(html).toContain("개선")
-    expect(html).toContain("리소스")
+    expect(html).not.toContain("리소스")
   })
 
   it("exposes one topology navigation entry instead of separate runtime and enterprise entries", () => {

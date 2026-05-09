@@ -181,7 +181,7 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
   }
 }
 
-function command(id: string, retryBudget = 2): CommandRequest {
+function command(id: string): CommandRequest {
   return {
     identity: identity("sub_session", id, `idem:${id}`),
     commandRequestId: `command:${id}`,
@@ -191,7 +191,6 @@ function command(id: string, retryBudget = 2): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget,
   }
 }
 
@@ -603,7 +602,6 @@ describe("task014 release readiness", () => {
                 agentDisplayName: "Researcher",
                 commandRequestId: "command:left",
                 status: "completed",
-                retryBudgetRemaining: 1,
                 promptBundleId: "prompt-bundle:researcher",
               },
               status: "completed",
@@ -635,7 +633,6 @@ describe("task014 release readiness", () => {
                 agentDisplayName: "Researcher",
                 commandRequestId: "command:right",
                 status: "completed",
-                retryBudgetRemaining: 1,
                 promptBundleId: "prompt-bundle:researcher",
               },
               status: "completed",

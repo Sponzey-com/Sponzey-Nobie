@@ -47,5 +47,4 @@ export declare function createExecutionLoopRuntimeState(params: {
     structuredRequest?: TaskStructuredRequest;
     intentEnvelope?: TaskIntentEnvelope;
 }): ExecutionLoopRuntimeState;
-export declare function looksLikePlainTextInformationRequest(value: string): boolean;
 //# sourceMappingURL=execution-profile.d.ts.map

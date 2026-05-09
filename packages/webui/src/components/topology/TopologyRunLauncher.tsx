@@ -1,9 +1,16 @@
 import * as React from "react"
+import type { EnterpriseTopology } from "../../contracts/enterprise-topology"
 import type {
+  EnterpriseTopologyGuiDraftRunRequest,
   EnterpriseTopologyRunRecord,
   WorkOrderTemplatePreset,
   WorkOrderTemplateSimulationMode,
 } from "../../lib/enterprise-topology-operations"
+import {
+  shouldShowTopologyWorkspaceAdvancedSurface,
+  type TopologyWorkspaceExposureMode,
+} from "../../lib/topology-workspace-copy"
+import { ExecutorRunPanel } from "./ExecutorRunPanel"
 import type { TopologyRunTraceOverlayInput } from "./TopologyRunTraceOverlay"
 import {
   TopologyRunStrip,
@@ -22,6 +29,9 @@ export {
 } from "./TopologyRunStrip"
 
 export function TopologyRunLauncher({
+  exposureMode = "simple",
+  simpleLayout = "wide",
+  topology,
   templates,
   selectedTemplateId,
   selectedContextPresetId,
@@ -38,10 +48,14 @@ export function TopologyRunLauncher({
   onSelectSimulationMode,
   onAdvancedInstructionChange,
   onRun,
+  onSelectRunTarget,
   onSelectRunHistory,
   onTraceLayerRequest,
   onStartNodeQuickFix,
 }: {
+  exposureMode?: TopologyWorkspaceExposureMode
+  simpleLayout?: "wide" | "sidebar"
+  topology?: EnterpriseTopology | null
   templates: WorkOrderTemplatePreset[]
   selectedTemplateId?: string
   selectedContextPresetId?: string
@@ -57,13 +71,41 @@ export function TopologyRunLauncher({
   onSelectContextPreset?: (contextPresetId: string) => void
   onSelectSimulationMode?: (mode: WorkOrderTemplateSimulationMode) => void
   onAdvancedInstructionChange?: (value: string) => void
-  onRun?: () => void
+  onRun?: (payload?: EnterpriseTopologyGuiDraftRunRequest) => void
+  onSelectRunTarget?: (nodeId: string) => void
   onSelectRunHistory?: (topologyRunId: string) => void
   onTraceLayerRequest?: () => void
   onStartNodeQuickFix?: () => void
 }) {
+  if (!shouldShowTopologyWorkspaceAdvancedSurface(exposureMode)) {
+    return (
+      <ExecutorRunPanel
+        topology={topology}
+        templates={templates}
+        layout={simpleLayout}
+        selectedTemplateId={selectedTemplateId}
+        selectedContextPresetId={selectedContextPresetId}
+        selectedStartExecutorId={runTargetNodeId ?? targetState?.targetNodeId ?? null}
+        targetState={targetState}
+        runInput={advancedInstruction}
+        simulationMode={simulationMode}
+        loading={loading}
+        recentRuns={recentRuns}
+        selectedRunId={selectedRunId}
+        traceOverlay={traceOverlay}
+        onRunInputChange={onAdvancedInstructionChange}
+        onSelectStartExecutor={onSelectRunTarget}
+        onRun={onRun}
+        onSelectRunHistory={onSelectRunHistory}
+        onTraceLayerRequest={onTraceLayerRequest}
+        onStartNodeQuickFix={onStartNodeQuickFix}
+      />
+    )
+  }
+
   return (
     <TopologyRunStrip
+      exposureMode={exposureMode}
       templates={templates}
       selectedTemplateId={selectedTemplateId}
       selectedContextPresetId={selectedContextPresetId}

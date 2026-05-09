@@ -32,6 +32,7 @@ export type OrchestrationEventKind =
   | "approval_requested"
   | "result_reported"
   | "result_reviewed"
+  | "parent_child_result_aggregated"
   | "control_action"
   | "resource_lock_wait"
   | "resource_lock_released"
@@ -176,6 +177,7 @@ export const ORCHESTRATION_EVENT_KINDS = [
   "approval_requested",
   "result_reported",
   "result_reviewed",
+  "parent_child_result_aggregated",
   "control_action",
   "resource_lock_wait",
   "resource_lock_released",

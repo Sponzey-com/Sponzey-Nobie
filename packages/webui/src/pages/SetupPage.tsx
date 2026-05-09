@@ -1477,7 +1477,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="AI 연결을 준비합니다"
-              description="이 단계는 Nobie Core Router 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
+              description="이 단계는 노비 실행 경로 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1486,14 +1486,14 @@ export function SetupPage() {
               <StatCard label="활성 AI" value={enabledBackends[0]?.label ?? "없음"} compact />
               <StatCard label="활성 모델" value={enabledBackends[0]?.defaultModel || "미설정"} compact />
               <StatCard label="주소 입력됨" value={String(activeDraft.aiBackends.filter((backend) => backend.endpoint?.trim()).length)} />
-              <StatCard label="라우팅 대상" value={String(activeDraft.routingProfiles[0]?.targets.length ?? 0)} />
+              <StatCard label="실행 대상" value={String(activeDraft.routingProfiles[0]?.targets.length ?? 0)} />
             </div>
             <RuntimeNotice
               tone={enabledBackends.length === 1 ? "info" : "error"}
               title="단일 AI 정책"
               message={enabledBackends.length === 1
-                ? "현재 topology와 routing projection 모두 하나의 활성 backend를 기준으로 정렬됩니다."
-                : "활성 backend를 하나 선택해야 topology와 routing scene이 정상 상태로 정렬됩니다."}
+                ? "현재 연결 보기와 실행 경로 보기가 하나의 활성 backend를 기준으로 정렬됩니다."
+                : "활성 backend를 하나 선택해야 연결 보기와 실행 경로 보기가 정상 상태로 정렬됩니다."}
             />
             {selectedBackend?.reason ? (
               <RuntimeNotice
@@ -1507,7 +1507,7 @@ export function SetupPage() {
               <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
                 <ChecklistItem text="캔버스에서 backend 노드를 선택하면 Inspector가 같은 backend 편집 UI로 바로 연결됩니다." />
                 <ChecklistItem text="연결 확인 또는 모델 조회 결과는 노드 상태와 alert overlay에 같이 반영됩니다." />
-                <ChecklistItem text="Routing 장면은 확장 보기이며, 현재 routingProfiles 의미를 그대로 시각화합니다." />
+                <ChecklistItem text="실행 경로 보기는 확장 보기이며, 현재 AI 실행 대상 순서를 그대로 시각화합니다." />
               </div>
             </div>
           </div>
@@ -3036,7 +3036,7 @@ function AiVisualizationModeToggle({
             {pickUiText(language, "AI 장면", "AI scene")}
           </div>
           <div className="mt-2 text-sm leading-6 text-stone-600">
-            {pickUiText(language, "연결 topology와 routing projection을 같은 단계에서 전환해 볼 수 있습니다.", "Switch between the connection topology and the routing projection within the same step.")}
+            {pickUiText(language, "연결 보기와 실행 경로 보기를 같은 단계에서 전환해 볼 수 있습니다.", "Switch between the connection view and the execution path view within the same step.")}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -3053,7 +3053,7 @@ function AiVisualizationModeToggle({
             disabled={!routingAvailable}
             className={`rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${mode === "routing" ? "border-stone-900 bg-stone-900 text-white" : "border-stone-200 bg-white text-stone-700"}`}
           >
-            {pickUiText(language, "라우팅", "Routing")}
+            {pickUiText(language, "실행 경로", "Execution path")}
           </button>
         </div>
       </div>
@@ -3111,11 +3111,11 @@ function AiSetupInspector({
           {pickUiText(
             language,
             enabledBackend
-              ? `${enabledBackend.label} 이(가) 현재 live backend입니다. 다른 backend를 켜면 routing target도 같이 바뀝니다.`
-              : "아직 live backend가 없습니다. Inspector에서 하나를 활성화하면 topology와 routing scene이 같이 갱신됩니다.",
+              ? `${enabledBackend.label} 이(가) 현재 live backend입니다. 다른 backend를 켜면 실행 대상도 같이 바뀝니다.`
+              : "아직 live backend가 없습니다. Inspector에서 하나를 활성화하면 연결 보기와 실행 경로 보기가 같이 갱신됩니다.",
             enabledBackend
-              ? `${enabledBackend.label} is currently live. Enabling another backend also updates the routing target.`
-              : "There is no live backend yet. Enable one backend here and both the topology and routing scene will update together.",
+              ? `${enabledBackend.label} is currently live. Enabling another backend also updates the execution target.`
+              : "There is no live backend yet. Enable one backend here and both the connection view and execution path view will update together.",
           )}
         </div>
       </div>

@@ -19,7 +19,7 @@ export interface AdminToolCallView {
     startedAt: number | null;
     finishedAt: number | null;
     durationMs: number | null;
-    retryCount: number;
+    signalCount: number;
     eventCount: number;
     paramsRedacted: unknown;
     outputRedacted: unknown;
@@ -64,7 +64,7 @@ export interface AdminWebRetrievalAttemptView {
     fetchTimestamp: string | null;
     sourceTimestamp: string | null;
     durationMs: number | null;
-    retryCount: number;
+    signalCount: number;
 }
 export interface AdminWebRetrievalVerificationView {
     canAnswer: boolean | null;

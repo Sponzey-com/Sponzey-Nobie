@@ -6,7 +6,9 @@ export interface OrchestrationRegistryAgentSnapshot {
     agentId: string;
     displayName: string;
     nickname?: string;
-    source: "db" | "config";
+    source: "topology" | "db" | "config";
+    topologyId?: string;
+    executorId?: string;
 }
 export interface OrchestrationModeSnapshot {
     mode: OrchestrationMode;

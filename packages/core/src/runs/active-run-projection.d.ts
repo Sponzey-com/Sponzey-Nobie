@@ -18,11 +18,10 @@ export interface ActiveRunContractProjection {
         subSessionId: string;
         parentRunId: string;
         agentId: string;
-        agentDisplayName: string;
-        agentNickname?: string;
-        status: string;
-        retryBudgetRemaining: number;
-    }>;
+            agentDisplayName: string;
+            agentNickname?: string;
+            status: string;
+        }>;
     updatedAt: number;
     legacy: boolean;
     legacyReason?: string;

@@ -109,7 +109,6 @@ describe("task007 WorkOrder runtime bridge", () => {
       parentRunId: "topology-run:task007",
       subSessionId: "sub-session:task007",
       targetAgentId: "node:intake",
-      retryBudget: 1,
     })
     expect(command.identity.parent).toMatchObject({
       parentRunId: "run:task007",

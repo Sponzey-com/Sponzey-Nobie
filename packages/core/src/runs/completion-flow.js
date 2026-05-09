@@ -81,7 +81,7 @@ export function decideCompletionFlow(params) {
     }) && !params.truncatedOutputRecoveryAttempted) {
         return {
             kind: "retry_truncated",
-            summary: review.summary || "중간에 끊긴 작업을 자동으로 다시 시도합니다.",
+            summary: review.summary || "중간에 끊긴 작업을 다른 방식으로 이어갑니다.",
             ...(review.reason ? { reason: review.reason } : {}),
             ...(review.remainingItems.length > 0 ? { remainingItems: review.remainingItems } : {}),
         };

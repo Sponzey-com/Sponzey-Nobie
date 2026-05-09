@@ -224,7 +224,6 @@ describe("task002 WorkOrder, Result, Failure, Trace contracts", () => {
     const failurePolicy: FailurePolicy = {
       failureReportRequired: true,
       allowPartialSuccess: true,
-      maxRetryAttempts: 2,
       fallbackNodeIds: ["node:fallback"],
     }
     const recoveryPolicy: RecoveryPolicy = {

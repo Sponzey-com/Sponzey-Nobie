@@ -99,18 +99,138 @@ print_pid_state() {
 }
 
 extract_status() {
-  node -e '
+  NOBIE_STATUS_ROOT_DIR="$ROOT_DIR" node -e '
+    const { existsSync, readdirSync, statSync } = require("node:fs")
+    const { join, relative } = require("node:path")
+    const ignoredDirs = new Set([".git", "node_modules", ".turbo", ".cache"])
+    function newestFileMtime(dir) {
+      if (!existsSync(dir)) return null
+      let newest = null
+      const stack = [dir]
+      while (stack.length > 0) {
+        const current = stack.pop()
+        let entries = []
+        try {
+          entries = readdirSync(current)
+        } catch {
+          continue
+        }
+        for (const entry of entries) {
+          if (ignoredDirs.has(entry)) continue
+          const path = join(current, entry)
+          let stat
+          try {
+            stat = statSync(path)
+          } catch {
+            continue
+          }
+          if (stat.isDirectory()) {
+            stack.push(path)
+            continue
+          }
+          if (!stat.isFile()) continue
+          if (!newest || stat.mtimeMs > newest.mtimeMs) {
+            newest = { path, mtimeMs: stat.mtimeMs, mtimeIso: new Date(stat.mtimeMs).toISOString() }
+          }
+        }
+      }
+      return newest
+    }
+    function sourceBuildInputs(dir) {
+      if (!existsSync(dir)) return []
+      const files = []
+      const stack = [dir]
+      while (stack.length > 0) {
+        const current = stack.pop()
+        let entries = []
+        try {
+          entries = readdirSync(current)
+        } catch {
+          continue
+        }
+        for (const entry of entries) {
+          if (ignoredDirs.has(entry)) continue
+          const path = join(current, entry)
+          let stat
+          try {
+            stat = statSync(path)
+          } catch {
+            continue
+          }
+          if (stat.isDirectory()) {
+            stack.push(path)
+            continue
+          }
+          if (!stat.isFile()) continue
+          if (!/\.(?:ts|tsx)$/u.test(path) || /\.d\.ts$/u.test(path)) continue
+          files.push({ path, mtimeMs: stat.mtimeMs, mtimeIso: new Date(stat.mtimeMs).toISOString() })
+        }
+      }
+      return files
+    }
+    function outputMtime(path) {
+      try {
+        const stat = statSync(path)
+        if (!stat.isFile()) return null
+        return { path, mtimeMs: stat.mtimeMs, mtimeIso: new Date(stat.mtimeMs).toISOString() }
+      } catch {
+        return null
+      }
+    }
+    function localRuntimeBuild(data) {
+      const root = process.env.NOBIE_STATUS_ROOT_DIR
+      const processStartedAt = data.runtime?.startedAt ?? data.runtimeBuild?.processStartedAt
+      const processStartMs = Date.parse(processStartedAt ?? "")
+      if (!root) return { packages: [], buildRequired: undefined, restartRequired: undefined, warnings: [] }
+      const packages = ["core", "cli"].map((name) => {
+        const sourceDir = join(root, "packages", name, "src")
+        const distDir = join(root, "packages", name, "dist")
+        const sourceInputs = sourceBuildInputs(sourceDir)
+        const sourceNewest = sourceInputs.reduce((newest, file) => !newest || file.mtimeMs > newest.mtimeMs ? file : newest, null)
+        const distNewest = newestFileMtime(distDir)
+        const missingOutputs = []
+        const staleOutputs = []
+        for (const source of sourceInputs) {
+          const outputPath = join(distDir, relative(sourceDir, source.path).replace(/\.(?:ts|tsx)$/u, ".js"))
+          const output = outputMtime(outputPath)
+          if (!output) {
+            missingOutputs.push(outputPath)
+          }
+        }
+        const buildRequired = Boolean(missingOutputs.length > 0 || (sourceNewest && (!distNewest || sourceNewest.mtimeMs > distNewest.mtimeMs + 1)))
+        const restartRequired = Boolean(Number.isFinite(processStartMs) && distNewest && distNewest.mtimeMs > processStartMs + 1)
+        return { package: name, sourceNewest, distNewest, missingOutputs, staleOutputs, buildRequired, restartRequired }
+      })
+      const buildRequired = packages.some((pkg) => pkg.buildRequired)
+      const restartRequired = packages.some((pkg) => pkg.restartRequired)
+      const warnings = []
+      if (buildRequired) warnings.push("build_required")
+      if (restartRequired) warnings.push("restart_required")
+      return { packages, buildRequired, restartRequired, warnings }
+    }
     let raw = ""
     process.stdin.setEncoding("utf8")
     process.stdin.on("data", (chunk) => raw += chunk)
     process.stdin.on("end", () => {
       try {
         const data = JSON.parse(raw)
+        const runtimeBuild = data.runtimeBuild ?? {}
+        const localBuild = localRuntimeBuild(data)
+        const effectiveBuildRequired = typeof runtimeBuild.buildRequired === "boolean" ? runtimeBuild.buildRequired : localBuild.buildRequired
+        const effectiveRestartRequired = typeof runtimeBuild.restartRequired === "boolean" ? runtimeBuild.restartRequired : localBuild.restartRequired
+        const runtimePackages = Array.isArray(runtimeBuild.packages) ? runtimeBuild.packages : localBuild.packages
+        const runtimeWarnings = Array.isArray(runtimeBuild.warnings) ? runtimeBuild.warnings : localBuild.warnings
+        const boolText = (value) => typeof value === "boolean" ? String(value) : "unknown"
         const lines = [
           `  status: reachable`,
           `  version: ${data.displayVersion ?? data.version ?? "unknown"}`,
           `  runtimePid: ${data.runtime?.pid ?? "unknown"}`,
+          `  gatewayStartedAt: ${data.runtime?.startedAt ?? runtimeBuild.processStartedAt ?? "unknown"}`,
           `  uptimeSeconds: ${data.runtime?.uptimeSeconds ?? data.uptime ?? "unknown"}`,
+          `  buildId: ${runtimeBuild.buildId ?? "unknown"}`,
+          `  gitCommit: ${runtimeBuild.gitCommit ? String(runtimeBuild.gitCommit).slice(0, 12) : "unknown"}`,
+          `  buildRequired: ${boolText(effectiveBuildRequired)}`,
+          `  restartRequired: ${boolText(effectiveRestartRequired)}`,
           `  stateDir: ${data.paths?.stateDir ?? "unknown"}`,
           `  dbFile: ${data.paths?.dbFile ?? "unknown"}`,
           `  promptChecksum: ${data.promptSources?.checksum ?? "none"}`,
@@ -118,6 +238,13 @@ extract_status() {
           `  yeonjangExtensions: ${Array.isArray(data.yeonjang?.extensions) ? data.yeonjang.extensions.length : "unknown"}`,
           `  setupCompleted: ${data.setupCompleted === true}`,
         ]
+        for (const pkg of runtimePackages) {
+          lines.push(`  ${pkg.package ?? "package"}SourceMtime: ${pkg.sourceNewest?.mtimeIso ?? "missing"}`)
+          lines.push(`  ${pkg.package ?? "package"}DistMtime: ${pkg.distNewest?.mtimeIso ?? "missing"}`)
+        }
+        if (runtimeWarnings.length > 0) {
+          lines.push(`  runtimeWarnings: ${runtimeWarnings.join(",")}`)
+        }
         if (Array.isArray(data.yeonjang?.extensions)) {
           for (const extension of data.yeonjang.extensions.slice(0, 10)) {
             lines.push(`    - ${extension.extensionId ?? "unknown"}: ${extension.state ?? "unknown"} ${extension.os ?? extension.platform ?? ""} ${extension.version ?? ""}`.trimEnd())

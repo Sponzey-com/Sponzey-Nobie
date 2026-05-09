@@ -76,9 +76,9 @@ export function SetupVisualizationCanvas({
                 : scene.id === "scene:personal"
                   ? t("프로필, 언어, 시간대, 작업 폴더가 이후 동작에 어떤 영향을 주는지 보여줍니다.", "Shows how identity, language, timezone, and workspace affect later behavior.")
                   : scene.id === "scene:ai_backends"
-                    ? t("Nobie Core Router를 중심으로 활성 AI와 대기 AI를 구분해 보여줍니다.", "Centers the Nobie Core Router and separates the live AI from standby connections.")
+                    ? t("노비 실행 경로를 중심으로 활성 AI와 대기 AI를 구분해 보여줍니다.", "Centers the Nobie execution path and separates the live AI from standby connections.")
                     : scene.id === "scene:ai_routing"
-                      ? t("routingProfiles가 현재 어떤 순서로 backend에 연결되는지 확장 장면으로 보여줍니다.", "Shows the current routingProfiles order as an advanced expansion scene.")
+                      ? t("AI 실행 대상이 현재 어떤 순서로 backend에 연결되는지 확장 장면으로 보여줍니다.", "Shows the current AI execution target order as an advanced expansion scene.")
                       : scene.id === "scene:mcp"
                         ? t("MCP 서버를 transport cluster로 나누고, 준비된 외부 도구 수를 capability map으로 보여줍니다.", "Groups MCP servers by transport cluster and shows external tool readiness as a capability map.")
                         : scene.id === "scene:skills"
@@ -410,7 +410,7 @@ function AiRoutingSceneLayout({
           </React.Fragment>
         )) : (
           <VisualizationEmptyCard
-            title={t("라우팅 대상 없음", "No routing targets")}
+            title={t("실행 대상 없음", "No execution targets")}
             description={t("활성 AI를 선택하면 요청 흐름이 이 영역에 순서대로 표시됩니다.", "Selecting an active AI will populate this request flow area in order.")}
           />
         )}

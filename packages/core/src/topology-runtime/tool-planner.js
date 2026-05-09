@@ -88,12 +88,12 @@ export function planNodeToolExecution(input) {
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             approvalRequired,
             approvalStatus,
-            retryBudget: Math.max(0, input.nodeContractSnapshot.failurePolicy?.maxRetryAttempts ?? 0),
             fallbackNodeIds: [...(input.nodeContractSnapshot.failurePolicy?.fallbackNodeIds ?? [])],
             reasonCodes: [
                 "node_tool_call_planned",
                 `tool_type:${tool.toolType}`,
                 approvalRequired ? "tool_approval_policy_required" : "tool_approval_policy_not_required",
+                "node_retry_policy_unbounded",
             ],
         });
     }

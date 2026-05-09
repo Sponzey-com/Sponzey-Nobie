@@ -132,7 +132,7 @@ describe("run execution attempt pass", () => {
       applyExecutionChunkPass: vi.fn(() => ({
         handled: true,
         executionRecoveryLimitStop: {
-          summary: "limit",
+          summary: "cannot continue safely",
           reason: "reason",
           remainingItems: ["item"],
         },
@@ -150,7 +150,7 @@ describe("run execution attempt pass", () => {
 
     expect(params.abortExecutionStream).toHaveBeenCalled()
     expect(result.executionRecoveryLimitStop).toEqual({
-      summary: "limit",
+      summary: "cannot continue safely",
       reason: "reason",
       remainingItems: ["item"],
     })

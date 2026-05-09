@@ -80,7 +80,7 @@ export function applyExecutionChunkPass(params, dependencies, moduleDependencies
         maxDelegationTurns: params.maxDelegationTurns,
         failureTitle: "ai_recovery",
         payload: params.chunk,
-        limitRemainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 자동 재시도 한도에 도달했습니다."],
+        limitRemainingItems: ["AI 호출 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
     }, dependencies);
     if (aiRecoveryAttempt.kind === "stop") {
         return {

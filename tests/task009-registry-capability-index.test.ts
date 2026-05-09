@@ -120,13 +120,11 @@ function subAgent(agentId: string, overrides: Partial<SubAgentConfig> = {}): Sub
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: [],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -281,9 +279,13 @@ describe("task009 registry snapshot and capability index", () => {
     const snapshot = buildSnapshot()
 
     expect(snapshot.agents.map((agent) => agent.agentId)).toEqual(["agent:alpha", "agent:beta"])
-    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"] ?? []).toEqual([])
-    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"] ?? []).toEqual([])
-    expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"] ?? []).toEqual([
+      "agent:alpha",
+    ])
+    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"] ?? []).toEqual([
+      { agentId: "agent:beta", reasonCodes: ["agent_disabled"] },
+    ])
+    expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "candidate_excluded",
     )
   })
@@ -335,8 +337,6 @@ describe("task009 registry snapshot and capability index", () => {
     expect(alpha?.config.modelProfile).toMatchObject({
       providerId: "openai",
       modelId: "gpt-5.4-mini",
-      retryCount: 0,
-      timeoutMs: 30_000,
     })
     expect(alpha?.modelSummary.availability).toBe("available")
     expect(snapshot.capabilityIndex?.topLevelCandidateAgentIds).toContain("agent:alpha")
@@ -472,6 +472,17 @@ describe("task009 registry snapshot and capability index", () => {
       .get()
 
     expect(result).toMatchObject({ attempted: 1, completed: 1, failed: 0, skipped: 0 })
+    expect(result.outcomes[0]).toMatchObject({
+      status: "completed",
+      startedAt: now,
+      completedAt: now,
+      childRunId: "run:child",
+      lifecycle: [
+        expect.objectContaining({ status: "running", at: now }),
+        expect.objectContaining({ status: "pending_result", at: now, childRunId: "run:child" }),
+        expect.objectContaining({ status: "completed", at: now, childRunId: "run:child" }),
+      ],
+    })
     expect(stored?.count).toBe(1)
     expect(childRunParams[0]).toMatchObject({
       parentRunId: "run:parent",
@@ -635,6 +646,118 @@ describe("task009 registry snapshot and capability index", () => {
     expect(childRunParams.every((params) => params.runScope === "child")).toBe(true)
     expect(childRunParams.every((params) => params.skipIntake === true)).toBe(true)
     expect(childRunParams.every((params) => params.lineageRootRunId === "request-group:team-parent")).toBe(true)
+  })
+
+  it("skips inferred team dispatch so hidden registry teams are not expanded", async () => {
+    upsertSkillCatalogEntry(
+      {
+        skillId: "skill:research",
+        displayName: "Research",
+        risk: "safe",
+        toolNames: ["web_search"],
+      },
+      { now },
+    )
+    upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
+    upsertTeamConfig(
+      teamConfig({
+        teamId: "team:delivery",
+        leadAgentId: "agent:alpha",
+        memberAgentIds: ["agent:alpha"],
+        roleHints: ["lead"],
+        memberships: [membership("team:delivery", "agent:alpha", ["lead"], 0)],
+      }),
+      { source: "manual", now },
+    )
+
+    const plan: OrchestrationPlan = {
+      identity: {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        entityType: "session",
+        entityId: "plan:inferred-team",
+        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        idempotencyKey: "plan:inferred-team",
+        parent: { parentRunId: "run:inferred-team", parentRequestId: "request:inferred-team" },
+      },
+      planId: "plan:inferred-team",
+      parentRunId: "run:inferred-team",
+      parentRequestId: "request:inferred-team",
+      directNobieTasks: [],
+      delegatedTasks: [
+        {
+          taskId: "plan:inferred-team:task:0",
+          executionKind: "delegated_sub_agent",
+          scope: {
+            goal: "투자 봇 프로젝트를 구현해줘",
+            intentType: "user_request",
+            actionType: "development",
+            constraints: [],
+            expectedOutputs: [
+              {
+                outputId: "implementation_summary",
+                kind: "text",
+                description: "구현 결과 요약",
+                required: true,
+                acceptance: {
+                  requiredEvidenceKinds: ["child_run"],
+                  artifactRequired: false,
+                  reasonCodes: ["child_run_completed"],
+                },
+              },
+            ],
+            reasonCodes: ["default_structured_scope"],
+          },
+          assignedTeamId: "team:delivery",
+          requiredCapabilities: ["filesystem_write"],
+          resourceLockIds: [],
+          planningTrace: {
+            reasonCodes: ["inferred_team_target_from_capability"],
+            explanation: "Capability-based team inference must not expand hidden teams.",
+          },
+        },
+      ],
+      dependencyEdges: [],
+      resourceLocks: [],
+      parallelGroups: [],
+      approvalRequirements: [],
+      fallbackStrategy: {
+        mode: "single_nobie",
+        reasonCode: "delegation_planned",
+      },
+      createdAt: now,
+    }
+
+    const result = await dispatchDelegatedSubAgentTasks({
+      plan,
+      parentRunId: "run:inferred-team",
+      parentSessionId: "session:inferred-team",
+      parentRequestGroupId: "request-group:inferred-team",
+      source: "telegram",
+      message: "투자 봇 프로젝트를 구현해줘",
+      workDir: process.cwd(),
+      controller: new AbortController(),
+    }, {
+      startSubAgentRun: () => {
+        throw new Error("hidden inferred team dispatch should not start child runs")
+      },
+      now: () => now,
+    })
+
+    const teamPlans = getDb()
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM team_execution_plans")
+      .get()
+
+    expect(result).toMatchObject({
+      attempted: 0,
+      completed: 0,
+      failed: 0,
+      skipped: 1,
+    })
+    expect(result.outcomes[0]).toMatchObject({
+      status: "skipped",
+      reasonCode: "inferred_team_target_from_capability_blocked",
+    })
+    expect(teamPlans?.count).toBe(0)
   })
 
   it("recalculates team coverage conservatively with capability and model summaries", () => {

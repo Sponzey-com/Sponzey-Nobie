@@ -10,6 +10,7 @@ import {
 
 export {
   TopologyWorkspaceInspector,
+  TopologyWorkspaceExecutorPicker,
   TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS,
   applyTopologyWorkspaceExecutorMappingToNode,
   buildTopologyWorkspaceExecutorMapping,

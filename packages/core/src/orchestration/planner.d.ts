@@ -1,6 +1,7 @@
 import type { CapabilityRiskLevel, DependencyEdgeContract, OrchestrationPlan, ResourceLockContract, StructuredTaskScope } from "../contracts/sub-agent-orchestration.js";
 import type { OrchestrationModeSnapshot } from "./mode.js";
 import { type OrchestrationRegistrySnapshot } from "./registry.js";
+import type { AgentExecutionDecision } from "./execution-decision-contract.js";
 export declare const ORCHESTRATION_PLANNER_VERSION = "structured-v1";
 export declare const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100;
 export declare const ORCHESTRATION_PLANNER_TARGET_P95_MS = 700;
@@ -53,6 +54,7 @@ export interface OrchestrationPlannerInput {
     taskScopes?: StructuredTaskScope[];
     intent?: OrchestrationPlannerIntent;
     learningHints?: OrchestrationPlannerLearningHint[];
+    agentExecutionDecision?: AgentExecutionDecision;
     parentAgentId?: string;
     resourceLocks?: ResourceLockContract[];
     resourceLocksByTaskId?: Record<string, ResourceLockContract[]>;
@@ -82,7 +84,6 @@ export interface OrchestrationPlanBuildResult {
     reasonCodes: string[];
 }
 export declare function classifyFastPath(input: FastPathClassifierInput): FastPathClassificationResult;
-export declare function resolveExplicitTeamIdFromRequest(userRequest: string, registry: OrchestrationRegistrySnapshot): string | undefined;
 export declare function buildDefaultStructuredTaskScope(userRequest: string): StructuredTaskScope;
 export declare function buildOrchestrationPlan(input: OrchestrationPlannerInput): OrchestrationPlanBuildResult;
 export declare function createOrchestrationPlanner(): {

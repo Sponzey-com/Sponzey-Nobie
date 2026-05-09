@@ -135,7 +135,7 @@ describe("task020 enterprise topology validation and compile UI", () => {
       expect(body.ok).toBe(true)
       expect(body.issues.map((item: { reasonCode: string }) => item.reasonCode)).toContain("tool_permission_missing")
       expect(html).toContain('data-testid="topology-validation-issue-tool_permission_missing"')
-      expect(html).toContain('data-testid="topology-validation-quickfix-tool_permission_missing"')
+      expect(html).not.toContain('data-testid="topology-validation-quickfix-tool_permission_missing"')
     } finally {
       await app.close()
     }
@@ -163,7 +163,7 @@ describe("task020 enterprise topology validation and compile UI", () => {
     expect(canvasSource).toContain("setCenter")
   })
 
-  it("generates quick fix operations for delegation target, approver, team/org, and permissions", () => {
+  it("generates quick fix operations for delegation target, approver, and team/org while excluding permissions", () => {
     const topology = topologyWithMissingToolPermission()
     const permissionFix = buildTopologyQuickFixOperations(issue({
       reasonCode: "tool_permission_missing",
@@ -191,11 +191,7 @@ describe("task020 enterprise topology validation and compile UI", () => {
       entityType: "process_definition",
     }), topology)
 
-    expect(permissionFix[0]).toEqual(expect.objectContaining({
-      op: "updateNode",
-      nodeId: "node:intake",
-      patch: expect.objectContaining({ allowedToolIds: ["tool:crm-search"] }),
-    }))
+    expect(permissionFix).toEqual([])
     expect(approverFix[0]).toEqual(expect.objectContaining({
       op: "createRelation",
       relationType: "approves",

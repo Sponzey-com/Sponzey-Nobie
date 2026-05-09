@@ -3,7 +3,7 @@ import type { DataExchangePackage, ExpectedOutputContract, FeedbackRequest, Feed
 import { persistDataExchangePackage } from "../memory/isolation.js";
 import { type SubSessionFeedbackCycleDirective } from "../runs/review-cycle-pass.js";
 import type { RunSubSessionInput } from "./sub-session-runner.js";
-export type FeedbackLoopContinuationAction = "feedback_request" | "limited_success_finalized" | "blocked_repeated_failure" | "blocked_retry_budget_exhausted" | "blocked_review_not_retryable";
+export type FeedbackLoopContinuationAction = "feedback_request" | "limited_success_finalized" | "blocked_repeated_failure" | "blocked_review_not_retryable";
 export interface FeedbackLoopContinuationDecision {
     action: FeedbackLoopContinuationAction;
     reasonCode: string;
@@ -40,7 +40,6 @@ export interface BuildFeedbackLoopPackageInput {
     conflictItems?: string[];
     additionalConstraints?: string[];
     additionalContextRefs?: string[];
-    retryBudgetRemaining?: number;
     idProvider?: () => string;
     now?: () => number;
     persistSynthesizedContext?: boolean;
@@ -63,7 +62,6 @@ export interface BuildRedelegatedSubSessionInput {
 }
 export declare function decideFeedbackLoopContinuation(input: {
     review: SubAgentResultReview;
-    retryBudgetRemaining: number;
     previousFailureKeys?: string[];
 }): FeedbackLoopContinuationDecision;
 export declare function validateRedelegationTarget(input: RedelegationTargetValidationInput): RedelegationTargetValidationResult;

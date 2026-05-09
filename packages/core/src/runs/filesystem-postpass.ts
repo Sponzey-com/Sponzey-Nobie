@@ -1,4 +1,4 @@
-import { canConsumeRecoveryBudget, type RecoveryBudgetUsage } from "./recovery-budget.js"
+import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import {
   decideFilesystemVerificationRecovery,
   decideMissingFilesystemMutationRecovery,
@@ -56,12 +56,7 @@ export async function decideFilesystemPostPassRecovery(params: {
     return { kind: "none" }
   }
 
-  const canRetryExecution = (params.maxDelegationTurns <= 0 || params.usedTurns < params.maxDelegationTurns)
-    && canConsumeRecoveryBudget({
-      usage: params.recoveryBudgetUsage,
-      kind: "execution",
-      maxDelegationTurns: params.maxDelegationTurns,
-    })
+  const canRetryExecution = true
 
   if (!params.sawRealFilesystemMutation) {
     const mutationDecision = decideMissingFilesystemMutationRecovery({
@@ -93,7 +88,7 @@ export async function decideFilesystemPostPassRecovery(params: {
         summary: mutationDecision.summary,
         budgetKind: "execution",
         maxDelegationTurns: params.maxDelegationTurns,
-        eventLabel: "파일 작업 복구 재시도",
+        eventLabel: "파일 작업 복구",
         nextMessage: mutationDecision.nextMessage,
         reviewStepStatus: "running",
         executingStepSummary: mutationDecision.summary,
@@ -126,7 +121,7 @@ export async function decideFilesystemPostPassRecovery(params: {
         summary: verificationDecision.summary,
         budgetKind: "execution",
         maxDelegationTurns: params.maxDelegationTurns,
-        eventLabel: "파일 검증 복구 재시도",
+        eventLabel: "파일 검증 복구",
         nextMessage: verificationDecision.nextMessage,
         reviewStepStatus: "running",
         executingStepSummary: verificationDecision.summary,

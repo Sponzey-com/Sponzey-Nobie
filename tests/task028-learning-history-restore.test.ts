@@ -25,6 +25,10 @@ import {
   restoreHistoryVersion,
 } from "../packages/core/src/index.ts"
 import { listOrchestrationEventLedger } from "../packages/core/src/orchestration/event-ledger.ts"
+import {
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+  type AgentExecutionDecision,
+} from "../packages/core/src/orchestration/execution-decision-contract.ts"
 import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
 import type {
   AgentRegistryEntry,
@@ -96,6 +100,40 @@ function capabilityPolicy(): CapabilityPolicy {
   }
 }
 
+function executionDecision(selectedExecutorId: string): AgentExecutionDecision {
+  return {
+    contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+    current_executor_id: "agent:nobie",
+    domain: "learning_history_test",
+    behavior_pattern: "delegate",
+    execution_route: "delegate_to_child",
+    selected_executor_id: selectedExecutorId,
+    selected_connection_path: ["agent:nobie", selectedExecutorId],
+    task_profile: {
+      title: "learning hint validated target",
+      summary: "A decision-selected direct child should not be bypassed by learning hints.",
+      goals: ["Keep hierarchy validation in place."],
+      task_units: [
+        {
+          id: "unit:1",
+          title: "delegate",
+          goal: "Delegate to the validated child.",
+          preferred_executor_id: selectedExecutorId,
+        },
+      ],
+      success_criteria: ["Invalid hints remain advisory only."],
+    },
+    required_outputs: [{ id: "answer", label: "answer" }],
+    risk_boundary: {
+      requires_user_approval: false,
+      reason: "test fixture",
+    },
+    confidence: 0.92,
+    fallback_if_unavailable: "direct_current_agent",
+    reason: "test execution decision",
+  }
+}
+
 function registryAgent(agentId: string, specialtyTags: string[]): AgentRegistryEntry {
   const policy = capabilityPolicy()
   return {
@@ -107,7 +145,6 @@ function registryAgent(agentId: string, specialtyTags: string[]): AgentRegistryE
     avoidTasks: [],
     teamIds: [],
     delegationEnabled: true,
-    retryBudget: 2,
     source: "db",
     config: {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -128,9 +165,9 @@ function registryAgent(agentId: string, specialtyTags: string[]): AgentRegistryE
         writebackReviewRequired: true,
       },
       capabilityPolicy: policy,
-      delegationPolicy: { enabled: true, maxParallelSessions: 1, retryBudget: 2 },
+      delegationPolicy: { enabled: true, maxParallelSessions: 1 },
       teamIds: [],
-      delegation: { enabled: true, maxParallelSessions: 1, retryBudget: 2 },
+      delegation: { enabled: true, maxParallelSessions: 1 },
       profileVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -444,6 +481,7 @@ describe("task028 learning history restore", () => {
       registrySnapshot: registry(),
       taskScopes: [scope()],
       intent: { specialtyTags: ["research"] },
+      agentExecutionDecision: executionDecision("agent:a"),
       learningHints: [
         {
           hintId: "hint:task028:grandchild",

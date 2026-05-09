@@ -3,7 +3,7 @@ export type EnterpriseTopologyReleaseModeId = "contracts_validator_only" | "dry_
 export type EnterpriseTopologyReleaseGateStatus = "passed" | "warning" | "failed";
 export type EnterpriseTopologyReleaseFeatureFlagKey = "enterprise_topology_registry" | "enterprise_topology_validator" | "enterprise_topology_compiler" | "topology_runtime_mvp" | "topology_runtime_recursive_delegation" | "topology_tool_runtime" | "topology_exhaustion_failure" | "declared_observed_topology_analysis" | "enterprise_topology_builder_ui" | "topology_runtime_enabled";
 export type EnterpriseTopologyReleaseGateCheckId = "feature_flag_matrix" | "contracts_validator_only_stage" | "dry_run_shadow_stage" | "gated_mode_stage" | "opt_in_routing_stage" | "feature_flag_off_path" | "single_nobie_fallback" | "sub_agent_regression_suite" | "channel_finalizer_regression_suite" | "webui_build_gate" | "topology_workspace_route_compatibility" | "topology_workspace_layer_gate" | "topology_workspace_no_typing_usability" | "topology_workspace_usability_gate" | "topology_runtime_smoke" | "topology_rollback_smoke" | "active_topology_snapshot_restore";
-export type EnterpriseTopologyWorkspaceLayerId = "build" | "run" | "trace" | "improve" | "resources";
+export type EnterpriseTopologyWorkspaceLayerId = "build" | "run" | "trace" | "improve";
 export interface EnterpriseTopologyReleaseFeatureFlagDefinition {
     featureKey: EnterpriseTopologyReleaseFeatureFlagKey;
     defaultMode: FeatureFlagMode;
@@ -84,7 +84,7 @@ export interface EnterpriseTopologyWorkspaceRouteCompatibility {
     canonicalRoute: "/advanced/topology";
     enterpriseBuilderAlias: "/advanced/enterprise-topology";
     enterpriseBuilderReplacement: "/advanced/topology?mode=build";
-    runtimeResourcesRoute: "/advanced/topology?mode=resources";
+    runtimeResourcesRoute: null;
     legacyRuntimeMenuRemoved: boolean;
 }
 export interface EnterpriseTopologyWorkspaceUsabilityGate {

@@ -24,7 +24,7 @@ describe("run retry application", () => {
         summary: "파일 검증 복구를 다시 시도합니다.",
         budgetKind: "execution",
         maxDelegationTurns: 3,
-        eventLabel: "파일 검증 복구 재시도",
+        eventLabel: "파일 검증 복구",
         nextMessage: "retry prompt",
         reviewStepStatus: "running",
         executingStepSummary: "파일 검증 복구를 다시 시도합니다.",
@@ -52,7 +52,7 @@ describe("run retry application", () => {
       title: "filesystem_verification_recovery",
     })
     expect(incrementDelegationTurnCount).toHaveBeenCalledWith("run-1", "파일 검증 복구를 다시 시도합니다.")
-    expect(appendRunEvent).toHaveBeenNthCalledWith(1, "run-1", "파일 검증 복구 재시도 1/3")
+    expect(appendRunEvent).toHaveBeenNthCalledWith(1, "run-1", "파일 검증 복구 신호 1")
     expect(appendRunEvent).toHaveBeenNthCalledWith(2, "run-1", "대안 후보: 다른 도구")
     expect(updateRunSummary).toHaveBeenCalledWith("run-1", "파일 검증 복구를 다시 시도합니다.")
     expect(updateRunStatus).toHaveBeenCalledWith("run-1", "running", "파일 검증 복구를 다시 시도합니다.", true)

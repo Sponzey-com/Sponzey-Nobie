@@ -1,4 +1,5 @@
 import { ENTERPRISE_RELATION_TYPES, ENTERPRISE_TOPOLOGY_SCHEMA_VERSION, } from "../contracts/enterprise-topology.js";
+import { repairTopologyForPersistence } from "./repair.js";
 import { validateTopology } from "./validator.js";
 export const ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION = 1;
 export class EnterpriseTopologyGuiOperationError extends Error {
@@ -96,7 +97,6 @@ function defaultNode(operation) {
         failurePolicy: {
             failureReportRequired: true,
             allowPartialSuccess: true,
-            maxRetryAttempts: 0,
             fallbackNodeIds: [],
         },
         recoveryPolicy: {
@@ -204,12 +204,18 @@ function applyUpdateNode(topology, operation) {
         node.tags = uniqueValues(patch.tags);
     if (patch.children !== undefined)
         node.children = uniqueValues(patch.children);
+    if (patch.template !== undefined)
+        node.template = patch.template;
     if (patch.allowedToolIds !== undefined)
         node.allowedToolIds = uniqueValues(patch.allowedToolIds);
     if (patch.allowedSystemIds !== undefined)
         node.allowedSystemIds = uniqueValues(patch.allowedSystemIds);
     if (patch.owner !== undefined)
         node.owner = patch.owner;
+    if (patch.failurePolicy !== undefined)
+        node.failurePolicy = patch.failurePolicy;
+    if (patch.recoveryPolicy !== undefined)
+        node.recoveryPolicy = patch.recoveryPolicy;
     node.updatedAt = operation.at;
     updateTopologyTimestamp(topology, operation.at);
 }
@@ -352,7 +358,7 @@ function rebuildDraftFromOperationLog(input) {
 }
 export function createEnterpriseTopologyGuiDraft(input) {
     const now = input.now ?? Date.now();
-    const baseTopology = cloneTopology(input.topology);
+    const baseTopology = repairTopologyForPersistence(input.topology).topology;
     const layout = input.layout ? cloneLayout(input.layout) : { nodes: {} };
     const validation = validateTopology(baseTopology);
     return {

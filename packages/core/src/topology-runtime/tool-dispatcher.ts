@@ -100,7 +100,7 @@ export async function dispatchPlannedNodeTools(
     const status = normalizeToolExecutionStatus(execution)
     const reasonCode = reasonCodeForExecutionStatus(status, execution)
     const failureCandidate = status !== "succeeded"
-    const retryPossible = failureCandidate && call.retryBudget > 0 && (status === "timeout" || status === "execution_error")
+    const retryPossible = failureCandidate && (status === "timeout" || status === "execution_error")
     const fallbackPossible = failureCandidate && call.fallbackNodeIds.length > 0
     const doneTrace = createNodeRuntimeTraceEvent({
       workOrder: input.workOrder,
@@ -140,7 +140,6 @@ export async function dispatchPlannedNodeTools(
               reasonCode,
               retryPossible,
               fallbackPossible,
-              retryBudget: call.retryBudget,
               fallbackNodeIds: call.fallbackNodeIds,
             },
           }

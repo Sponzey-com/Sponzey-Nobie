@@ -144,7 +144,6 @@ function subAgentConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -153,7 +152,6 @@ function subAgentConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     ...overrides,
   }
@@ -213,7 +211,6 @@ function subSession(): SubSessionContract {
     agentNickname: "Researcher",
     commandRequestId: "command:1",
     status: "queued",
-    retryBudgetRemaining: 2,
     promptBundleId: "bundle:1",
   }
 }
@@ -344,9 +341,9 @@ describe("task004 storage migration", () => {
       legacyDb.prepare(
         `INSERT INTO run_subsessions
          (sub_session_id, parent_run_id, parent_session_id, parent_request_id, agent_id, agent_display_name, agent_nickname,
-          command_request_id, status, retry_budget_remaining, prompt_bundle_id, contract_json, schema_version, audit_id,
+          command_request_id, status, prompt_bundle_id, contract_json, schema_version, audit_id,
           idempotency_key, created_at, updated_at, started_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "sub-session:legacy",
         "run:root",
@@ -357,7 +354,6 @@ describe("task004 storage migration", () => {
         "Researcher",
         "command:legacy",
         "queued",
-        2,
         "bundle:legacy",
         JSON.stringify(subSession()),
         CONTRACT_SCHEMA_VERSION,

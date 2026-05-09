@@ -24,7 +24,7 @@ const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
     allowedCommands: [],
   },
   orchestration: {
-    maxDelegationTurns: 5,
+    maxDelegationTurns: 0,
   },
   webui: {
     enabled: true,

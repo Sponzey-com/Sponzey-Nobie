@@ -139,7 +139,6 @@ function command(id: string, expectedOutputs: ExpectedOutputContract[] = [eviden
     taskScope: { ...taskScope, expectedOutputs },
     contextPackageIds: [],
     expectedOutputs,
-    retryBudget: 2,
   }
 }
 
@@ -159,6 +158,10 @@ function promptBundle(): AgentPromptBundle {
       skillMcpAllowlist: allowlist,
       rateLimit: { maxConcurrentCalls: 2 },
     },
+    modelProfileSnapshot: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
     taskScope,
     safetyRules: ["Do not deliver sub-session results directly to the user."],
     sourceProvenance: [{ sourceId: "profile:agent:researcher", version: "1" }],
@@ -171,7 +174,6 @@ describe("task007 sub-agent result review", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
       now: () => now,
       idProvider: () => "feedback-1",
     })
@@ -184,7 +186,6 @@ describe("task007 sub-agent result review", () => {
       parentRunId: "run-parent",
       subSessionId: "sub:review",
       missingItems: ["missing_evidence:answer:source"],
-      retryBudgetRemaining: 1,
       reasonCode: "sub_agent_result_review:required_evidence_missing:answer:source:none",
     })
   })
@@ -196,7 +197,6 @@ describe("task007 sub-agent result review", () => {
         evidence: [{ evidenceId: "e-1", kind: "source", sourceRef: "source:1" }],
       }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
     const wrongEvidenceKind = reviewSubAgentResult({
       resultReport: resultReport({
@@ -204,7 +204,6 @@ describe("task007 sub-agent result review", () => {
         evidence: [{ evidenceId: "e-2", kind: "quote", sourceRef: "source:2" }],
       }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(accepted.status).toBe("completed")
@@ -221,7 +220,6 @@ describe("task007 sub-agent result review", () => {
         artifacts: [{ artifactId: "artifact-1", kind: "image", path: "/tmp/missing.png" }],
       }),
       expectedOutputs: [artifactOutput],
-      retryBudgetRemaining: 2,
       artifactExists: () => false,
     })
 
@@ -233,12 +231,10 @@ describe("task007 sub-agent result review", () => {
     const first = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
     const second = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 1,
       previousFailureKeys: [first.normalizedFailureKey ?? ""],
     })
 
@@ -249,21 +245,20 @@ describe("task007 sub-agent result review", () => {
     expect(second.feedbackRequest).toBeUndefined()
   })
 
-  it("applies retry budget classes for default, format-only, and expensive work", () => {
-    expect(getSubAgentResultRetryBudgetLimit("default")).toBe(2)
-    expect(getSubAgentResultRetryBudgetLimit("format_only")).toBe(3)
-    expect(getSubAgentResultRetryBudgetLimit("risk_or_external")).toBe(1)
-    expect(getSubAgentResultRetryBudgetLimit("expensive")).toBe(1)
-    expect(getSubSessionRevisionBudgetLimit("format_only")).toBe(3)
-    expect(canRetrySubSessionRevision({ retryBudgetRemaining: 1, budgetClass: "expensive" })).toBe(true)
-    expect(canRetrySubSessionRevision({ retryBudgetRemaining: 1, budgetClass: "default", repeatedFailure: true })).toBe(false)
+  it("keeps legacy retry budget classes unbounded", () => {
+    expect(getSubAgentResultRetryBudgetLimit("default")).toBe(Number.MAX_SAFE_INTEGER)
+    expect(getSubAgentResultRetryBudgetLimit("format_only")).toBe(Number.MAX_SAFE_INTEGER)
+    expect(getSubAgentResultRetryBudgetLimit("risk_or_external")).toBe(Number.MAX_SAFE_INTEGER)
+    expect(getSubAgentResultRetryBudgetLimit("expensive")).toBe(Number.MAX_SAFE_INTEGER)
+    expect(getSubSessionRevisionBudgetLimit("format_only")).toBe(Number.MAX_SAFE_INTEGER)
+    expect(canRetrySubSessionRevision({ budgetClass: "expensive" })).toBe(true)
+    expect(canRetrySubSessionRevision({ budgetClass: "default", repeatedFailure: true })).toBe(false)
   })
 
   it("builds a concrete feedback cycle directive from FeedbackRequest", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
       idProvider: () => "feedback-directive",
     })
     const directive = buildSubSessionFeedbackCycleDirective(review.feedbackRequest!)
@@ -278,12 +273,10 @@ describe("task007 sub-agent result review", () => {
     const accepted = reviewSubAgentResult({
       resultReport: resultReport(),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
     const rejected = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(decideSubSessionCompletionIntegration([
@@ -299,7 +292,7 @@ describe("task007 sub-agent result review", () => {
   })
 
   it("connects typed review to SubSessionRunner lifecycle", async () => {
-    const sessions = new Map<string, { status: string; retryBudgetRemaining: number }>()
+    const sessions = new Map<string, { status: string }>()
     const events: string[] = []
     const runner = new SubSessionRunner({
       now: () => now,
@@ -308,14 +301,12 @@ describe("task007 sub-agent result review", () => {
       persistSubSession: (subSession) => {
         sessions.set(subSession.subSessionId, {
           status: subSession.status,
-          retryBudgetRemaining: subSession.retryBudgetRemaining,
         })
         return true
       },
       updateSubSession: (subSession) => {
         sessions.set(subSession.subSessionId, {
           status: subSession.status,
-          retryBudgetRemaining: subSession.retryBudgetRemaining,
         })
       },
       appendParentEvent: (_runId, label) => {
@@ -336,7 +327,7 @@ describe("task007 sub-agent result review", () => {
 
     expect(outcome.status).toBe("needs_revision")
     expect(outcome.feedbackRequest?.missingItems).toEqual(["missing_evidence:answer:source"])
-    expect(sessions.get("sub:runner")).toMatchObject({ status: "needs_revision", retryBudgetRemaining: 1 })
+    expect(sessions.get("sub:runner")).toMatchObject({ status: "needs_revision" })
     expect(events).toEqual(expect.arrayContaining([
       "sub_session_result:sub:runner:needs_revision",
       "sub_session_feedback_requested:sub:runner:sub_agent_result_review:required_evidence_missing:answer:source:none",

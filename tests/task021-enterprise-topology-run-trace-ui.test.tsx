@@ -83,7 +83,7 @@ async function startDraft(app: ReturnType<typeof Fastify>) {
 }
 
 describe("task021 enterprise topology manual run and trace UI", () => {
-  it("lets the selected canvas work node become the manual run entry target", () => {
+  it("keeps manual run target controls out of the removed advanced canvas surface", () => {
     const model = buildEnterpriseTopologyCanvasModel(topologyFixture())
     const html = renderToStaticMarkup(
       createElement(EnterpriseTopologyCanvasShell, {
@@ -94,13 +94,12 @@ describe("task021 enterprise topology manual run and trace UI", () => {
       }),
     )
 
-    expect(html).toContain('data-testid="topology-run-target-panel"')
-    expect(html).toContain('data-testid="topology-run-target-select"')
-    expect(html).toContain("node:intake")
+    expect(html).not.toContain('data-testid="topology-run-target-panel"')
+    expect(html).not.toContain('data-testid="topology-run-target-select"')
     expect(html).toContain('data-testid="topology-run-trace-overlay"')
   })
 
-  it("renders WorkOrder template and context pickers with advanced typing collapsed", () => {
+  it("renders the simple run launcher without WorkOrder template or context pickers", () => {
     const template = WORK_ORDER_TEMPLATE_CATALOG.templates[0]!
     const html = renderToStaticMarkup(
       createElement(TopologyRunLauncher, {
@@ -113,12 +112,13 @@ describe("task021 enterprise topology manual run and trace UI", () => {
       }),
     )
 
-    expect(html).toContain('data-testid="topology-run-launcher"')
-    expect(html).toContain('data-testid="topology-run-template-picker"')
-    expect(html).toContain('data-testid="topology-run-context-picker"')
-    expect(html).toContain("고객 요청 분류")
-    expect(html).toContain("일반 문의")
-    expect(html).toContain('data-testid="topology-run-advanced-input"')
+    expect(html).toContain('data-testid="executor-run-panel"')
+    expect(html).toContain('data-testid="topology-run-simple-panel"')
+    expect(html).not.toContain('data-testid="topology-run-template-picker"')
+    expect(html).not.toContain('data-testid="topology-run-context-picker"')
+    expect(html).not.toContain("고객 요청 분류")
+    expect(html).not.toContain("일반 문의")
+    expect(html).not.toContain('data-testid="topology-run-advanced-input"')
     expect(html).not.toContain("<details open")
   })
 

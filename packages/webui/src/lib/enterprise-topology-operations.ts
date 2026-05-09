@@ -218,12 +218,25 @@ export interface EnterpriseTopologyGuiDraftStartRequest {
   topology?: EnterpriseTopology
   version?: number
   reset?: boolean
+  persist?: boolean
+  createdBy?: string
+  importSource?: string
 }
 
 export interface EnterpriseTopologyGuiDraftResponse {
   ok: true
-  draft: EnterpriseTopologyGuiDraft
+  draft: EnterpriseTopologyGuiDraft | null
   reused?: boolean
+  source?: "memory" | "registry" | "empty"
+  version?: number
+  persisted?: boolean
+  persistError?: string
+  persistIssues?: unknown
+  persistedVersion?: {
+    version: number
+    versionId: string
+    topologyId: string
+  }
 }
 
 export interface EnterpriseTopologyGuiDraftOperationsRequest {
@@ -321,6 +334,21 @@ export type EnterpriseTopologyGuiDraftCompiledPreviewResponse =
       validation: EnterpriseTopologyGuiValidation
       issues: EnterpriseTopologyValidationIssue[]
     }
+
+export interface GraphExecutionPlanPreviewResponse {
+  ok: true
+  topologyId: string
+  draftId: string
+  graphExecutionPlanId: string
+  plan: unknown
+  validationWarnings: string[]
+  record: {
+    graphExecutionPlanId: string
+    status: string
+    createdAt: number
+    updatedAt: number
+  }
+}
 
 export interface EnterpriseTopologyGuiDraftValidateResponse {
   ok: true
@@ -541,6 +569,16 @@ export interface EnterpriseTopologyGuiDraftRunResponse {
   templateId: string
   contextPresetId: string
   simulationMode: WorkOrderTemplateSimulationMode
+  topologyRun: EnterpriseTopologyRunTraceProjection
+}
+
+export interface EnterpriseTopologyRunListResponse {
+  ok: true
+  topologyRuns: EnterpriseTopologyRunRecord[]
+}
+
+export interface EnterpriseTopologyRunProjectionResponse {
+  ok: true
   topologyRun: EnterpriseTopologyRunTraceProjection
 }
 

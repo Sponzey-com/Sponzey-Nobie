@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import cors from "@fastify/cors"
 import staticPlugin from "@fastify/static"
 import websocketPlugin from "@fastify/websocket"
-import Fastify from "fastify"
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify"
 import {
   startArtifactCleanupScheduler,
   stopArtifactCleanupScheduler,
@@ -69,32 +69,6 @@ export async function startServer(): Promise<void> {
   await server.register(cors, { origin: true })
   await server.register(websocketPlugin)
 
-  const __dirname = fileURLToPath(new URL(".", import.meta.url))
-  const webuiDist = join(__dirname, "../../../webui/dist")
-  if (existsSync(webuiDist)) {
-    await server.register(staticPlugin, {
-      root: webuiDist,
-      prefix: "/",
-      decorateReply: false,
-    })
-    server.setNotFoundHandler(
-      async (_req: unknown, reply: { sendFile: (f: string, r: string) => unknown }) => {
-        return reply.sendFile("index.html", webuiDist)
-      },
-    )
-  } else {
-    server.setNotFoundHandler(
-      async (
-        _req: unknown,
-        reply: { status: (n: number) => { send: (o: unknown) => unknown } },
-      ) => {
-        return reply
-          .status(404)
-          .send({ error: "WebUI not built. Run: pnpm build --filter @nobie/webui" })
-      },
-    )
-  }
-
   registerStatusRoute(server)
   registerBenchmarkRoutes(server)
   registerCapabilitiesRoute(server)
@@ -128,6 +102,32 @@ export async function startServer(): Promise<void> {
   registerUiModeRoute(server)
   registerAdminRoute(server)
   registerWsRoute(server)
+
+  const __dirname = fileURLToPath(new URL(".", import.meta.url))
+  const webuiDist = join(__dirname, "../../../webui/dist")
+  if (existsSync(webuiDist)) {
+    await server.register(staticPlugin, {
+      root: webuiDist,
+      prefix: "/",
+    })
+    server.setNotFoundHandler(async (req: FastifyRequest, reply: FastifyReply) => {
+      const url = req.raw.url ?? ""
+      if (url === "/api" || url.startsWith("/api/") || url === "/ws" || url.startsWith("/ws/")) {
+        return reply.status(404).send({ error: "Not found" })
+      }
+      return reply.sendFile("index.html")
+    })
+  } else {
+    server.setNotFoundHandler(async (req: FastifyRequest, reply: FastifyReply) => {
+      const url = req.raw.url ?? ""
+      if (url === "/api" || url.startsWith("/api/") || url === "/ws" || url.startsWith("/ws/")) {
+        return reply.status(404).send({ error: "Not found" })
+      }
+      return reply
+        .status(404)
+        .send({ error: "WebUI not built. Run: pnpm build --filter @nobie/webui" })
+    })
+  }
 
   const { host, port } = cfg.webui
   await server.listen({ host, port })

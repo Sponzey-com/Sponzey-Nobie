@@ -37,7 +37,7 @@ describe("execution post-pass recovery", () => {
     expect(decision.state.nextMessage).toContain("[Command Failure Recovery]")
   })
 
-  it("returns a stop when generic execution recovery has exhausted budget", () => {
+  it("returns retry when generic execution recovery passes the old fixed budget", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "예약을 등록해줘",
       preview: "create_schedule failed",
@@ -62,12 +62,11 @@ describe("execution post-pass recovery", () => {
       maxDelegationTurns: 2,
     })
 
-    expect(decision).toEqual({
-      kind: "stop",
-      summary: "실행 복구 재시도 한도(2회)에 도달했습니다.",
-      reason: "invalid schedule registration path",
-      remainingItems: ["실패한 도구에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
-    })
+    expect(decision.kind).toBe("retry")
+    if (decision.kind !== "retry") return
+    expect(decision.seenKeyKind).toBe("generic_execution")
+    expect(decision.state.eventLabel).toBe("도구 실패 대안 재시도")
+    expect(decision.state.nextMessage).toContain("[Execution Recovery]")
   })
 
   it("returns stop when command failure has no unseen alternative path left", () => {

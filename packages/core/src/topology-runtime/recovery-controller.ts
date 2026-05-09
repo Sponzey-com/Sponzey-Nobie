@@ -108,10 +108,7 @@ export class RecoveryController {
 
   reviewRetry(): NodeRecoveryReviewSignal {
     const possible = this.input.options?.requireRetryReview
-      ?? (
-        this.input.nodeContractSnapshot.recoveryPolicy?.retryAllowed === true
-        && (this.input.nodeContractSnapshot.failurePolicy?.maxRetryAttempts ?? 0) > 0
-      )
+      ?? this.input.nodeContractSnapshot.recoveryPolicy?.retryAllowed === true
     const reviewed = this.input.options?.retryAttempted === true
     return buildSignal({
       kind: "retry",
@@ -123,10 +120,10 @@ export class RecoveryController {
       unreviewedReasonCode: "retry_untried",
       notAvailableReasonCode: "retry_not_available",
       summary: reviewed
-        ? "Retry budget was reviewed or consumed."
+        ? "Retry path was reviewed or attempted."
         : possible
-          ? "Retry budget remains unreviewed."
-          : "Retry is unavailable by recovery policy or retry budget.",
+          ? "Retry path remains unreviewed."
+          : "Retry is unavailable by node recovery policy.",
     })
   }
 

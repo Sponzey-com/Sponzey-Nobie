@@ -138,8 +138,6 @@ function diagnosticMessage(reasonCode, catalogId) {
             return "Agent model id is unknown.";
         case "model_fallback_cost_budget_missing":
             return "Agent fallback model is configured without a cost budget.";
-        case "model_timeout_missing":
-            return "Agent model timeout is not configured.";
         case "model_doctor_unavailable":
             return "Model availability doctor reports this model as unavailable.";
         case "model_doctor_degraded":
@@ -335,7 +333,6 @@ function modelReasonCodes(modelProfile, options = {}) {
         modelProfile.fallbackModelId && modelProfile.costBudget === undefined
             ? "model_fallback_cost_budget_missing"
             : undefined,
-        modelProfile.timeoutMs === undefined ? "model_timeout_missing" : undefined,
         doctor?.status === "unavailable" ? "model_doctor_unavailable" : undefined,
         doctor?.status === "degraded" ? "model_doctor_degraded" : undefined,
         ...(doctor?.reasonCodes ?? []),
@@ -361,12 +358,6 @@ export function buildAgentModelSummary(config, options = {}) {
         availability,
         ...(config.modelProfile?.providerId ? { providerId: config.modelProfile.providerId } : {}),
         ...(config.modelProfile?.modelId ? { modelId: config.modelProfile.modelId } : {}),
-        ...(config.modelProfile?.timeoutMs !== undefined
-            ? { timeoutMs: config.modelProfile.timeoutMs }
-            : {}),
-        ...(config.modelProfile?.retryCount !== undefined
-            ? { retryCount: config.modelProfile.retryCount }
-            : {}),
         ...(config.modelProfile?.costBudget !== undefined
             ? { costBudget: config.modelProfile.costBudget }
             : {}),

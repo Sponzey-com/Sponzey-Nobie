@@ -17,6 +17,10 @@ import type {
 import { closeDb } from "../packages/core/src/db/index.js"
 import { upsertAgentConfig, upsertTeamConfig } from "../packages/core/src/db/index.js"
 import { resolveAgentCapabilityModelSummary } from "../packages/core/src/orchestration/capability-model.ts"
+import {
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+  type AgentExecutionDecision,
+} from "../packages/core/src/orchestration/execution-decision-contract.ts"
 import type { OrchestrationModeSnapshot } from "../packages/core/src/orchestration/mode.ts"
 import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
 import {
@@ -99,7 +103,6 @@ function subAgent(input: {
   riskCeiling?: CapabilityRiskLevel
   approvalRequiredFrom?: CapabilityRiskLevel
   maxParallelSessions?: number
-  retryBudget?: number
 }): SubAgentConfig {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -135,7 +138,6 @@ function subAgent(input: {
     delegation: {
       enabled: true,
       maxParallelSessions: input.maxParallelSessions ?? 2,
-      retryBudget: input.retryBudget ?? 2,
     },
   }
 }
@@ -168,7 +170,6 @@ function registryEntry(config: SubAgentConfig): AgentRegistryEntry {
     avoidTasks: config.avoidTasks,
     teamIds: config.teamIds,
     delegationEnabled: config.delegation.enabled,
-    retryBudget: config.delegation.retryBudget,
     source: "config",
     config,
     permissionProfile: config.capabilityPolicy.permissionProfile,
@@ -270,6 +271,43 @@ function taskScope(id: string): StructuredTaskScope {
   }
 }
 
+function executionDecision(
+  selectedExecutorId: string,
+  currentExecutorId = "agent:nobie",
+): AgentExecutionDecision {
+  return {
+    contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+    current_executor_id: currentExecutorId,
+    domain: "planner_test",
+    behavior_pattern: "delegate",
+    execution_route: "delegate_to_child",
+    selected_executor_id: selectedExecutorId,
+    selected_connection_path: [currentExecutorId, selectedExecutorId],
+    task_profile: {
+      title: "validated planner target",
+      summary: "The execution harness selected the target executor before planning.",
+      goals: ["Convert the selected executor into a planner assignment."],
+      task_units: [
+        {
+          id: "unit:1",
+          title: "execute",
+          goal: "Handle the requested work.",
+          preferred_executor_id: selectedExecutorId,
+        },
+      ],
+      success_criteria: ["Planner does not pick another executor."],
+    },
+    required_outputs: [{ id: "answer", label: "answer" }],
+    risk_boundary: {
+      requires_user_approval: false,
+      reason: "planner fixture",
+    },
+    confidence: 0.96,
+    fallback_if_unavailable: "direct_current_agent",
+    reason: "test execution decision",
+  }
+}
+
 describe("task004 orchestration registry and planner", () => {
   it("builds a registry snapshot with enabled agent state, team membership, permissions, skills, load, and failure rate", () => {
     const agent = subAgent({
@@ -355,7 +393,7 @@ describe("task004 orchestration registry and planner", () => {
     expect(snapshot.teams.some((team) => team.teamId === configTeam.teamId)).toBe(false)
   })
 
-  it("excludes disabled agents and chooses an eligible candidate by structured fields", () => {
+  it("excludes disabled agents and honors an explicit eligible target", () => {
     const disabled = subAgent({ agentId: "agent:disabled", status: "disabled" })
     const enabled = subAgent({ agentId: "agent:enabled", specialtyTags: ["market"] })
     const result = buildOrchestrationPlan({
@@ -364,7 +402,12 @@ describe("task004 orchestration registry and planner", () => {
       userRequest: "이 문자열은 점수 계산에 직접 쓰이지 않는다",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([disabled, enabled]),
-      intent: { specialtyTags: ["market"], requiredSkillIds: ["research"] },
+      intent: {
+        explicitAgentId: "agent:enabled",
+        specialtyTags: ["market"],
+        requiredSkillIds: ["research"],
+      },
+      agentExecutionDecision: executionDecision("agent:enabled"),
       now: () => now,
       idProvider: () => "plan:disabled",
     })
@@ -387,6 +430,7 @@ describe("task004 orchestration registry and planner", () => {
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([fallback, preferred]),
       intent: { explicitAgentId: "agent:preferred", specialtyTags: ["ops"] },
+      agentExecutionDecision: executionDecision("agent:preferred"),
       now: () => now,
       idProvider: () => "plan:explicit",
     })
@@ -408,6 +452,7 @@ describe("task004 orchestration registry and planner", () => {
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([requested, other]),
       intent: { explicitAgentId: "agent:requested" },
+      agentExecutionDecision: executionDecision("agent:requested"),
       now: () => now,
       idProvider: () => "plan:explicit-missing",
     })
@@ -431,6 +476,7 @@ describe("task004 orchestration registry and planner", () => {
         [team("team:research", ["agent:team-member"])],
       ),
       intent: { explicitTeamId: "team:research" },
+      agentExecutionDecision: executionDecision("agent:team-member"),
       now: () => now,
       idProvider: () => "plan:team",
     })
@@ -443,14 +489,16 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.plan.directNobieTasks).toHaveLength(0)
     expect(result.plan.plannerMetadata?.status).toBe("planned")
     expect(result.plan.plannerMetadata?.reasonCodes).toContain("team_execution_plan_planned")
-    expect(result.plan.fallbackStrategy.reasonCode).toBe("delegate_failure_single_nobie")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe(
+      "delegated_team_runtime_failure_direct_current_agent",
+    )
     expect(
       result.candidateScores.find((candidate) => candidate.agentId === "agent:outsider")
         ?.excludedReasonCodes,
     ).toContain("not_explicit_target")
   })
 
-  it("infers a capable team from request capability and delegates instead of direct Nobie handling", () => {
+  it("does not auto-expand capable teams that are not explicitly selected", () => {
     const developer = subAgent({
       agentId: "agent:developer",
       displayName: "Developer",
@@ -476,22 +524,22 @@ describe("task004 orchestration registry and planner", () => {
       userRequest: "투자 봇 프로젝트를 구현해줘",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([developer, research], [developmentTeam]),
+      intent: { explicitAgentId: "agent:developer" },
+      agentExecutionDecision: executionDecision("agent:developer"),
       now: () => now,
       idProvider: () => "plan:inferred-team",
     })
 
-    expect(result.plan.directNobieTasks).toHaveLength(0)
     expect(result.plan.delegatedTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks[0]).toMatchObject({
-      assignedTeamId: "team:development",
+      assignedAgentId: "agent:developer",
       executionKind: "delegated_sub_agent",
     })
-    expect(result.plan.delegatedTasks[0]?.planningTrace.reasonCodes).toContain(
+    expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBeUndefined()
+    expect(result.plan.delegatedTasks[0]?.planningTrace.reasonCodes).not.toContain(
       "inferred_team_target_from_capability",
     )
-    expect(result.plan.plannerMetadata?.reasonCodes).toContain(
-      "mandatory_delegation_candidate_available",
-    )
+    expect(result.plan.plannerMetadata?.reasonCodes).not.toContain("inferred_team_target_from_capability")
   })
 
   it("marks approval required when permission profile threshold requires it", () => {
@@ -506,7 +554,8 @@ describe("task004 orchestration registry and planner", () => {
       userRequest: "external network check",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([agent]),
-      intent: { requiredRisk: "external" },
+      intent: { explicitAgentId: "agent:risky", requiredRisk: "external" },
+      agentExecutionDecision: executionDecision("agent:risky"),
       now: () => now,
       idProvider: () => "plan:approval",
     })
@@ -546,6 +595,8 @@ describe("task004 orchestration registry and planner", () => {
       userRequest: "parallel conflict",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registry([first, second]),
+      intent: { explicitAgentId: "agent:first" },
+      agentExecutionDecision: executionDecision("agent:first"),
       taskScopes: [taskScope("a"), taskScope("b")],
       resourceLocksByTaskId: locks,
       now: () => now,
@@ -557,7 +608,7 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.plan.dependencyEdges[0]?.reasonCode).toBe("exclusive_resource_lock_conflict")
   })
 
-  it("falls back to degraded single_nobie plan when planning exceeds the budget", () => {
+  it("falls back to degraded current-agent direct plan when planning exceeds the budget", () => {
     let tick = now
     const result = buildOrchestrationPlan({
       parentRunId: "run:7",
@@ -576,7 +627,7 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.timedOut).toBe(true)
     expect(result.plan.delegatedTasks).toHaveLength(0)
     expect(result.plan.plannerMetadata?.status).toBe("degraded")
-    expect(result.plan.fallbackStrategy.reasonCode).toBe("planning_timeout_single_nobie")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("planning_timeout_direct_current_agent")
   })
 
   it("creates a valid OrchestrationPlan without semantic string matching as a core condition", () => {
@@ -592,7 +643,9 @@ describe("task004 orchestration registry and planner", () => {
       idProvider: () => "plan:no-semantic",
     })
 
-    expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe("agent:generic")
+    expect(result.plan.delegatedTasks).toHaveLength(0)
+    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("execution_decision_required")
     expect(result.plan.plannerMetadata?.semanticComparisonUsed).toBe(false)
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })

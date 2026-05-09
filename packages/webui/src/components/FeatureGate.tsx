@@ -3,6 +3,7 @@ import { DisabledPanel } from "./DisabledPanel"
 import { ErrorState } from "./ErrorState"
 import { PlannedState } from "./PlannedState"
 import type { FeatureCapability } from "../contracts/capabilities"
+import { TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY } from "../lib/topology-workspace-copy"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useCapability } from "../stores/capabilities"
 
@@ -14,7 +15,7 @@ const FEATURE_GATE_FALLBACKS: Record<string, FeatureCapability> = {
     status: "disabled",
     implemented: true,
     enabled: false,
-    reason: "토폴로지 기능 플래그가 아직 준비되지 않았습니다.",
+    reason: TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo,
   },
 }
 

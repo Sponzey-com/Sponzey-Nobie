@@ -201,6 +201,11 @@ const COLLECTION_ENTITY_TYPE_BY_KEY: Record<EntityCollectionDefinition["key"], E
 export const TOPOLOGY_VALIDATOR_QUICK_FIX_CODES = [
   "missing_entity_reference",
   "duplicate_entity_id",
+] as const satisfies readonly TopologyValidatorIssueCode[]
+
+export const ENTERPRISE_TOPOLOGY_COMPATIBILITY_QUICK_FIX_CODES = [
+  "missing_entity_reference",
+  "duplicate_entity_id",
   "authority_rule_conflict",
   "invalid_authority_rule_action",
   "approval_authority_missing",
@@ -254,6 +259,21 @@ export function createTopologyValidatorIssue(input: TopologyValidatorIssueInput)
 }
 
 export function validateTopology(value: unknown, options: TopologyValidatorOptions = {}): TopologyValidationResult {
+  return validateTopologyInternal(value, options, { compatibilityRules: "auto" })
+}
+
+export function validateEnterpriseTopologyCompatibility(
+  value: unknown,
+  options: TopologyValidatorOptions = {},
+): TopologyValidationResult {
+  return validateTopologyInternal(value, options, { compatibilityRules: "always" })
+}
+
+function validateTopologyInternal(
+  value: unknown,
+  options: TopologyValidatorOptions,
+  mode: { compatibilityRules: "auto" | "always" },
+): TopologyValidationResult {
   const contractValidation = validateEnterpriseTopology(value)
   if (!contractValidation.ok) {
     return buildTopologyValidationResult(contractValidation.issues.map((issue) => convertContractIssue(value, issue)))
@@ -264,7 +284,9 @@ export function validateTopology(value: unknown, options: TopologyValidatorOptio
   const indexes = buildTopologyEntityIndexes(topology, issues)
   validateTopologyReferences(topology, indexes, issues)
   validateDelegationGraph(topology, indexes, issues, options.maxDelegationDepth ?? DEFAULT_TOPOLOGY_MAX_DELEGATION_DEPTH)
-  validateEnterpriseRules(topology, indexes, issues, options)
+  if (mode.compatibilityRules === "always" || !isExecutorTopologyV2PersistenceProjection(topology)) {
+    validateEnterpriseRules(topology, indexes, issues, options)
+  }
 
   return buildTopologyValidationResult(issues)
 }
@@ -353,6 +375,15 @@ function inferEntityContextFromPath(
 
 function isTopologyCollectionKey(value: unknown): value is EntityCollectionDefinition["key"] {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(COLLECTION_ENTITY_TYPE_BY_KEY, value)
+}
+
+function isExecutorTopologyV2PersistenceProjection(topology: EnterpriseTopology): boolean {
+  const marker = recordFromMetadata(topology.metadata?.executorTopologyV2)
+  return marker?.schemaVersion === 2 && marker.sourceOfTruth === "executor_topology_v2"
+}
+
+function recordFromMetadata(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined
 }
 
 function buildTopologyEntityIndexes(topology: EnterpriseTopology, issues: TopologyValidatorIssue[]): TopologyEntityIndexes {
@@ -1429,16 +1460,6 @@ function validateNodeFailureAndRecoveryPolicies(
         entityType: "node",
       }))
     } else {
-      if (!Number.isInteger(node.failurePolicy.maxRetryAttempts) || node.failurePolicy.maxRetryAttempts < 0) {
-        issues.push(createTopologyValidatorIssue({
-          path: `${path}.failurePolicy.maxRetryAttempts`,
-          code: "invalid_failure_policy",
-          severity: "invalid",
-          message: "FailurePolicy maxRetryAttempts must be a non-negative integer.",
-          entityId: node.id,
-          entityType: "node",
-        }))
-      }
       node.failurePolicy.fallbackNodeIds.forEach((fallbackNodeId, fallbackIndex) => {
         validateTypedReference(
           indexes,

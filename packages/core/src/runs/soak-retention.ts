@@ -297,7 +297,7 @@ export interface RetentionCleanupApplyOptions extends RetentionCleanupOptions {
 export type RetryFailureDomain = "model" | "channel" | "yeonjang" | "tool" | "delivery" | "scheduler"
 
 export interface RetryPolicy {
-  maxAttempts: number
+  strategyChangeSignalThreshold: number
   baseDelayMs: number
   maxDelayMs: number
 }
@@ -315,18 +315,18 @@ export interface RetryFailureFingerprintInput {
 
 export interface RetryBackoffInput {
   domain?: RetryFailureDomain
-  attempt: number
-  maxAttempts?: number
+  signalCount: number
+  strategyChangeSignalThreshold?: number
   baseDelayMs?: number
   maxDelayMs?: number
 }
 
 export interface RetryBackoffDecision {
-  attempt: number
-  maxAttempts: number
-  shouldRetry: boolean
-  exhausted: boolean
-  reason: "retry_scheduled" | "retry_exhausted"
+  signalCount: number
+  strategyChangeSignalThreshold: number
+  shouldContinue: true
+  strategyChangeRecommended: boolean
+  reason: "continue_with_backoff" | "strategy_change_recommended"
   nextDelayMs?: number
 }
 
@@ -334,7 +334,8 @@ export interface RepeatedFailureStopDecision {
   fingerprint: string
   seenCount: number
   threshold: number
-  shouldStop: boolean
+  shouldStop: false
+  strategyChangeRecommended: boolean
 }
 
 const RETENTION_DATA_KINDS: RetentionDataKind[] = [
@@ -354,12 +355,12 @@ export const DEFAULT_RETENTION_POLICY: RetentionPolicy = {
 }
 
 export const DEFAULT_RETRY_POLICIES: Record<RetryFailureDomain, RetryPolicy> = {
-  model: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-  channel: { maxAttempts: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
-  yeonjang: { maxAttempts: 6, baseDelayMs: 5_000, maxDelayMs: 60_000 },
-  tool: { maxAttempts: 2, baseDelayMs: 1_000, maxDelayMs: 15_000 },
-  delivery: { maxAttempts: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
-  scheduler: { maxAttempts: 3, baseDelayMs: 5_000, maxDelayMs: 120_000 },
+  model: { strategyChangeSignalThreshold: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+  channel: { strategyChangeSignalThreshold: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
+  yeonjang: { strategyChangeSignalThreshold: 6, baseDelayMs: 5_000, maxDelayMs: 60_000 },
+  tool: { strategyChangeSignalThreshold: 2, baseDelayMs: 1_000, maxDelayMs: 15_000 },
+  delivery: { strategyChangeSignalThreshold: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
+  scheduler: { strategyChangeSignalThreshold: 3, baseDelayMs: 5_000, maxDelayMs: 120_000 },
 }
 
 export const DEFAULT_SOAK_HEALTH_THRESHOLDS: SoakHealthThresholds = {
@@ -644,19 +645,22 @@ export function buildRetryFailureFingerprint(input: RetryFailureFingerprintInput
 
 export function evaluateRetryBackoff(input: RetryBackoffInput): RetryBackoffDecision {
   const defaultPolicy = input.domain ? DEFAULT_RETRY_POLICIES[input.domain] : DEFAULT_RETRY_POLICIES.tool
-  const attempt = Math.max(1, Math.trunc(input.attempt))
-  const maxAttempts = Math.max(1, Math.trunc(input.maxAttempts ?? defaultPolicy.maxAttempts))
+  const signalCount = Math.max(1, Math.trunc(input.signalCount))
+  const strategyChangeSignalThreshold = Math.max(
+    1,
+    Math.trunc(input.strategyChangeSignalThreshold ?? defaultPolicy.strategyChangeSignalThreshold),
+  )
   const baseDelayMs = Math.max(0, input.baseDelayMs ?? defaultPolicy.baseDelayMs)
   const maxDelayMs = Math.max(baseDelayMs, input.maxDelayMs ?? defaultPolicy.maxDelayMs)
-  const exhausted = attempt >= maxAttempts
+  const strategyChangeRecommended = signalCount >= strategyChangeSignalThreshold
   const decision: RetryBackoffDecision = {
-    attempt,
-    maxAttempts,
-    shouldRetry: !exhausted,
-    exhausted,
-    reason: exhausted ? "retry_exhausted" : "retry_scheduled",
+    signalCount,
+    strategyChangeSignalThreshold,
+    shouldContinue: true,
+    strategyChangeRecommended,
+    reason: strategyChangeRecommended ? "strategy_change_recommended" : "continue_with_backoff",
   }
-  if (!exhausted) decision.nextDelayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1))
+  decision.nextDelayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** (signalCount - 1))
   return decision
 }
 
@@ -671,7 +675,8 @@ export function shouldStopRepeatedFailure(input: {
     fingerprint: input.fingerprint,
     seenCount,
     threshold,
-    shouldStop: seenCount >= threshold,
+    shouldStop: false,
+    strategyChangeRecommended: seenCount >= threshold,
   }
 }
 

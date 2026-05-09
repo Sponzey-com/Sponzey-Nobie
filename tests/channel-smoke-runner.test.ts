@@ -34,6 +34,14 @@ function passingTrace(current: ChannelSmokeScenario): ChannelSmokeTrace {
     sourceChannel: current.channel,
     responseChannel: current.expectedTarget,
     correlationKey: current.correlationKey,
+    requestFlow: {
+      runId: `run-${current.id}`,
+      requestGroupId: `run-${current.id}`,
+      requestGroupMatchesRunId: true,
+      decisionTracePresent: true,
+      topologyRunCreated: true,
+      providerDirectUsed: false,
+    },
     auditLogId: `audit-${current.id}`,
     toolCalls: current.expectedTool
       ? [{ toolName: current.expectedTool, sourceChannel: current.channel, deliveryChannel: current.channel }]
@@ -216,6 +224,30 @@ describe("channel smoke runner", () => {
 
     expect(result.status).toBe("failed")
     expect(result.failures).toContain("unsupported_capability_ui_missing")
+  })
+
+  it("fails traces that bypass root-run isolation or topology execution", () => {
+    const webui = scenario("webui.basic_query")
+
+    const result = validateChannelSmokeTrace(webui, {
+      ...passingTrace(webui),
+      requestFlow: {
+        runId: "run-a",
+        requestGroupId: "group-b",
+        requestGroupMatchesRunId: false,
+        decisionTracePresent: false,
+        topologyRunCreated: false,
+        providerDirectUsed: true,
+      },
+    })
+
+    expect(result.status).toBe("failed")
+    expect(result.failures).toEqual(expect.arrayContaining([
+      "request_group_id_not_run_id",
+      "decision_trace_missing",
+      "topology_run_missing",
+      "provider_direct_used",
+    ]))
   })
 
   it("runs ready scenarios and records skip instead of failing missing external channels", async () => {

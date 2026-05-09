@@ -39,7 +39,6 @@ export interface ActiveRunContractProjection {
     agentDisplayName: string
     agentNickname?: string
     status: string
-    retryBudgetRemaining: number
   }>
   updatedAt: number
   legacy: boolean
@@ -230,7 +229,6 @@ export function buildActiveRunProjection(run: RootRun): ActiveRunContractProject
           agentDisplayName: subSession.agentDisplayName,
           ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
           status: subSession.status,
-          retryBudgetRemaining: subSession.retryBudgetRemaining,
         })),
       }
       : {}),
@@ -291,7 +289,6 @@ export function serializeActiveRunCandidateForComparison(candidate: ActiveRunCon
       parentRunId: subSession.parentRunId,
       agentId: subSession.agentId,
       status: subSession.status,
-      retryBudgetRemaining: subSession.retryBudgetRemaining,
     })),
     legacy: candidate.legacy,
     comparisonHash: candidate.comparisonHash,

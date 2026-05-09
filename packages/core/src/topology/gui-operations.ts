@@ -15,6 +15,7 @@ import {
   ENTERPRISE_RELATION_TYPES,
   ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
 } from "../contracts/enterprise-topology.js"
+import { repairTopologyForPersistence } from "./repair.js"
 import { validateTopology, type TopologyValidationResult } from "./validator.js"
 
 export const ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION = 1 as const
@@ -339,7 +340,6 @@ function defaultNode(operation: EnterpriseTopologyGuiCreateNodeOperation): NodeC
     failurePolicy: {
       failureReportRequired: true,
       allowPartialSuccess: true,
-      maxRetryAttempts: 0,
       fallbackNodeIds: [],
     },
     recoveryPolicy: {
@@ -619,7 +619,7 @@ export function createEnterpriseTopologyGuiDraft(
   input: CreateEnterpriseTopologyGuiDraftInput,
 ): EnterpriseTopologyGuiDraft {
   const now = input.now ?? Date.now()
-  const baseTopology = cloneTopology(input.topology)
+  const baseTopology = repairTopologyForPersistence(input.topology).topology
   const layout = input.layout ? cloneLayout(input.layout) : { nodes: {} }
   const validation = validateTopology(baseTopology)
   return {

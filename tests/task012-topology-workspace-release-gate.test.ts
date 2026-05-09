@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/s
 import { afterEach, describe, expect, it } from "vitest"
 import { createCapabilities } from "../packages/core/src/control-plane/index.ts"
 import {
+  ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS,
+  ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH,
   ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH,
   ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS,
   buildEnterpriseTopologyReleaseReadinessSummary,
@@ -131,7 +133,7 @@ afterEach(() => {
 })
 
 describe("task012 Topology Workspace release gate", () => {
-  it("adds route, layer, and no-typing workspace checks to Enterprise Topology release readiness", () => {
+  it("adds route, layer, and Executor-first workspace checks to Enterprise Topology release readiness", () => {
     const summary = buildEnterpriseTopologyReleaseReadinessSummary({
       now: new Date("2026-04-30T00:00:00.000Z"),
     })
@@ -144,23 +146,28 @@ describe("task012 Topology Workspace release gate", () => {
     expect(summary.checks.map((check) => check.id)).toEqual(expect.arrayContaining([
       "topology_workspace_route_compatibility",
       "topology_workspace_layer_gate",
-      "topology_workspace_no_typing_usability",
+      "topology_workspace_executor_first_usability",
       "topology_workspace_usability_gate",
     ]))
     expect(gate.requiredLayers).toEqual(ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS)
     expect(gate.noTypingHappyPath).toEqual(ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH)
+    expect(gate.executorFirstHappyPath).toEqual(ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH)
+    expect(gate.allowedTypingInputs).toEqual(ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS)
     expect(gate.routeCompatibility).toEqual(expect.objectContaining({
       canonicalRoute: "/advanced/topology",
       enterpriseBuilderAlias: "/advanced/enterprise-topology",
       enterpriseBuilderReplacement: "/advanced/topology?mode=build",
-      runtimeResourcesRoute: "/advanced/topology?mode=resources",
+      runtimeResourcesRoute: null,
       legacyRuntimeMenuRemoved: true,
     }))
     expect(summary.regressionCommands).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "topology_workspace_usability_gate",
         command: expect.arrayContaining([
+          "tests/task013-executor-first-usability.test.tsx",
+          "tests/task013-executor-first-release-gate.test.ts",
           "tests/task012-topology-workspace-release-gate.test.ts",
+          "tests/task012-advanced-escape-hatch.test.tsx",
           "tests/task001-topology-workspace-ux-foundation.test.tsx",
           "tests/task002-topology-workspace-routing.test.tsx",
           "tests/task008-topology-workspace-run-strip.test.tsx",
@@ -170,30 +177,34 @@ describe("task012 Topology Workspace release gate", () => {
     ]))
   })
 
-  it("fails readiness when a workspace layer, route alias, or no-typing step regresses", () => {
+  it("fails readiness when a visible layer, route alias, removed resources route, or Executor-first step regresses", () => {
     const broken = buildEnterpriseTopologyReleaseReadinessSummary({
       now: new Date("2026-04-30T00:00:00.000Z"),
       workspaceUsability: buildEnterpriseTopologyWorkspaceUsabilityGate({
         now: new Date("2026-04-30T00:00:00.000Z"),
-        requiredLayers: ["build", "run", "trace", "improve"],
+        requiredLayers: ["build", "run", "trace"],
         routeCompatibility: {
           enterpriseBuilderReplacement: "/advanced/enterprise-topology",
+          runtimeResourcesRoute: "/advanced/topology?mode=resources" as never,
           legacyRuntimeMenuRemoved: false,
         },
-        noTypingHappyPath: ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH.map((step) =>
-          step.id === "smart_connect" ? { ...step, noTypingRequired: false } : step
+        executorFirstHappyPath: ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.filter((step) =>
+          step.id !== "connect_executors"
         ),
+        allowedTypingInputs: ["executor_name", "executor_work"],
       }),
     })
 
     expect(broken.gateStatus).toBe("failed")
-    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:missing_workspace_layer:resources")
+    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:missing_workspace_layer:improve")
     expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:enterprise_topology_alias_not_preserved")
-    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:typing_required:smart_connect")
-    expect(broken.blockingFailures.join("\n")).toContain("topology_workspace_no_typing_usability")
+    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:runtime_resources_route_still_exposed")
+    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:missing_executor_first_step:connect_executors")
+    expect(broken.blockingFailures.join("\n")).toContain("workspace_usability:missing_allowed_typing_input:run_input")
+    expect(broken.blockingFailures.join("\n")).toContain("topology_workspace_executor_first_usability")
   })
 
-  it("exercises the no-typing happy path from template through Trace", () => {
+  it("exercises the simple compatibility path from template through Trace", () => {
     const starterHtml = renderToStaticMarkup(
       createElement(TopologyWorkspaceFirstStartPanel, {
         templates: TOPOLOGY_WORKSPACE_STARTER_TEMPLATES,
@@ -275,9 +286,10 @@ describe("task012 Topology Workspace release gate", () => {
       simulationMode: "success",
       input: { launchedFrom: "enterprise_topology_builder" },
     })
-    expect(runStripHtml).toContain('data-layout="one-line"')
-    expect(runStripHtml).toContain("WorkOrder Template")
-    expect(runStripHtml).toContain("Context")
+    expect(runStripHtml).toContain('data-testid="topology-run-simple-panel"')
+    expect(runStripHtml).not.toContain('data-layout="one-line"')
+    expect(runStripHtml).not.toContain("WorkOrder Template")
+    expect(runStripHtml).not.toContain("Context")
     expect(quickFixHtml).toContain('data-testid="topology-validation-quickfix-fallback_path_missing"')
     expect(traceHtml).toContain('data-testid="topology-trace-delegation-path"')
     for (const hiddenTerm of ["AgentConfig", "SubSession", "CompiledSnapshot", "raw JSON", "YAML"]) {
@@ -330,7 +342,7 @@ describe("task012 Topology Workspace release gate", () => {
       }),
     )
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
-    expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("resources")
+    expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("build")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=improve")).toBe("improve")
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
     expect(appSource).toContain('to="/advanced/topology?mode=build"')
@@ -348,8 +360,10 @@ describe("task012 Topology Workspace release gate", () => {
     expect(runbook).toContain("/advanced/enterprise-topology")
     expect(runbook).toContain("/advanced/topology?mode=build")
     expect(runbook).toContain("/advanced/topology?mode=resources")
+    expect(runbook).toContain("must stay on the simple Executor Graph surface")
     expect(runbook).toContain("old Runtime Topology menu")
-    expect(runbook).toContain("No-typing usability gate")
+    expect(runbook).toContain("Executor-first usability gate")
+    expect(runbook).toContain("Default UX leak gate")
     expect(runbook).toContain("enterprise_topology_builder_ui=off")
     expect(runbook).toContain("declared_observed_topology_analysis=off")
     expect(runbook).toContain("topology_runtime_enabled")

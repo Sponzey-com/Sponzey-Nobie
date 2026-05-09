@@ -1,11 +1,8 @@
+import * as React from "react"
 import { useEffect, useMemo, useState } from "react"
 import type { Connection } from "@xyflow/react"
 import { api } from "../api/client"
 import { buildEnterpriseTopologyCanvasModel } from "../components/topology/EnterpriseTopologyCanvas"
-import {
-  TopologyAdvancedImportExportPanel,
-  buildTopologyDraftExportText,
-} from "../components/topology/TopologyAdvancedImportExportPanel"
 import {
   createEmptyEnterpriseTopologyForPalette,
   createEnterpriseTopologyPaletteEntity,
@@ -14,35 +11,45 @@ import {
 import type { EnterpriseTopology, EnterpriseTopologyValidationIssue } from "../contracts/enterprise-topology"
 import type { EnterpriseRelationType } from "../contracts/enterprise-topology"
 import type { AgentTopologyProjection } from "../contracts/topology"
+import type { RootRun } from "../contracts/runs"
 import type { TopologyRelationTemplateCatalog } from "../contracts/relation-templates"
 import type { TopologyTemplateCatalog } from "../contracts/topology-templates"
 import { useUiI18n } from "../lib/ui-i18n"
+import {
+  type TopologyWorkspaceExposureMode,
+} from "../lib/topology-workspace-copy"
 import {
   buildEnterpriseTopologyRelationDraft,
   type EnterpriseRelationModeIssue,
   type TopologyRelationModeId,
 } from "../components/topology/RelationModeToolbar"
 import {
-  TopologyRunLauncher,
   buildTopologyRunRequestPayload,
   resolveTopologyRunTargetState,
 } from "../components/topology/TopologyRunLauncher"
+import { ExecutorCreatePanel, type ExecutorCreatePanelSubmit } from "../components/topology/ExecutorCreatePanel"
+import { ExecutorWorkspaceShell } from "../components/topology/ExecutorWorkspaceShell"
 import type { TopologyRunTraceOverlayInput } from "../components/topology/TopologyRunTraceOverlay"
 import { TopologyWorkspaceCanvas } from "../components/topology/TopologyWorkspaceCanvas"
 import {
   applyTopologyWorkspaceExecutorMappingToNode,
   type TopologyWorkspaceExecutorMapping,
 } from "../components/topology/TopologyWorkspaceInspector"
-import { TopologyWorkspaceFirstStartPanel } from "../components/topology/TopologyWorkspaceFirstStart"
+import { createExecutorDraftFromInference } from "../lib/executor-inference"
+import { createExecutorConnectionDraft } from "../lib/executor-relation-inference"
+import {
+  buildExecutorGraphFromEnterpriseTopology,
+  compileExecutorGraphToEnterpriseTopology,
+  type ExecutorDraft,
+  type ExecutorGraphWorkspace,
+} from "../lib/executor-graph"
 import type { TopologyWorkspaceLayer } from "../lib/topology-workspace"
 import { TOPOLOGY_WORKSPACE_STARTER_TEMPLATES, buildTopologyWorkspaceStarterDraft, type TopologyWorkspaceStarterTemplateId } from "../lib/topology-workspace-templates"
 import type {
-  AgentTeamImportMode,
-  AgentTeamTopologyImportPreviewResponse,
+  EnterpriseTopologyGuiDraftRunRequest,
   EnterpriseTopologyGuiDraftCompiledPreviewResponse,
   EnterpriseTopologyGuiOperation,
   EnterpriseTopologyRunRecord,
-  TopologyImportExportFormat,
   WorkOrderTemplateCatalog,
   WorkOrderTemplateSimulationMode,
 } from "../lib/enterprise-topology-operations"
@@ -55,24 +62,79 @@ const DRAFT_TOPOLOGY_OPTIONS = [
   },
 ]
 
-const DRAFT_VERSION_OPTIONS = [
-  {
-    id: "draft",
-    labelKo: "Draft",
-    labelEn: "Draft",
-  },
-]
+function topologyUpdatedAt(topology: EnterpriseTopology | null | undefined): number {
+  return typeof topology?.updatedAt === "number" && Number.isFinite(topology.updatedAt)
+    ? topology.updatedAt
+    : 0
+}
 
-export function EnterpriseTopologyPage({
+export function sameTopologyRuntimeIds(current: string[], next: string[]): boolean {
+  if (current.length !== next.length) return false
+  return current.every((value, index) => value === next[index])
+}
+
+export function topologyRunningStatusMap(ids: string[]): Record<string, "running"> {
+  return ids.reduce<Record<string, "running">>((statuses, id) => {
+    statuses[id] = "running"
+    return statuses
+  }, {})
+}
+
+function applyExecutorDraftToTopology(
+  current: EnterpriseTopology,
+  executor: ExecutorDraft,
+  now = Date.now(),
+): EnterpriseTopology {
+  const graph = buildExecutorGraphFromEnterpriseTopology(current, { mode: "simple", now })
+  const nextGraph: ExecutorGraphWorkspace = {
+    ...graph,
+    executors: graph.executors.map((item) =>
+      item.id === executor.id || item.sourceNodeId === executor.sourceNodeId
+        ? {
+          ...executor,
+          sourceNodeId: item.sourceNodeId ?? executor.sourceNodeId ?? item.id,
+          position: executor.position ?? item.position,
+        }
+        : item
+    ),
+    selectedId: executor.id,
+    inference: {
+      ...graph.inference,
+      confidence: executor.confidence,
+      generatedAt: now,
+    },
+  }
+  const compiled = compileExecutorGraphToEnterpriseTopology(nextGraph, {
+    baseTopology: current,
+    now,
+  })
+  return compiled.ok ? compiled.topology : current
+}
+
+export function shouldRestoreServerTopology(
+  current: EnterpriseTopology | null,
+  restored: EnterpriseTopology,
+): boolean {
+  if (!current) return true
+  if (current.id !== restored.id) return true
+  const currentUpdatedAt = topologyUpdatedAt(current)
+  const restoredUpdatedAt = topologyUpdatedAt(restored)
+  if (restoredUpdatedAt > currentUpdatedAt) return true
+  if (current.nodes.length === 0 && restored.nodes.length > 0 && restoredUpdatedAt >= currentUpdatedAt) return true
+  return false
+}
+
+export function LegacyEnterpriseTopologyPage({
   workspaceLayer = "build",
+  workspaceExposureMode: _workspaceExposureMode = "simple",
   onWorkspaceLayerChange,
 }: {
   workspaceLayer?: TopologyWorkspaceLayer
+  workspaceExposureMode?: TopologyWorkspaceExposureMode
   onWorkspaceLayerChange?: (layer: TopologyWorkspaceLayer) => void
 } = {}) {
   const { text } = useUiI18n()
   const [topologyId, setTopologyId] = useState(DRAFT_TOPOLOGY_OPTIONS[0].id)
-  const [versionId, setVersionId] = useState(DRAFT_VERSION_OPTIONS[0].id)
   const [draftTopology, setDraftTopology] = useState<EnterpriseTopology | null>(null)
   const [templateCatalog, setTemplateCatalog] = useState<TopologyTemplateCatalog | null>(null)
   const [relationCatalog, setRelationCatalog] = useState<TopologyRelationTemplateCatalog | null>(null)
@@ -90,18 +152,18 @@ export function EnterpriseTopologyPage({
   const [compilePreview, setCompilePreview] =
     useState<EnterpriseTopologyGuiDraftCompiledPreviewResponse | null>(null)
   const [compilePreviewLoading, setCompilePreviewLoading] = useState(false)
-  const [importExportFormat, setImportExportFormat] = useState<TopologyImportExportFormat>("json")
-  const [importText, setImportText] = useState("")
-  const [exportText, setExportText] = useState("")
-  const [importExportStatus, setImportExportStatus] = useState("")
-  const [teamImportMode, setTeamImportMode] = useState<AgentTeamImportMode>("team")
-  const [agentTeamPreview, setAgentTeamPreview] = useState<AgentTeamTopologyImportPreviewResponse | null>(null)
   const [runTargetNodeId, setRunTargetNodeId] = useState<string | null>(null)
   const [selectedWorkOrderTemplateId, setSelectedWorkOrderTemplateId] = useState<string>("")
   const [selectedContextPresetId, setSelectedContextPresetId] = useState<string>("")
   const [simulationMode, setSimulationMode] = useState<WorkOrderTemplateSimulationMode>("success")
   const [advancedInstruction, setAdvancedInstruction] = useState("")
+  const [executorCreateOpen, setExecutorCreateOpen] = useState(false)
+  const [selectedExecutorId, setSelectedExecutorId] = useState<string | null>(null)
   const [topologyRunLoading, setTopologyRunLoading] = useState(false)
+  const [runningExecutorIds, setRunningExecutorIds] = useState<string[]>([])
+  const [runningEdgeIds, setRunningEdgeIds] = useState<string[]>([])
+  const [runtimeActiveExecutorIds, setRuntimeActiveExecutorIds] = useState<string[]>([])
+  const [runtimeActiveEdgeIds, setRuntimeActiveEdgeIds] = useState<string[]>([])
   const [traceOverlay, setTraceOverlay] = useState<TopologyRunTraceOverlayInput | null>(null)
   const [runHistory, setRunHistory] = useState<EnterpriseTopologyRunRecord[]>([])
   const [traceOverlayByRunId, setTraceOverlayByRunId] = useState<Record<string, TopologyRunTraceOverlayInput>>({})
@@ -116,12 +178,52 @@ export function EnterpriseTopologyPage({
     }),
     [draftTopology, runTargetNodeId],
   )
+  const visibleActiveExecutorIds = topologyRunLoading ? runningExecutorIds : runtimeActiveExecutorIds
+  const visibleActiveEdgeIds = topologyRunLoading ? runningEdgeIds : runtimeActiveEdgeIds
+  const visibleExecutorStatuses = useMemo(
+    () => topologyRunningStatusMap(visibleActiveExecutorIds),
+    [visibleActiveExecutorIds],
+  )
+  const visibleEdgeStatuses = useMemo(
+    () => topologyRunningStatusMap(visibleActiveEdgeIds),
+    [visibleActiveEdgeIds],
+  )
 
   useEffect(() => {
     if (runTargetState.source !== "auto_entry" || !runTargetState.targetNodeId) return
     if (runTargetNodeId === runTargetState.targetNodeId) return
     setRunTargetNodeId(runTargetState.targetNodeId)
   }, [runTargetNodeId, runTargetState.source, runTargetState.targetNodeId])
+
+  useEffect(() => {
+    let cancelled = false
+    api.enterpriseTopologyGuiDraft(topologyId)
+      .then((response) => {
+        if (cancelled) return
+        if (!response.draft) return
+        const restoredTopology = response.draft.topology
+        setDraftTopology((current) =>
+          shouldRestoreServerTopology(current, restoredTopology) ? restoredTopology : current
+        )
+        setDraftIssues((current) => current.length > 0 ? current : response.draft.validation.issues)
+        setRunTargetNodeId((current) =>
+          current && restoredTopology.nodes.some((node) => node.id === current)
+            ? current
+            : restoredTopology.nodes[0]?.id ?? null
+        )
+        setSelectedExecutorId((current) =>
+          current && restoredTopology.nodes.some((node) => node.id === current)
+            ? current
+            : restoredTopology.nodes[0]?.id ?? null
+        )
+      })
+      .catch(() => {
+        if (cancelled) return
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [topologyId])
 
   useEffect(() => {
     let cancelled = false
@@ -200,6 +302,44 @@ export function EnterpriseTopologyPage({
 
   useEffect(() => {
     let cancelled = false
+    let timer: ReturnType<typeof setInterval> | undefined
+
+    const refreshActiveTopologyRuns = async () => {
+      if (!draftTopology) {
+        setRuntimeActiveExecutorIds((current) => sameTopologyRuntimeIds(current, []) ? current : [])
+        setRuntimeActiveEdgeIds((current) => sameTopologyRuntimeIds(current, []) ? current : [])
+        return
+      }
+      try {
+        const response = await api.runs()
+        if (cancelled) return
+        const active = runtimeActiveStateFromRuns(response.runs, draftTopology)
+        setRuntimeActiveExecutorIds((current) =>
+          sameTopologyRuntimeIds(current, active.executorIds) ? current : active.executorIds
+        )
+        setRuntimeActiveEdgeIds((current) =>
+          sameTopologyRuntimeIds(current, active.edgeIds) ? current : active.edgeIds
+        )
+      } catch {
+        if (cancelled) return
+        setRuntimeActiveExecutorIds((current) => sameTopologyRuntimeIds(current, []) ? current : [])
+        setRuntimeActiveEdgeIds((current) => sameTopologyRuntimeIds(current, []) ? current : [])
+      }
+    }
+
+    void refreshActiveTopologyRuns()
+    timer = setInterval(() => {
+      void refreshActiveTopologyRuns()
+    }, 2500)
+
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [draftTopology])
+
+  useEffect(() => {
+    let cancelled = false
     if (!draftTopology) {
       setDraftIssues([])
       setCompilePreview(null)
@@ -255,6 +395,67 @@ export function EnterpriseTopologyPage({
     })
   }
 
+  const addExecutorToDraft = (input: Pick<ExecutorCreatePanelSubmit, "name" | "description" | "userConfirmed">) => {
+    const now = Date.now()
+    const base = draftTopology ?? createEmptyEnterpriseTopologyForPalette({
+      topologyId,
+      name: text("기업 업무 구조 초안", "Enterprise work model draft"),
+      now,
+    })
+    const nodeId = nextExecutorNodeId(base)
+    const graph = buildExecutorGraphFromEnterpriseTopology(base, { mode: "simple", now })
+    const executor = createExecutorDraftFromInference({
+      id: nodeId,
+      sourceNodeId: nodeId,
+      name: input.name,
+      description: input.description,
+      now,
+      userConfirmed: input.userConfirmed,
+    })
+    const nextGraph = {
+      ...graph,
+      executors: [...graph.executors, executor],
+      selectedId: executor.id,
+      inference: {
+        ...graph.inference,
+        executorCount: graph.executors.length + 1,
+        issueCount: 0,
+        generatedAt: now,
+      },
+    }
+    const compiled = compileExecutorGraphToEnterpriseTopology(nextGraph, {
+      baseTopology: base,
+      now,
+    })
+    if (!compiled.ok) {
+      setDraftApiStatus("failed")
+      return
+    }
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setRelationIssue(null)
+    setDraftTopology(compiled.topology)
+    setRunTargetNodeId((current) => current ?? nodeId)
+    setSelectedExecutorId(executor.id)
+    setExecutorCreateOpen(false)
+  }
+
+  const handleCreateInferredExecutor = (input: ExecutorCreatePanelSubmit) => {
+    addExecutorToDraft(input)
+  }
+
+  const handleAddExecutorNode = () => {
+    const nextIndex = (draftTopology?.nodes.length ?? 0) + 1
+    addExecutorToDraft({
+      name: text(`새 노드 ${nextIndex}`, `New node ${nextIndex}`),
+      description: text(
+        "오른쪽 카드에서 이 노드의 성격과 하는 일을 정합니다.",
+        "Define this node's character and work in the card on the right.",
+      ),
+      userConfirmed: false,
+    })
+  }
+
   const handleCreateStarterTopology = (templateId: TopologyWorkspaceStarterTemplateId) => {
     setCompilePreview(null)
     setTraceOverlay(null)
@@ -275,6 +476,7 @@ export function EnterpriseTopologyPage({
     }
     setDraftTopology(starter)
     setRunTargetNodeId(starter.nodes[0]?.id ?? null)
+    setSelectedExecutorId(starter.nodes[0]?.id ?? null)
   }
 
   const handleCreateRelation = (connection: Connection, relationMode: TopologyRelationModeId) => {
@@ -302,18 +504,32 @@ export function EnterpriseTopologyPage({
     })
   }
 
-  const handleValidateDraft = async () => {
-    if (!draftTopology) return
+  const persistAndValidateDraft = async (topology: EnterpriseTopology) => {
     setDraftApiStatus("syncing")
     setCompilePreview(null)
     try {
-      await api.startEnterpriseTopologyGuiDraft(draftTopology.id, { topology: draftTopology, reset: true })
-      const response = await api.validateEnterpriseTopologyGuiDraft(draftTopology.id)
+      const saved = await api.startEnterpriseTopologyGuiDraft(topology.id, {
+        topology,
+        reset: true,
+        persist: true,
+        importSource: "enterprise_topology_simple_builder",
+      })
+      if (saved.persisted === false) {
+        setDraftIssues(saved.draft?.validation.issues ?? [])
+        setDraftApiStatus("failed")
+        return
+      }
+      const response = await api.validateEnterpriseTopologyGuiDraft(topology.id)
       setDraftIssues(response.issues)
       setDraftApiStatus("ready")
     } catch {
       setDraftApiStatus("failed")
     }
+  }
+
+  const handleValidateDraft = async () => {
+    if (!draftTopology) return
+    await persistAndValidateDraft(draftTopology)
   }
 
   const handleCompileDraft = async () => {
@@ -354,75 +570,6 @@ export function EnterpriseTopologyPage({
     }
   }
 
-  const handleSelectImportExportFormat = (format: TopologyImportExportFormat) => {
-    setImportExportFormat(format)
-    setExportText((current) => current ? buildTopologyDraftExportText(draftTopology, format) : current)
-  }
-
-  const handleSelectTeamImportMode = (mode: AgentTeamImportMode) => {
-    setTeamImportMode(mode)
-    setAgentTeamPreview(null)
-  }
-
-  const handleExportDraft = () => {
-    const textValue = buildTopologyDraftExportText(draftTopology, importExportFormat)
-    setExportText(textValue)
-    setImportText(textValue)
-    setImportExportStatus(textValue
-      ? text("초안 내용을 만들었습니다.", "Draft export is ready.")
-      : text("내보낼 초안이 없습니다.", "No draft to export."))
-  }
-
-  const handleImportDraft = async () => {
-    if (!importText.trim()) return
-    setImportExportStatus(text("가져오는 중", "Importing"))
-    setCompilePreview(null)
-    setTraceOverlay(null)
-    try {
-      const response = await api.importEnterpriseTopology({
-        content: importText,
-        format: importExportFormat,
-        dryRun: true,
-        importSource: "enterprise_builder_advanced",
-      })
-      if (response.topology) {
-        setDraftTopology(response.topology)
-        setTopologyId(response.topology.id)
-      }
-      setDraftIssues(response.issues)
-      setImportExportStatus(text("가져온 초안을 검증했습니다.", "Imported draft was validated."))
-    } catch {
-      setImportExportStatus(text("가져오기 실패", "Import failed"))
-    }
-  }
-
-  const handlePreviewAgentTeamImport = async () => {
-    setImportExportStatus(text("이전 미리보기 생성 중", "Building migration preview"))
-    try {
-      const response = await api.previewAgentTeamTopologyImport({
-        topologyId,
-        name: text("Agent/Team 이전 초안", "Agent/Team migration draft"),
-        teamImportMode,
-      })
-      setAgentTeamPreview(response)
-      setDraftIssues(response.validation.issues)
-      setImportExportStatus(text("이전 미리보기를 만들었습니다.", "Migration preview is ready."))
-    } catch {
-      setAgentTeamPreview(null)
-      setImportExportStatus(text("이전 미리보기 실패", "Migration preview failed"))
-    }
-  }
-
-  const handleApplyAgentTeamImport = () => {
-    if (!agentTeamPreview) return
-    setCompilePreview(null)
-    setTraceOverlay(null)
-    setDraftTopology(agentTeamPreview.topology)
-    setDraftIssues(agentTeamPreview.validation.issues)
-    setTopologyId(agentTeamPreview.topology.id)
-    setImportExportStatus(text("이전 초안을 적용했습니다.", "Migration draft applied."))
-  }
-
   const handleSelectWorkOrderTemplate = (templateId: string) => {
     const template = workOrderTemplateCatalog?.templates.find((item) => item.templateId === templateId)
     setSelectedWorkOrderTemplateId(templateId)
@@ -455,24 +602,182 @@ export function EnterpriseTopologyPage({
     })
   }
 
+  const handleExecutorDraftChange = (executor: ExecutorDraft) => {
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setDraftTopology((current) => {
+      if (!current) return current
+      return applyExecutorDraftToTopology(current, executor)
+    })
+  }
+
+  const handleExecutorUnderstandingSave = async (executor: ExecutorDraft) => {
+    if (!draftTopology) {
+      handleExecutorDraftChange(executor)
+      return
+    }
+    const nextTopology = applyExecutorDraftToTopology(draftTopology, executor)
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setDraftTopology(nextTopology)
+    await persistAndValidateDraft(nextTopology)
+  }
+
+  const handleConnectExecutors = (sourceExecutorId: string, targetExecutorId: string) => {
+    if (sourceExecutorId === targetExecutorId) return
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setRelationIssue(null)
+    setSelectedExecutorId(targetExecutorId)
+    setDraftTopology((current) => {
+      if (!current) return current
+      const now = Date.now()
+      const graph = buildExecutorGraphFromEnterpriseTopology(current, { mode: "simple", now })
+      const source = graph.executors.find((executor) =>
+        executor.id === sourceExecutorId || executor.sourceNodeId === sourceExecutorId
+      )
+      const target = graph.executors.find((executor) =>
+        executor.id === targetExecutorId || executor.sourceNodeId === targetExecutorId
+      )
+      if (!source || !target) return current
+      const sourceNodeId = source.sourceNodeId ?? source.id
+      const targetNodeId = target.sourceNodeId ?? target.id
+      if (graph.connections.some((connection) =>
+        connection.fromExecutorId === sourceNodeId && connection.toExecutorId === targetNodeId
+      )) {
+        return current
+      }
+      const connection = createExecutorConnectionDraft({
+        source: { ...source, id: sourceNodeId },
+        target: { ...target, id: targetNodeId },
+      })
+      const nextGraph = {
+        ...graph,
+        connections: [...graph.connections, connection],
+        selectedId: targetNodeId,
+        inference: {
+          ...graph.inference,
+          connectionCount: graph.connections.length + 1,
+          generatedAt: now,
+        },
+      }
+      const compiled = compileExecutorGraphToEnterpriseTopology(nextGraph, {
+        baseTopology: current,
+        now,
+      })
+      return compiled.ok ? compiled.topology : current
+    })
+  }
+
+  const handleMoveExecutorNode = (executorId: string, position: { x: number; y: number }) => {
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setDraftTopology((current) => {
+      if (!current) return current
+      const now = Date.now()
+      const graph = buildExecutorGraphFromEnterpriseTopology(current, { mode: "simple", now })
+      let changed = false
+      const nextGraph = {
+        ...graph,
+        executors: graph.executors.map((executor) => {
+          if (executor.id !== executorId && executor.sourceNodeId !== executorId) return executor
+          if (executor.position?.x === position.x && executor.position.y === position.y) return executor
+          changed = true
+          return { ...executor, position }
+        }),
+        selectedId: executorId,
+        inference: {
+          ...graph.inference,
+          generatedAt: now,
+        },
+      }
+      if (!changed) return current
+      const compiled = compileExecutorGraphToEnterpriseTopology(nextGraph, {
+        baseTopology: current,
+        now,
+      })
+      return compiled.ok ? compiled.topology : current
+    })
+  }
+
+  const handleSelectExecutor = (executorId: string | null) => {
+    setSelectedExecutorId(executorId)
+  }
+
+  const handleDeleteSelectedExecutor = () => {
+    if (!draftTopology || draftTopology.nodes.length === 0) return
+    const now = Date.now()
+    const graph = buildExecutorGraphFromEnterpriseTopology(draftTopology, { mode: "simple", now })
+    const targetExecutor =
+      graph.executors.find((executor) => executor.id === selectedExecutorId) ??
+      graph.executors[0] ??
+      null
+    if (!targetExecutor) return
+    const nodeId = targetExecutor.sourceNodeId ?? targetExecutor.id
+    setCompilePreview(null)
+    setTraceOverlay(null)
+    setRelationIssue(null)
+    setSelectedExecutorId(null)
+    setRunTargetNodeId((currentTarget) => currentTarget === nodeId ? null : currentTarget)
+    setDraftTopology({
+      ...draftTopology,
+      updatedAt: now,
+      nodes: draftTopology.nodes.filter((node) => node.id !== nodeId),
+      teams: draftTopology.teams.map((team) => ({
+        ...team,
+        nodeIds: team.nodeIds.filter((id) => id !== nodeId),
+        updatedAt: now,
+      })),
+      processes: draftTopology.processes.map((process) => {
+        const nextProcess = {
+          ...process,
+          stepNodeIds: process.stepNodeIds.filter((id) => id !== nodeId),
+          updatedAt: now,
+        }
+        if (process.ownerNodeId !== nodeId) return nextProcess
+        const { ownerNodeId: _ownerNodeId, ...withoutOwner } = nextProcess
+        return withoutOwner
+      }),
+      authorityRules: draftTopology.authorityRules.filter((rule) =>
+        !entityRefMatchesNode(rule.subject, nodeId) && !entityRefMatchesNode(rule.object, nodeId)
+      ),
+      responsibilities: draftTopology.responsibilities.filter((responsibility) =>
+        !entityRefMatchesNode(responsibility.scope, nodeId) &&
+        !entityRefMatchesNode(responsibility.responsible, nodeId) &&
+        !entityRefMatchesNode(responsibility.accountable, nodeId) &&
+        !responsibility.consulted.some((ref) => entityRefMatchesNode(ref, nodeId)) &&
+        !responsibility.informed.some((ref) => entityRefMatchesNode(ref, nodeId))
+      ),
+      relations: draftTopology.relations.filter((relation) =>
+        !entityRefMatchesNode(relation.from, nodeId) && !entityRefMatchesNode(relation.to, nodeId)
+      ),
+    })
+  }
+
   const handleSelectRunHistory = (topologyRunId: string) => {
     const overlay = traceOverlayByRunId[topologyRunId]
     if (overlay) setTraceOverlay(overlay)
   }
 
-  const handleRunTopology = async () => {
-    const entryNodeId = runTargetState.targetNodeId ?? runTargetNodeId
-    if (!draftTopology || !entryNodeId || !selectedWorkOrderTemplateId) return
+  const handleRunTopology = async (payloadOverride?: EnterpriseTopologyGuiDraftRunRequest) => {
+    const entryNodeId = payloadOverride?.entryNodeId ?? runTargetState.targetNodeId ?? runTargetNodeId
+    const templateId = payloadOverride?.templateId ?? selectedWorkOrderTemplateId
+    if (!draftTopology || !entryNodeId || !templateId) return
+    const graph = buildExecutorGraphFromEnterpriseTopology(draftTopology, { mode: "simple" })
+    setRunningExecutorIds(executorRunPathIds(graph, entryNodeId))
+    setRunningEdgeIds(executorRunPathEdgeIds(graph, entryNodeId))
     setTopologyRunLoading(true)
     try {
       await api.startEnterpriseTopologyGuiDraft(draftTopology.id, { topology: draftTopology, reset: true })
-      const run = await api.runEnterpriseTopologyGuiDraft(draftTopology.id, buildTopologyRunRequestPayload({
+      await api.createEnterpriseTopologyGuiDraftExecutionPlan(draftTopology.id)
+      const payload = payloadOverride ?? buildTopologyRunRequestPayload({
         entryNodeId,
-        templateId: selectedWorkOrderTemplateId,
+        templateId,
         ...(selectedContextPresetId ? { contextPresetId: selectedContextPresetId } : {}),
         simulationMode,
         advancedInstruction,
-      }))
+      })
+      const run = await api.runEnterpriseTopologyGuiDraft(draftTopology.id, payload)
       const [trace, failures] = await Promise.all([
         api.topologyRunTrace(run.topologyRunId),
         api.topologyRunFailureReports(run.topologyRunId),
@@ -495,6 +800,8 @@ export function EnterpriseTopologyPage({
       setTraceOverlay(null)
     } finally {
       setTopologyRunLoading(false)
+      setRunningExecutorIds([])
+      setRunningEdgeIds([])
     }
   }
 
@@ -509,191 +816,34 @@ export function EnterpriseTopologyPage({
             ? text("검증 통과", "Validation passed")
             : text(`${draftIssues.length}개 이슈`, `${draftIssues.length} issues`)
 
-  return (
+  const simpleEmptyStart = workspaceLayer === "build" && (!draftTopology || model.nodes.length === 0)
+  const simpleCreatePanel = (simpleEmptyStart || executorCreateOpen) ? (
+    <ExecutorCreatePanel
+      titleKo="실행자 이름과 성격 정하기"
+      titleEn="Define the executor"
+      helperKo="첫 화면에서는 이것만 정합니다. 어떤 이름의 실행자가 어떤 성격으로 일할지만 적어 주세요."
+      helperEn="Start with this only. Enter the executor name and the character of how it works."
+      descriptionLabelKo="성격과 하는 일"
+      descriptionLabelEn="Character and work"
+      descriptionPlaceholderKo="예: 고객 문의를 차분하게 정리하고 CRM을 확인하는 담당자"
+      descriptionPlaceholderEn="e.g. Calmly triages customer requests and checks CRM."
+      showCancel={!simpleEmptyStart}
+      showDraftButton={false}
+      showExamples={false}
+      hideUnderstandingUntilReady
+      surface="card"
+      workspaceId={topologyId}
+      topologyId={topologyId}
+      onCreate={handleCreateInferredExecutor}
+      onCancel={() => setExecutorCreateOpen(false)}
+    />
+  ) : null
+  const content = (
     <div className="flex h-full flex-col bg-stone-100 text-stone-950">
-      <header className="shrink-0 border-b border-stone-200 bg-white px-4 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
-              {text("토폴로지", "Topology")}
-            </div>
-            <h1 className="mt-1 text-xl font-semibold">
-              {text("업무 흐름 만들기", "Build work flows")}
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleValidateDraft}
-              disabled={!draftTopology || draftApiStatus === "syncing"}
-              className="h-8 rounded-md border border-stone-200 bg-white px-3 text-xs font-semibold text-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {text("검증", "Validate")}
-            </button>
-            <button
-              type="button"
-              onClick={handleCompileDraft}
-              disabled={!draftTopology || compilePreviewLoading}
-              className="h-8 rounded-md bg-stone-900 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {text("실행 준비", "Prepare run")}
-            </button>
-            <label className="grid gap-0.5 text-[11px] font-semibold text-stone-500">
-              <span>{text("토폴로지", "Topology")}</span>
-              <select
-                value={topologyId}
-                onChange={(event) => setTopologyId(event.currentTarget.value)}
-                className="h-8 min-w-48 rounded-md border border-stone-200 bg-white px-2.5 text-xs font-semibold text-stone-800"
-              >
-                {DRAFT_TOPOLOGY_OPTIONS.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {text(item.labelKo, item.labelEn)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-0.5 text-[11px] font-semibold text-stone-500">
-              <span>{text("버전", "Version")}</span>
-              <select
-                value={versionId}
-                onChange={(event) => setVersionId(event.currentTarget.value)}
-                className="h-8 min-w-24 rounded-md border border-stone-200 bg-white px-2.5 text-xs font-semibold text-stone-800"
-              >
-                {DRAFT_VERSION_OPTIONS.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {text(item.labelKo, item.labelEn)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
-              {text("만들기", "Build")}
-            </span>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              templateCatalogStatus === "ready"
-                ? "bg-emerald-100 text-emerald-800"
-                : templateCatalogStatus === "failed"
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-stone-100 text-stone-700"
-            }`}>
-              {templateCatalogStatus === "ready"
-                ? text("템플릿 준비", "Templates ready")
-                : templateCatalogStatus === "failed"
-                  ? text("기본 템플릿", "Default templates")
-                  : text("템플릿 로딩", "Loading templates")}
-            </span>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              relationCatalogStatus === "ready"
-                ? "bg-emerald-100 text-emerald-800"
-                : relationCatalogStatus === "failed"
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-stone-100 text-stone-700"
-            }`}>
-              {relationCatalogStatus === "ready"
-                ? text("관계 규칙 준비", "Relation rules ready")
-                : relationCatalogStatus === "failed"
-                  ? text("기본 관계 규칙", "Default relation rules")
-                  : text("관계 규칙 로딩", "Loading relation rules")}
-            </span>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              workOrderTemplateStatus === "ready"
-                ? "bg-emerald-100 text-emerald-800"
-                : workOrderTemplateStatus === "failed"
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-stone-100 text-stone-700"
-            }`}>
-              {workOrderTemplateStatus === "ready"
-                ? text("실행 템플릿 준비", "Run templates ready")
-                : workOrderTemplateStatus === "failed"
-                  ? text("실행 템플릿 실패", "Run templates failed")
-                : text("실행 템플릿 로딩", "Loading run templates")}
-            </span>
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              runtimeResourceStatus === "ready"
-                ? "bg-emerald-100 text-emerald-800"
-                : runtimeResourceStatus === "failed"
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-stone-100 text-stone-700"
-            }`}>
-              {runtimeResourceStatus === "ready"
-                ? text("리소스 준비", "Resources ready")
-                : runtimeResourceStatus === "failed"
-                  ? text("리소스 실패", "Resources failed")
-                  : text("리소스 로딩", "Loading resources")}
-            </span>
-          </div>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500">
-          <span className="rounded-full bg-stone-100 px-2 py-0.5 font-semibold text-stone-700">
-            {model.nodes.length} {text("업무 항목", "items")}
-          </span>
-          <span className="rounded-full bg-stone-100 px-2 py-0.5 font-semibold text-stone-700">
-            {model.edges.length} {text("연결", "connections")}
-          </span>
-          <span className={`rounded-full px-2 py-0.5 font-semibold ${
-            draftApiStatus === "failed"
-              ? "bg-amber-100 text-amber-800"
-              : draftIssues.length === 0
-                ? "bg-emerald-100 text-emerald-800"
-                : "bg-amber-100 text-amber-800"
-          }`}>
-            {validationBadgeLabel}
-          </span>
-        </div>
-      </header>
-
-      <div className="shrink-0 border-b border-stone-200 bg-stone-50 px-4 py-3">
-        <TopologyRunLauncher
-          templates={workOrderTemplateCatalog?.templates ?? []}
-          selectedTemplateId={selectedWorkOrderTemplateId}
-          selectedContextPresetId={selectedContextPresetId}
-          simulationMode={simulationMode}
-          advancedInstruction={advancedInstruction}
-          runTargetNodeId={runTargetNodeId}
-          targetState={runTargetState}
-          recentRuns={runHistory}
-          selectedRunId={traceOverlay?.run?.topologyRunId ?? null}
-          traceOverlay={traceOverlay}
-          loading={topologyRunLoading}
-          onSelectTemplate={handleSelectWorkOrderTemplate}
-          onSelectContextPreset={setSelectedContextPresetId}
-          onSelectSimulationMode={setSimulationMode}
-          onAdvancedInstructionChange={setAdvancedInstruction}
-          onRun={handleRunTopology}
-          onSelectRunHistory={handleSelectRunHistory}
-          onTraceLayerRequest={() => onWorkspaceLayerChange?.("trace")}
-          onStartNodeQuickFix={handleRunStartNodeQuickFix}
-        />
-      </div>
-
-      {workspaceLayer === "build" && (!draftTopology || model.nodes.length === 0) ? (
-        <TopologyWorkspaceFirstStartPanel
-          templates={TOPOLOGY_WORKSPACE_STARTER_TEMPLATES}
-          onSelectTemplate={handleCreateStarterTopology}
-          onAddFirstStep={() => handleCreateEntity("work_node")}
-        />
-      ) : null}
-
-      <TopologyAdvancedImportExportPanel
-        topology={draftTopology}
-        format={importExportFormat}
-        importText={importText}
-        exportText={exportText}
-        status={importExportStatus}
-        issues={draftIssues}
-        agentTeamPreview={agentTeamPreview}
-        teamImportMode={teamImportMode}
-        onFormatChange={handleSelectImportExportFormat}
-        onImportTextChange={setImportText}
-        onExportDraft={handleExportDraft}
-        onImportDraft={handleImportDraft}
-        onPreviewAgentTeamImport={handlePreviewAgentTeamImport}
-        onApplyAgentTeamImport={handleApplyAgentTeamImport}
-        onTeamImportModeChange={handleSelectTeamImportMode}
-      />
-
       <TopologyWorkspaceCanvas
+        topologyId={topologyId}
         selectedLayer={workspaceLayer}
+        exposureMode="simple"
         topology={draftTopology}
         runtimeResources={runtimeResources}
         validationIssues={draftIssues}
@@ -714,13 +864,201 @@ export function EnterpriseTopologyPage({
         onRunTargetChange={setRunTargetNodeId}
         onSelectedRunnableTargetChange={setRunTargetNodeId}
         onExecutorMappingChange={handleExecutorMappingChange}
+        onExecutorDraftChange={handleExecutorDraftChange}
+        onExecutorUnderstandingConfirm={handleExecutorUnderstandingSave}
+        onExecutorConnect={handleConnectExecutors}
+        onExecutorMove={handleMoveExecutorNode}
+        activeExecutorIds={visibleActiveExecutorIds}
+        activeEdgeIds={visibleActiveEdgeIds}
+        executorStatuses={visibleExecutorStatuses}
+        edgeStatuses={visibleEdgeStatuses}
+        selectedExecutorId={selectedExecutorId}
+        onSelectedExecutorChange={handleSelectExecutor}
         onRunLayerRequest={() => onWorkspaceLayerChange?.("run")}
-        agentTeamPreview={agentTeamPreview}
-        teamImportMode={teamImportMode}
-        onPreviewAgentTeamImport={handlePreviewAgentTeamImport}
-        onApplyAgentTeamImport={handleApplyAgentTeamImport}
-        onTeamImportModeChange={handleSelectTeamImportMode}
+        simpleCreatePanel={simpleCreatePanel}
       />
     </div>
   )
+
+  return (
+    <ExecutorWorkspaceShell
+      selectedLayer={workspaceLayer}
+      savedStatusLabel={text("저장됨", "Saved")}
+      validationLabel={validationBadgeLabel}
+      executorCount={draftTopology?.nodes.length ?? 0}
+      connectionCount={draftTopology?.relations.length ?? 0}
+      showFirstStart={false}
+      showLeftRail={false}
+      validateDisabled={!draftTopology || draftApiStatus === "syncing"}
+      prepareRunDisabled={!draftTopology}
+      saveDisabled={!draftTopology}
+      deleteDisabled={!draftTopology || draftTopology.nodes.length === 0}
+      onSelectLayer={onWorkspaceLayerChange}
+      onValidate={handleValidateDraft}
+      onPrepareRun={() => onWorkspaceLayerChange?.("run")}
+      onSaveDraft={handleValidateDraft}
+      onAddExecutor={handleAddExecutorNode}
+      onDeleteExecutor={handleDeleteSelectedExecutor}
+      onAddSection={() => handleCreateEntity("group")}
+      onStartRecommendedFlow={() => handleCreateStarterTopology("customer-request-flow")}
+    >
+      {content}
+    </ExecutorWorkspaceShell>
+  )
+}
+
+export const EnterpriseTopologyPage = LegacyEnterpriseTopologyPage
+
+function nextExecutorNodeId(topology: EnterpriseTopology): string {
+  const used = new Set(topology.nodes.map((node) => node.id))
+  let index = topology.nodes.length + 1
+  while (used.has(`node:executor-${index}`)) index += 1
+  return `node:executor-${index}`
+}
+
+function executorRunPathIds(graph: ExecutorGraphWorkspace, startExecutorId: string): string[] {
+  const executorIds = new Set(graph.executors.map((executor) => executor.id))
+  const start = executorIds.has(startExecutorId)
+    ? startExecutorId
+    : graph.executors.find((executor) => executor.sourceNodeId === startExecutorId)?.id
+  if (!start) return []
+
+  const outgoing = new Map<string, string[]>()
+  for (const connection of graph.connections) {
+    outgoing.set(connection.fromExecutorId, [
+      ...(outgoing.get(connection.fromExecutorId) ?? []),
+      connection.toExecutorId,
+    ])
+  }
+
+  const visited = new Set<string>()
+  const queue = [start]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || visited.has(current)) continue
+    visited.add(current)
+    for (const next of outgoing.get(current) ?? []) {
+      if (!visited.has(next)) queue.push(next)
+    }
+  }
+  return [...visited]
+}
+
+function executorRunPathEdgeIds(graph: ExecutorGraphWorkspace, startExecutorId: string): string[] {
+  const executorIds = new Set(graph.executors.map((executor) => executor.id))
+  const start = executorIds.has(startExecutorId)
+    ? startExecutorId
+    : graph.executors.find((executor) => executor.sourceNodeId === startExecutorId)?.id
+  if (!start) return []
+
+  const outgoing = new Map<string, ExecutorGraphWorkspace["connections"]>()
+  for (const connection of graph.connections) {
+    outgoing.set(connection.fromExecutorId, [
+      ...(outgoing.get(connection.fromExecutorId) ?? []),
+      connection,
+    ])
+  }
+
+  const visited = new Set<string>()
+  const edgeIds: string[] = []
+  const queue = [start]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || visited.has(current)) continue
+    visited.add(current)
+    for (const edge of outgoing.get(current) ?? []) {
+      edgeIds.push(edge.id)
+      if (!visited.has(edge.toExecutorId)) queue.push(edge.toExecutorId)
+    }
+  }
+  return [...new Set(edgeIds)]
+}
+
+function runtimeActiveStateFromRuns(
+  runs: RootRun[],
+  topology: EnterpriseTopology,
+): { executorIds: string[]; edgeIds: string[] } {
+  const graph = buildExecutorGraphFromEnterpriseTopology(topology, { mode: "simple" })
+  const executorIds = new Set<string>()
+  const edgeIds = new Set<string>()
+  for (const run of runs) {
+    if (!isActiveRunStatus(run.status)) continue
+    const routing = topologyRoutingFromRun(run)
+    if (routing?.mode !== "route" || routing.topologyId !== topology.id) continue
+    if (routing.entryNodeId) {
+      for (const executorId of executorRunPathIds(graph, routing.entryNodeId)) executorIds.add(executorId)
+      for (const edgeId of executorRunPathEdgeIds(graph, routing.entryNodeId)) edgeIds.add(edgeId)
+    }
+    for (const executorId of topologyAssignedExecutorIdsFromRun(run, topology.id)) {
+      executorIds.add(executorId)
+    }
+  }
+
+  for (const connection of graph.connections) {
+    if (
+      executorIds.has(connection.fromExecutorId) &&
+      executorIds.has(connection.toExecutorId)
+    ) {
+      edgeIds.add(connection.id)
+    }
+  }
+
+  return {
+    executorIds: [...executorIds].sort(),
+    edgeIds: [...edgeIds].sort(),
+  }
+}
+
+function isActiveRunStatus(status: RootRun["status"]): boolean {
+  return status === "queued" ||
+    status === "running" ||
+    status === "awaiting_approval" ||
+    status === "awaiting_user"
+}
+
+function topologyRoutingFromRun(
+  run: RootRun,
+): { mode?: string; topologyId?: string; entryNodeId?: string } | null {
+  const snapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {}
+  const routing = isRecord(snapshot.topologyRouting) ? snapshot.topologyRouting : {}
+  const mode = stringValue(routing.mode)
+  const topologyId = stringValue(routing.topologyId)
+  const entryNodeId = stringValue(routing.entryNodeId)
+  if (!mode && !topologyId && !entryNodeId) return null
+  return { mode, topologyId, entryNodeId }
+}
+
+function topologyAssignedExecutorIdsFromRun(run: RootRun, topologyId: string): string[] {
+  const plan = isRecord(run.orchestrationPlanSnapshot)
+    ? run.orchestrationPlanSnapshot
+    : isRecord(run.promptSourceSnapshot) && isRecord(run.promptSourceSnapshot.orchestrationPlan)
+      ? run.promptSourceSnapshot.orchestrationPlan
+      : null
+  if (!plan) return []
+  const tasks = [...recordArray(plan.directNobieTasks), ...recordArray(plan.delegatedTasks)]
+  return tasks
+    .map((task) => topologyExecutorIdFromAgentId(stringValue(task.assignedAgentId), topologyId))
+    .filter((executorId): executorId is string => Boolean(executorId))
+}
+
+function topologyExecutorIdFromAgentId(agentId: string | undefined, topologyId: string): string | undefined {
+  if (!agentId?.startsWith(`${topologyId}:`)) return undefined
+  const executorId = agentId.slice(topologyId.length + 1)
+  return executorId.startsWith("node:") ? executorId : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : []
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function entityRefMatchesNode(ref: { entityType: string; id: string } | undefined, nodeId: string): boolean {
+  return ref?.entityType === "node" && ref.id === nodeId
 }

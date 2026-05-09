@@ -192,7 +192,7 @@ export interface RetentionCleanupApplyOptions extends RetentionCleanupOptions {
 }
 export type RetryFailureDomain = "model" | "channel" | "yeonjang" | "tool" | "delivery" | "scheduler";
 export interface RetryPolicy {
-    maxAttempts: number;
+    strategyChangeSignalThreshold: number;
     baseDelayMs: number;
     maxDelayMs: number;
 }
@@ -208,24 +208,25 @@ export interface RetryFailureFingerprintInput {
 }
 export interface RetryBackoffInput {
     domain?: RetryFailureDomain;
-    attempt: number;
-    maxAttempts?: number;
+    signalCount: number;
+    strategyChangeSignalThreshold?: number;
     baseDelayMs?: number;
     maxDelayMs?: number;
 }
 export interface RetryBackoffDecision {
-    attempt: number;
-    maxAttempts: number;
-    shouldRetry: boolean;
-    exhausted: boolean;
-    reason: "retry_scheduled" | "retry_exhausted";
+    signalCount: number;
+    strategyChangeSignalThreshold: number;
+    shouldContinue: true;
+    strategyChangeRecommended: boolean;
+    reason: "continue_with_backoff" | "strategy_change_recommended";
     nextDelayMs?: number;
 }
 export interface RepeatedFailureStopDecision {
     fingerprint: string;
     seenCount: number;
     threshold: number;
-    shouldStop: boolean;
+    shouldStop: false;
+    strategyChangeRecommended: boolean;
 }
 export declare const DEFAULT_RETENTION_POLICY: RetentionPolicy;
 export declare const DEFAULT_RETRY_POLICIES: Record<RetryFailureDomain, RetryPolicy>;

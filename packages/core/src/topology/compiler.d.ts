@@ -112,10 +112,12 @@ export interface CompiledAuthorityRule {
 }
 export interface CompiledDelegationTree {
     rootNodeIds: string[];
+    rootChildNodeIds: string[];
     entryNodeId: string | null;
     exitNodeIds: string[];
     edges: Record<string, string[]>;
     parents: Record<string, string[]>;
+    incomingEdgeCountByNodeId: Record<string, number>;
 }
 export interface CompiledDelegationScope {
     nodeId: string;
@@ -165,6 +167,7 @@ export interface CompiledResponsibilityIndex {
 export interface CompiledRuntimeExecutionContext {
     topologyId: string;
     entryNodeId: string | null;
+    rootChildNodeIds: string[];
     exitNodeIds: string[];
     nodeCount: number;
     delegationEdgeCount: number;

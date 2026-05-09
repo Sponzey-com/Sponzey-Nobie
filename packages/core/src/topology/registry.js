@@ -3,13 +3,15 @@ import { assertMigrationWriteAllowed } from "../db/migration-safety.js";
 import { compileTopology, } from "./compiler.js";
 import { validateTopology, } from "./validator.js";
 import { buildTopologyHistoryId, buildTopologyValidationSnapshotId, buildTopologyVersionId, compiledSnapshotMatchesTopologyVersion, computeTopologyRegistrySourceHash, describeCompiledSnapshotMismatch, } from "./versioning.js";
+import { repairTopologyForPersistence } from "./repair.js";
 export function createEnterpriseTopologyRegistry(options = {}) {
     const db = options.db ?? getDb();
     const now = options.now ?? Date.now;
     function appendTopologyVersion(input) {
         assertMigrationWriteAllowed(db, "enterprise_topology.version.append");
         const timestamp = now();
-        const topology = structuredClone(input.topology);
+        const repair = repairTopologyForPersistence(input.topology);
+        const topology = repair.topology;
         const validation = validateTopology(topology);
         const version = nextVersion(topology.id);
         const versionId = buildTopologyVersionId(topology.id, version);
@@ -70,6 +72,18 @@ export function createEnterpriseTopologyRegistry(options = {}) {
                     sourceHash,
                     executable: validation.executable,
                     issueCounts: { ...validation.issueCounts },
+                    ...(repair.issues.length > 0
+                        ? {
+                            repairIssues: repair.issues.map((issue) => ({
+                                code: issue.code,
+                                severity: issue.severity,
+                                message: issue.message,
+                                topologyId: issue.topologyId,
+                                ...(issue.nodeId !== undefined ? { nodeId: issue.nodeId } : {}),
+                                ...(issue.relationId !== undefined ? { relationId: issue.relationId } : {}),
+                            })),
+                        }
+                        : {}),
                     ...(input.importSource !== undefined ? { importSource: input.importSource } : {}),
                 },
                 createdAt: timestamp,

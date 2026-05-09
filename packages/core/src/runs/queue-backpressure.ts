@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import { insertDiagnosticEvent, insertQueueBackpressureEvent, listQueueBackpressureEvents, type DbQueueBackpressureEventKind } from "../db/index.js"
+import { insertQueueBackpressureEvent, type DbQueueBackpressureEventKind } from "../db/index.js"
 
 export const QUEUE_NAMES = [
   "fast_receipt",
@@ -17,7 +17,6 @@ export type QueueName = typeof QUEUE_NAMES[number]
 export interface QueueBudget {
   concurrency: number
   timeoutMs: number
-  retryCount: number
   backoffMs: number
   maxPending: number
 }
@@ -27,16 +26,14 @@ export interface QueueSnapshotItem extends QueueBudget {
   running: number
   pending: number
   oldestPendingAgeMs: number
-  retryKeys: number
-  deadLetterCount: number
-  status: "ok" | "waiting" | "recovering" | "stopped"
+  recoveryKeys: number
+  status: "ok" | "waiting" | "recovering"
 }
 
-export interface RetryBudgetDecision {
-  allowed: boolean
-  retryCount: number
-  retryBudgetRemaining: number
-  actionTaken: "retry_scheduled" | "dead_letter"
+export interface QueueRecoveryAttemptDecision {
+  allowed: true
+  signalCount: number
+  actionTaken: "recovery_scheduled"
   userMessage: string
 }
 
@@ -68,33 +65,30 @@ interface QueueState {
   pending: Array<QueueJob<unknown>>
 }
 
-interface RetryState {
+interface RecoveryState {
   count: number
-  deadLettered: boolean
   updatedAt: number
 }
 
 export const DEFAULT_QUEUE_BUDGETS: Record<QueueName, QueueBudget> = {
-  fast_receipt: { concurrency: 8, timeoutMs: 500, retryCount: 0, backoffMs: 0, maxPending: 100 },
-  interactive_run: { concurrency: 2, timeoutMs: 120_000, retryCount: 1, backoffMs: 500, maxPending: 50 },
-  tool_execution: { concurrency: 4, timeoutMs: 60_000, retryCount: 2, backoffMs: 1_000, maxPending: 80 },
-  delivery: { concurrency: 3, timeoutMs: 30_000, retryCount: 3, backoffMs: 1_500, maxPending: 100 },
-  web_browser: { concurrency: 1, timeoutMs: 20_000, retryCount: 1, backoffMs: 2_000, maxPending: 10 },
-  memory_index: { concurrency: 1, timeoutMs: 90_000, retryCount: 2, backoffMs: 2_000, maxPending: 500 },
-  diagnostic: { concurrency: 1, timeoutMs: 30_000, retryCount: 1, backoffMs: 1_000, maxPending: 20 },
-  schedule_tick: { concurrency: 2, timeoutMs: 30_000, retryCount: 1, backoffMs: 1_000, maxPending: 200 },
+  fast_receipt: { concurrency: 8, timeoutMs: 500, backoffMs: 0, maxPending: 100 },
+  interactive_run: { concurrency: 2, timeoutMs: 120_000, backoffMs: 500, maxPending: 50 },
+  tool_execution: { concurrency: 4, timeoutMs: 60_000, backoffMs: 1_000, maxPending: 80 },
+  delivery: { concurrency: 3, timeoutMs: 30_000, backoffMs: 1_500, maxPending: 100 },
+  web_browser: { concurrency: 1, timeoutMs: 20_000, backoffMs: 2_000, maxPending: 10 },
+  memory_index: { concurrency: 1, timeoutMs: 90_000, backoffMs: 2_000, maxPending: 500 },
+  diagnostic: { concurrency: 1, timeoutMs: 30_000, backoffMs: 1_000, maxPending: 20 },
+  schedule_tick: { concurrency: 2, timeoutMs: 30_000, backoffMs: 1_000, maxPending: 200 },
 }
 
 const queueStates = new Map<QueueName, QueueState>()
-const retryStates = new Map<string, RetryState>()
-const deadLetterKeys = new Set<string>()
+const recoveryStates = new Map<string, RecoveryState>()
 
 function budgetFor(queueName: QueueName, override?: Partial<QueueBudget>): QueueBudget {
   const base = DEFAULT_QUEUE_BUDGETS[queueName]
   return {
     concurrency: Math.max(1, Math.floor(override?.concurrency ?? base.concurrency)),
     timeoutMs: Math.max(1, Math.floor(override?.timeoutMs ?? base.timeoutMs)),
-    retryCount: Math.max(0, Math.floor(override?.retryCount ?? base.retryCount)),
     backoffMs: Math.max(0, Math.floor(override?.backoffMs ?? base.backoffMs)),
     maxPending: Math.max(0, Math.floor(override?.maxPending ?? base.maxPending)),
   }
@@ -108,7 +102,7 @@ function stateFor(queueName: QueueName): QueueState {
   return state
 }
 
-function retryKey(queueName: QueueName, recoveryKey: string): string {
+function recoveryStateKey(queueName: QueueName, recoveryKey: string): string {
   return `${queueName}:${recoveryKey}`
 }
 
@@ -119,11 +113,11 @@ function safeRecordQueueEvent(input: {
   runId?: string
   requestGroupId?: string
   pendingCount?: number
-  retryCount?: number
-  retryBudgetRemaining?: number | null
+  signalCount?: number
   recoveryKey?: string
   detail?: Record<string, unknown>
 }): void {
+  const signalCount = input.signalCount ?? 0
   try {
     insertQueueBackpressureEvent({
       queueName: input.queueName,
@@ -132,10 +126,12 @@ function safeRecordQueueEvent(input: {
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
       pendingCount: input.pendingCount ?? 0,
-      retryCount: input.retryCount ?? 0,
-      retryBudgetRemaining: input.retryBudgetRemaining ?? null,
+      retryCount: signalCount,
       ...(input.recoveryKey ? { recoveryKey: input.recoveryKey } : {}),
-      ...(input.detail ? { detail: input.detail } : {}),
+      detail: {
+        ...(input.detail ?? {}),
+        signalCount,
+      },
     })
   } catch {
     // Queue diagnostics must not block user-facing execution.
@@ -149,51 +145,11 @@ export function recordQueueBackpressureEvent(input: {
   runId?: string
   requestGroupId?: string
   pendingCount?: number
-  retryCount?: number
-  retryBudgetRemaining?: number | null
+  signalCount?: number
   recoveryKey?: string
   detail?: Record<string, unknown>
 }): void {
   safeRecordQueueEvent(input)
-}
-
-function recordDeadLetter(input: {
-  queueName: QueueName
-  recoveryKey: string
-  runId?: string
-  requestGroupId?: string
-  retryCount: number
-  reason: string
-}): void {
-  const key = retryKey(input.queueName, input.recoveryKey)
-  deadLetterKeys.add(key)
-  safeRecordQueueEvent({
-    queueName: input.queueName,
-    eventKind: "dead_letter",
-    actionTaken: "stop_auto_retry",
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
-    retryCount: input.retryCount,
-    retryBudgetRemaining: 0,
-    recoveryKey: input.recoveryKey,
-    detail: { reason: input.reason },
-  })
-  try {
-    insertDiagnosticEvent({
-      kind: "queue_dead_letter",
-      summary: `${input.queueName} 자동 재시도 중단: ${input.recoveryKey}`,
-      ...(input.runId ? { runId: input.runId } : {}),
-      ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
-      recoveryKey: input.recoveryKey,
-      detail: {
-        queueName: input.queueName,
-        retryCount: input.retryCount,
-        reason: input.reason,
-      },
-    })
-  } catch {
-    // Best-effort diagnostic.
-  }
 }
 
 function runNext(queueName: QueueName, budget: QueueBudget): void {
@@ -313,68 +269,42 @@ export function enqueueBackpressureTask<T>(input: {
   })
 }
 
-export function recordRetryBudgetAttempt(input: {
+export function recordQueueRecoveryAttempt(input: {
   queueName: QueueName
   recoveryKey: string
   runId?: string
   requestGroupId?: string
-  budget?: Partial<QueueBudget>
   reason?: string
-}): RetryBudgetDecision {
-  const budget = budgetFor(input.queueName, input.budget)
-  const key = retryKey(input.queueName, input.recoveryKey)
-  const current = retryStates.get(key) ?? { count: 0, deadLettered: false, updatedAt: 0 }
-  if (current.deadLettered || current.count >= budget.retryCount) {
-    const retryCount = current.count
-    retryStates.set(key, { count: retryCount, deadLettered: true, updatedAt: Date.now() })
-    recordDeadLetter({
-      queueName: input.queueName,
-      recoveryKey: input.recoveryKey,
-      ...(input.runId ? { runId: input.runId } : {}),
-      ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
-      retryCount,
-      reason: input.reason ?? "retry_budget_exhausted",
-    })
-    return {
-      allowed: false,
-      retryCount,
-      retryBudgetRemaining: 0,
-      actionTaken: "dead_letter",
-      userMessage: buildBackpressureUserMessage("retry_stopped", input.queueName),
-    }
-  }
-
+}): QueueRecoveryAttemptDecision {
+  const key = recoveryStateKey(input.queueName, input.recoveryKey)
+  const current = recoveryStates.get(key) ?? { count: 0, updatedAt: 0 }
   const nextCount = current.count + 1
-  const remaining = Math.max(0, budget.retryCount - nextCount)
-  retryStates.set(key, { count: nextCount, deadLettered: false, updatedAt: Date.now() })
+  recoveryStates.set(key, { count: nextCount, updatedAt: Date.now() })
   safeRecordQueueEvent({
     queueName: input.queueName,
-    eventKind: "retry_scheduled",
-    actionTaken: "retry_scheduled",
+    eventKind: "recovery_scheduled",
+    actionTaken: "recovery_scheduled",
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
-    retryCount: nextCount,
-    retryBudgetRemaining: remaining,
+    signalCount: nextCount,
     recoveryKey: input.recoveryKey,
-    detail: { reason: input.reason ?? "retry" },
+    detail: { reason: input.reason ?? "recovery" },
   })
   return {
     allowed: true,
-    retryCount: nextCount,
-    retryBudgetRemaining: remaining,
-    actionTaken: "retry_scheduled",
+    signalCount: nextCount,
+    actionTaken: "recovery_scheduled",
     userMessage: buildBackpressureUserMessage("recovering", input.queueName),
   }
 }
 
-export function resetRetryBudget(input: { queueName: QueueName; recoveryKey: string; runId?: string; requestGroupId?: string }): void {
-  const key = retryKey(input.queueName, input.recoveryKey)
-  retryStates.delete(key)
-  deadLetterKeys.delete(key)
+export function resetQueueRecoveryAttempt(input: { queueName: QueueName; recoveryKey: string; runId?: string; requestGroupId?: string }): void {
+  const key = recoveryStateKey(input.queueName, input.recoveryKey)
+  recoveryStates.delete(key)
   safeRecordQueueEvent({
     queueName: input.queueName,
     eventKind: "reset",
-    actionTaken: "reset_retry_budget",
+    actionTaken: "reset_recovery_attempt",
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
     recoveryKey: input.recoveryKey,
@@ -382,48 +312,39 @@ export function resetRetryBudget(input: { queueName: QueueName; recoveryKey: str
 }
 
 export function buildQueueBackpressureSnapshot(): QueueSnapshotItem[] {
-  const persistedDeadLetters = listQueueBackpressureEvents({ eventKind: "dead_letter", limit: 500 })
   return QUEUE_NAMES.map((queueName) => {
     const state = stateFor(queueName)
     const budget = budgetFor(queueName)
     const oldest = state.pending[0]?.createdAt
-    const queueRetryPrefix = `${queueName}:`
-    const retryKeys = [...retryStates.keys()].filter((key) => key.startsWith(queueRetryPrefix)).length
-    const deadLetterCount = [...deadLetterKeys].filter((key) => key.startsWith(queueRetryPrefix)).length
-      + persistedDeadLetters.filter((event) => event.queue_name === queueName).length
-    const status: QueueSnapshotItem["status"] = deadLetterCount > 0
-      ? "stopped"
-      : state.pending.length >= budget.maxPending
-        ? "recovering"
-        : state.pending.length > 0
-          ? "waiting"
-          : "ok"
+    const queueRecoveryPrefix = `${queueName}:`
+    const recoveryKeys = [...recoveryStates.keys()].filter((key) => key.startsWith(queueRecoveryPrefix)).length
+    const status: QueueSnapshotItem["status"] = state.pending.length >= budget.maxPending
+      ? "recovering"
+      : state.pending.length > 0
+        ? "waiting"
+        : "ok"
     return {
       queueName,
       ...budget,
       running: state.running,
       pending: state.pending.length,
       oldestPendingAgeMs: oldest ? Date.now() - oldest : 0,
-      retryKeys,
-      deadLetterCount,
+      recoveryKeys,
       status,
     }
   })
 }
 
-export function buildBackpressureUserMessage(kind: "waiting" | "recovering" | "retry_stopped", queueName: QueueName): string {
+export function buildBackpressureUserMessage(kind: "waiting" | "recovering", queueName: QueueName): string {
   switch (kind) {
     case "waiting":
       return `${queueName} 작업이 대기 중입니다. 실패가 아니라 앞선 작업이 끝나기를 기다리는 상태입니다.`
     case "recovering":
-      return `${queueName} 작업을 복구 중입니다. 자동 재시도 예산 안에서 한 번 더 시도합니다.`
-    case "retry_stopped":
-      return `${queueName} 작업의 같은 오류가 반복되어 자동 재시도를 중단했습니다. 원인을 확인한 뒤 명시적으로 다시 시도해야 합니다.`
+      return `${queueName} 작업을 복구 중입니다. 실패 원인을 기록하고 다음 복구 시도를 이어갑니다.`
   }
 }
 
 export function resetQueueBackpressureState(): void {
   queueStates.clear()
-  retryStates.clear()
-  deadLetterKeys.clear()
+  recoveryStates.clear()
 }

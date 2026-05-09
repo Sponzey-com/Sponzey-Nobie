@@ -225,7 +225,6 @@ export declare class SubSessionRunner {
     private changeStatus;
     private reviewResultReport;
     private executeWithModelPolicy;
-    private runWithTimeout;
 }
 export declare function runParallelSubSessionGroup(group: Pick<ParallelSubSessionGroup, "groupId" | "dependencyEdges" | "concurrencyLimit">, items: SubSessionWorkItem[], options?: ParallelSubSessionGroupRunOptions): Promise<ParallelSubSessionGroupRunResult>;
 export declare function classifySubSessionRecovery(subSession: SubSessionContract): SubSessionRecoveryDecision;

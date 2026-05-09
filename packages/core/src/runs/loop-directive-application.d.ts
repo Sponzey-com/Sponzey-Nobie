@@ -14,6 +14,8 @@ export declare function applyLoopDirective(params: {
     onChunk: RunChunkDeliveryHandler | undefined;
     directive: LoopDirective;
     finalizationDependencies: FinalizationDependencies;
+    suppressFinalDelivery?: boolean;
+    suppressFinalDeliveryReasonCode?: string;
 }, moduleDependencies?: LoopDirectiveApplicationModuleDependencies): Promise<"break">;
 export {};
 //# sourceMappingURL=loop-directive-application.d.ts.map

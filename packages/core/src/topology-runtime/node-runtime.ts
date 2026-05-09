@@ -269,6 +269,10 @@ export async function runNodeRuntime(input: RunNodeRuntimeInput): Promise<NodeRu
   recordState("planning", "node_runtime_planning", {
     expectedOutputIds: envelope.expectedOutputs.map((expectedOutput) => expectedOutput.outputId),
   })
+  const workOrderTraceContext = (): EnterpriseMetadata => buildWorkOrderTraceContext({
+    workOrder,
+    expectedOutputIds: envelope.expectedOutputs.map((expectedOutput) => expectedOutput.outputId),
+  })
 
   const completeWithReport = (inputReport: {
     status: NodeResultStatus
@@ -473,7 +477,9 @@ export async function runNodeRuntime(input: RunNodeRuntimeInput): Promise<NodeRu
 
     if (plan.childWorkOrders.length > 0 || plan.status === "blocked" || plan.status === "partial") {
       recordState("child_delegating", "child_delegation_started", {
+        ...workOrderTraceContext(),
         childNodeIds: plan.childWorkOrders.map((item) => item.childNodeId),
+        target_executor_ids: plan.childWorkOrders.map((item) => item.childNodeId),
         skippedReasonCodes: plan.skipped.map((issue) => issue.reasonCode),
         maxDelegationDepth: plan.maxDelegationDepth,
         childDelegationDepth: plan.childDelegationDepth,
@@ -541,6 +547,19 @@ export async function runNodeRuntime(input: RunNodeRuntimeInput): Promise<NodeRu
     outputs: normalizedSelfExecution.outputs,
   })
   if (input.aggregation?.enabled === true) {
+    recordTrace({
+      state: "validating",
+      phase: "aggregation",
+      reasonCode: "aggregation_started",
+      payload: {
+        ...workOrderTraceContext(),
+        source_executor_ids: [
+          workOrder.to.id,
+          ...(childDelegation?.results.map((result) => result.childNodeId) ?? []),
+          ...(toolExecution?.results.map((result) => result.toolId) ?? []),
+        ],
+      },
+    })
     aggregation = aggregateNodeRuntimeResults({
       workOrder,
       strategy: input.aggregation.strategy ?? "merge_and_validate",
@@ -563,6 +582,31 @@ export async function runNodeRuntime(input: RunNodeRuntimeInput): Promise<NodeRu
       workOrder,
       aggregation,
       ...(allowPartialSuccess !== undefined ? { allowPartialSuccess } : {}),
+    })
+    recordTrace({
+      state: "validating",
+      phase: "validation",
+      reasonCode: `aggregation_${validation.status}`,
+      payload: {
+        ...workOrderTraceContext(),
+        aggregation_result: {
+          strategy: aggregation.strategy,
+          source_executor_ids: aggregation.sources.map((source) => source.sourceId),
+          issue_codes: aggregation.issues.map((issue) => issue.reasonCode),
+          output_count: aggregation.outputs.length,
+          missing_child_node_ids: aggregation.missingChildNodeIds,
+        },
+        validation_result: {
+          status: validation.status,
+          node_result_status: validation.nodeResultStatus,
+          risk_or_gap_count: validation.risksOrGaps.length,
+        },
+        self_solve_attempt: {
+          executor_id: workOrder.to.id,
+          status: selfExecution.status ?? decision.status,
+          reason_code: selfExecution.reasonCode ?? decision.reasonCode,
+        },
+      },
     })
 
     return completeWithReport({
@@ -706,6 +750,17 @@ function buildDefaultChildRuntimeRunner(input: {
       now: input.now,
       component: input.component,
       ...(childDelegation !== undefined ? { childDelegation } : {}),
+      ...(childDelegation !== undefined
+        ? {
+            aggregation: {
+              enabled: true,
+              strategy: "parent_decides",
+              expectedChildNodeIds: childInput.compiledTopologySnapshot.parentChildTree.edges[childInput.planItem.childNodeId] ?? [],
+              requireAllChildResults: false,
+              allowPartialSuccess: true,
+            },
+          }
+        : {}),
     })
 
     return {
@@ -716,6 +771,28 @@ function buildDefaultChildRuntimeRunner(input: {
       risksOrGaps: result.nodeResultReport.risksOrGaps,
     }
   }
+}
+
+function buildWorkOrderTraceContext(input: {
+  workOrder: WorkOrder
+  expectedOutputIds: string[]
+}): EnterpriseMetadata {
+  const rootRunId = metadataString(input.workOrder.input.rootRunId)
+  const fallbackReason = metadataString(input.workOrder.input.fallbackReason)
+    ?? metadataString(input.workOrder.input.routingReasonCode)
+  return {
+    ...(rootRunId !== undefined ? { parent_run_id: rootRunId } : {}),
+    delegating_executor_id: input.workOrder.fromNodeId,
+    target_executor_id: input.workOrder.to.id,
+    work_order_id: input.workOrder.workOrderId,
+    work_order_goal: input.workOrder.objective,
+    expected_output: input.expectedOutputIds,
+    ...(fallbackReason !== undefined ? { fallback_reason: fallbackReason } : {}),
+  }
+}
+
+function metadataString(value: EnterpriseMetadataValue | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined
 }
 
 function childDelegationOptionsForRecursiveChild(

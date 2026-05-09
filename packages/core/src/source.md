@@ -110,7 +110,7 @@
 - 실행 종료 직후 worker runtime 종료 이벤트, runtime preview 저장, reply log 기록, reviewing step 진입도 `runs/review-transition.ts`로 분리하기 시작했고, `start.ts`는 review 전환 세부보다 post-pass orchestration에 더 집중합니다.
 - external recovery의 `plan -> apply -> next state` 패스도 `runs/external-recovery-pass.ts`로 분리하기 시작했고, `start.ts`는 AI/worker runtime 복구를 종류별로 거의 같은 블록 두 개로 들고 있지 않도록 정리하고 있습니다.
 - external recovery의 `ai -> worker_runtime` 순회와 next state 적용도 `runs/external-recovery-sequence.ts`로 분리하기 시작했고, `start.ts`는 외부 복구 전체 시퀀스 결과만 반영하도록 더 좁혀지고 있습니다.
-- chunk loop 직후의 실행 복구 한도 중단, external recovery sequence, failed/aborted 종료도 `runs/recovery-entry-pass.ts`로 분리하기 시작했고, `start.ts`는 복구 진입부의 다음 상태 반영만 맡는 방향으로 더 좁아졌습니다.
+- chunk loop 직후의 실행 복구 중단, external recovery sequence, failed/aborted 종료도 `runs/recovery-entry-pass.ts`로 분리하기 시작했고, `start.ts`는 복구 진입부의 다음 상태 반영만 맡는 방향으로 더 좁아졌습니다.
 - completion review 이후의 flow decision과 application decision 조합도 `runs/completion-pass.ts`로 분리하기 시작했고, `start.ts`는 completion apply 결과를 소비하는 orchestration에 더 집중합니다.
 - completion application의 `complete / stop / retry / awaiting_user` 실제 적용도 `runs/completion-application-pass.ts`로 분리하기 시작했고, `start.ts`는 completion apply 결과를 받고 flag와 next message만 반영하도록 더 좁혀지고 있습니다.
 - `retry_intake`의 실패 기록, interpretation budget 확인, retry/stop 적용도 `runs/intake-retry-application.ts`로 분리하기 시작했고, `start.ts`는 일정 해석 복구 적용 세부를 직접 들고 있지 않도록 더 좁혀지고 있습니다.

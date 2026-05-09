@@ -16,6 +16,7 @@ import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSes
 import { getSession, insertChannelMessageRef } from "../../db/index.js";
 import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js";
 import { setTelegramRuntimeError } from "./runtime.js";
+import { telegramAllowedRoomIdsForChatType, telegramRoomTypeForChatType, } from "./auth.js";
 const log = createLogger("channel:telegram");
 export function findTelegramReplyTaskRef(params) {
     if (params.replyToMessageId === undefined)
@@ -54,7 +55,7 @@ function buildTelegramContinuationEnvelope(params) {
         ...(params.threadId !== undefined ? { threadId: String(params.threadId) } : {}),
         ...(params.replyToMessageId !== undefined ? { replyToMessageId: String(params.replyToMessageId) } : {}),
         sender: { id: String(params.userId ?? 0), providerType: "user" },
-        room: { id: String(params.chatId), type: "unknown" },
+        room: { id: String(params.chatId), type: telegramRoomTypeForChatType(params.chatType ?? "unknown") },
         text: params.text ?? "",
         attachments: [],
         mentions: [],
@@ -170,6 +171,7 @@ export class TelegramChannel {
             const access = evaluateInboundAccessPolicy({
                 envelope: buildTelegramContinuationEnvelope({
                     chatId,
+                    chatType,
                     messageId: message.message_id,
                     ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
                     ...(threadId !== undefined ? { threadId } : {}),
@@ -179,7 +181,7 @@ export class TelegramChannel {
                 policy: buildAccessPolicyFromAllowedIds({
                     provider: "telegram",
                     allowedUserIds: this.config.allowedUserIds,
-                    allowedRoomIds: this.config.allowedGroupIds,
+                    allowedRoomIds: telegramAllowedRoomIdsForChatType(chatType, this.config.allowedGroupIds),
                     requireAllowedPrincipal: true,
                     allowUnlisted: false,
                     emptyAllowlistAllows: false,

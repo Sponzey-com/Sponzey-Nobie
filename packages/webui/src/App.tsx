@@ -552,7 +552,7 @@ function AdminShellPage() {
                           {call.approvalState}
                         </span>
                         <span className="rounded-full bg-white px-2 py-1 text-stone-700 ring-1 ring-stone-200">
-                          retry {call.retryCount}
+                          신호 {call.signalCount}
                         </span>
                       </div>
                     </div>
@@ -838,7 +838,7 @@ function AdminShellPage() {
               {memoryWritebacks.map((item) => (
                 <div key={item.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
                   <div className="text-xs font-semibold uppercase text-amber-700">
-                    {msg("admin.inspectors.writeback", { count: item.retryCount })} · {item.status}
+                    {msg("admin.inspectors.writeback", { count: item.signalCount })} · {item.status}
                   </div>
                   <p className="mt-2 text-sm leading-5 text-amber-950">{item.contentPreview}</p>
                   {item.lastError ? (

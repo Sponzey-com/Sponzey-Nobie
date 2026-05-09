@@ -21,6 +21,10 @@ import {
   type TopologyWorkspaceLayer,
   type TopologyWorkspaceModel,
 } from "../../lib/topology-workspace"
+import {
+  shouldShowTopologyWorkspaceAdvancedSurface,
+  type TopologyWorkspaceExposureMode,
+} from "../../lib/topology-workspace-copy"
 import { useUiI18n } from "../../lib/ui-i18n"
 import {
   EnterpriseTopologyCanvasShell,
@@ -29,8 +33,17 @@ import {
   type EnterpriseTopologyCanvasNodeData,
   type EnterpriseTopologyRelationEdgeData,
 } from "./EnterpriseTopologyCanvas"
+import {
+  ExecutorGraphCanvas,
+  buildExecutorGraphCanvasModel,
+  type ExecutorFlowEdgeStatus,
+} from "./ExecutorGraphCanvas"
+import { ExecutorInspector } from "./ExecutorInspector"
+import type { ExecutorCardExecutionStatus } from "./ExecutorCardNode"
+import { ExecutorRunResultPanel } from "./ExecutorRunResultPanel"
 import type { EnterpriseTopologyPaletteKind } from "./EnterpriseTopologyPalette"
 import type { TopologyWorkspaceExecutorMapping } from "./TopologyWorkspaceInspector"
+import type { ExecutorDraft } from "../../lib/executor-graph"
 import type { EnterpriseRelationModeIssue, TopologyRelationModeId } from "./RelationModeToolbar"
 import {
   buildTopologyRunOverlayState,
@@ -88,7 +101,9 @@ export interface TopologyWorkspaceCanvasLayerModel {
 
 export interface TopologyWorkspaceCanvasProps {
   workspaceModel?: TopologyWorkspaceModel
+  topologyId?: string
   selectedLayer?: TopologyWorkspaceLayer
+  exposureMode?: TopologyWorkspaceExposureMode
   topology?: EnterpriseTopology | null
   runtimeResources?: AgentTopologyProjection | null
   validationIssues?: EnterpriseTopologyValidationIssue[]
@@ -108,8 +123,20 @@ export interface TopologyWorkspaceCanvasProps {
   runTargetNodeId?: string | null
   onRunTargetChange?: (nodeId: string) => void
   onExecutorMappingChange?: (nodeId: string, mapping: TopologyWorkspaceExecutorMapping) => void
+  onExecutorDraftChange?: (executor: ExecutorDraft) => void
+  onExecutorUnderstandingConfirm?: (executor: ExecutorDraft) => void
+  onExecutorConnect?: (sourceExecutorId: string, targetExecutorId: string) => void
+  onExecutorMove?: (executorId: string, position: { x: number; y: number }) => void
+  activeExecutorIds?: string[]
+  activeEdgeIds?: string[]
+  executorStatuses?: Record<string, ExecutorCardExecutionStatus>
+  edgeStatuses?: Record<string, ExecutorFlowEdgeStatus>
+  selectedExecutorId?: string | null
+  onSelectedExecutorChange?: (executorId: string | null) => void
   onSelectedRunnableTargetChange?: (nodeId: string) => void
   onRunLayerRequest?: () => void
+  simpleCreatePanel?: React.ReactNode
+  showSimpleCreatePanel?: boolean
   agentTeamPreview?: AgentTeamTopologyImportPreviewResponse | null
   teamImportMode?: AgentTeamImportMode
   onPreviewAgentTeamImport?: () => void
@@ -269,7 +296,9 @@ export function topologyWorkspaceCanvasLegend(layer: TopologyWorkspaceLayer): To
 
 export function TopologyWorkspaceCanvas({
   workspaceModel,
+  topologyId,
   selectedLayer = "build",
+  exposureMode = "simple",
   topology,
   runtimeResources,
   validationIssues = [],
@@ -289,8 +318,20 @@ export function TopologyWorkspaceCanvas({
   runTargetNodeId,
   onRunTargetChange,
   onExecutorMappingChange,
+  onExecutorDraftChange,
+  onExecutorUnderstandingConfirm,
+  onExecutorConnect,
+  onExecutorMove,
+  activeExecutorIds,
+  activeEdgeIds,
+  executorStatuses,
+  edgeStatuses,
+  selectedExecutorId,
+  onSelectedExecutorChange,
   onSelectedRunnableTargetChange,
   onRunLayerRequest,
+  simpleCreatePanel,
+  showSimpleCreatePanel,
   agentTeamPreview,
   teamImportMode = "team",
   onPreviewAgentTeamImport,
@@ -298,6 +339,9 @@ export function TopologyWorkspaceCanvas({
   onTeamImportModeChange,
 }: TopologyWorkspaceCanvasProps) {
   const latestTrace = React.useMemo(() => buildTopologyWorkspaceTraceProjection(traceOverlay), [traceOverlay])
+  const effectiveExposureMode: TopologyWorkspaceExposureMode = shouldShowTopologyWorkspaceAdvancedSurface(exposureMode)
+    ? exposureMode
+    : "simple"
   const effectiveModel = React.useMemo(() => workspaceModel ?? buildTopologyWorkspaceModel({
     snapshot: buildTopologyWorkspaceSnapshot({
       topology: topology ?? null,
@@ -313,6 +357,73 @@ export function TopologyWorkspaceCanvas({
     relationCatalog,
     traceOverlay,
   }), [effectiveModel, validationIssues, relationCatalog, traceOverlay])
+  const showSimpleExecutorGraph = effectiveExposureMode === "simple" && effectiveModel.selectedLayer !== "resources"
+  const effectiveTopologyId = topologyId ?? effectiveModel.topologyId
+  const simpleExecutorModel = React.useMemo(
+    () => showSimpleExecutorGraph ? buildExecutorGraphCanvasModel({ topology }) : null,
+    [showSimpleExecutorGraph, topology],
+  )
+  const [internalSelectedExecutorId, setInternalSelectedExecutorId] = React.useState<string | null>(null)
+  const hasControlledSelection = selectedExecutorId !== undefined
+  const selectedExecutorState = hasControlledSelection ? selectedExecutorId : internalSelectedExecutorId
+  const setSelectedExecutorState = React.useCallback((executorId: string | null) => {
+    setInternalSelectedExecutorId(executorId)
+    onSelectedExecutorChange?.(executorId)
+  }, [onSelectedExecutorChange])
+  React.useEffect(() => {
+    if (!showSimpleExecutorGraph) return
+    const currentExists = simpleExecutorModel?.graph.executors.some((executor) => executor.id === selectedExecutorState) ?? false
+    if (currentExists) return
+    setSelectedExecutorState(simpleExecutorModel?.graph.executors[0]?.id ?? null)
+  }, [selectedExecutorState, setSelectedExecutorState, showSimpleExecutorGraph, simpleExecutorModel])
+  const effectiveSelectedExecutorId = selectedExecutorState ?? simpleExecutorModel?.graph.executors[0]?.id ?? null
+  const selectedExecutor = simpleExecutorModel?.graph.executors.find((executor) => executor.id === effectiveSelectedExecutorId) ?? null
+  if (showSimpleExecutorGraph) {
+    return (
+      <section
+        className="grid h-full min-h-0 flex-1 grid-rows-[minmax(220px,1fr)_auto] gap-3 overflow-y-auto overscroll-contain scroll-pb-4 bg-stone-100 p-4 md:grid-cols-[minmax(0,1fr)_340px] md:grid-rows-1 md:overflow-hidden"
+        data-testid="topology-workspace-simple-executor-layout"
+      >
+        <ExecutorGraphCanvas
+          topology={topology}
+          graph={simpleExecutorModel?.graph ?? null}
+          selectedLayer={effectiveModel.selectedLayer}
+          selectedExecutorId={effectiveSelectedExecutorId}
+          activeExecutorIds={activeExecutorIds}
+          activeEdgeIds={activeEdgeIds}
+          executorStatuses={executorStatuses}
+          edgeStatuses={edgeStatuses}
+          onSelectExecutor={setSelectedExecutorState}
+          onConnectExecutors={onExecutorConnect}
+          onMoveExecutor={onExecutorMove}
+        />
+        <aside className="grid min-h-0 max-h-full content-start gap-4 overflow-y-auto overscroll-contain scroll-pb-4 pb-4 pr-1 md:h-full md:pb-0" data-testid="topology-workspace-simple-sidebar">
+          {traceOverlay?.run ? (
+            <ExecutorRunResultPanel
+              topology={topology}
+              graph={simpleExecutorModel?.graph ?? null}
+              overlay={traceOverlay}
+              onTraceLayerRequest={onRunLayerRequest}
+            />
+          ) : null}
+          {simpleCreatePanel ? (
+            <div data-testid="topology-workspace-simple-node-card">
+              {simpleCreatePanel}
+            </div>
+          ) : (
+            <ExecutorInspector
+              executor={selectedExecutor}
+              graph={simpleExecutorModel?.graph ?? null}
+              workspaceId={effectiveModel.topologyId}
+              topologyId={effectiveTopologyId}
+              onExecutorChange={onExecutorDraftChange}
+              onConfirmUnderstanding={onExecutorUnderstandingConfirm}
+            />
+          )}
+        </aside>
+      </section>
+    )
+  }
 
   return (
     <section
@@ -355,6 +466,8 @@ export function TopologyWorkspaceCanvas({
             onSelectedRunnableTargetChange={onSelectedRunnableTargetChange}
             runtimeResources={effectiveModel.runtimeResources.projection}
             workspaceLayer={effectiveModel.selectedLayer}
+            exposureMode={effectiveExposureMode}
+            showSimpleCreatePanel={showSimpleCreatePanel}
             gapFindings={effectiveModel.gaps}
             observedEdges={effectiveModel.observed.latestTrace?.observedEdges ?? []}
             onRunLayerRequest={onRunLayerRequest}

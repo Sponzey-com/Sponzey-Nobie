@@ -6,6 +6,7 @@ import type { buildScheduleRegistrationCancelledEvent, buildScheduleRegistration
 import { runIntakeBridgePass, type DelegatedRunStartParams } from "./intake-bridge-pass.js";
 import type { ScheduleDelayedRunRequest } from "./action-execution.js";
 import type { TaskProfile } from "./types.js";
+import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
 interface StartBridgeModuleDependencies {
     applyLoopDirective: typeof applyLoopDirective;
     runIntakeBridgePass: typeof runIntakeBridgePass;
@@ -25,6 +26,8 @@ export declare function executeStartLoopDirective(params: {
     onChunk: RunChunkDeliveryHandler | undefined;
     directive: LoopDirective;
     finalizationDependencies: FinalizationDependencies;
+    suppressFinalDelivery?: boolean;
+    suppressFinalDeliveryReasonCode?: string;
 }, moduleDependencies?: StartBridgeModuleDependencies): Promise<"break">;
 export declare function runStartIntakeBridge(params: {
     message: string;
@@ -47,6 +50,11 @@ export declare function runStartIntakeBridge(params: {
     emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void;
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile;
     logInfo: (message: string, payload: Record<string, unknown>) => void;
+    recordExecutionDecisionTrace?: (params: {
+        runId: string;
+        agentExecutionDecision: AgentExecutionDecision;
+        executionDecisionTrace: AgentExecutionDecisionTraceSnapshot;
+    }) => void;
 }, moduleDependencies?: StartBridgeModuleDependencies): Promise<LoopDirective | null>;
 export {};
 //# sourceMappingURL=start-bridges.d.ts.map

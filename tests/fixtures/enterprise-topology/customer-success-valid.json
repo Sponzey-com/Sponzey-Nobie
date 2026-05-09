@@ -30,7 +30,6 @@
       "failurePolicy": {
         "failureReportRequired": true,
         "allowPartialSuccess": true,
-        "maxRetryAttempts": 1,
         "fallbackNodeIds": ["node:triage"]
       },
       "recoveryPolicy": {
@@ -56,7 +55,6 @@
       "failurePolicy": {
         "failureReportRequired": true,
         "allowPartialSuccess": true,
-        "maxRetryAttempts": 0,
         "fallbackNodeIds": []
       },
       "recoveryPolicy": {

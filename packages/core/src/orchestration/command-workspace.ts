@@ -909,13 +909,11 @@ function templateAgentConfig(
     delegationPolicy: {
       enabled: false,
       maxParallelSessions: 1,
-      retryBudget: 0,
     },
     teamIds,
     delegation: {
       enabled: false,
       maxParallelSessions: 1,
-      retryBudget: 0,
     },
     profileVersion: 1,
     createdAt: now,
@@ -1159,13 +1157,11 @@ export function importExternalAgentProfileDraft(input: {
     delegationPolicy: {
       enabled: false,
       maxParallelSessions: 1,
-      retryBudget: 0,
     },
     teamIds: asStringArray(overrides.teamIds) ?? ["team:imported:drafts"],
     delegation: {
       enabled: false,
       maxParallelSessions: 1,
-      retryBudget: 0,
     },
     profileVersion: 1,
     createdAt: now,

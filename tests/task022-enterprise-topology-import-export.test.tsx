@@ -1,9 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createElement } from "../packages/webui/node_modules/react/index.js"
-import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { registerTopologyRoutes, resetTopologyGuiDraftStoreForTest } from "../packages/core/src/api/routes/topologies.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
@@ -14,15 +12,6 @@ import {
   stringifyTopologyDocument,
   type EnterpriseTopology,
 } from "../packages/core/src/index.ts"
-import {
-  TopologyAdvancedImportExportPanel,
-  buildTopologyDraftExportText,
-  summarizeImportIssueTargets,
-} from "../packages/webui/src/components/topology/TopologyAdvancedImportExportPanel.tsx"
-import {
-  EnterpriseTopologyCanvasShell,
-  buildEnterpriseTopologyCanvasModel,
-} from "../packages/webui/src/components/topology/EnterpriseTopologyCanvas.tsx"
 import { topologyIssueTargetId } from "../packages/webui/src/components/topology/TopologyValidationAssistant.tsx"
 
 const require = createRequire(import.meta.url)
@@ -81,34 +70,25 @@ afterEach(() => {
 })
 
 describe("task022 enterprise topology import/export and migration assistant", () => {
-  it("exports GUI drafts as JSON/YAML only inside the advanced panel", () => {
+  it("keeps JSON/YAML topology import-export out of the WebUI advanced panel surface", () => {
     const topology = topologyFixture()
-    const json = buildTopologyDraftExportText(topology, "json")
-    const yaml = buildTopologyDraftExportText(topology, "yaml")
-    const panel = renderToStaticMarkup(
-      createElement(TopologyAdvancedImportExportPanel, {
-        topology,
-        format: "yaml",
-        importText: yaml,
-        exportText: json,
-        issues: [],
-        agentTeamPreview: null,
-        teamImportMode: "team",
-      }),
+    const json = stringifyTopologyDocument(topology, "json")
+    const yaml = stringifyTopologyDocument(topology, "yaml")
+    const pageSource = readFileSync(
+      new URL("../packages/webui/src/pages/EnterpriseTopologyPage.tsx", import.meta.url),
+      "utf-8",
     )
-    const canvas = renderToStaticMarkup(
-      createElement(EnterpriseTopologyCanvasShell, {
-        model: buildEnterpriseTopologyCanvasModel(topology),
-      }),
+    const removedPanelPath = new URL(
+      "../packages/webui/src/components/topology/TopologyAdvancedImportExportPanel.tsx",
+      import.meta.url,
     )
 
     expect(JSON.parse(json).id).toBe(topology.id)
     expect(yaml).toContain("schemaVersion: 1")
-    expect(panel).toContain('data-testid="topology-advanced-import-export"')
-    expect(panel).toContain("JSON")
-    expect(panel).toContain("YAML")
-    expect(panel).not.toContain("<details open")
-    expect(canvas).not.toMatch(/JSON|YAML/i)
+    expect(existsSync(removedPanelPath)).toBe(false)
+    expect(pageSource).not.toContain("TopologyAdvancedImportExportPanel")
+    expect(pageSource).not.toContain("buildTopologyDraftExportText")
+    expect(pageSource).not.toContain("JSON/YAML")
   })
 
   it("adds API/client methods for JSON/YAML export and dry-run import issue mapping", async () => {
@@ -163,7 +143,7 @@ describe("task022 enterprise topology import/export and migration assistant", ()
         return issue.reasonCode === "declared_tool_relation_missing"
       })
       expect(topologyIssueTargetId(declaredIssue)).toBe(`node:${topology.nodes[0]!.id}`)
-      expect(summarizeImportIssueTargets(dryRunBody.issues)).toContain(`node:${topology.nodes[0]!.id}`)
+      expect(dryRunBody.issues.map(topologyIssueTargetId)).toContain(`node:${topology.nodes[0]!.id}`)
       expect(clientSource).toContain("exportEnterpriseTopology")
       expect(clientSource).toContain("/api/topologies/import")
       expect(clientSource).toContain("/api/topologies/import/agent-team-preview")
@@ -225,18 +205,6 @@ describe("task022 enterprise topology import/export and migration assistant", ()
         updatedAt: now,
       }],
     })
-    const html = renderToStaticMarkup(
-      createElement(TopologyAdvancedImportExportPanel, {
-        topology: preview.topology,
-        format: "json",
-        importText: stringifyTopologyDocument(preview.topology, "json"),
-        exportText: stringifyTopologyDocument(preview.topology, "yaml"),
-        issues: preview.validation.issues,
-        agentTeamPreview: preview,
-        teamImportMode: "team",
-      }),
-    )
-
     expect(preview.transformations.map((item) => item.summary)).toEqual(expect.arrayContaining([
       "AgentConfig -> NodeContract",
       "TeamConfig -> Team",
@@ -265,10 +233,6 @@ describe("task022 enterprise topology import/export and migration assistant", ()
       "failure_policy_missing",
       "recovery_policy_missing",
     ]))
-    expect(html).toContain("AgentConfig -&gt; NodeContract")
-    expect(html).toContain("TeamConfig -&gt; Team")
-    expect(html).toContain("parent_child -&gt; delegates_to")
-    expect(html).toContain("TeamConfig는 OrgUnit으로 자동 변환하지 않습니다.")
   })
 
   it("supports explicit TeamConfig skip mode in the legacy import wizard", async () => {

@@ -75,6 +75,12 @@ describe("channel smoke route", () => {
       expect(detail.statusCode).toBe(200)
       const detailBody = detail.json()
       expect(detailBody.steps).toHaveLength(4)
+      expect(detailBody.steps[0].trace.requestFlow).toEqual(expect.objectContaining({
+        requestGroupMatchesRunId: true,
+        decisionTracePresent: true,
+        topologyRunCreated: true,
+        providerDirectUsed: false,
+      }))
       expect(JSON.stringify(detailBody)).not.toMatch(/Bearer\s+|xox[abpr]-|\/Users\//u)
     } finally {
       await app.close()

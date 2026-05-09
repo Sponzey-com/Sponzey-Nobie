@@ -46,9 +46,6 @@ export interface ModelExecutionAuditSummary extends ModelExecutionSnapshot {
   }
 }
 
-export const DEFAULT_MODEL_TIMEOUT_MS = 30_000
-export const DEFAULT_MODEL_RETRY_COUNT = 0
-
 export const DEFAULT_PROVIDER_MODEL_CAPABILITY_MATRIX: ProviderModelCapability[] = [
   {
     providerId: "openai",
@@ -195,8 +192,6 @@ function buildSnapshot(input: {
   fallbackReasonCode?: string
   reasonCodes: string[]
 }): ModelExecutionSnapshot {
-  const timeoutMs = input.profile.timeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS
-  const retryCount = Math.max(0, Math.floor(input.profile.retryCount ?? DEFAULT_MODEL_RETRY_COUNT))
   return {
     providerId: input.profile.providerId,
     modelId: input.active.modelId === "*" ? input.profile.modelId : input.active.modelId,
@@ -204,8 +199,6 @@ function buildSnapshot(input: {
     fallbackApplied: input.fallbackApplied,
     ...(input.fallbackFromModelId ? { fallbackFromModelId: input.fallbackFromModelId } : {}),
     ...(input.fallbackReasonCode ? { fallbackReasonCode: input.fallbackReasonCode } : {}),
-    timeoutMs,
-    retryCount,
     ...(input.profile.costBudget !== undefined ? { costBudget: input.profile.costBudget } : {}),
     maxOutputTokens: Math.min(
       input.profile.maxOutputTokens ?? input.active.maxOutputTokens,

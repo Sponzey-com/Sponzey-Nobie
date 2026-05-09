@@ -36,7 +36,7 @@ describe("execution profile", () => {
     expect(runtime.priorAssistantMessages).toEqual([])
   })
 
-  it("repairs capture requests into direct artifact delivery semantics", () => {
+  it("does not repair capture requests from raw text when execution semantics say no direct artifact", () => {
     const result = buildResolvedExecutionProfile({
       message: "메인 전체 화면 캡처",
       originalRequest: "메인 전체 화면 캡처",
@@ -85,13 +85,13 @@ describe("execution profile", () => {
       },
     })
 
-    expect(result.executionSemantics.artifactDelivery).toBe("direct")
-    expect(result.wantsDirectArtifactDelivery).toBe(true)
-    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
-    expect(result.intentEnvelope.delivery_mode).toBe("direct")
+    expect(result.executionSemantics.artifactDelivery).toBe("none")
+    expect(result.wantsDirectArtifactDelivery).toBe(false)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
+    expect(result.intentEnvelope.delivery_mode).toBe("none")
   })
 
-  it("downgrades mistaken direct artifact delivery for plain monitor-count questions", () => {
+  it("keeps direct artifact delivery when the structured execution semantics say direct", () => {
     const result = buildResolvedExecutionProfile({
       message: "모니터 몇개있지?",
       originalRequest: "모니터 몇개있지?",
@@ -140,13 +140,13 @@ describe("execution profile", () => {
       },
     })
 
-    expect(result.executionSemantics.artifactDelivery).toBe("none")
-    expect(result.wantsDirectArtifactDelivery).toBe(false)
-    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
-    expect(result.intentEnvelope.delivery_mode).toBe("none")
+    expect(result.executionSemantics.artifactDelivery).toBe("direct")
+    expect(result.wantsDirectArtifactDelivery).toBe(true)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
+    expect(result.intentEnvelope.delivery_mode).toBe("direct")
   })
 
-  it("downgrades mistaken direct artifact delivery for plain weather text answers", () => {
+  it("does not downgrade direct artifact delivery by weather keywords", () => {
     const executionSemantics = {
       filesystemEffect: "none" as const,
       privilegedOperation: "none" as const,
@@ -196,13 +196,13 @@ describe("execution profile", () => {
       },
     })
 
-    expect(result.executionSemantics.artifactDelivery).toBe("none")
-    expect(result.wantsDirectArtifactDelivery).toBe(false)
-    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
-    expect(result.intentEnvelope.delivery_mode).toBe("none")
+    expect(result.executionSemantics.artifactDelivery).toBe("direct")
+    expect(result.wantsDirectArtifactDelivery).toBe(true)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
+    expect(result.intentEnvelope.delivery_mode).toBe("direct")
   })
 
-  it("downgrades mistaken direct artifact delivery for plain market index text answers", () => {
+  it("does not downgrade direct artifact delivery by market keywords", () => {
     const executionSemantics = {
       filesystemEffect: "none" as const,
       privilegedOperation: "none" as const,
@@ -252,9 +252,9 @@ describe("execution profile", () => {
       },
     })
 
-    expect(result.executionSemantics.artifactDelivery).toBe("none")
-    expect(result.wantsDirectArtifactDelivery).toBe(false)
-    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
-    expect(result.intentEnvelope.delivery_mode).toBe("none")
+    expect(result.executionSemantics.artifactDelivery).toBe("direct")
+    expect(result.wantsDirectArtifactDelivery).toBe(true)
+    expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("direct")
+    expect(result.intentEnvelope.delivery_mode).toBe("direct")
   })
 })

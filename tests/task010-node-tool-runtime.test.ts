@@ -380,7 +380,6 @@ describe("task010 Node Tool Runtime", () => {
         reasonCode: "crm_down",
         retryPossible: true,
         fallbackPossible: true,
-        retryBudget: 1,
         fallbackNodeIds: ["node:triage"],
       },
     })

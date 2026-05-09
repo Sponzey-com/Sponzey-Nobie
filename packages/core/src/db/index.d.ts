@@ -120,7 +120,7 @@ export interface DbMessageLedgerInput {
     detail?: Record<string, unknown>;
     createdAt?: number;
 }
-export type DbQueueBackpressureEventKind = "queued" | "running" | "completed" | "failed" | "timeout" | "rejected" | "retry_scheduled" | "dead_letter" | "reset";
+export type DbQueueBackpressureEventKind = "queued" | "running" | "completed" | "failed" | "timeout" | "rejected" | "recovery_scheduled" | "reset";
 export interface DbQueueBackpressureEvent {
     id: string;
     created_at: number;
@@ -130,7 +130,6 @@ export interface DbQueueBackpressureEvent {
     request_group_id: string | null;
     pending_count: number;
     retry_count: number;
-    retry_budget_remaining: number | null;
     recovery_key: string | null;
     action_taken: string;
     detail_json: string | null;
@@ -144,7 +143,6 @@ export interface DbQueueBackpressureEventInput {
     requestGroupId?: string | null;
     pendingCount?: number;
     retryCount?: number;
-    retryBudgetRemaining?: number | null;
     recoveryKey?: string | null;
     actionTaken: string;
     detail?: Record<string, unknown>;
@@ -282,7 +280,6 @@ export interface DbRunSubSession {
     agent_nickname: string | null;
     command_request_id: string;
     status: SubSessionContract["status"];
-    retry_budget_remaining: number;
     prompt_bundle_id: string;
     contract_json: string;
     schema_version: number;

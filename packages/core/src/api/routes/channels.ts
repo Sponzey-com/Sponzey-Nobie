@@ -62,6 +62,7 @@ import {
 import { eventBus, type ApprovalDecision } from "../../events/index.js"
 import { getApprovalRegistryRow, resolveApprovalRegistryDecision, type ApprovalRegistryRow } from "../../runs/approval-registry.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
+import { getRuntimeBuildStatus } from "../../runtime/build-status.js"
 import { authMiddleware } from "../middleware/auth.js"
 
 type RuntimeProvider = "telegram" | "slack" | "discord" | "google_chat"
@@ -521,17 +522,31 @@ function requireConnection(channelId: string): ChannelConnectionRecord {
   return connection
 }
 
+function runtimeBuildDiagnostic(): Record<string, unknown> {
+  const status = getRuntimeBuildStatus()
+  return {
+    buildId: status.buildId,
+    checkedAt: status.checkedAt,
+    processStartedAt: status.processStartedAt,
+    buildRequired: status.buildRequired,
+    restartRequired: status.restartRequired,
+    warnings: status.warnings,
+  }
+}
+
 function providerRuntimeStatus(provider: string) {
-  if (provider === "telegram") return getTelegramRuntimeStatus()
-  if (provider === "slack") return getSlackRuntimeStatus()
-  if (provider === "discord") return getDiscordRuntimeStatus()
-  if (provider === "google_chat") return getGoogleChatRuntimeStatus()
+  const runtimeBuild = runtimeBuildDiagnostic()
+  if (provider === "telegram") return { ...getTelegramRuntimeStatus(), runtimeBuild }
+  if (provider === "slack") return { ...getSlackRuntimeStatus(), runtimeBuild }
+  if (provider === "discord") return { ...getDiscordRuntimeStatus(), runtimeBuild }
+  if (provider === "google_chat") return { ...getGoogleChatRuntimeStatus(), runtimeBuild }
   return {
     isRunning: false,
     lastStartedAt: null,
     lastStoppedAt: null,
     lastError: null,
     lastErrorAt: null,
+    runtimeBuild,
   }
 }
 
@@ -591,6 +606,21 @@ function connectionValidation(connection: ChannelConnectionRecord): Record<strin
   }
 
   const runtime = providerRuntimeStatus(connection.provider)
+  const runtimeBuild = runtime.runtimeBuild as { buildRequired?: boolean; restartRequired?: boolean } | undefined
+  if (runtimeBuild?.buildRequired) {
+    issues.push({
+      code: "runtime_build_required",
+      severity: "warning",
+      message: "Source files are newer than dist. Build the workspace before relying on this channel runtime.",
+    })
+  }
+  if (runtimeBuild?.restartRequired) {
+    issues.push({
+      code: "runtime_restart_required",
+      severity: "warning",
+      message: "Built files are newer than the Gateway process. Restart the Gateway before relying on this channel runtime.",
+    })
+  }
   if (connection.enabled && connection.configured && !runtime.isRunning) {
     issues.push({
       code: "runtime_stopped",

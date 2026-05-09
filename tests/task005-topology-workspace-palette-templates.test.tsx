@@ -104,7 +104,10 @@ describe("task005 topology workspace palette and templates", () => {
       if (template.id !== "blank-graph") {
         expect(topology.nodes.every((node) => Array.isArray(node.template?.metadata?.successCriteria))).toBe(true)
         expect(topology.responsibilities).toHaveLength(topology.nodes.length)
-        if (compiled.ok) expect(compiled.snapshot.runtimeExecutionContext.entryNodeId).toBe(topology.nodes[0]?.id)
+        if (compiled.ok) {
+          expect(compiled.snapshot.runtimeExecutionContext.entryNodeId).toBeNull()
+          expect(compiled.snapshot.runtimeExecutionContext.rootChildNodeIds).toContain(topology.nodes[0]?.id)
+        }
       }
     }
   })

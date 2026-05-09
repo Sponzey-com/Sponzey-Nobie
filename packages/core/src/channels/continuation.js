@@ -1,7 +1,6 @@
-import { findChannelMessageRef, findLatestChannelMessageRefForThread, getDb, } from "../db/index.js";
-const DEFAULT_LOOKUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+import { findChannelMessageRef, getDb, } from "../db/index.js";
 export function resolveChannelContinuation(input) {
-    const lookupWindowMs = input.lookupWindowMs ?? DEFAULT_LOOKUP_WINDOW_MS;
+    void input.lookupWindowMs;
     const candidates = [];
     const explicitRunId = input.runId ?? input.envelope.continuationContext?.runId;
     const explicitTaskId = input.taskId ?? input.envelope.continuationContext?.taskId;
@@ -26,7 +25,9 @@ export function resolveChannelContinuation(input) {
         if (exactIncomingRef)
             return finalizeContinuationResult(candidates);
         const parentMessageId = input.envelope.replyToMessageId
-            ?? input.envelope.continuationContext?.parentMessageId;
+            ?? (input.envelope.continuationContext?.source === "thread"
+                ? undefined
+                : input.envelope.continuationContext?.parentMessageId);
         if (parentMessageId) {
             const parentRef = findChannelMessageRef({
                 source: input.envelope.provider,
@@ -37,40 +38,6 @@ export function resolveChannelContinuation(input) {
             pushCandidate(candidates, candidateFromMessageRef(parentRef, "message_ref_parent", "exact"));
             if (parentRef)
                 return finalizeContinuationResult(candidates);
-        }
-        if (input.envelope.threadId) {
-            if (input.envelope.threadId !== input.envelope.messageId) {
-                const threadRootRef = findChannelMessageRef({
-                    source: input.envelope.provider,
-                    externalChatId: roomId,
-                    externalMessageId: input.envelope.threadId,
-                    externalThreadId: input.envelope.threadId,
-                });
-                pushCandidate(candidates, candidateFromMessageRef(threadRootRef, "message_ref_thread_root", "high"));
-            }
-            const latestThreadRef = findLatestChannelMessageRefForThread({
-                source: input.envelope.provider,
-                externalChatId: roomId,
-                externalThreadId: input.envelope.threadId,
-            });
-            pushCandidate(candidates, candidateFromMessageRef(latestThreadRef, "message_ref_latest_thread", "medium"));
-        }
-        else if (input.envelope.replyToMessageId) {
-            const latestMainRef = findLatestChannelMessageRefForThread({
-                source: input.envelope.provider,
-                externalChatId: roomId,
-            });
-            pushCandidate(candidates, candidateFromMessageRef(latestMainRef, "message_ref_latest_thread", "medium"));
-        }
-        if (!input.envelope.threadId && !input.envelope.replyToMessageId) {
-            for (const candidate of candidatesFromSenderRoomWindow({
-                provider: input.envelope.provider,
-                roomId,
-                timestamp: input.envelope.timestamp,
-                lookupWindowMs,
-            })) {
-                pushCandidate(candidates, candidate);
-            }
         }
     }
     return finalizeContinuationResult(candidates);
@@ -110,11 +77,7 @@ function finalizeContinuationResult(candidates) {
             confirmationRequired: false,
             reasonCode: selected.source.startsWith("explicit")
                 ? "explicit_match"
-                : selected.source.includes("thread")
-                    ? "thread_match"
-                    : selected.source === "sender_room_window"
-                        ? "window_match"
-                        : "message_match",
+                : "message_match",
         };
     }
     return {
@@ -193,22 +156,6 @@ function candidateFromMessageRef(ref, source, confidence) {
         confidence,
         createdAt: ref.created_at,
     };
-}
-function candidatesFromSenderRoomWindow(input) {
-    const since = Math.max(0, input.timestamp - input.lookupWindowMs);
-    const rows = getDb()
-        .prepare(`SELECT *
-       FROM channel_message_refs
-       WHERE source = ?
-         AND external_chat_id = ?
-         AND created_at BETWEEN ? AND ?
-         AND role IN ('assistant', 'tool')
-       ORDER BY created_at DESC
-       LIMIT 10`)
-        .all(input.provider, input.roomId, since, input.timestamp);
-    return rows
-        .map((ref) => candidateFromMessageRef(ref, "sender_room_window", "low"))
-        .filter((candidate) => candidate !== null);
 }
 function pushCandidate(candidates, candidate) {
     if (!candidate)

@@ -87,6 +87,31 @@ export const ENTERPRISE_RELATION_TYPES: readonly EnterpriseRelationType[] = [
 const ENTITY_STATUSES = new Set<EnterpriseEntityStatus>(["draft", "active", "inactive", "archived"])
 const NODE_TYPES = new Set<NodeType>(ENTERPRISE_NODE_TYPES)
 const RELATION_TYPES = new Set<EnterpriseRelationType>(ENTERPRISE_RELATION_TYPES)
+const FAILURE_ISSUE_KINDS = new Set<FailureIssueKind>([
+  "success_criteria_unmet",
+  "runtime_risk",
+  "execution_incomplete",
+  "permission_or_tool_blocked",
+  "unknown",
+])
+const FAILURE_RECOVERY_ACTION_KINDS = new Set<FailureRecoveryActionKind>([
+  "retry",
+  "delegate_to_next_executor",
+  "add_tool_permission",
+  "add_fallback_path",
+  "pass_partial_result",
+  "return_to_parent",
+  "review_trace",
+  "none",
+])
+const FAILURE_NEXT_ACTION_KINDS = new Set<FailureNextActionKind>([
+  "add_permission",
+  "pass_partial",
+  "add_fallback",
+  "revise_description",
+  "review_trace",
+  "user_review",
+])
 
 export interface EnterpriseBaseEntity<TType extends EnterpriseEntityType = EnterpriseEntityType> {
   schemaVersion: EnterpriseTopologySchemaVersion
@@ -278,6 +303,28 @@ export type AttemptKind =
   | "partial_success_review"
   | "parent_recovery"
 export type AttemptStatus = "attempted" | "skipped" | "blocked" | "succeeded" | "failed"
+export type FailureIssueKind =
+  | "success_criteria_unmet"
+  | "runtime_risk"
+  | "execution_incomplete"
+  | "permission_or_tool_blocked"
+  | "unknown"
+export type FailureRecoveryActionKind =
+  | "retry"
+  | "delegate_to_next_executor"
+  | "add_tool_permission"
+  | "add_fallback_path"
+  | "pass_partial_result"
+  | "return_to_parent"
+  | "review_trace"
+  | "none"
+export type FailureNextActionKind =
+  | "add_permission"
+  | "pass_partial"
+  | "add_fallback"
+  | "revise_description"
+  | "review_trace"
+  | "user_review"
 export type TracePhase =
   | "topology_run"
   | "work_order"
@@ -400,6 +447,9 @@ export interface FailureReport {
   organizationalCause?: string
   processCause?: string
   authorityCause?: string
+  issueKind?: FailureIssueKind
+  recoveryActionKind?: FailureRecoveryActionKind
+  nextActionKind?: FailureNextActionKind
   recommendedAction: string
   createdAt: EnterpriseTimestamp
 }
@@ -422,7 +472,6 @@ export interface TraceEvent {
 export interface FailurePolicy {
   failureReportRequired: boolean
   allowPartialSuccess: boolean
-  maxRetryAttempts: number
   fallbackNodeIds: string[]
 }
 
@@ -633,6 +682,18 @@ function validateRequiredBoolean(
   addIssue(issues, `${path}.${key}`, "missing_required_field", `${key} must be a boolean.`)
 }
 
+function validateOptionalEnumString<T extends string>(
+  record: Record<string, unknown>,
+  key: string,
+  values: ReadonlySet<T>,
+  path: string,
+  issues: EnterpriseTopologyValidationIssue[],
+): void {
+  if (!hasKey(record, key) || record[key] === undefined) return
+  if (typeof record[key] === "string" && values.has(record[key] as T)) return
+  addIssue(issues, `${path}.${key}`, "enterprise_contract_validation_failed", `${key} has an unsupported value.`)
+}
+
 function validateRequiredNumber(
   record: Record<string, unknown>,
   key: string,
@@ -672,7 +733,6 @@ function validateFailurePolicyContract(value: unknown, path: string, issues: Ent
   if (!validateRequiredRecord(value, path, issues, "enterprise_contract_validation_failed")) return
   validateRequiredBoolean(value, "failureReportRequired", path, issues)
   validateRequiredBoolean(value, "allowPartialSuccess", path, issues)
-  validateRequiredNumber(value, "maxRetryAttempts", path, issues)
   validateStringArray(value.fallbackNodeIds, `${path}.fallbackNodeIds`, issues)
 }
 
@@ -1100,6 +1160,9 @@ export function validateFailureReport(value: unknown): EnterpriseTopologyValidat
     addIssue(issues, "$.attempts", "missing_required_field", "attempts must be an array.")
   }
   validateStringArray(value.untriedOptions, "$.untriedOptions", issues)
+  validateOptionalEnumString(value, "issueKind", FAILURE_ISSUE_KINDS, "$", issues)
+  validateOptionalEnumString(value, "recoveryActionKind", FAILURE_RECOVERY_ACTION_KINDS, "$", issues)
+  validateOptionalEnumString(value, "nextActionKind", FAILURE_NEXT_ACTION_KINDS, "$", issues)
   validateRequiredString(value, "recommendedAction", "$", issues)
   validateTimestamp(value, "createdAt", "$", issues)
   return issues.length === 0 ? { ok: true, value: value as unknown as FailureReport, issues: [] } : { ok: false, issues }

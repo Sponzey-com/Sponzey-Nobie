@@ -66,7 +66,8 @@ describe("task006 topology compiler core", () => {
     expect(Object.keys(snapshot.systemIndex)).toEqual(["system:crm"])
     expect(snapshot.parentChildTree).toMatchObject({
       rootNodeIds: ["node:intake"],
-      entryNodeId: "node:intake",
+      rootChildNodeIds: ["node:intake"],
+      entryNodeId: null,
       exitNodeIds: ["node:triage"],
       edges: {
         "node:intake": ["node:triage"],
@@ -77,7 +78,8 @@ describe("task006 topology compiler core", () => {
         "node:triage": ["node:intake"],
       },
     })
-    expect(getCompiledEntryNode(snapshot)?.id).toBe("node:intake")
+    expect(snapshot.runtimeExecutionContext.entryNodeId).toBeNull()
+    expect(getCompiledEntryNode(snapshot)).toBeUndefined()
     expect(getCompiledChildCandidates(snapshot, "node:intake").map((node) => node.id)).toEqual(["node:triage"])
     expect(snapshot.delegationScopeMap["node:intake"]).toMatchObject({
       directChildNodeIds: ["node:triage"],

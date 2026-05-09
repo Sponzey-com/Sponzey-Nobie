@@ -8,7 +8,24 @@ import type { AgentTopologyNode, AgentTopologyProjection } from "../../contracts
 import type { TopologyTemplateCatalog } from "../../contracts/topology-templates"
 import { useUiI18n } from "../../lib/ui-i18n"
 import type { EnterpriseTopologyCanvasNodeData } from "./EnterpriseTopologyCanvas"
-import { ENTERPRISE_TOPOLOGY_KIND_LABELS } from "./EnterpriseTopologyPalette"
+
+const TOPOLOGY_WORKSPACE_KIND_LABELS: Record<EnterpriseTopologyCanvasNodeData["kind"], { ko: string; en: string }> = {
+  task: { ko: "실행자", en: "Executor" },
+  decision: { ko: "판단 실행자", en: "Decision executor" },
+  approval: { ko: "최종 검토", en: "Final review" },
+  data: { ko: "데이터", en: "Data" },
+  group: { ko: "그룹", en: "Group" },
+  work_node: { ko: "실행자", en: "Executor" },
+  team: { ko: "팀", en: "Team" },
+  org_unit: { ko: "조직", en: "Org unit" },
+  position: { ko: "직책", en: "Position" },
+  person: { ko: "담당자", en: "Person" },
+  process: { ko: "프로세스", en: "Process" },
+  system: { ko: "시스템", en: "System" },
+  tool: { ko: "도구", en: "Tool" },
+  authority: { ko: "승인 규칙", en: "Authority rule" },
+  responsibility: { ko: "책임", en: "Responsibility" },
+}
 
 export type TopologyWorkspaceExecutorKind =
   | "nobie"
@@ -48,42 +65,42 @@ export interface TopologyWorkspaceRuntimeExecutorResourceOption {
 export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOption[] = [
   {
     kind: "nobie",
-    labelKo: "Nobie",
-    labelEn: "Nobie",
-    descriptionKo: "기본 런타임이 업무를 직접 실행합니다.",
-    descriptionEn: "The default runtime executes this work step.",
+    labelKo: "자동 처리",
+    labelEn: "Auto processing",
+    descriptionKo: "노비가 기본 실행자로 업무를 처리합니다.",
+    descriptionEn: "Nobie handles this step with the default executor.",
     defaultExecutorId: "nobie:default",
   },
   {
     kind: "agent",
-    labelKo: "기존 Agent",
-    labelEn: "Existing Agent",
-    descriptionKo: "이미 등록된 Agent를 실행자로만 연결합니다.",
-    descriptionEn: "Link an existing Agent only as executor.",
+    labelKo: "기존 실행자 사용",
+    labelEn: "Use existing executor",
+    descriptionKo: "이미 등록된 실행자를 이 업무에만 연결합니다.",
+    descriptionEn: "Link an existing executor only to this step.",
     defaultExecutorId: "agent:select-existing",
   },
   {
     kind: "team",
-    labelKo: "Team",
-    labelEn: "Team",
-    descriptionKo: "기존 Team이 이 업무를 나눠 처리합니다.",
-    descriptionEn: "An existing Team handles this work step.",
+    labelKo: "기존 실행자 사용",
+    labelEn: "Use existing executor",
+    descriptionKo: "이미 등록된 실행자 그룹이 이 업무를 처리합니다.",
+    descriptionEn: "An existing executor group handles this step.",
     defaultExecutorId: "team:select-existing",
   },
   {
     kind: "tool",
-    labelKo: "Tool",
-    labelEn: "Tool",
+    labelKo: "도구 실행",
+    labelEn: "Tool execution",
     descriptionKo: "도구 실행으로 처리되는 자동화 단계입니다.",
     descriptionEn: "This step is executed through a tool.",
     defaultExecutorId: "tool:select-existing",
   },
   {
     kind: "manual_approval",
-    labelKo: "Manual/Approval only",
-    labelEn: "Manual/Approval only",
-    descriptionKo: "자동 실행하지 않고 사람의 승인만 기다립니다.",
-    descriptionEn: "Do not auto-execute; wait for human approval.",
+    labelKo: "최종 검토",
+    labelEn: "Final review",
+    descriptionKo: "중간 실행은 자동 흐름으로 두고 최종 결과 검토에만 사용합니다.",
+    descriptionEn: "Keep intermediate execution automatic and use review only at the final result stage.",
     defaultExecutorId: "manual:approval-required",
   },
 ]
@@ -326,7 +343,7 @@ function SectionShell({
   )
 }
 
-function ExecutorPicker({
+export function TopologyWorkspaceExecutorPicker({
   selectedData,
   mapping,
   runtimeResources,
@@ -491,7 +508,7 @@ function DecisionSettings() {
         label={text("Condition preset", "Condition preset")}
         choices={[
           text("정보 충분", "Information enough"),
-          text("승인 필요", "Approval required"),
+          text("검토 필요", "Review needed"),
           text("위험도 높음", "High risk"),
         ]}
         selected={text("정보 충분", "Information enough")}
@@ -699,11 +716,11 @@ export function TopologyWorkspaceInspector({
         <div className="mt-3 grid gap-3">
           <div className="grid grid-cols-2 gap-2">
             <InspectorField label={text("이름", "Name")} value={selectedData.label} />
-            <InspectorField label={text("종류", "Type")} value={text(ENTERPRISE_TOPOLOGY_KIND_LABELS[selectedData.kind].ko, ENTERPRISE_TOPOLOGY_KIND_LABELS[selectedData.kind].en)} />
+            <InspectorField label={text("종류", "Type")} value={text(TOPOLOGY_WORKSPACE_KIND_LABELS[selectedData.kind].ko, TOPOLOGY_WORKSPACE_KIND_LABELS[selectedData.kind].en)} />
             <InspectorField label={text("세부", "Detail")} value={selectedData.detail || "-"} />
             <InspectorField label="ID" value={selectedData.entityId} />
           </div>
-          <ExecutorPicker
+          <TopologyWorkspaceExecutorPicker
             selectedData={selectedData}
             mapping={effectiveExecutorMapping}
             runtimeResources={runtimeResources}

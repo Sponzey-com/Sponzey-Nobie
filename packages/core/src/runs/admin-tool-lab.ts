@@ -26,7 +26,7 @@ export interface AdminToolCallView {
   startedAt: number | null
   finishedAt: number | null
   durationMs: number | null
-  retryCount: number
+  signalCount: number
   eventCount: number
   paramsRedacted: unknown
   outputRedacted: unknown
@@ -68,7 +68,7 @@ export interface AdminWebRetrievalAttemptView {
   fetchTimestamp: string | null
   sourceTimestamp: string | null
   durationMs: number | null
-  retryCount: number
+  signalCount: number
 }
 
 export interface AdminWebRetrievalVerificationView {
@@ -378,11 +378,11 @@ function approvalStateFor(events: ToolEventEnvelope[], context: string, toolName
   return "not_required"
 }
 
-function maxRetryCount(events: ToolEventEnvelope[]): number {
+function maxSignalCount(events: ToolEventEnvelope[]): number {
   let max = 0
   for (const event of events) {
     const detail = detailRecord(event.detail)
-    const explicit = asNumber(detail?.retryCount ?? detail?.retry_count ?? detail?.attemptIndex)
+    const explicit = asNumber(detail?.signalCount ?? detail?.signal_count ?? detail?.retryCount ?? detail?.retry_count ?? detail?.attemptIndex)
     if (explicit != null) max = Math.max(max, explicit)
   }
   const starts = events.filter((event) => event.eventKind === "tool_started" || event.eventKind === "tool.dispatched").length
@@ -434,7 +434,7 @@ export function buildAdminToolCallsInspector(input: Pick<LabInput, "timeline" | 
       startedAt,
       finishedAt,
       durationMs,
-      retryCount: maxRetryCount(ordered),
+      signalCount: maxSignalCount(ordered),
       eventCount: ordered.length,
       paramsRedacted: params.value,
       outputRedacted: output.value,
@@ -649,7 +649,7 @@ function attemptViewFromToolCall(call: AdminToolCallView): AdminWebRetrievalAtte
     fetchTimestamp: policy?.fetchTimestamp ?? null,
     sourceTimestamp: null,
     durationMs: call.durationMs,
-    retryCount: call.retryCount,
+    signalCount: call.signalCount,
   }
 }
 
@@ -669,7 +669,7 @@ function sourceAttemptFromEvent(event: ControlTimelineEvent): AdminWebRetrievalA
     fetchTimestamp: evidence.fetchTimestamp,
     sourceTimestamp: evidence.sourceTimestamp ?? null,
     durationMs: asNumber(detailRecord(event.detail)?.durationMs),
-    retryCount: asNumber(detailRecord(event.detail)?.retryCount) ?? 0,
+    signalCount: asNumber(detailRecord(event.detail)?.signalCount ?? detailRecord(event.detail)?.retryCount) ?? 0,
   }
 }
 

@@ -27,7 +27,6 @@ export declare function consumeRecoveryBudget(params: {
 export declare function formatRecoveryBudgetProgress(state: RecoveryBudgetState): string;
 export declare function getSubSessionRevisionBudgetLimit(budgetClass?: SubSessionRevisionBudgetClass): number;
 export declare function canRetrySubSessionRevision(params: {
-    retryBudgetRemaining: number;
     budgetClass?: SubSessionRevisionBudgetClass;
     repeatedFailure?: boolean;
 }): boolean;
