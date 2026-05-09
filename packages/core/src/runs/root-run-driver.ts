@@ -5,7 +5,11 @@ import type { AIProvider } from "../ai/index.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import type { RunChunkDeliveryHandler, logAssistantReply } from "./delivery.js"
 import { createExecutionLoopRuntimeState } from "./execution-profile.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import {
+  completeRunWithAssistantMessage,
+  type FinalizationDependencies,
+  type FinalizationSource,
+} from "./finalization.js"
 import type { LoopDirective } from "./loop-directive.js"
 import { applyRootRunDriverFailure } from "./root-run-driver-failure.js"
 import { prepareRootLoopLaunch } from "./root-loop-launch.js"
@@ -13,6 +17,11 @@ import { runRootLoop } from "./root-loop.js"
 import type { ReconnectRequestGroupSelection } from "./store.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import {
+  runTopologyRootRun,
+  type TopologyRootRunExecutionResult,
+  type TopologyRootRunRoutingDecision,
+} from "../topology-runtime/harness.js"
 
 export interface RootRunDriverDependencies {
   appendRunEvent: (runId: string, message: string) => void
@@ -70,6 +79,7 @@ interface RootRunDriverModuleDependencies {
   prepareRootLoopLaunch: typeof prepareRootLoopLaunch
   runRootLoop: typeof runRootLoop
   applyRootRunDriverFailure: typeof applyRootRunDriverFailure
+  runTopologyRootRun: typeof runTopologyRootRun
 }
 
 const defaultModuleDependencies: RootRunDriverModuleDependencies = {
@@ -77,6 +87,7 @@ const defaultModuleDependencies: RootRunDriverModuleDependencies = {
   prepareRootLoopLaunch,
   runRootLoop,
   applyRootRunDriverFailure,
+  runTopologyRootRun,
 }
 
 export async function executeRootRunDriver(
@@ -108,8 +119,10 @@ export async function executeRootRunDriver(
     workerSessionId?: string
     toolsEnabled?: boolean
     isRootRequest: boolean
+    suppressFinalDelivery?: boolean
     contextMode: AgentContextMode
     taskProfile: TaskProfile
+    topologyRouting?: TopologyRootRunRoutingDecision
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
     defaultMaxDelegationTurns: number
   },
@@ -155,6 +168,18 @@ export async function executeRootRunDriver(
 
   try {
     await new Promise<void>((resolve) => setImmediate(resolve))
+    if (params.topologyRouting?.mode === "route") {
+      const topologyExecution = await executeTopologyRuntimeOrFallback({
+        runId: params.runId,
+        sessionId: params.sessionId,
+        source: params.source,
+        onChunk: params.onChunk,
+        message: params.message,
+        topologyRouting: params.topologyRouting,
+        ...(params.suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
+      }, dependencies, moduleDependencies)
+      if (topologyExecution.ok) return
+    }
     await moduleDependencies.runRootLoop(rootLoopLaunch.rootLoopParams, rootLoopLaunch.rootLoopDependencies)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -176,4 +201,61 @@ export async function executeRootRunDriver(
   } finally {
     dependencies.onFinally?.()
   }
+}
+
+async function executeTopologyRuntimeOrFallback(
+  params: {
+    runId: string
+    sessionId: string
+    source: FinalizationSource
+    onChunk: RunChunkDeliveryHandler | undefined
+    message: string
+    topologyRouting: Extract<TopologyRootRunRoutingDecision, { mode: "route" }>
+    suppressFinalDelivery?: boolean
+  },
+  dependencies: RootRunDriverDependencies,
+  moduleDependencies: RootRunDriverModuleDependencies,
+): Promise<TopologyRootRunExecutionResult> {
+  const selectedExecutorLabel = params.topologyRouting.selectedExecutorId ?? "unselected"
+  dependencies.appendRunEvent(
+    params.runId,
+    `topology_runtime_selected:${params.topologyRouting.topologyId}@${params.topologyRouting.topologyVersion}:selected=${selectedExecutorLabel}`,
+  )
+  dependencies.setRunStepStatus(
+    params.runId,
+    "executing",
+    "running",
+    "Active Enterprise Topology runtime is handling this root request.",
+  )
+  dependencies.updateRunSummary(params.runId, "Enterprise Topology runtime 실행 중")
+  const execution = await moduleDependencies.runTopologyRootRun({
+    decision: params.topologyRouting,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    source: params.source,
+    message: params.message,
+  })
+  if (!execution.ok) {
+    dependencies.appendRunEvent(params.runId, `topology_runtime_fallback:${execution.reasonCode}`)
+    dependencies.updateRunSummary(params.runId, execution.fallbackSummary)
+    return execution
+  }
+
+  dependencies.appendRunEvent(
+    params.runId,
+    `topology_runtime_completed:${execution.topologyRunId}:selected=${selectedExecutorLabel}`,
+  )
+  await completeRunWithAssistantMessage({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    text: execution.finalAnswer,
+    source: params.source,
+    onChunk: params.onChunk,
+    ...(params.suppressFinalDelivery ? {
+      suppressFinalDelivery: true,
+      suppressFinalDeliveryReasonCode: "child_result_parent_aggregation_required",
+    } : {}),
+    dependencies: dependencies.getFinalizationDependencies(),
+  })
+  return execution
 }

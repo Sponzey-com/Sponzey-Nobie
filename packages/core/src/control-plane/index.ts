@@ -234,7 +234,7 @@ const KNOWN_BACKENDS = [
 
 const GENERIC_BACKEND_REASONS = new Set([
   "계획·리서치 특화 provider runtime은 아직 gateway에 연결되지 않았습니다.",
-  "엔드포인트와 모델 조회는 가능하지만 실제 라우팅 런타임은 아직 연결되지 않았습니다.",
+  "엔드포인트와 모델 조회는 가능하지만 실제 실행 경로는 아직 연결되지 않았습니다.",
   "로컬 경량 추론 provider runtime은 후속 Phase에서 연결합니다.",
   "사용자 추가 backend이며 실제 연결 테스트는 setup에서 확인합니다.",
 ])
@@ -304,7 +304,9 @@ function toNumberArrayString(value: unknown): string {
 function parseIdString(value: string): number[] {
   return value
     .split(/[\s,]+/)
-    .map((item) => Number(item.trim()))
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => Number(item))
     .filter((item) => Number.isFinite(item))
 }
 
@@ -865,7 +867,7 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
 
   raw.orchestration = {
     ...toObject(raw.orchestration),
-    maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 5)),
+    maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)),
   }
 
   raw.telegram = {
@@ -1018,7 +1020,7 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
   persistMcpSetupDraft(raw, draft.mcp)
   persistSkillsSetupDraft(raw, draft.skills)
   writeRawConfig(raw)
-  updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 5)))
+  updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)))
 
   const nextState = state ? writeSetupState(state) : readSetupState()
   return { draft: buildSetupDraft(), state: nextState }
@@ -1060,6 +1062,24 @@ export function createSetupChecks(): SetupChecks {
 
 export function createTransientAuthToken(): string {
   return randomBytes(32).toString("hex")
+}
+
+function createEnterpriseTopologyBuilderCapability(): FeatureCapability {
+  const rawFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase()
+  const explicitlyDisabled =
+    rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off"
+
+  return {
+    key: "enterprise_topology_builder_ui",
+    label: "Enterprise Topology Builder",
+    area: "gateway",
+    status: explicitlyDisabled ? "disabled" : "ready",
+    implemented: true,
+    enabled: !explicitlyDisabled,
+    ...(explicitlyDisabled
+      ? { reason: "Enterprise Topology Builder UI 기능 플래그가 꺼져 있습니다." }
+      : {}),
+  }
 }
 
 export function createCapabilities(): FeatureCapability[] {
@@ -1211,9 +1231,10 @@ export function createCapabilities(): FeatureCapability[] {
     },
     { key: "ai.backends", label: "AI Backends", area: "ai", status: "ready", implemented: true, enabled: true },
     mcpCapability,
-    { key: "ai.routing", label: "AI Routing", area: "ai", status: "ready", implemented: true, enabled: true },
+    { key: "ai.routing", label: "AI execution path", area: "ai", status: "ready", implemented: true, enabled: true },
     { key: "instructions.chain", label: "Active Instructions", area: "gateway", status: "ready", implemented: true, enabled: true },
     { key: "settings.control", label: "Settings Control", area: "security", status: "ready", implemented: true, enabled: true },
+    createEnterpriseTopologyBuilderCapability(),
     {
       key: "audit.viewer",
       label: "Audit Viewer",

@@ -225,8 +225,7 @@ export type DbQueueBackpressureEventKind =
   | "failed"
   | "timeout"
   | "rejected"
-  | "retry_scheduled"
-  | "dead_letter"
+  | "recovery_scheduled"
   | "reset"
 
 export interface DbQueueBackpressureEvent {
@@ -238,7 +237,6 @@ export interface DbQueueBackpressureEvent {
   request_group_id: string | null
   pending_count: number
   retry_count: number
-  retry_budget_remaining: number | null
   recovery_key: string | null
   action_taken: string
   detail_json: string | null
@@ -253,7 +251,6 @@ export interface DbQueueBackpressureEventInput {
   requestGroupId?: string | null
   pendingCount?: number
   retryCount?: number
-  retryBudgetRemaining?: number | null
   recoveryKey?: string | null
   actionTaken: string
   detail?: Record<string, unknown>
@@ -400,7 +397,6 @@ export interface DbRunSubSession {
   agent_nickname: string | null
   command_request_id: string
   status: SubSessionContract["status"]
-  retry_budget_remaining: number
   prompt_bundle_id: string
   contract_json: string
   schema_version: number
@@ -1216,8 +1212,8 @@ export function insertQueueBackpressureEvent(input: DbQueueBackpressureEventInpu
     .prepare(
       `INSERT INTO queue_backpressure_events
        (id, created_at, queue_name, event_kind, run_id, request_group_id, pending_count,
-        retry_count, retry_budget_remaining, recovery_key, action_taken, detail_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        retry_count, recovery_key, action_taken, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -1228,7 +1224,6 @@ export function insertQueueBackpressureEvent(input: DbQueueBackpressureEventInpu
       input.requestGroupId ?? null,
       input.pendingCount ?? 0,
       input.retryCount ?? 0,
-      input.retryBudgetRemaining ?? null,
       input.recoveryKey ?? null,
       input.actionTaken,
       toJsonOrNull(input.detail),
@@ -2050,9 +2045,18 @@ export function upsertPromptSources(sources: PromptSourceMetadata[]): void {
 }
 
 export function updateRunPromptSourceSnapshot(runId: string, snapshot: PromptSourceSnapshot): void {
+  const current = getDb()
+    .prepare<[string], { prompt_source_snapshot: string | null }>(
+      `SELECT prompt_source_snapshot FROM root_runs WHERE id = ?`,
+    )
+    .get(runId)
+  const existing = parseJsonRecord(current?.prompt_source_snapshot)
+  const mergedSnapshot = existing
+    ? { ...existing, ...snapshot }
+    : snapshot
   getDb()
     .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
-    .run(JSON.stringify(snapshot), Date.now(), runId)
+    .run(JSON.stringify(mergedSnapshot), Date.now(), runId)
 }
 
 export function getPromptSourceStates(): PromptSourceState[] {
@@ -2307,7 +2311,6 @@ function deriveDelegationPolicyValue(
   return {
     enabled: asBoolean(legacyDelegation.enabled) ?? false,
     maxParallelSessions: asNumber(legacyDelegation.maxParallelSessions) ?? 1,
-    retryBudget: asNumber(legacyDelegation.retryBudget) ?? 0,
   }
 }
 
@@ -3440,9 +3443,9 @@ export function insertRunSubSession(
     db.prepare(
       `INSERT INTO run_subsessions
        (sub_session_id, parent_run_id, parent_session_id, parent_sub_session_id, parent_request_id, agent_id, agent_display_name,
-        agent_nickname, command_request_id, status, retry_budget_remaining, prompt_bundle_id, contract_json, schema_version,
+        agent_nickname, command_request_id, status, prompt_bundle_id, contract_json, schema_version,
         audit_id, idempotency_key, created_at, updated_at, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.subSessionId,
       input.parentRunId,
@@ -3454,7 +3457,6 @@ export function insertRunSubSession(
       input.agentNickname ?? null,
       input.commandRequestId,
       input.status,
-      input.retryBudgetRemaining,
       input.promptBundleId,
       toJson(input),
       input.identity.schemaVersion,
@@ -3491,7 +3493,6 @@ export function updateRunSubSession(
            agent_nickname = ?,
            command_request_id = ?,
            status = ?,
-           retry_budget_remaining = ?,
            prompt_bundle_id = ?,
            contract_json = ?,
            schema_version = ?,
@@ -3512,7 +3513,6 @@ export function updateRunSubSession(
       input.agentNickname ?? null,
       input.commandRequestId,
       input.status,
-      input.retryBudgetRemaining,
       input.promptBundleId,
       toJson(input),
       input.identity.schemaVersion,

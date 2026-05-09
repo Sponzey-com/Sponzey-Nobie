@@ -186,7 +186,6 @@ function command(id: string, parentRunId = "run:task014"): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 2,
   }
 }
 

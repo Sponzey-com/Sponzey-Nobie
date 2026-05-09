@@ -390,7 +390,6 @@ function checkMemoryVector(manifest) {
 function checkQueueBackpressure() {
     try {
         const queues = buildQueueBackpressureSnapshot();
-        const stopped = queues.filter((queue) => queue.status === "stopped");
         const recovering = queues.filter((queue) => queue.status === "recovering");
         const waiting = queues.filter((queue) => queue.status === "waiting");
         const detail = {
@@ -400,12 +399,9 @@ function checkQueueBackpressure() {
                 running: queue.running,
                 pending: queue.pending,
                 oldestPendingAgeMs: queue.oldestPendingAgeMs,
-                deadLetterCount: queue.deadLetterCount,
+                recoveryKeys: queue.recoveryKeys,
             })),
         };
-        if (stopped.length > 0) {
-            return makeCheck("queue.backpressure", "blocked", "일부 queue가 dead-letter 상태로 자동 재시도를 중단했습니다.", detail, "해당 recovery key를 확인하고 명시적으로 재시도하거나 운영자 조치로 retry budget을 reset하세요.");
-        }
         if (recovering.length > 0)
             return makeCheck("queue.backpressure", "warning", "일부 queue가 backpressure 복구 상태입니다.", detail);
         if (waiting.length > 0)

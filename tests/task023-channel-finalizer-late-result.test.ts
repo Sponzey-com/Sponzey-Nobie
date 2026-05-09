@@ -89,7 +89,6 @@ function command(id = "researcher"): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 1,
   }
 }
 
@@ -369,7 +368,10 @@ describe("task023 channel delivery finalizer and late result policy", () => {
     expect(approvalBlocked).toMatchObject({ status: "blocked" })
     expect(approvalBlocked.reasonCodes).toEqual(["approval_denied:approval:two"])
     expect(reviewBlocked).toMatchObject({ status: "blocked" })
-    expect(reviewBlocked.reasonCodes).toEqual(["sub_agent_result_review:missing_evidence"])
+    expect(reviewBlocked.reasonCodes).toEqual([
+      "parent_aggregation_required",
+      "sub_agent_result_review:missing_evidence",
+    ])
     expect(listMessageLedgerEvents({ runId: "run:task023" })).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ event_kind: "approval_aggregated" }),

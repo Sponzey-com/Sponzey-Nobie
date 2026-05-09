@@ -159,7 +159,7 @@ describe("prepare start launch", () => {
     }), expect.any(Object))
   })
 
-  it("uses isolated AI comparison result when using the real start plan helper", async () => {
+  it("keeps structured provider target contracts isolated without explicit continuation", async () => {
     const result = await prepareStartLaunch({
       message: "continue the previous work",
       sessionId: "session-real",
@@ -218,7 +218,9 @@ describe("prepare start launch", () => {
       updateRunStatus: vi.fn(),
     })
 
-    expect(result.startPlan.entrySemantics.reuse_conversation_context).toBe(true)
-    expect(result.startPlan.requestGroupId).toBe("group-prev")
+    expect(result.startPlan.entrySemantics.reuse_conversation_context).toBe(false)
+    expect(result.startPlan.requestGroupId).toBe("run-real")
+    expect(result.startPlan.requestIsolation).toBe("root")
+    expect(result.startPlan.continuationSource).toBe("new_root")
   })
 })

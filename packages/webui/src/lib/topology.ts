@@ -239,13 +239,11 @@ export function buildTopologyAgentCreatePayload(
       delegationPolicy: {
         enabled: true,
         maxParallelSessions: 2,
-        retryBudget: 2,
       },
       teamIds: ["team:unassigned"],
       delegation: {
         enabled: true,
         maxParallelSessions: 2,
-        retryBudget: 2,
       },
       profileVersion: 1,
       createdAt: now,

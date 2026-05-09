@@ -101,7 +101,7 @@ describe("completion application pass", () => {
         kind: "retry",
         budgetKind: "execution",
         summary: "중간에 끊긴 작업을 다시 시도합니다.",
-        eventLabel: "중간 절단 복구 재시도",
+        eventLabel: "중간 절단 복구",
         nextMessage: "retry prompt",
         reviewStepStatus: "completed",
         executingStepSummary: "다시 시도합니다.",

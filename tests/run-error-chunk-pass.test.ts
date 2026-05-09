@@ -25,8 +25,8 @@ describe("error chunk pass", () => {
       chunk: { type: "error", message: "command failed" },
       aborted: false,
       executionRecoveryLimitStop: {
-        summary: "실행 복구 한도",
-        reason: "limit",
+        summary: "실행 복구를 자동으로 계속할 수 없습니다.",
+        reason: "no safe alternative",
         remainingItems: ["manual action"],
       },
       activeWorkerRuntime: undefined,
@@ -48,7 +48,7 @@ describe("error chunk pass", () => {
     })
 
     expect(result).toEqual({ failed: false })
-    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "실행 복구 한도에 도달해 자동 진행을 중단합니다.")
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "실행 복구를 자동으로 계속할 수 없어 중단합니다.")
     expect(deliverTrackedChunk).toHaveBeenCalled()
   })
 

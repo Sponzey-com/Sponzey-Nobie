@@ -5,8 +5,9 @@ import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { findScheduleCandidatesByContract } from "../schedules/candidates.js";
 import { storeMemorySync } from "../memory/store.js";
 import { isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../scheduler/cron.js";
+import { buildPromptContextBlockPlan } from "../orchestration/prompt-bundle.js";
 import { reconcileScheduleExecution, removeManagedScheduleExecution, } from "../scheduler/system-cron.js";
-import { buildScheduledFollowupPrompt, extractDirectChannelDeliveryText, getScheduledRunExecutionOptions } from "./scheduled.js";
+import { buildScheduledFollowupPrompt, getScheduledRunExecutionOptions } from "./scheduled.js";
 import { buildStructuredExecutionBrief } from "./request-prompt.js";
 function defaultScheduleActionReceipts() {
     return [];
@@ -20,7 +21,7 @@ function buildRecurringScheduleContract(params) {
         : params.source === "slack"
             ? "slack"
             : "agent";
-    const literalText = extractDirectChannelDeliveryText(params.task);
+    const literalText = params.literalText?.trim();
     return {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         kind: "recurring",
@@ -71,6 +72,7 @@ export function createDefaultScheduleActionDependencies(overrides) {
                 ...(targetSessionId ? { targetSessionId } : {}),
                 originRunId: params.originRunId,
                 originRequestGroupId: params.originRequestGroupId,
+                ...(params.literalText ? { literalText: params.literalText } : {}),
             });
             const [duplicateCandidate] = findScheduleCandidatesByContract({
                 contract,
@@ -205,12 +207,47 @@ export function buildFollowupPrompt(params) {
     const context = getString(payload.context) || params.intake.intent.summary || params.originalMessage;
     const successCriteria = toStringList(payload.success_criteria);
     const constraints = toStringList(payload.constraints);
-    const preferredTarget = getString(payload.preferred_target)
-        || getString(payload.preferredTarget)
-        || params.intake.intent_envelope.preferred_target;
     const requiresFilesystemMutation = params.intake.intent_envelope.execution_semantics.filesystemEffect === "mutate";
+    const requiredOutputs = uniqueStrings([
+        ...successCriteria,
+        ...params.intake.structured_request.complete_condition,
+        params.intake.structured_request.target,
+    ]);
+    const verificationNotes = uniqueStrings([
+        ...constraints,
+        ...params.intake.notes,
+        params.intake.intent_envelope.execution_semantics.approvalRequired
+            ? `승인/권한 필요 여부 확인: ${params.intake.intent_envelope.execution_semantics.approvalTool ?? "approval"}`
+            : "",
+        requiresFilesystemMutation
+            ? "파일/폴더 변경이 필요한 경우 실제 경로와 변경 여부를 확인한다."
+            : "결과가 텍스트라도 확인한 사실과 확인하지 못한 항목을 분리한다.",
+    ]);
+    const promptContextPlan = buildPromptContextBlockPlan({
+        mode: "handoff",
+        hasLatestUserMessage: true,
+        hasChannelMetadata: true,
+        hasExecutionGraph: true,
+        hasParentWorkOrder: true,
+        hasRequiredOutputs: requiredOutputs.length > 0,
+        hasVerificationNotes: verificationNotes.length > 0,
+        hasReturnToParentContract: true,
+    });
+    const selectedExecutorLines = params.selectedExecutorId
+        ? [
+            "[validated_executor]",
+            `executor_id: ${params.selectedExecutorId}`,
+            params.selectedExecutorLabel ? `executor_label: ${params.selectedExecutorLabel}` : "",
+            params.selectedExecutorReason ? `selection_reason: ${params.selectedExecutorReason}` : "",
+            "The executor route is already validated by the parent decision. Do not choose another provider or target unless the parent explicitly asks for a fallback.",
+        ].filter(Boolean).join("\n")
+        : "";
     return buildStructuredExecutionBrief({
         header: "[Task Execution Brief]",
+        introLines: [
+            "This is a child execution prompt for the current root request.",
+            "Do not treat this as a fresh channel request or a direct final answer to the user.",
+        ],
         originalRequest: params.originalMessage,
         structuredRequest: {
             ...params.intake.structured_request,
@@ -227,8 +264,39 @@ export function buildFollowupPrompt(params) {
         },
         executionSemantics: params.intake.intent_envelope.execution_semantics,
         extraSections: [
+            [
+                "[included_context_blocks]",
+                ...promptContextPlan.includedContextBlocks.map((block) => `- ${block.blockId}: ${block.included ? "included" : "excluded"} (${block.reason})`),
+            ].join("\n"),
+            [
+                "[parent_work_order]",
+                `root_request: ${params.originalMessage}`,
+                `delegated_action: ${params.action.title}`,
+                `goal: ${goal}`,
+                `context: ${context}`,
+                `task_profile: ${params.taskProfile}`,
+            ].join("\n"),
+            selectedExecutorLines,
+            [
+                "[required_outputs]",
+                ...(requiredOutputs.length > 0
+                    ? requiredOutputs.map((item) => `- ${item}`)
+                    : ["- Return the concrete result requested by the parent work order."]),
+            ].join("\n"),
+            [
+                "[verification_notes]",
+                ...(verificationNotes.length > 0
+                    ? verificationNotes.map((item) => `- ${item}`)
+                    : ["- Verify the output against the original request before returning it."]),
+            ].join("\n"),
+            [
+                "[return_to_parent_contract]",
+                "- Return a structured result to the parent/requesting agent.",
+                "- Do not send or claim the final user-channel answer yourself.",
+                "- Include status, confirmed facts, produced outputs, verification performed, unresolved items, risks, and next recommended action.",
+                "- If incomplete, include the safe alternatives already tried and the remaining alternatives the parent can choose.",
+            ].join("\n"),
             `작업 프로필: ${params.taskProfile}`,
-            preferredTarget ? `선호 대상: ${preferredTarget}` : "",
             successCriteria.length > 0 ? ["성공 조건:", ...successCriteria.map((item) => `- ${item}`)].join("\n") : "",
             constraints.length > 0 ? ["제약 사항:", ...constraints.map((item) => `- ${item}`)].join("\n") : "",
         ].filter(Boolean),
@@ -237,7 +305,7 @@ export function buildFollowupPrompt(params) {
             "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
             requiresFilesystemMutation
                 ? "이 요청은 실제 로컬 파일 또는 폴더 변경이 필요합니다. 로컬 도구를 사용해 실제로 생성하거나 수정하세요. 코드 조각, 설명문, 수동 안내만 남기고 끝내지 마세요."
-                : "지금 실제 작업을 수행하세요. 다시 intake 접수 메시지를 만들지 말고, 실제 결과를 만들어 내세요.",
+                : "지금 실제 작업을 수행하세요. 다시 intake 접수 메시지를 만들지 말고, 부모 실행자가 검증/취합할 수 있는 실제 결과를 반환하세요.",
         ],
     });
 }
@@ -306,6 +374,7 @@ function executeCreateScheduleAction(action, intake, params, receipt, dependenci
     const runAt = getString(action.payload.run_at) || intake.scheduling.run_at;
     const actionScheduleText = getString(action.payload.schedule_text);
     const timezone = getString(action.payload.timezone);
+    const followup = getFollowupRunPayload(action);
     if (runAt) {
         const scheduledAt = Date.parse(runAt);
         if (Number.isNaN(scheduledAt)) {
@@ -320,10 +389,9 @@ function executeCreateScheduleAction(action, intake, params, receipt, dependenci
                 receipts: defaultScheduleActionReceipts(),
             };
         }
-        const followup = getFollowupRunPayload(action);
-        const immediateCompletionText = followup.literalText ?? extractDirectChannelDeliveryText(task);
+        const immediateCompletionText = followup.literalText;
         const scheduledTaskProfile = normalizeTaskProfile(followup.taskProfile ?? "general_chat");
-        const executionOptions = getScheduledRunExecutionOptions(task, scheduledTaskProfile);
+        const executionOptions = getScheduledRunExecutionOptions(task, scheduledTaskProfile, intake.intent_envelope.execution_semantics);
         dependencies.scheduleDelayedRun({
             runAtMs: scheduledAt,
             message: buildScheduledFollowupPrompt({
@@ -412,6 +480,7 @@ function executeCreateScheduleAction(action, intake, params, receipt, dependenci
         originRunId: params.runId,
         originRequestGroupId: params.requestGroupId,
         model: params.model,
+        ...(followup.literalText ? { literalText: followup.literalText } : {}),
     });
     const scheduleText = actionScheduleText || cron;
     if (executionSync.duplicate) {
@@ -523,6 +592,9 @@ function getFollowupRunPayload(action) {
 }
 function getString(value) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+function uniqueStrings(values) {
+    return [...new Set(values.map((value) => value?.trim()).filter((value) => Boolean(value)))];
 }
 function normalizeTaskProfile(taskProfile) {
     switch (taskProfile) {

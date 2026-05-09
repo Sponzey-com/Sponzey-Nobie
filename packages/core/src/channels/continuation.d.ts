@@ -1,7 +1,7 @@
 import type { DbChannelMessageRef } from "../db/index.js";
 import type { InboundEnvelope } from "./contracts.js";
 export type ChannelContinuationLookupStatus = "resolved" | "ambiguous" | "not_found";
-export type ChannelContinuationCandidateSource = "explicit_run_id" | "explicit_task_id" | "delivery_id" | "message_ref_exact" | "message_ref_parent" | "message_ref_thread_root" | "message_ref_latest_thread" | "sender_room_window";
+export type ChannelContinuationCandidateSource = "explicit_run_id" | "explicit_task_id" | "delivery_id" | "message_ref_exact" | "message_ref_parent";
 export interface ChannelContinuationLookupCandidate {
     source: ChannelContinuationCandidateSource;
     runId: string;
@@ -21,7 +21,7 @@ export interface ChannelContinuationLookupResult {
     selected?: ChannelContinuationLookupCandidate | undefined;
     confirmationRequired: boolean;
     confirmationPrompt?: string | undefined;
-    reasonCode: "explicit_match" | "message_match" | "thread_match" | "window_match" | "ambiguous_candidates" | "no_candidates";
+    reasonCode: "explicit_match" | "message_match" | "ambiguous_candidates" | "no_candidates";
 }
 export interface ChannelContinuationLookupInput {
     envelope: InboundEnvelope;

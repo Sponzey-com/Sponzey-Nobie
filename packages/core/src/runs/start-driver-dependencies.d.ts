@@ -8,6 +8,7 @@ import type { FinalizationDependencies, FinalizationSource } from "./finalizatio
 import type { ActiveQueueCancellationMode } from "./entry-semantics.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
 export declare function buildStartRootRunDriverDependencies(params: {
     runId: string;
     sessionId: string;
@@ -18,6 +19,7 @@ export declare function buildStartRootRunDriverDependencies(params: {
     model: string | undefined;
     workDir: string;
     reuseConversationContext: boolean;
+    suppressFinalDelivery?: boolean;
     activeQueueCancellationMode: ActiveQueueCancellationMode | null;
     startNestedRootRun: (params: {
         message: string;
@@ -30,6 +32,8 @@ export declare function buildStartRootRunDriverDependencies(params: {
         provider?: AIProvider | undefined;
         targetId?: string | undefined;
         targetLabel?: string | undefined;
+        agentExecutionDecision?: AgentExecutionDecision | undefined;
+        agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined;
         workerRuntime?: WorkerRuntimeTarget | undefined;
         workDir?: string | undefined;
         source: FinalizationSource;

@@ -9,9 +9,7 @@ export function reviewSubAgentResult(input) {
     const normalizedFailureKey = normalizedBlockingFailureKey ?? normalizedReviewKey;
     const repeatedFailure = Boolean(normalizedBlockingFailureKey &&
         (input.previousFailureKeys ?? []).includes(normalizedBlockingFailureKey));
-    const retryBudgetRemaining = Math.min(Math.max(0, input.retryBudgetRemaining), retryBudgetLimit);
     const canRetry = blockingIssues.length > 0 &&
-        retryBudgetRemaining > 0 &&
         !repeatedFailure &&
         !input.resultReport.impossibleReason;
     if (issues.length === 0) {
@@ -28,7 +26,6 @@ export function reviewSubAgentResult(input) {
                 ? { impossibleReason: input.resultReport.impossibleReason }
                 : {}),
             retryBudgetLimit,
-            retryBudgetRemaining,
             repeatedFailure: false,
             canRetry: false,
         };
@@ -51,7 +48,6 @@ export function reviewSubAgentResult(input) {
                 ? { impossibleReason: input.resultReport.impossibleReason }
                 : {}),
             retryBudgetLimit,
-            retryBudgetRemaining,
             repeatedFailure: false,
             canRetry: false,
         };
@@ -71,7 +67,6 @@ export function reviewSubAgentResult(input) {
             ? { impossibleReason: input.resultReport.impossibleReason }
             : {}),
         retryBudgetLimit,
-        retryBudgetRemaining,
         repeatedFailure,
         canRetry,
     };
@@ -80,7 +75,9 @@ export function reviewSubAgentResult(input) {
             ...base,
             manualActionReason: repeatedFailure
                 ? "same_sub_agent_result_review_failure_repeated"
-                : "sub_agent_result_review_retry_budget_exhausted",
+                : input.resultReport.impossibleReason
+                    ? "sub_agent_result_review_impossible_reported"
+                    : "sub_agent_result_review_not_retryable",
         };
     }
     return {
@@ -90,7 +87,6 @@ export function reviewSubAgentResult(input) {
             expectedOutputs: input.expectedOutputs,
             missingItems,
             requiredChanges,
-            retryBudgetRemaining: Math.max(0, retryBudgetRemaining - 1),
             additionalContextRefs: input.additionalContextRefs ?? [],
             reasonCode: failureKey,
             ...(input.now ? { now: input.now } : {}),
@@ -207,15 +203,8 @@ export function normalizeResultReviewFailureKey(issues) {
     return `sub_agent_result_review:${[...new Set(tokens)].sort().join("|")}`;
 }
 export function getSubAgentResultRetryBudgetLimit(retryClass) {
-    switch (retryClass) {
-        case "format_only":
-            return 3;
-        case "risk_or_external":
-        case "expensive":
-            return 1;
-        default:
-            return 2;
-    }
+    void retryClass;
+    return Number.MAX_SAFE_INTEGER;
 }
 function isLimitedSuccessIssue(issue, resultReport) {
     if (issue.code === "reported_risk_or_gap" || issue.code === "impossible_reason_reported") {
@@ -295,9 +284,119 @@ export function buildFeedbackRequest(input) {
         additionalConstraints: [],
         additionalContextRefs: input.additionalContextRefs,
         expectedRevisionOutputs: input.expectedOutputs.filter((output) => output.required),
-        retryBudgetRemaining: input.retryBudgetRemaining,
         reasonCode: input.reasonCode,
         createdAt: now,
+    };
+}
+export function summarizeChildResultForParent(input) {
+    const report = input.resultReport;
+    const status = resolveParentFacingChildResultStatus(input);
+    const confirmedFacts = report
+        ? report.outputs
+            .filter((output) => output.status === "satisfied")
+            .map((output) => summarizeOutputValue(output.outputId, output.value))
+        : [];
+    const reportUnverifiedItems = report
+        ? report.outputs
+            .filter((output) => output.status !== "satisfied")
+            .map((output) => `${output.outputId}:${output.status}`)
+        : [];
+    const attemptedMethods = uniqueNonEmpty([
+        ...(input.attemptedMethods ?? []),
+        ...(report
+            ? report.evidence.map((evidence) => ["evidence", evidence.kind, evidence.sourceRef].filter(Boolean).join(":"))
+            : []),
+        ...(report
+            ? report.artifacts.map((artifact) => ["artifact", artifact.kind, artifact.path ?? artifact.artifactId].filter(Boolean).join(":"))
+            : []),
+        report ? `result_report:${report.status}` : "",
+    ]);
+    const riskNotes = uniqueNonEmpty([
+        ...input.review.risksOrGaps,
+        ...(input.review.impossibleReason ? [input.review.impossibleReason.detail] : []),
+    ]);
+    const unverifiedItems = uniqueNonEmpty([
+        ...input.review.missingItems,
+        ...reportUnverifiedItems,
+    ]);
+    return {
+        subSessionId: input.subSessionId,
+        ...(report?.resultReportId ? { resultReportId: report.resultReportId } : {}),
+        status,
+        confirmedFacts,
+        unverifiedItems,
+        attemptedMethods,
+        remainingAlternatives: uniqueNonEmpty(input.remainingAlternatives ?? []),
+        artifacts: report?.artifacts ?? [],
+        riskNotes,
+        handoffSummary: [
+            `sub_session:${input.subSessionId}`,
+            `status:${status}`,
+            input.review.verdict ? `verdict:${input.review.verdict}` : "",
+            input.review.parentIntegrationStatus
+                ? `parent_integration:${input.review.parentIntegrationStatus}`
+                : "",
+        ].filter(Boolean).join(" "),
+        ...(input.review.verdict ? { reviewVerdict: input.review.verdict } : {}),
+        ...(input.review.parentIntegrationStatus
+            ? { parentIntegrationStatus: input.review.parentIntegrationStatus }
+            : {}),
+    };
+}
+export function aggregateSubSessionResultsForParent(input) {
+    const childResults = input.childResults.map(summarizeChildResultForParent);
+    const blockedSubSessionIds = input.childResults
+        .filter((item) => !item.review.accepted || item.review.status === "failed")
+        .map((item) => item.subSessionId);
+    const limitedSubSessionIds = input.childResults
+        .filter((item) => item.review.accepted &&
+        (item.review.verdict === "limited_success" ||
+            item.review.parentIntegrationStatus === "limited_parent_integration"))
+        .map((item) => item.subSessionId);
+    const unverifiedSubSessionIds = childResults
+        .filter((item) => item.status !== "completed" ||
+        item.unverifiedItems.length > 0 ||
+        item.riskNotes.length > 0)
+        .map((item) => item.subSessionId);
+    const hasProblem = input.childResults.length === 0 ||
+        blockedSubSessionIds.length > 0 ||
+        limitedSubSessionIds.length > 0 ||
+        unverifiedSubSessionIds.length > 0;
+    const nextAction = hasProblem
+        ? chooseParentAggregationAlternative(input)
+        : "ready_for_finalization";
+    const reasonCodes = buildParentAggregationReasonCodes({
+        input,
+        blockedSubSessionIds,
+        limitedSubSessionIds,
+        unverifiedSubSessionIds,
+        nextAction,
+    });
+    return {
+        kind: "parent_child_result_aggregation",
+        ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+        ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
+        ...(input.requestingAgentId ? { requestingAgentId: input.requestingAgentId } : {}),
+        ...(input.originalRequest ? { originalRequest: input.originalRequest } : {}),
+        successCriteria: uniqueNonEmpty(input.successCriteria ?? []),
+        childResults,
+        nextAction,
+        finalDeliveryAllowed: nextAction === "ready_for_finalization",
+        reasonCodes,
+        blockedSubSessionIds,
+        limitedSubSessionIds,
+        unverifiedSubSessionIds,
+        createdAt: Date.now(),
+    };
+}
+export function buildParentAggregationRuntimeEvent(trace) {
+    return {
+        eventKind: "parent_child_result_aggregated",
+        ...(trace.parentRunId ? { parentRunId: trace.parentRunId } : {}),
+        ...(trace.parentAgentId ? { parentAgentId: trace.parentAgentId } : {}),
+        ...(trace.requestingAgentId ? { requestingAgentId: trace.requestingAgentId } : {}),
+        summary: `parent aggregation selected ${trace.nextAction}`,
+        payload: trace,
     };
 }
 export function decideSubSessionCompletionIntegration(reviews) {
@@ -313,14 +412,26 @@ export function decideSubSessionCompletionIntegration(reviews) {
             : {}),
     }));
     if (blocked.length === 0) {
+        if (limited.length > 0) {
+            return {
+                finalDeliveryAllowed: false,
+                blockedSubSessionIds: [],
+                limitedSubSessionIds: limited.map((item) => item.subSessionId),
+                reviewStatuses,
+                reasonCodes: [
+                    "parent_aggregation_required",
+                    "limited_success_parent_integration_requires_parent_decision",
+                ],
+                parentAggregationRequired: true,
+                parentAggregationNextAction: "self_solve",
+            };
+        }
         return {
             finalDeliveryAllowed: true,
             blockedSubSessionIds: [],
             limitedSubSessionIds: limited.map((item) => item.subSessionId),
             reviewStatuses,
-            reasonCodes: limited.length > 0
-                ? ["all_sub_session_results_accepted", "limited_success_parent_integration"]
-                : ["all_sub_session_results_accepted"],
+            reasonCodes: ["all_sub_session_results_accepted"],
         };
     }
     return {
@@ -329,9 +440,91 @@ export function decideSubSessionCompletionIntegration(reviews) {
         limitedSubSessionIds: limited.map((item) => item.subSessionId),
         reviewStatuses,
         reasonCodes: [
+            "parent_aggregation_required",
             ...new Set(blocked.map((item) => item.review.normalizedFailureKey ?? "sub_session_result_not_accepted")),
         ].sort(),
+        parentAggregationRequired: true,
+        parentAggregationNextAction: "augment_same_child",
     };
+}
+function resolveParentFacingChildResultStatus(input) {
+    if (input.resultReport?.status === "failed" || input.review.status === "failed")
+        return "failed";
+    if (input.resultReport?.status === "needs_revision" ||
+        !input.review.accepted ||
+        input.review.verdict === "limited_success" ||
+        input.review.parentIntegrationStatus === "limited_parent_integration" ||
+        input.resultReport?.outputs.some((output) => output.status !== "satisfied") ||
+        input.review.missingItems.length > 0 ||
+        input.review.risksOrGaps.length > 0 ||
+        input.review.impossibleReason) {
+        return "partial";
+    }
+    return "completed";
+}
+function chooseParentAggregationAlternative(input) {
+    if (input.childResults.length === 0) {
+        if (input.canSelfSolve !== false)
+            return "self_solve";
+        if (input.returnToParentAllowed)
+            return "return_to_parent";
+        if (input.needsUserDecision)
+            return "ask_user";
+        return "fail_with_reason";
+    }
+    if (input.childResults.some((item) => item.canUseSameChild ?? item.review.canRetry)) {
+        return "augment_same_child";
+    }
+    if (input.childResults.some((item) => item.canUseOtherDirectChild || (item.remainingAlternatives?.length ?? 0) > 0)) {
+        return "redelegate_direct_child";
+    }
+    const canSelfSolve = input.canSelfSolve ??
+        (input.childResults.some((item) => item.canSelfSolve) ||
+            input.childResults.every((item) => item.canSelfSolve !== false));
+    if (canSelfSolve) {
+        return "self_solve";
+    }
+    if (input.needsUserDecision || input.childResults.some((item) => item.needsUserDecision)) {
+        return "ask_user";
+    }
+    if (input.returnToParentAllowed || input.childResults.some((item) => item.returnToParentAllowed)) {
+        return "return_to_parent";
+    }
+    return "fail_with_reason";
+}
+function buildParentAggregationReasonCodes(input) {
+    return uniqueNonEmpty([
+        "parent_aggregation_trace_recorded",
+        input.input.childResults.length === 0 ? "no_child_results_to_aggregate" : "",
+        input.blockedSubSessionIds.length > 0 ? "child_result_blocked" : "",
+        input.limitedSubSessionIds.length > 0 ? "child_result_limited" : "",
+        input.unverifiedSubSessionIds.length > 0 ? "child_result_unverified" : "",
+        input.input.childResults.some((item) => item.canUseSameChild ?? item.review.canRetry)
+            ? "same_child_augmentation_available"
+            : "",
+        input.input.childResults.some((item) => item.canUseOtherDirectChild || (item.remainingAlternatives?.length ?? 0) > 0)
+            ? "direct_child_alternative_available"
+            : "",
+        input.nextAction === "fail_with_reason" ? "no_safe_alternative_remaining" : "",
+        `next_action:${input.nextAction}`,
+    ]).sort();
+}
+function summarizeOutputValue(outputId, value) {
+    if (value === undefined)
+        return `output:${outputId}:satisfied`;
+    if (typeof value === "string")
+        return value.trim() || `output:${outputId}:satisfied`;
+    if (typeof value === "number" || typeof value === "boolean")
+        return String(value);
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        return `output:${outputId}:satisfied`;
+    }
+}
+function uniqueNonEmpty(values) {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 function dedupeIssues(issues) {
     const seen = new Set();

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 999,
+  "entityType": "topology",
+  "id": "topology:invalid-schema",
+  "name": "Invalid Schema Topology",
+  "status": "draft",
+  "createdAt": 1777392000000,
+  "updatedAt": 1777392000000,
+  "nodes": [],
+  "teams": [],
+  "orgUnits": [],
+  "positions": [],
+  "persons": [],
+  "memberships": [],
+  "authorityRules": [],
+  "responsibilities": [],
+  "systems": [],
+  "tools": [],
+  "processes": [],
+  "relations": []
+}

@@ -60,7 +60,7 @@ describe("filesystem post-pass recovery", () => {
 
     expect(decision.kind).toBe("retry")
     if (decision.kind !== "retry") return
-    expect(decision.state.eventLabel).toBe("파일 검증 복구 재시도")
+    expect(decision.state.eventLabel).toBe("파일 검증 복구")
     expect(decision.state.failureTitle).toBe("filesystem_verification_recovery")
     expect(decision.state.nextMessage).toContain("[Filesystem Verification Recovery]")
   })

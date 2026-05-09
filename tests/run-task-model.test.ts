@@ -401,7 +401,7 @@ describe("buildTaskModels", () => {
         summary: "보고서 생성에 실패했습니다.",
         recentEvents: [
           { id: "evt-7-1", at: 10, label: "AI 호출 실패: 인증 또는 접근 차단 문제" },
-          { id: "evt-7-2", at: 9, label: "AI 복구 재시도 한도(5회)에 도달했습니다." },
+          { id: "evt-7-2", at: 9, label: "AI 복구를 자동으로 계속할 수 없습니다." },
           { id: "evt-7-3", at: 8, label: "worker runtime를 기본 추론 경로로 대체합니다." },
         ],
       }),
@@ -413,7 +413,7 @@ describe("buildTaskModels", () => {
       title: "실행 실패",
       summary: "AI 호출 실패: 인증 또는 접근 차단 문제",
       detailLines: [
-        "AI 복구 재시도 한도(5회)에 도달했습니다.",
+        "AI 복구를 자동으로 계속할 수 없습니다.",
         "worker runtime를 기본 추론 경로로 대체합니다.",
       ],
       sourceAttemptId: "run-failed",
@@ -512,7 +512,7 @@ describe("buildTaskModels", () => {
         recentEvents: [
           { id: "evt-diagnostics-1", at: 1, label: "prompt_ms=12ms" },
           { id: "evt-diagnostics-2", at: 2, label: "memory_total_ms=5ms" },
-          { id: "evt-diagnostics-3", at: 3, label: "복구 재시도 1/2" },
+          { id: "evt-diagnostics-3", at: 3, label: "복구 신호 1" },
           { id: "evt-diagnostics-4", at: 4, label: "tool receipt: screen_capture ok" },
           { id: "evt-diagnostics-5", at: 5, label: "Slack 파일 전달 완료: /tmp/screen.png" },
         ],
@@ -532,7 +532,7 @@ describe("buildTaskModels", () => {
         pendingDelivery: ["slack:file:/tmp/screen.png"],
         failedRecoveryKey: "delivery:screen_capture",
         failureKind: "delivery",
-        recoveryBudget: "delivery 1/2",
+        recoveryBudget: "delivery 신호 1",
         status: "awaiting_approval",
         updatedAt: 20,
       },
@@ -545,7 +545,7 @@ describe("buildTaskModels", () => {
       pendingDelivery: ["slack:file:/tmp/screen.png"],
       failedRecoveryKey: "delivery:screen_capture",
       failureKind: "delivery",
-      recoveryBudget: "delivery 1/2",
+      recoveryBudget: "delivery 신호 1",
       status: "awaiting_approval",
     })
     expect(task?.diagnostics).toEqual({
@@ -559,9 +559,32 @@ describe("buildTaskModels", () => {
       memoryEvents: ["memory_total_ms=5ms"],
       toolEvents: ["tool receipt: screen_capture ok"],
       deliveryEvents: ["Slack 파일 전달 완료: /tmp/screen.png"],
-      recoveryEvents: ["복구 재시도 1/2"],
+      recoveryEvents: ["복구 신호 1"],
       lastRecoveryKey: "delivery:screen_capture",
-      recoveryBudget: "delivery 1/2",
+      recoveryBudget: "delivery 신호 1",
     })
+  })
+
+  it("returns newer requests before old runs that were updated by recovery bookkeeping", () => {
+    const tasks = buildTaskModels([
+      makeRun({
+        id: "run-old-restored",
+        requestGroupId: "old-restored",
+        prompt: "오래된 대기 요청",
+        status: "awaiting_user",
+        createdAt: 10,
+        updatedAt: 1_000,
+      }),
+      makeRun({
+        id: "run-new",
+        requestGroupId: "new-request",
+        prompt: "방금 들어온 요청",
+        status: "completed",
+        createdAt: 100,
+        updatedAt: 200,
+      }),
+    ])
+
+    expect(tasks.map((task) => task.id)).toEqual(["new-request", "old-restored"])
   })
 })

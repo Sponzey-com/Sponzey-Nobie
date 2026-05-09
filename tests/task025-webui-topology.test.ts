@@ -278,7 +278,7 @@ function projection(): AgentTopologyProjection {
             allowedPathCount: 0,
             reasonCodes: [],
           },
-          delegation: { enabled: true, maxParallelSessions: 2, retryBudget: 2 },
+          delegation: { enabled: true, maxParallelSessions: 2 },
           diagnostics: [],
         },
       },

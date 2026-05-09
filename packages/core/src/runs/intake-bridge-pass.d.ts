@@ -1,4 +1,5 @@
-import type { AIProvider } from "../ai/index.js";
+import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
+import type { ChannelSource } from "../channels/contracts.js";
 import { buildScheduleRegistrationCancelledEvent, buildScheduleRegistrationCreatedEvent } from "../scheduler/lifecycle.js";
 import { analyzeTaskIntake, type TaskExecutionSemantics, type TaskIntentEnvelope, type TaskStructuredRequest } from "../agent/intake.js";
 import type { AgentContextMode } from "../agent/index.js";
@@ -8,6 +9,9 @@ import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { LoopDirective } from "./loop-directive.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
+import { buildExecutionGraphSnapshot } from "../orchestration/execution-graph-snapshot.js";
+import { runAgentExecutionHarness } from "../orchestration/execution-harness.js";
 export interface DelegatedRunStartParams {
     message: string;
     sessionId: string;
@@ -23,11 +27,14 @@ export interface DelegatedRunStartParams {
     model?: string | undefined;
     providerId?: string | undefined;
     provider?: AIProvider | undefined;
+    providerTrace?: ProviderAuditTrace | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     targetId?: string | undefined;
     targetLabel?: string | undefined;
+    agentExecutionDecision?: AgentExecutionDecision | undefined;
+    agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined;
     workDir: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     skipIntake?: boolean | undefined;
     toolsEnabled?: boolean | undefined;
     contextMode?: AgentContextMode | undefined;
@@ -43,6 +50,11 @@ interface IntakeBridgePassDependencies {
     startDelegatedRun: (params: DelegatedRunStartParams) => void;
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile;
     logInfo: (message: string, payload: Record<string, unknown>) => void;
+    recordExecutionDecisionTrace?: (params: {
+        runId: string;
+        agentExecutionDecision: AgentExecutionDecision;
+        executionDecisionTrace: AgentExecutionDecisionTraceSnapshot;
+    }) => void;
 }
 interface IntakeBridgePassModuleDependencies {
     analyzeTaskIntake: typeof analyzeTaskIntake;
@@ -51,6 +63,8 @@ interface IntakeBridgePassModuleDependencies {
     createDefaultScheduleActionDependencies: typeof createDefaultScheduleActionDependencies;
     inferDelegatedTaskProfile: typeof inferDelegatedTaskProfile;
     buildFollowupPrompt: typeof buildFollowupPrompt;
+    buildExecutionGraphSnapshot?: typeof buildExecutionGraphSnapshot;
+    runAgentExecutionHarness?: typeof runAgentExecutionHarness;
 }
 export declare function runIntakeBridgePass(params: {
     message: string;
@@ -59,7 +73,7 @@ export declare function runIntakeBridgePass(params: {
     requestGroupId: string;
     model: string | undefined;
     workDir: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     runId: string;
     onChunk: RunChunkDeliveryHandler | undefined;
     reuseConversationContext: boolean;

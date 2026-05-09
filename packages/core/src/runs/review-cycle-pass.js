@@ -9,11 +9,9 @@ const defaultModuleDependencies = {
     getRootRun,
 };
 export function buildSubSessionFeedbackCycleDirective(feedback) {
-    const canRetry = feedback.retryBudgetRemaining >= 0;
     return {
-        kind: canRetry ? "retry_sub_session" : "manual_action_required",
+        kind: "retry_sub_session",
         subSessionId: feedback.subSessionId,
-        retryBudgetRemaining: feedback.retryBudgetRemaining,
         normalizedFailureKey: feedback.reasonCode,
         missingItems: [...feedback.missingItems],
         requiredChanges: [...feedback.requiredChanges],

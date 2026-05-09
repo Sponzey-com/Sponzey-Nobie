@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, readFileSync, existsSync, writeFileSync } from
 import { join, dirname, basename } from "node:path"
 
 const MAX_NOBIE_MD_SIZE = 8000
-const MAX_SYSTEM_PROMPT_SIZE = 60000
+const MAX_SYSTEM_PROMPT_SIZE = 90000
 const MEMORY_FILENAMES = ["NOBIE.md", "WIZBY.md", "HOWIE.md"] as const
 const PROMPTS_DIRNAME = "prompts"
 const PROMPT_ASSEMBLY_POLICY_VERSION = 1
@@ -147,10 +147,12 @@ const PROMPT_SOURCE_DEFINITIONS: PromptSourceDefinition[] = [
   { sourceId: "user", filenames: { ko: "user.ko.md", en: "user.md" }, priority: 30, required: true, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "soul", filenames: { ko: "soul.ko.md", en: "soul.md" }, priority: 40, required: true, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "planner", filenames: { ko: "planner.ko.md", en: "planner.md" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
+  { sourceId: "nobie_execution", filenames: { ko: "nobie-execution.ko.md", en: "nobie-execution.md" }, priority: 55, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "memory_policy", filenames: { ko: "memory_policy.ko.md", en: "memory_policy.md" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "tool_policy", filenames: { ko: "tool_policy.ko.md", en: "tool_policy.md" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.ko.md", en: "web_retrieval_planner.md" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
   { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.ko.md", en: "recovery_policy.md" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
+  { sourceId: "topology_executor_policy", filenames: { ko: "topology_executor_policy.ko.md", en: "topology_executor_policy.md" }, priority: 85, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "completion_policy", filenames: { ko: "completion_policy.ko.md", en: "completion_policy.md" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "output_policy", filenames: { ko: "output_policy.ko.md", en: "output_policy.md" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
   { sourceId: "channel", filenames: { ko: "channel.ko.md", en: "channel.md" }, priority: 110, required: false, usageScope: "runtime", defaultRuntime: true },
@@ -494,6 +496,66 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Impossible requests complete by returning the reason.
 `,
   },
+  nobie_execution: {
+    ko: `# 노비 실행 판단 정책
+
+이 파일은 루트 노비와 위임받은 모든 에이전트가 공통으로 사용하는 실행 판단 규칙이다.
+
+## 원칙
+
+- 실행 판단은 별도 판단 컴포넌트가 아니라 현재 작업을 받은 에이전트의 기본 능력이다.
+- 사용자 요청 원문, 노드 이름, 실행자 설명을 코드 키워드나 정규식으로 해석해 실행자를 고르지 않는다.
+- 현재 에이전트는 프롬프트에 제공된 실행자 정의, 연결선, 권한, 위험 경계를 읽고 구조화된 실행 판단을 만든다.
+- 실행자 정의의 \`delegationScope\`, \`declineCriteria\`, \`riskBoundary\`는 문자열 검색용 태그가 아니라 모델이 읽는 자연어 기준이다.
+- 선택 가능한 일반 후보는 현재 에이전트의 직속 하위 실행자뿐이다. 진단용 전체 실행자 목록은 경로 설명용이며, 유효한 연결 경로 없이는 선택하지 않는다.
+
+## 실행 순서
+
+1. 연결된 직속 하위 실행자 또는 팀 멤버가 적합한지 본다.
+2. 로컬 장치/시스템 실행이 필요하면 연장을 검토한다.
+3. 위임과 연장이 부적합하면 현재 에이전트가 자신의 역할과 도구 범위 안에서 자체 해결한다.
+4. 자체 해결도 권한, 안전, 개인정보, 계층 경계 때문에 불가능하면 상위 에이전트/요청자에게 미해결 사유를 반환하거나 필요한 확인을 요청한다.
+5. 루트 노비만 상위 에이전트가 없을 때 직접 처리 또는 사용자 확인으로 전환한다.
+
+## 출력 계약
+
+- 실행 판단은 \`AgentExecutionDecision\` JSON으로 남긴다.
+- 선택한 실행자는 현재 에이전트가 접근 가능한 실행자여야 한다.
+- 연결 경로는 현재 에이전트 또는 현재 에이전트의 직속 하위 실행자에서 시작해 허용된 연결선만 따라가야 한다.
+- provider direct는 명시 provider target이 있을 때만 가능하며, 실행 판단 실패나 토폴로지 fallback의 기본 대안이 아니다.
+- confidence가 낮다는 이유만으로 실패하지 않는다. 구조적으로 불가능할 때 fallback한다.
+- 실패 횟수는 실패 조건이 아니라 다른 방법을 찾기 위한 신호다.
+`,
+    en: `# Nobie Execution Decision Policy
+
+This file defines the shared execution-decision rules for root Nobie and every delegated agent.
+
+## Principles
+
+- Execution decision is the current agent's built-in responsibility, not a separate decision component.
+- Do not choose executors by keyword or regex matching against the raw user request, node name, or executor description.
+- The current agent reads provided executor definitions, edges, permissions, and risk boundaries, then returns a structured execution decision.
+- \`delegationScope\`, \`declineCriteria\`, and \`riskBoundary\` are natural-language criteria for the model to read, not tags for code string search.
+- The ordinary selectable candidates are only direct child executors of the current agent. Diagnostic full-agent lists are reference-only and are not selectable without a valid connection path.
+
+## Execution Order
+
+1. Check suitable connected direct child executors or team members.
+2. If local device or system execution is needed, check Yeonjang.
+3. If delegation and Yeonjang are not suitable, self-solve within the current agent's role and tool boundary.
+4. If self-solve is blocked by permission, safety, privacy, or hierarchy boundaries, return an unresolved reason to the parent/requester or ask for the required decision.
+5. Only root Nobie uses direct handling or user confirmation when there is no parent agent.
+
+## Output Contract
+
+- Record execution decisions as \`AgentExecutionDecision\` JSON.
+- The selected executor must be accessible to the current agent.
+- The selected connection path must start from the current agent or the current agent's direct child, then follow only allowed edges.
+- Provider direct is allowed only with an explicit provider target. It is not the default fallback for execution-decision failure or topology fallback.
+- Low confidence alone is not failure. Fall back only when the selected path is structurally impossible.
+- Attempt count is a signal to search for another method, not a failure condition.
+`,
+  },
   memory_policy: {
     ko: `# 메모리 정책
 
@@ -530,6 +592,9 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Team 대상 작업은 실제 멤버 에이전트별 권한을 확인한다.
 - 실행 결과의 바이너리, 파일 경로, receipt는 버리지 않는다.
 - 현재 채널에서 전달 가능한 도구를 우선 사용하고 다른 채널 도구로 임의 변경하지 않는다.
+- 도구 fallback은 키워드 기반으로 판단하지 않는다. 원래 요청의 대상, 채널, 산출물 형식, 완료 조건은 유지하고 실행 경로, 도구, 입력 형식, 권한 상태만 바꾼다.
+- provider direct 실행은 요청 또는 상위 handoff에 명시 provider target이 있을 때만 허용한다. 실행 판단 실패, 토폴로지 runtime off, 직속 하위 후보 없음의 기본 fallback으로 쓰지 않는다.
+- 프롬프트 안에 자연어 폴더 별칭 목록을 두지 않는다. 위치는 명시 경로, 도구 또는 OS가 제공한 well-known folder 메타데이터, 검증된 이전 맥락, 사용자 확인으로만 확정한다.
 `,
     en: `# Tool Policy
 
@@ -542,6 +607,9 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Team-targeted work checks permissions for each actual member agent.
 - Preserve binaries, file paths, and receipts returned by tools.
 - Prefer tools deliverable through the active channel and do not switch to another channel tool arbitrarily.
+- Tool fallback is not keyword-based. Preserve the original target, channel, artifact type, and completion condition while changing only the execution path, tool, input shape, or permission state.
+- Provider direct execution is allowed only when the request or parent handoff provides an explicit provider target. It is not the default fallback for execution-decision failure, topology runtime off, or missing direct-child candidates.
+- Do not keep natural-language folder alias lists in prompts. Resolve locations only from explicit paths, tool or OS-provided well-known folder metadata, prior verified context, or user confirmation.
 `,
   },
   web_retrieval_planner: {
@@ -573,6 +641,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 - 권한, 경로, 대상, 채널, 입력 형식, 실행 순서를 우선 점검한다.
 - 하위 에이전트 실패는 sub-session, CommandRequest, capability, data package, 결과 조건을 기준으로 분류한다.
 - 이미 성공한 하위 에이전트 작업은 복구 과정에서 다시 실행하지 않는다.
+- 실행 판단 실패는 provider direct로 빠지지 않는다. 현재 에이전트 기준 self-solve, direct-current-agent, return-to-parent, ask-parent, ask-user 또는 명확한 불가능 사유로 정리한다.
 - 대안이 없으면 raw 오류 대신 사용자에게 이해 가능한 실패 사유를 반환한다.
 `,
     en: `# Recovery Policy
@@ -583,7 +652,36 @@ This file documents the internal task intake and execution-planning prompt. Name
 - Check permission, path, target, channel, input format, and execution order first.
 - Classify child-agent failure by sub-session, CommandRequest, capability, data package, and result criteria.
 - Do not rerun child-agent work that already succeeded while recovering a later failure.
+- Execution-decision failure must not fall through to provider direct execution. Use self-solve, direct-current-agent handling, return-to-parent, ask-parent, ask-user, or an explicit impossible reason.
 - If no alternative remains, return a user-readable failure reason instead of a raw error.
+`,
+  },
+  topology_executor_policy: {
+    ko: `# 토폴로지 실행자 정책
+
+- 보이는 실행자 노드는 사용자 업무를 계획, 위임, 실행, 추적, 취소할 수 있는 단위다.
+- 사용자 업무 sub-session은 보이는 executorId에 매핑되어야 한다.
+- 노드 연결선은 위임, 넘김, 검토, 승인, 보고, 예외, 참고, 협업 의미를 가진다.
+- 기본 연결 의미는 다음 실행자에게 일을 넘기는 handoff다.
+- 현재 에이전트는 자신의 직속 하위 노드만 직접 선택한다. 간접 노드는 현재 에이전트 또는 직속 하위에서 시작해 보이는 연결선을 따르는 구체적 path가 있어야 한다.
+- 토폴로지 runtime fallback, 비활성 graph, 직속 후보 없음은 provider direct 허용 사유가 아니다.
+- retry count, attempt count, 반복 실패 횟수는 실패 조건이 아니라 다른 방법을 찾기 위한 신호다.
+- 다른 방법은 target, tool, input shape, path, permission request, execution order, task split, verification method, fallback route 중 하나 이상이 달라져야 한다.
+- 안전한 대안이 없을 때만 실패로 종료한다.
+- 사용자가 중단하면 복구보다 취소가 우선한다.
+`,
+    en: `# Topology Executor Policy
+
+- A visible executor node is the unit for user-facing planning, delegation, execution, trace, and cancellation.
+- User-facing sub-session work must map back to a visible executorId.
+- A node edge means delegation, handoff, review, approval, report, exception, reference, or collaboration.
+- The default edge meaning is handoff to the next executor.
+- The current agent may directly select only its direct child nodes. An indirect node requires a concrete path that starts from the current agent or its direct child and follows visible edges.
+- Topology runtime fallback, inactive graph state, or missing direct-child candidates are not reasons to call a provider directly.
+- Retry count, attempt count, and repeated failure count are not failure conditions. They are signals to search for another method.
+- Another method must change at least one of target, tool, input shape, path, permission request, execution order, task split, verification method, or fallback route.
+- Terminal failure is allowed only when no safe alternative remains.
+- User cancellation has priority over recovery.
 `,
   },
   completion_policy: {
@@ -671,7 +769,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 ## 완료 기준
 
 - 필수 prompt source가 모두 존재한다.
-- 선택 prompt source(channel, memory/tool/recovery/completion/output policy)가 누락 없이 seed된다.
+- 선택 prompt source(nobie execution, channel, memory/tool/recovery/completion/output policy)가 누락 없이 seed된다.
 - source metadata와 checksum이 기록된다.
 - sub-agent hierarchy, delegation contract, nickname attribution, team expansion 기본 정의가 생성된다.
 - 사용자 정보는 확인되지 않은 값을 추정하지 않는다.
@@ -691,7 +789,7 @@ Use this file only during first-run initialization or prompt source registry rep
 ## Completion Criteria
 
 - All required prompt sources exist.
-- Optional prompt sources (channel, memory/tool/recovery/completion/output policy) are seeded without gaps.
+- Optional prompt sources (nobie execution, channel, memory/tool/recovery/completion/output policy) are seeded without gaps.
 - Source metadata and checksums are recorded.
 - Default definitions for sub-agent hierarchy, delegation contracts, nickname attribution, and team expansion are created.
 - Unconfirmed user facts are not inferred.

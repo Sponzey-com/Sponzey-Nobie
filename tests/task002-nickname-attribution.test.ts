@@ -142,7 +142,6 @@ function subAgent(input: {
     delegation: {
       enabled: true,
       maxParallelSessions: 1,
-      retryBudget: 1,
     },
   }
 }
@@ -199,7 +198,6 @@ function command(targetNicknameSnapshot = "Researcher"): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 1,
   }
 }
 
@@ -214,7 +212,6 @@ function subSession(agentNickname = "Researcher"): SubSessionContract {
     agentNickname,
     commandRequestId: "command:1",
     status: "queued",
-    retryBudgetRemaining: 1,
     promptBundleId: "bundle:1",
   }
 }

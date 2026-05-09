@@ -134,7 +134,7 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
   }
 }
 
-function command(id: string, retryBudget = 2): CommandRequest {
+function command(id: string): CommandRequest {
   return {
     identity: identity("sub_session", `command:${id}`, `idem:${id}`),
     commandRequestId: `command:${id}`,
@@ -144,7 +144,6 @@ function command(id: string, retryBudget = 2): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget,
   }
 }
 

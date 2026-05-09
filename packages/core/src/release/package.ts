@@ -43,6 +43,11 @@ import {
   type SubAgentReleaseReadinessSummary,
   buildSubAgentReleaseReadinessSummary,
 } from "./sub-agent-release-gate.js"
+import {
+  type EnterpriseTopologyReleaseReadinessSummary,
+  buildEnterpriseTopologyReleaseReadinessSummary,
+  buildEnterpriseTopologyRollbackRunbook,
+} from "./enterprise-topology-release-gate.js"
 import { type UiModeReleaseGateSummary, buildUiModeReleaseGateSummary } from "./ui-mode-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
@@ -110,6 +115,7 @@ export interface ReleaseManifest {
   performanceEvidence: ReleasePerformanceSummary
   benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
   subAgentReleaseGate: SubAgentReleaseReadinessSummary
+  enterpriseTopologyReleaseGate: EnterpriseTopologyReleaseReadinessSummary
   orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
   releaseNotes: ReleaseNoteSummary
   pipeline: ReleasePipelinePlan
@@ -279,12 +285,17 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     orchestrationEvidence,
     uiModeEvidence,
   })
+  const enterpriseTopologyReleaseGate = buildEnterpriseTopologyReleaseReadinessSummary({
+    now: options.now ?? new Date(),
+    featureFlags,
+  })
   const releaseNotes = buildReleaseNoteSummary({
     featureFlags,
     migrationPreflight,
     performanceEvidence,
     benchmarkEvidence,
     subAgentReleaseGate,
+    enterpriseTopologyReleaseGate,
     orchestrationEvidence,
     rollback,
     webRetrievalEvidence,
@@ -347,6 +358,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     performanceEvidence,
     benchmarkEvidence,
     subAgentReleaseGate,
+    enterpriseTopologyReleaseGate,
     orchestrationEvidence,
     releaseNotes,
     pipeline: buildReleasePipelinePlan({ targetPlatforms }),
@@ -650,6 +662,21 @@ export function buildReleasePipelinePlan(
       "Verify rollout mode sequence, release dry-run summary, rollback-by-feature-flag, restart-resume soak, WebUI projection, nested delegation, benchmark thresholds, and duplicate-final zero tolerance.",
     ),
     step(
+      "enterprise-topology-release-gate",
+      "Enterprise Topology release gate",
+      [
+        "pnpm",
+        "test",
+        "tests/task025-enterprise-topology-release-gate.test.ts",
+        "tests/task013-executor-first-release-gate.test.ts",
+        "tests/task013-executor-first-usability.test.tsx",
+        "tests/task012-topology-workspace-release-gate.test.ts",
+      ],
+      true,
+      false,
+      "Verify topology feature flag matrix, workspace route/layer/Executor-first usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke.",
+    ),
+    step(
       "web-retrieval-fixture-regression",
       "Web retrieval fixture regression",
       ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"],
@@ -801,12 +828,14 @@ export function buildReleasePipelinePlan(
 }
 
 export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
+  const topologyRollback = buildEnterpriseTopologyRollbackRunbook()
   return {
     id: "release-rollback-runbook",
     title: "Release rollback runbook",
     stopBeforeRollback: [
       "Stop Gateway service, channel adapters, scheduler, and Yeonjang writers.",
       "Confirm no process is writing the operational SQLite DB or prompt registry.",
+      ...topologyRollback.stopBeforeRollback,
     ],
     restoreTargets: [
       "Gateway/CLI/Core binary bundle",
@@ -816,12 +845,15 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
       "prompts/*.md seed files",
       "config file with secret re-entry as needed",
       "Yeonjang executable plus protocol/permission manifests",
+      ...topologyRollback.restoreTargets,
     ],
     steps: [
       "Verify the release manifest checksum and the selected backup snapshot checksum.",
       "Copy the current runtime state into a rollback-of-rollback snapshot.",
       "Restore the previous release binary payload and WebUI static files.",
       "Disable the orchestration feature flag or set it to rollback compatibility mode before restoring state when delegation-related regressions are suspected.",
+      ...topologyRollback.flagActions,
+      ...topologyRollback.steps,
       "Restore the DB and prompt files into a rehearsal directory first.",
       "Run SQLite integrity_check, migration status, and prompt source registry checks.",
       "Re-run migration rehearsal and admin diagnostic export against the rehearsal directory before swapping operational files.",
@@ -835,6 +867,7 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
       "Existing schedules and memory search load without migration warnings.",
       "Yeonjang node.ping protocolVersion is compatible with Gateway expectations.",
       "At least one live channel delivery smoke passes after restart.",
+      ...topologyRollback.verification,
     ],
     retryForbiddenWhen: [
       "Backup or release manifest checksum fails.",
@@ -842,6 +875,7 @@ export function buildReleaseRollbackRunbook(): ReleaseRollbackRunbook {
       "Prompt source registry cannot load from rehearsal directory.",
       "Yeonjang protocol version is newer than the rollback Gateway can parse.",
       "Feature flag rollback still leaves no-agent fallback broken in compatibility smoke.",
+      ...topologyRollback.retryForbiddenWhen,
     ],
   }
 }
@@ -913,6 +947,12 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
         "Sub-agent rollout modes, dry-run summary, rollback smoke, restart-resume soak, nested delegation, WebUI projection, and duplicate-final zero tolerance pass before public enablement.",
     },
     {
+      id: "enterprise-topology-release-gate",
+      required: true,
+      description:
+        "Enterprise Topology feature flag matrix, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, active topology rollback, and compiled snapshot restore evidence pass before opt-in routing.",
+    },
+    {
       id: "plan-drift",
       required: true,
       description:
@@ -969,6 +1009,7 @@ function buildReleaseNoteSummary(input: {
   performanceEvidence: ReleasePerformanceSummary
   benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
   subAgentReleaseGate: SubAgentReleaseReadinessSummary
+  enterpriseTopologyReleaseGate: EnterpriseTopologyReleaseReadinessSummary
   orchestrationEvidence: ReleaseOrchestrationEvidenceSummary
   rollback: ReleaseRollbackRunbook
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
@@ -989,10 +1030,12 @@ function buildReleaseNoteSummary(input: {
       `migration risk=${input.migrationPreflight.risk}`,
       "Always take a verified DB and prompt backup snapshot immediately before a live rollout.",
       "Do not enable orchestration by default unless feature flag off parity and no-agent fallback smoke both pass.",
+      "Do not enable topology root-run routing until active topology rollback and compiled snapshot restore evidence pass.",
     ],
     rollbackProcedure: [
       ...input.rollback.steps,
       "Verify feature flag state first, then prefer rollback compatibility mode or full disable before restoring payloads.",
+      "For topology incidents, set topology_runtime_enabled=off before active topology or compiled snapshot restore.",
     ],
     knownLimitations: [
       input.performanceEvidence.missingRequiredMetrics.length > 0
@@ -1001,6 +1044,7 @@ function buildReleaseNoteSummary(input: {
       `Orchestration release gate: ${input.orchestrationEvidence.gateStatus}`,
       `Sub-agent benchmark release gate: ${input.benchmarkEvidence.gateStatus}`,
       `Sub-agent release readiness gate: ${input.subAgentReleaseGate.gateStatus}`,
+      `Enterprise Topology release gate: ${input.enterpriseTopologyReleaseGate.gateStatus}`,
       `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
       `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
       orchestrationFlag

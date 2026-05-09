@@ -1,11 +1,18 @@
+import { createElement } from "../packages/webui/node_modules/react/index.js"
+import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { describe, expect, it } from "vitest"
 import type { RunRuntimeInspectorProjection } from "../packages/webui/src/contracts/runs.ts"
+import { RunRuntimeInspectorPanel } from "../packages/webui/src/components/runs/RunRuntimeInspectorPanel.tsx"
 import {
   buildRuntimeInspectorSummaryCards,
   describeRuntimeApprovalState,
   describeRuntimeFinalizerStatus,
+  describeRuntimeTopologyRouting,
+  runtimeTopologyReasonLabel,
   runtimeControlActionLabels,
+  runtimeExecutorDisplayName,
   selectRuntimeSubSession,
+  selectRuntimeTopologyActiveState,
 } from "../packages/webui/src/lib/runtime-inspector.js"
 
 const text = (ko: string, _en: string) => ko
@@ -16,8 +23,63 @@ function projection(): RunRuntimeInspectorProjection {
     schemaVersion: 1,
     runId: "run:task024",
     requestGroupId: "group:task024",
+    requestIdentity: {
+      runId: "run:task024",
+      requestGroupId: "group:task024",
+      lineageRootRunId: "group:task024",
+      rootRunId: "group:task024",
+      userMessageKey: "telegram:chat:task024",
+      requestIsolationMode: "root",
+      continuationSource: "new_root",
+      contextMode: "isolated",
+    },
     generatedAt: now,
     orchestrationMode: "orchestration",
+    topologyRouting: {
+      mode: "route",
+      reasonCode: "execution_decision_selected_executor",
+      featureFlagMode: "off",
+      executionDecisionSource: "nobie_harness",
+      executionDecisionGraphId: "execution-graph:task024",
+      executionDecisionGraphSource: "workspace_draft",
+      executionDecisionCurrentExecutorId: "agent:nobie",
+      executionDecisionAvailableExecutorIds: ["workspace:draft:node:researcher"],
+      executionDecisionDiagnosticExecutorIds: ["workspace:draft:node:reviewer"],
+      executionDecisionAllExecutorIds: [
+        "agent:nobie",
+        "workspace:draft:node:researcher",
+        "workspace:draft:node:reviewer",
+      ],
+      executionDecisionSelectedExecutorId: "workspace:draft:node:researcher",
+      executionDecisionSelectedConnectionPath: ["workspace:draft:node:researcher"],
+      executionDecisionNormalizedConnectionPath: ["agent:nobie", "workspace:draft:node:researcher"],
+      executionDecisionRoute: "delegate_to_child",
+      executionDecisionFallbackReason: "self_solve",
+      executionDecisionValidationStatus: "valid",
+      executionDecisionExecutorNameById: {
+        "agent:nobie": "노비",
+        "workspace:draft:node:researcher": "Researcher",
+        "workspace:draft:node:reviewer": "Reviewer",
+        "node:researcher": "Researcher",
+        "node:reviewer": "Reviewer",
+      },
+      riskBoundaryRequiresUserApproval: false,
+      riskBoundaryReason: "공개 정보 검토",
+      topologyId: "workspace:draft",
+      topologyName: "첫 토폴로지",
+      topologyVersion: 1,
+      topologySchemaVersion: 2,
+      topologyMigrationSource: "executor_topology_v2_materialized_read_model",
+      entryNodeId: "node:researcher",
+      entryNodeName: "Researcher",
+      providerFallback: false,
+      providerFallbackBlocked: true,
+      providerFallbackBlockedReasonCode: "provider_direct_blocked_without_explicit_target",
+      selectedExecutorIds: ["node:researcher", "node:reviewer"],
+      selectedEdgeIds: ["relation:researcher-reviewer"],
+      assignedTopologyAgentIds: ["workspace:draft:node:researcher"],
+      issues: [],
+    },
     plan: {
       planId: "plan:task024",
       directTaskCount: 0,
@@ -33,6 +95,7 @@ function projection(): RunRuntimeInspectorProjection {
           executionKind: "delegated_sub_agent",
           goal: "Inspect runtime projection",
           assignedAgentId: "agent:researcher",
+          assignmentSource: "agent",
           reasonCodes: ["task024"],
         },
       ],
@@ -55,7 +118,6 @@ function projection(): RunRuntimeInspectorProjection {
             acceptanceReasonCodes: ["source_backed_answer"],
           },
         ],
-        retryBudgetRemaining: 2,
         promptBundleId: "bundle:researcher",
         startedAt: now,
         progress: [
@@ -72,7 +134,7 @@ function projection(): RunRuntimeInspectorProjection {
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           fallbackApplied: false,
-          retryCount: 1,
+          signalCount: 1,
           estimatedInputTokens: 120,
           estimatedOutputTokens: 64,
           estimatedCost: 0.002,
@@ -92,7 +154,6 @@ function projection(): RunRuntimeInspectorProjection {
         status: "needs_revision",
         commandSummary: "Review answer",
         expectedOutputs: [],
-        retryBudgetRemaining: 1,
         promptBundleId: "bundle:reviewer",
         progress: [],
         result: {
@@ -160,6 +221,7 @@ function projection(): RunRuntimeInspectorProjection {
         subSessionId: "sub:revision",
       },
     ],
+    topologyRuns: [],
     finalizer: {
       parentOwnedFinalAnswer: true,
       status: "delivered",
@@ -185,6 +247,7 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(cards.find((card) => card.id === "mode")?.value).toBe("orchestration")
     expect(cards.find((card) => card.id === "subsessions")?.tone).toBe("amber")
     expect(cards.find((card) => card.id === "data")?.value).toBe("1")
+    expect(cards.find((card) => card.id === "topology")?.value).toBe("Researcher")
     expect(describeRuntimeFinalizerStatus(runtime, text)).toContain("parent finalizer")
   })
 
@@ -198,6 +261,62 @@ describe("task024 webui runtime inspector helpers", () => {
     )
     expect(runtimeControlActionLabels(running, text)).toEqual(["전송", "방향 조정", "중지"])
     expect(runtimeControlActionLabels(revision, text)).toEqual(["재시도", "피드백", "재위임"])
+  })
+
+  it("describes topology routing and exposes active node/edge state for the topology canvas", () => {
+    const runtime = projection()
+    const activeState = selectRuntimeTopologyActiveState(runtime)
+
+    expect(describeRuntimeTopologyRouting(runtime.topologyRouting, text)).toContain("Researcher")
+    expect(runtime.topologyRouting.executionDecisionRoute).toBe("delegate_to_child")
+    expect(runtime.topologyRouting.executionDecisionFallbackReason).toBe("self_solve")
+    expect(runtimeExecutorDisplayName(runtime.topologyRouting, "workspace:draft:node:researcher")).toBe("Researcher")
+    expect(runtimeExecutorDisplayName(runtime.topologyRouting, "agent:nobie")).toBe("노비")
+    expect(runtime.topologyRouting.riskBoundaryRequiresUserApproval).toBe(false)
+    expect(runtime.topologyRouting.executionDecisionCurrentExecutorId).toBe("agent:nobie")
+    expect(runtime.topologyRouting.executionDecisionAvailableExecutorIds).toEqual(["workspace:draft:node:researcher"])
+    expect(runtime.topologyRouting.executionDecisionAllExecutorIds).toContain("workspace:draft:node:reviewer")
+    expect(runtime.topologyRouting.executionDecisionNormalizedConnectionPath).toEqual([
+      "agent:nobie",
+      "workspace:draft:node:researcher",
+    ])
+    expect(runtime.topologyRouting.topologySchemaVersion).toBe(2)
+    expect(runtime.topologyRouting.topologyMigrationSource).toBe("executor_topology_v2_materialized_read_model")
+    expect(runtime.topologyRouting.providerFallbackBlocked).toBe(true)
+    expect(activeState.executorIds).toEqual(["node:researcher", "node:reviewer"])
+    expect(activeState.edgeIds).toEqual(["relation:researcher-reviewer"])
+    expect(activeState.executorStatuses["node:researcher"]).toBe("running")
+    expect(activeState.edgeStatuses["relation:researcher-reviewer"]).toBe("running")
+  })
+
+  it("renders decision candidates separately without exposing internal reason codes", () => {
+    const runtime = projection()
+    runtime.topologyRouting.reasonCode = "topology_routing_not_opted_in"
+    const html = renderToStaticMarkup(
+      createElement(RunRuntimeInspectorPanel, {
+        projection: runtime,
+        selectedSubSessionId: null,
+        onSelectSubSession: () => undefined,
+        loading: false,
+        error: "",
+      }),
+    )
+
+    expect(runtimeTopologyReasonLabel("topology_routing_not_opted_in", text)).toBe("저장된 위임 흐름을 쓰지 않음")
+    expect(html).toContain("노비 실행 판단")
+    expect(html).toContain("현재 판단 후보")
+    expect(html).toContain("전체 등록 실행자")
+    expect(html).toContain("선택된 실행자")
+    expect(html).toContain("Researcher")
+    expect(html).toContain("Reviewer")
+    expect(html).toContain("노비")
+    expect(html).toContain("위임 흐름")
+    expect(html).toContain("스키마")
+    expect(html).toContain("executor_topology_v2_materialized_read_model")
+    expect(html).toContain("직접 실행 대안 차단됨")
+    expect(html).not.toContain("topology_routing_not_opted_in")
+    expect(html).not.toContain("provider_direct_blocked_without_explicit_target")
+    expect(html).not.toContain("라우터")
   })
 
   it("handles empty projection without throwing", () => {

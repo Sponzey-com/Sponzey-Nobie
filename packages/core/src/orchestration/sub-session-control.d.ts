@@ -24,7 +24,6 @@ export interface SubSessionInfo {
     agentNickname?: string;
     commandRequestId: string;
     status: SubSessionStatus;
-    retryBudgetRemaining: number;
     promptBundleId: string;
     idempotencyKey: string;
     auditCorrelationId?: string;

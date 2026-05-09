@@ -1,9 +1,10 @@
+import { type TaskExecutionSemantics } from "../agent/intake.js";
 export interface ScheduledRunExecutionOptions {
     toolsEnabled: boolean;
     contextMode: "isolated";
 }
-export declare function shouldDisableToolsForScheduledTask(task: string, taskProfile: string | undefined): boolean;
-export declare function getScheduledRunExecutionOptions(task: string, taskProfile: string | undefined): ScheduledRunExecutionOptions;
+export declare function shouldDisableToolsForScheduledTask(task: string, taskProfile: string | undefined, executionSemantics?: TaskExecutionSemantics | undefined): boolean;
+export declare function getScheduledRunExecutionOptions(task: string, taskProfile: string | undefined, executionSemantics?: TaskExecutionSemantics | undefined): ScheduledRunExecutionOptions;
 export declare function extractDirectChannelDeliveryText(task: string): string | null;
 export declare function buildScheduledFollowupPrompt(params: {
     task: string;

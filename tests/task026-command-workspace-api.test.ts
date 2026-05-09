@@ -128,13 +128,11 @@ function subAgentConfig(agentId: string, nickname: string): SubAgentConfig {
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: ["team:alpha"],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -207,7 +205,6 @@ function command(id: string): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 2,
   }
 }
 
@@ -249,7 +246,6 @@ function subSessionContract(id: string): SubSessionContract {
     agentNickname: "Alpha",
     commandRequestId: command(id).commandRequestId,
     status: "running",
-    retryBudgetRemaining: 2,
     promptBundleId: "prompt-bundle:task026",
     promptBundleSnapshot: promptBundle(),
     startedAt: now,

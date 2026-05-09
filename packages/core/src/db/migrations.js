@@ -1159,7 +1159,6 @@ export const MIGRATIONS = [
           request_group_id TEXT,
           pending_count INTEGER NOT NULL DEFAULT 0,
           retry_count INTEGER NOT NULL DEFAULT 0,
-          retry_budget_remaining INTEGER,
           recovery_key TEXT,
           action_taken TEXT NOT NULL,
           detail_json TEXT
@@ -1495,7 +1494,6 @@ export const MIGRATIONS = [
           agent_nickname TEXT,
           command_request_id TEXT NOT NULL,
           status TEXT NOT NULL CHECK(status IN ('created', 'queued', 'running', 'waiting_for_input', 'awaiting_approval', 'completed', 'needs_revision', 'failed', 'cancelled')),
-          retry_budget_remaining INTEGER NOT NULL,
           prompt_bundle_id TEXT NOT NULL,
           contract_json TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
@@ -1875,7 +1873,6 @@ export const MIGRATIONS = [
                         ? {
                             enabled: asBoolean(config["delegation"]["enabled"]) ?? false,
                             maxParallelSessions: asNumber(config["delegation"]["maxParallelSessions"]) ?? 1,
-                            retryBudget: asNumber(config["delegation"]["retryBudget"]) ?? 0,
                         }
                         : null;
                 updateAgentConfig.run(normalizedNickname, modelProfileJson, toJsonOrNull(delegationPolicy), row.agent_id);
@@ -2192,6 +2189,308 @@ export const MIGRATIONS = [
 
         CREATE INDEX IF NOT EXISTS idx_channel_runtime_events_provider_kind
           ON channel_runtime_events(provider, event_kind, created_at DESC);
+      `);
+        },
+    },
+    {
+        version: 41,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS enterprise_topologies (
+          topology_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'active', 'inactive', 'archived')),
+          active_version INTEGER,
+          active_version_id TEXT,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_enterprise_topologies_status
+          ON enterprise_topologies(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS enterprise_topology_versions (
+          version_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          topology_json TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          validation_snapshot_id TEXT NOT NULL,
+          compiled_snapshot_id TEXT,
+          created_by TEXT,
+          import_source TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_id) REFERENCES enterprise_topologies(topology_id) ON DELETE CASCADE,
+          UNIQUE(topology_id, version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_enterprise_topology_versions_topology_version
+          ON enterprise_topology_versions(topology_id, version DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_validation_snapshots (
+          snapshot_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          version_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          executable INTEGER NOT NULL CHECK(executable IN (0, 1)),
+          issue_counts_json TEXT NOT NULL,
+          issues_json TEXT NOT NULL,
+          validation_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_id) REFERENCES enterprise_topologies(topology_id) ON DELETE CASCADE,
+          FOREIGN KEY (version_id) REFERENCES enterprise_topology_versions(version_id) ON DELETE CASCADE,
+          UNIQUE(topology_id, version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_validation_snapshots_topology_version
+          ON topology_validation_snapshots(topology_id, version DESC);
+
+        CREATE TABLE IF NOT EXISTS compiled_topology_snapshots (
+          snapshot_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          version_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          source_topology_version TEXT NOT NULL,
+          source_topology_hash TEXT NOT NULL,
+          compiler_version TEXT NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_id) REFERENCES enterprise_topologies(topology_id) ON DELETE CASCADE,
+          FOREIGN KEY (version_id) REFERENCES enterprise_topology_versions(version_id) ON DELETE CASCADE,
+          UNIQUE(topology_id, version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_compiled_topology_snapshots_topology_version
+          ON compiled_topology_snapshots(topology_id, version DESC);
+
+        CREATE TABLE IF NOT EXISTS enterprise_topology_history (
+          history_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          version_id TEXT,
+          event_type TEXT NOT NULL CHECK(event_type IN ('imported', 'version_appended', 'activated', 'archived', 'rolled_back', 'activation_blocked', 'rollback_blocked')),
+          from_version INTEGER,
+          to_version INTEGER,
+          validation_snapshot_id TEXT,
+          compiled_snapshot_id TEXT,
+          summary TEXT NOT NULL,
+          detail_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_id) REFERENCES enterprise_topologies(topology_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_enterprise_topology_history_topology
+          ON enterprise_topology_history(topology_id, created_at DESC);
+      `);
+        },
+    },
+    {
+        version: 42,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS topology_runs (
+          topology_run_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          topology_version INTEGER,
+          topology_version_id TEXT,
+          root_run_id TEXT,
+          status TEXT NOT NULL,
+          entry_node_id TEXT,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          metadata_json TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_runs_topology
+          ON topology_runs(topology_id, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_runs_status
+          ON topology_runs(status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_runs_root_run
+          ON topology_runs(root_run_id, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_node_runs (
+          node_run_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          work_order_id TEXT,
+          node_id TEXT NOT NULL,
+          parent_node_run_id TEXT,
+          status TEXT NOT NULL,
+          final_state TEXT,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          metrics_json TEXT,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_node_runs_topology
+          ON topology_node_runs(topology_run_id, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_node_runs_node
+          ON topology_node_runs(node_id, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_work_orders (
+          work_order_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          node_run_id TEXT,
+          parent_work_order_id TEXT,
+          from_node_id TEXT NOT NULL,
+          to_type TEXT NOT NULL,
+          to_id TEXT NOT NULL,
+          delegation_path_json TEXT NOT NULL,
+          work_order_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_work_orders_topology
+          ON topology_work_orders(topology_run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_work_orders_parent
+          ON topology_work_orders(parent_work_order_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_result_reports (
+          result_report_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          node_run_id TEXT NOT NULL,
+          work_order_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          report_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_result_reports_topology
+          ON topology_result_reports(topology_run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_result_reports_status
+          ON topology_result_reports(status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_failure_reports (
+          failure_report_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          node_run_id TEXT NOT NULL,
+          work_order_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          failure_phase TEXT NOT NULL,
+          report_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_failure_reports_topology
+          ON topology_failure_reports(topology_run_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_failure_reports_node
+          ON topology_failure_reports(node_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_trace_events (
+          trace_event_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          node_run_id TEXT NOT NULL,
+          work_order_id TEXT NOT NULL,
+          parent_work_order_id TEXT,
+          phase TEXT NOT NULL,
+          component TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          delegation_path_json TEXT NOT NULL,
+          payload_json TEXT,
+          event_json TEXT NOT NULL,
+          at INTEGER NOT NULL,
+          sequence INTEGER NOT NULL,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_trace_events_run
+          ON topology_trace_events(topology_run_id, at ASC, sequence ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_trace_events_node
+          ON topology_trace_events(node_run_id, at ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_trace_events_phase
+          ON topology_trace_events(phase, at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_tool_calls (
+          tool_call_id TEXT PRIMARY KEY,
+          topology_run_id TEXT NOT NULL,
+          node_run_id TEXT NOT NULL,
+          work_order_id TEXT NOT NULL,
+          tool_id TEXT NOT NULL,
+          dispatcher_tool_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          retry_possible INTEGER NOT NULL CHECK(retry_possible IN (0, 1)),
+          fallback_possible INTEGER NOT NULL CHECK(fallback_possible IN (0, 1)),
+          started_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          result_json TEXT NOT NULL,
+          FOREIGN KEY (topology_run_id) REFERENCES topology_runs(topology_run_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_tool_calls_topology
+          ON topology_tool_calls(topology_run_id, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_topology_tool_calls_tool
+          ON topology_tool_calls(tool_id, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_metrics_daily (
+          metric_date TEXT NOT NULL,
+          topology_id TEXT NOT NULL,
+          topology_version INTEGER NOT NULL DEFAULT 0,
+          topology_run_count INTEGER NOT NULL DEFAULT 0,
+          node_run_count INTEGER NOT NULL DEFAULT 0,
+          completed_count INTEGER NOT NULL DEFAULT 0,
+          failed_count INTEGER NOT NULL DEFAULT 0,
+          partial_success_count INTEGER NOT NULL DEFAULT 0,
+          tool_call_count INTEGER NOT NULL DEFAULT 0,
+          failure_count INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (metric_date, topology_id, topology_version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_metrics_daily_topology
+          ON topology_metrics_daily(topology_id, metric_date DESC);
+
+        CREATE TABLE IF NOT EXISTS observed_topology_edges (
+          edge_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          topology_run_id TEXT NOT NULL,
+          from_node_id TEXT NOT NULL,
+          to_node_id TEXT NOT NULL,
+          edge_kind TEXT NOT NULL,
+          source TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          first_seen_at INTEGER NOT NULL,
+          last_seen_at INTEGER NOT NULL,
+          evidence_json TEXT NOT NULL,
+          UNIQUE(topology_run_id, from_node_id, to_node_id, edge_kind)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_observed_topology_edges_topology
+          ON observed_topology_edges(topology_id, last_seen_at DESC);
+
+        CREATE TABLE IF NOT EXISTS topology_gap_findings (
+          finding_id TEXT PRIMARY KEY,
+          topology_id TEXT NOT NULL,
+          topology_run_id TEXT,
+          finding_kind TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          status TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          detail_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_gap_findings_topology
+          ON topology_gap_findings(topology_id, updated_at DESC);
       `);
         },
     },

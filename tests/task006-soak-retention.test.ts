@@ -158,7 +158,7 @@ describe("task006 soak and retention policy", () => {
     expect(deleted).not.toContain("artifact-active-old")
   })
 
-  it("separates retry fingerprints and applies bounded backoff", () => {
+  it("separates recovery fingerprints and recommends strategy changes without stopping by count", () => {
     const telegramConflict = buildRetryFailureFingerprint({
       domain: "channel",
       channel: "telegram",
@@ -184,16 +184,19 @@ describe("task006 soak and retention policy", () => {
     expect(slackDelivery).toContain("kind=access_blocked")
     expect(slackDelivery).not.toContain("html")
 
-    expect(evaluateRetryBackoff({ domain: "channel", attempt: 1, maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 2_000 })).toMatchObject({
-      shouldRetry: true,
-      exhausted: false,
+    expect(evaluateRetryBackoff({ domain: "channel", signalCount: 1, strategyChangeSignalThreshold: 3, baseDelayMs: 500, maxDelayMs: 2_000 })).toMatchObject({
+      shouldContinue: true,
+      strategyChangeRecommended: false,
       nextDelayMs: 500,
     })
-    expect(evaluateRetryBackoff({ domain: "channel", attempt: 3, maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 2_000 })).toMatchObject({
-      shouldRetry: false,
-      exhausted: true,
-      reason: "retry_exhausted",
+    expect(evaluateRetryBackoff({ domain: "channel", signalCount: 3, strategyChangeSignalThreshold: 3, baseDelayMs: 500, maxDelayMs: 2_000 })).toMatchObject({
+      shouldContinue: true,
+      strategyChangeRecommended: true,
+      reason: "strategy_change_recommended",
     })
-    expect(shouldStopRepeatedFailure({ fingerprint: telegramConflict, seenCount: 3, threshold: 3 })).toMatchObject({ shouldStop: true })
+    expect(shouldStopRepeatedFailure({ fingerprint: telegramConflict, seenCount: 3, threshold: 3 })).toMatchObject({
+      shouldStop: false,
+      strategyChangeRecommended: true,
+    })
   })
 })

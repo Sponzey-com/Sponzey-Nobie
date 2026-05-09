@@ -6,6 +6,7 @@ import { type WebRetrievalReleaseGateSummary } from "../runs/web-retrieval-smoke
 import { type FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type ReleasePerformanceSummary } from "./performance-gate.js";
 import { type SubAgentReleaseReadinessSummary } from "./sub-agent-release-gate.js";
+import { type EnterpriseTopologyReleaseReadinessSummary } from "./enterprise-topology-release-gate.js";
 import { type UiModeReleaseGateSummary } from "./ui-mode-gate.js";
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux";
 export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook" | "admin_diagnostic_bundle";
@@ -57,6 +58,7 @@ export interface ReleaseManifest {
     performanceEvidence: ReleasePerformanceSummary;
     benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary;
     subAgentReleaseGate: SubAgentReleaseReadinessSummary;
+    enterpriseTopologyReleaseGate: EnterpriseTopologyReleaseReadinessSummary;
     orchestrationEvidence: ReleaseOrchestrationEvidenceSummary;
     releaseNotes: ReleaseNoteSummary;
     pipeline: ReleasePipelinePlan;

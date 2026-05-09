@@ -29,6 +29,10 @@ import {
   classifyFastPath,
 } from "../packages/core/src/orchestration/planner.ts"
 import {
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+  type AgentExecutionDecision,
+} from "../packages/core/src/orchestration/execution-decision-contract.ts"
+import {
   buildOrchestrationRegistrySnapshot,
   clearAgentCapabilityIndexCache,
 } from "../packages/core/src/orchestration/registry.ts"
@@ -116,13 +120,11 @@ function subAgent(agentId: string, overrides: Partial<SubAgentConfig> = {}): Sub
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: [],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -239,6 +241,43 @@ function registrySnapshot() {
   })
 }
 
+function executionDecision(
+  selectedExecutorId: string,
+  currentExecutorId = "agent:nobie",
+): AgentExecutionDecision {
+  return {
+    contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+    current_executor_id: currentExecutorId,
+    domain: "planner_fastpath_test",
+    behavior_pattern: "delegate",
+    execution_route: "delegate_to_child",
+    selected_executor_id: selectedExecutorId,
+    selected_connection_path: [currentExecutorId, selectedExecutorId],
+    task_profile: {
+      title: "validated explicit target",
+      summary: "The execution harness selected the executor before planner conversion.",
+      goals: ["Use only the validated executor."],
+      task_units: [
+        {
+          id: "unit:1",
+          title: "execute",
+          goal: "Handle the requested work.",
+          preferred_executor_id: selectedExecutorId,
+        },
+      ],
+      success_criteria: ["No implicit planner substitution."],
+    },
+    required_outputs: [{ id: "answer", label: "answer" }],
+    risk_boundary: {
+      requires_user_approval: false,
+      reason: "planner fixture",
+    },
+    confidence: 0.95,
+    fallback_if_unavailable: "direct_current_agent",
+    reason: "test execution decision",
+  }
+}
+
 beforeEach(() => {
   useTempState()
 })
@@ -258,13 +297,13 @@ afterEach(() => {
 })
 
 describe("task010 planner fast path and explicit targets", () => {
-  it("classifies direct, workflow, and delegation fast path candidates", () => {
+  it("keeps text-only fast path classification out of request semantics", () => {
     expect(classifyFastPath({ userRequest: "안녕", now: () => now }).classification).toBe(
-      "direct_nobie",
+      "delegation_candidate",
     )
     expect(
       classifyFastPath({ userRequest: "매일 오전 9시에 알려줘", now: () => now }).classification,
-    ).toBe("workflow_candidate")
+    ).toBe("delegation_candidate")
     expect(
       classifyFastPath({
         userRequest: "시장 조사를 웹 검색으로 정리해줘",
@@ -274,7 +313,7 @@ describe("task010 planner fast path and explicit targets", () => {
     ).toBe("delegation_candidate")
   })
 
-  it("creates a direct Nobie plan for simple requests", () => {
+  it("does not route simple text through a direct-request semantic fast path", () => {
     const result = buildOrchestrationPlan({
       parentRunId: "run:direct",
       parentRequestId: "request:direct",
@@ -284,14 +323,14 @@ describe("task010 planner fast path and explicit targets", () => {
       idProvider: () => "plan:direct",
     })
 
-    expect(result.fastPathClassification.classification).toBe("direct_nobie")
+    expect(result.fastPathClassification.classification).toBe("delegation_candidate")
     expect(result.plan.directNobieTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.plannerMetadata?.fastPath?.reasonCodes).toContain("fast_path_direct_nobie")
+    expect(result.plan.plannerMetadata?.fastPath?.reasonCodes).toContain("fast_path_delegation_candidate")
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
 
-  it("marks repeated requests as deterministic workflow recommendations", () => {
+  it("does not turn repeated wording into deterministic workflow recommendations", () => {
     const result = buildOrchestrationPlan({
       parentRunId: "run:workflow",
       parentRequestId: "request:workflow",
@@ -301,14 +340,14 @@ describe("task010 planner fast path and explicit targets", () => {
       idProvider: () => "plan:workflow",
     })
 
-    expect(result.fastPathClassification.classification).toBe("workflow_candidate")
-    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.fastPathClassification.classification).toBe("delegation_candidate")
+    expect(result.plan.directNobieTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.plannerMetadata?.status).toBe("requires_workflow_recommendation")
-    expect(result.reasonCodes).toContain("requires_workflow_recommendation")
+    expect(result.plan.plannerMetadata?.status).toBe("planned")
+    expect(result.reasonCodes).not.toContain("requires_workflow_recommendation")
   })
 
-  it("delegates only to Nobie's top-level sub-agent candidates", () => {
+  it("delegates only to Nobie's explicit top-level sub-agent target", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
@@ -321,7 +360,8 @@ describe("task010 planner fast path and explicit targets", () => {
       userRequest: "시장 조사를 웹 검색으로 정리해줘",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registrySnapshot(),
-      intent: { requiredSkillIds: ["skill:research"] },
+      intent: { explicitAgentId: "agent:alpha", requiredSkillIds: ["skill:research"] },
+      agentExecutionDecision: executionDecision("agent:alpha"),
       now: () => now,
       idProvider: () => "plan:delegate",
     }
@@ -336,7 +376,7 @@ describe("task010 planner fast path and explicit targets", () => {
     ).toContain("not_direct_child_candidate")
   })
 
-  it("lets a sub-agent see only its own direct child, not siblings or cross-tree agents", () => {
+  it("lets a sub-agent explicitly target only its own direct child, not siblings or cross-tree agents", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
@@ -352,7 +392,8 @@ describe("task010 planner fast path and explicit targets", () => {
       userRequest: "시장 조사를 웹 검색으로 정리해줘",
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registrySnapshot(),
-      intent: { requiredSkillIds: ["skill:research"] },
+      intent: { explicitAgentId: "agent:beta", requiredSkillIds: ["skill:research"] },
+      agentExecutionDecision: executionDecision("agent:beta", "agent:alpha"),
       now: () => now,
       idProvider: () => "plan:sub-agent",
     })
@@ -378,6 +419,7 @@ describe("task010 planner fast path and explicit targets", () => {
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registrySnapshot(),
       intent: { explicitAgentId: "agent:beta" },
+      agentExecutionDecision: executionDecision("agent:beta"),
       now: () => now,
       idProvider: () => "plan:explicit-grandchild",
     })
@@ -411,6 +453,7 @@ describe("task010 planner fast path and explicit targets", () => {
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registrySnapshot(),
       intent: { explicitAgentId: "agent:alpha", requiredRisk: "dangerous" },
+      agentExecutionDecision: executionDecision("agent:alpha"),
       now: () => now,
       idProvider: () => "plan:permission",
     })
@@ -437,6 +480,7 @@ describe("task010 planner fast path and explicit targets", () => {
       modeSnapshot: modeSnapshot(),
       registrySnapshot: registrySnapshot(),
       intent: { explicitTeamId: "team:research" },
+      agentExecutionDecision: executionDecision("agent:alpha"),
       now: () => now,
       idProvider: () => "plan:team",
     })
@@ -449,7 +493,7 @@ describe("task010 planner fast path and explicit targets", () => {
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
 
-  it("infers a team target from a natural-language team name", () => {
+  it("does not infer hidden team targets or capabilities from natural-language team names", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
@@ -475,12 +519,10 @@ describe("task010 planner fast path and explicit targets", () => {
       idProvider: () => "plan:dev-team",
     })
 
-    expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBe("team:dev")
-    expect(result.plan.delegatedTasks[0]?.requiredCapabilities).toEqual([
-      "filesystem_write",
-      "shell_execution",
-    ])
-    expect(result.reasonCodes).toContain("inferred_team_target_from_request")
+    expect(result.plan.delegatedTasks).toHaveLength(0)
+    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("execution_decision_required")
+    expect(result.reasonCodes).not.toContain("inferred_team_target_from_request")
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
 
@@ -503,6 +545,6 @@ describe("task010 planner fast path and explicit targets", () => {
 
     expect(result.timedOut).toBe(true)
     expect(result.plan.plannerMetadata?.status).toBe("degraded")
-    expect(result.plan.fallbackStrategy.reasonCode).toBe("planning_timeout_single_nobie")
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("planning_timeout_direct_current_agent")
   })
 })

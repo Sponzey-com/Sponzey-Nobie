@@ -44,7 +44,6 @@ export function normalizeLegacyAgentConfigRow(value) {
         : {
             enabled: asBoolean(delegation.enabled) ?? value.agentType === "nobie",
             maxParallelSessions: asNumber(delegation.maxParallelSessions) ?? asNumber(coordinator.maxDelegatedSubSessions) ?? 1,
-            retryBudget: asNumber(delegation.retryBudget) ?? 0,
         };
     return {
         ...value,

@@ -57,7 +57,7 @@ describe("intake retry application", () => {
     expect(deps.setRunStepStatus).toHaveBeenCalledWith("run-1", "executing", "running", "일정 요청을 다시 분석합니다.")
   })
 
-  it("stops when interpretation retry budget is exhausted", async () => {
+  it("continues interpretation recovery past the old fixed retry count", async () => {
     const deps = createDependencies()
     const applyTerminalApplication = vi.fn().mockResolvedValue("cancelled")
 
@@ -85,14 +85,12 @@ describe("intake retry application", () => {
       applyTerminalApplication,
     })
 
-    expect(result).toEqual({ kind: "break" })
-    expect(applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "run-2",
-      sessionId: "session-2",
-      source: "webui",
-      application: expect.objectContaining({
-        kind: "stop",
-      }),
-    }))
+    expect(result).toEqual({
+      kind: "retry",
+      nextMessage: "retry prompt",
+    })
+    expect(applyTerminalApplication).not.toHaveBeenCalled()
+    expect(deps.incrementDelegationTurnCount).toHaveBeenCalledWith("run-2", "일정 요청을 다시 분석합니다.")
+    expect(deps.appendRunEvent).toHaveBeenCalledWith("run-2", "일정 해석 복구 신호 1")
   })
 })

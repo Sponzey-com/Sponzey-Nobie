@@ -38,11 +38,22 @@ import {
 } from "./store.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import { shouldInspectActiveRunCandidates } from "./request-isolation.js"
 import {
-  detectExplicitToolIntent,
-  hasExplicitContinuationReference,
-  shouldInspectActiveRunCandidates,
-} from "./request-isolation.js"
+  resolveTopologyRootRunRouting,
+  type TopologyRootRunRoutingDecision,
+} from "../topology-runtime/harness.js"
+import type { AgentExecutionDecision } from "../orchestration/execution-decision-contract.js"
+
+export type StartPlanRequestIsolation = "root" | "continuation"
+
+export type StartPlanContinuationSource =
+  | "new_root"
+  | "explicit_request_group"
+  | "explicit_force_request_group"
+  | "explicit_id"
+  | "explicit_contract_comparison"
+  | "explicit_contract_clarification"
 
 export interface StartPlan {
   entrySemantics: RequestEntrySemantics
@@ -51,6 +62,8 @@ export interface StartPlan {
   reconnectTarget?: RootRun | undefined
   reconnectCandidateCount: number
   reconnectNeedsClarification: boolean
+  requestIsolation: StartPlanRequestIsolation
+  continuationSource: StartPlanContinuationSource
   requestGroupId: string
   isRootRequest: boolean
   effectiveTaskProfile: TaskProfile
@@ -60,6 +73,8 @@ export interface StartPlan {
   orchestrationMode: OrchestrationMode
   orchestrationRegistrySnapshot: OrchestrationModeSnapshot
   orchestrationPlanSnapshot: OrchestrationPlan
+  agentExecutionDecision?: AgentExecutionDecision
+  topologyRouting: TopologyRootRunRoutingDecision
   workerSessionId?: string | undefined
   reusableWorkerSessionRun?: RootRun | undefined
   latencyEvents: string[]
@@ -88,6 +103,7 @@ interface StartPlanDependencies {
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
   resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot
   buildOrchestrationPlan?: typeof buildOrchestrationPlan
+  resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting
 }
 
 const defaultDependencies: StartPlanDependencies = {
@@ -105,10 +121,7 @@ const defaultDependencies: StartPlanDependencies = {
   findLatestWorkerSessionRun,
   resolveOrchestrationMode: resolveOrchestrationModeSnapshot,
   buildOrchestrationPlan,
-}
-
-function isStandaloneLocalExecutionAction(message: string, explicitContinuationReference: boolean): boolean {
-  return !explicitContinuationReference && detectExplicitToolIntent(message) != null
+  resolveTopologyRootRunRouting,
 }
 
 export async function buildStartPlan(
@@ -128,6 +141,7 @@ export async function buildStartPlan(
     targetId?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
+    agentExecutionDecision?: AgentExecutionDecision | undefined
   },
   dependencies: StartPlanDependencies,
 ): Promise<StartPlan> {
@@ -158,21 +172,6 @@ export async function buildStartPlan(
     sessionId: params.sessionId,
     ...(params.source ? { source: params.source } : {}),
   }))} mode=${orchestrationRegistrySnapshot.mode}; reason=${orchestrationRegistrySnapshot.reasonCode}`)
-  const orchestrationPlanStartedAt = Date.now()
-  const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
-    parentRunId: params.runId,
-    parentRequestId: params.runId,
-    userRequest: params.message,
-    modeSnapshot: orchestrationRegistrySnapshot,
-    ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
-  }).plan
-  latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
-    name: "orchestration_planning_latency_ms",
-    durationMs: Date.now() - orchestrationPlanStartedAt,
-    runId: params.runId,
-    sessionId: params.sessionId,
-    ...(params.source ? { source: params.source } : {}),
-  }))} plan=${orchestrationPlanSnapshot.planId}; fallback=${orchestrationPlanSnapshot.fallbackStrategy.reasonCode}`)
   const explicitReusableRequestGroupId =
     params.requestGroupId && (params.forceRequestGroupReuse || dependencies.isReusableRequestGroup(params.requestGroupId))
       ? params.requestGroupId
@@ -247,16 +246,13 @@ export async function buildStartPlan(
     ...(params.source ? { source: params.source } : {}),
     ...(params.targetId ? { targetId: params.targetId } : {}),
   })
-  const explicitContinuationReference = hasExplicitContinuationReference(params.message)
-  const shouldBypassReconnectComparison = isStandaloneLocalExecutionAction(params.message, explicitContinuationReference)
   const shouldCompareContinuation =
     hasStructuredIncomingContract
     && params.requestGroupId == null
     && !explicitTarget
     && reconnectCandidateProjections.length > 0
     && entrySemanticsBase.active_queue_cancellation_mode == null
-    && !shouldBypassReconnectComparison
-    && explicitContinuationReference
+    && shouldInspectActiveRuns
   const reconnectDecision: RequestContinuationDecision = shouldCompareContinuation
     ? await (async (): Promise<RequestContinuationDecision> => {
         const comparisonStartedAt = Date.now()
@@ -306,6 +302,15 @@ export async function buildStartPlan(
     ?? (reconnectNeedsClarification ? params.runId : reconnectTarget?.requestGroupId)
     ?? params.runId
   const isRootRequest = requestGroupId === params.runId
+  const requestIsolation: StartPlanRequestIsolation = isRootRequest ? "root" : "continuation"
+  const continuationSource: StartPlanContinuationSource =
+    explicitReusableRequestGroupId
+      ? params.forceRequestGroupReuse ? "explicit_force_request_group" : "explicit_request_group"
+      : reconnectNeedsClarification
+        ? "explicit_contract_clarification"
+        : reconnectTarget
+          ? reconnectDecision.decisionSource === "explicit_id" ? "explicit_id" : "explicit_contract_comparison"
+          : "new_root"
   const effectiveTaskProfile = dependencies.normalizeTaskProfile(params.taskProfile)
   const initialDelegationTurnCount = isRootRequest ? 0 : dependencies.getRequestGroupDelegationTurnCount(requestGroupId)
   const shouldReuseContext = Boolean(explicitReusableRequestGroupId || reconnectTarget)
@@ -327,6 +332,37 @@ export async function buildStartPlan(
   const reusableWorkerSessionRun = workerSessionId
     ? dependencies.findLatestWorkerSessionRun(requestGroupId, workerSessionId)
     : undefined
+  const topologyRouting = (dependencies.resolveTopologyRootRunRouting ?? resolveTopologyRootRunRouting)({
+    message: params.message,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+    ...(params.targetId ? { targetId: params.targetId } : {}),
+    taskProfile: effectiveTaskProfile,
+    isRootRequest,
+    orchestrationModeSnapshot: orchestrationRegistrySnapshot,
+    ...(params.agentExecutionDecision !== undefined ? { executionDecision: params.agentExecutionDecision } : {}),
+  })
+  latencyEvents.push(`topology_routing:${topologyRouting.mode}:${topologyRouting.reasonCode}`)
+  const effectiveAgentExecutionDecision = params.agentExecutionDecision
+  const orchestrationPlanStartedAt = Date.now()
+  const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
+    parentRunId: params.runId,
+    parentRequestId: params.runId,
+    userRequest: params.message,
+    modeSnapshot: orchestrationRegistrySnapshot,
+    ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
+    ...(effectiveAgentExecutionDecision
+      ? { agentExecutionDecision: effectiveAgentExecutionDecision }
+      : {}),
+  }).plan
+  latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
+    name: "orchestration_planning_latency_ms",
+    durationMs: Date.now() - orchestrationPlanStartedAt,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+  }))} plan=${orchestrationPlanSnapshot.planId}; fallback=${orchestrationPlanSnapshot.fallbackStrategy.reasonCode}`)
 
   return {
     entrySemantics,
@@ -335,6 +371,8 @@ export async function buildStartPlan(
     ...(reconnectTarget ? { reconnectTarget } : {}),
     reconnectCandidateCount,
     reconnectNeedsClarification,
+    requestIsolation,
+    continuationSource,
     requestGroupId,
     isRootRequest,
     effectiveTaskProfile,
@@ -344,6 +382,10 @@ export async function buildStartPlan(
     orchestrationMode: orchestrationRegistrySnapshot.mode,
     orchestrationRegistrySnapshot,
     orchestrationPlanSnapshot,
+    ...(effectiveAgentExecutionDecision !== undefined
+      ? { agentExecutionDecision: effectiveAgentExecutionDecision }
+      : {}),
+    topologyRouting,
     ...(workerSessionId ? { workerSessionId } : {}),
     ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
     latencyEvents,

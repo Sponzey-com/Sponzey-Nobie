@@ -12,7 +12,8 @@ import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js";
 import { getFastResponseHealthSnapshot } from "../../observability/latency.js";
 import { loadPromptSourceRegistry } from "../../memory/nobie-md.js";
 import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js";
-const startTime = Date.now();
+import { getGatewayProcessStartTimeMs, getRuntimeBuildStatus } from "../../runtime/build-status.js";
+const startTime = getGatewayProcessStartTimeMs();
 const startedAt = new Date(startTime).toISOString();
 function getPromptSourceSnapshot() {
     try {
@@ -41,6 +42,7 @@ export function registerStatusRoute(app) {
         const capabilities = createCapabilities();
         const orchestrator = capabilities.find((item) => item.key === "gateway.orchestrator");
         const orchestration = resolveOrchestrationModeSnapshotSync();
+        const runtimeBuild = getRuntimeBuildStatus();
         const uptime = Math.floor((Date.now() - startTime) / 1000);
         return {
             version: getCurrentAppVersion(),
@@ -56,8 +58,10 @@ export function registerStatusRoute(app) {
                 platform: process.platform,
                 arch: process.arch,
                 startedAt,
+                startTimeMs: startTime,
                 uptimeSeconds: uptime,
             },
+            runtimeBuild,
             toolCount: toolDispatcher.getAll().length,
             setupCompleted: setupState.completed,
             capabilityCounts: createCapabilityCounts(),

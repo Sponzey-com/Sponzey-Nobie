@@ -1,8 +1,4 @@
-import {
-  canConsumeRecoveryBudget,
-  getRecoveryBudgetState,
-  type RecoveryBudgetUsage,
-} from "./recovery-budget.js"
+import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import {
   buildCommandFailureRecoveryPrompt,
   buildExecutionRecoveryPrompt,
@@ -60,25 +56,6 @@ export function decideExecutionPostPassRecovery(params: {
   })
 
   if (commandFailureRecovery) {
-    const executionBudget = getRecoveryBudgetState({
-      usage: params.recoveryBudgetUsage,
-      kind: "execution",
-      maxDelegationTurns: params.maxDelegationTurns,
-    })
-
-    if ((params.maxDelegationTurns > 0 && params.usedTurns >= params.maxDelegationTurns) || !canConsumeRecoveryBudget({
-      usage: params.recoveryBudgetUsage,
-      kind: "execution",
-      maxDelegationTurns: params.maxDelegationTurns,
-    })) {
-      return {
-        kind: "stop",
-        summary: `실행 복구 재시도 한도(${executionBudget.limit > 0 ? executionBudget.limit : params.maxDelegationTurns}회)에 도달했습니다.`,
-        reason: commandFailureRecovery.reason,
-        remainingItems: ["실패한 명령에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
-      }
-    }
-
     return {
       kind: "retry",
       seenKeyKind: "command",
@@ -138,25 +115,6 @@ export function decideExecutionPostPassRecovery(params: {
 
   if (!genericExecutionRecovery) {
     return { kind: "none" }
-  }
-
-  const executionBudget = getRecoveryBudgetState({
-    usage: params.recoveryBudgetUsage,
-    kind: "execution",
-    maxDelegationTurns: params.maxDelegationTurns,
-  })
-
-  if ((params.maxDelegationTurns > 0 && params.usedTurns >= params.maxDelegationTurns) || !canConsumeRecoveryBudget({
-    usage: params.recoveryBudgetUsage,
-    kind: "execution",
-    maxDelegationTurns: params.maxDelegationTurns,
-  })) {
-    return {
-      kind: "stop",
-      summary: `실행 복구 재시도 한도(${executionBudget.limit > 0 ? executionBudget.limit : params.maxDelegationTurns}회)에 도달했습니다.`,
-      reason: genericExecutionRecovery.reason,
-      remainingItems: ["실패한 도구에 대한 다른 방법 탐색이 더 필요하지만 자동 한도에 도달했습니다."],
-    }
   }
 
   return {

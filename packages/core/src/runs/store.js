@@ -214,7 +214,7 @@ export function listRootRuns(limit = 50) {
     return getDb()
         .prepare(`SELECT *
        FROM root_runs
-       ORDER BY updated_at DESC
+       ORDER BY created_at DESC, updated_at DESC
        LIMIT ?`)
         .all(limit)
         .map(hydrateRun);
@@ -224,7 +224,7 @@ export function listActiveRootRuns(limit = 100) {
         .prepare(`SELECT *
        FROM root_runs
        WHERE status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
-       ORDER BY updated_at DESC
+       ORDER BY created_at DESC, updated_at DESC
        LIMIT ?`)
         .all(limit)
         .map(hydrateRun);
@@ -371,6 +371,26 @@ export function listRequestGroupRuns(requestGroupId) {
         .all(requestGroupId)
         .map(hydrateRun);
 }
+function listCancellationScopeRuns(current) {
+    const lineageKey = current.lineageRootRunId || current.requestGroupId || current.id;
+    const rows = getDb()
+        .prepare(`SELECT *
+       FROM root_runs
+       WHERE id = ?
+          OR request_group_id = ?
+          OR parent_run_id = ?
+          OR COALESCE(lineage_root_run_id, request_group_id, id) = ?
+       ORDER BY created_at ASC, updated_at ASC`)
+        .all(current.id, current.requestGroupId, current.id, lineageKey)
+        .map(hydrateRun);
+    const deduped = new Map();
+    for (const run of rows) {
+        if (deduped.has(run.id))
+            continue;
+        deduped.set(run.id, run);
+    }
+    return [...deduped.values()].filter((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status) || activeRunControllers.has(run.id));
+}
 export function hasActiveRequestGroupRuns(requestGroupId) {
     return listRequestGroupRuns(requestGroupId).some((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status));
 }
@@ -515,7 +535,7 @@ export function createRootRun(params) {
         worker_runtime_kind, worker_session_id, context_mode,
         delegation_turn_count, max_delegation_turns, current_step_key, current_step_index,
         total_steps, summary, can_cancel, prompt_source_snapshot, runtime_manifest_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 5, "received", 1, totalSteps, summary, 1, Object.keys(promptSourceSnapshot).length > 0 ? JSON.stringify(promptSourceSnapshot) : null, runtimeManifestId, now, now);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(params.id, params.sessionId, identifiers.requestGroupId, identifiers.lineageRootRunId, identifiers.parentRunId ?? null, identifiers.runScope, params.handoffSummary ?? null, title, params.prompt, params.source, "queued", taskProfile, params.targetId ?? null, params.targetLabel ?? null, params.workerRuntimeKind ?? null, params.workerSessionId ?? null, params.contextMode ?? "full", params.delegationTurnCount ?? 0, params.maxDelegationTurns ?? 0, "received", 1, totalSteps, summary, 1, Object.keys(promptSourceSnapshot).length > 0 ? JSON.stringify(promptSourceSnapshot) : null, runtimeManifestId, now, now);
         const insertStep = db.prepare(`INSERT INTO run_steps
        (id, run_id, step_key, title, step_index, status, summary, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -551,6 +571,23 @@ export function appendRunEvent(runId, label) {
     getDb()
         .prepare(`INSERT INTO run_events (id, run_id, at, label) VALUES (?, ?, ?, ?)`)
         .run(crypto.randomUUID(), runId, at, label);
+}
+export function mergeRunPromptSourceSnapshot(runId, patch) {
+    const current = getRootRun(runId);
+    if (!current)
+        return undefined;
+    const nextSnapshot = {
+        ...(current.promptSourceSnapshot ?? {}),
+        ...patch,
+    };
+    const now = Date.now();
+    getDb()
+        .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(nextSnapshot), now, runId);
+    const updated = getRootRun(runId);
+    if (updated)
+        eventBus.emit("run.progress", { run: updated });
+    return updated;
 }
 export function updateRunSummary(runId, summary) {
     const now = Date.now();
@@ -693,7 +730,7 @@ export function cancelRootRun(runId, options = {}) {
     const current = getRootRun(runId);
     if (!current)
         return undefined;
-    const activeRuns = listRequestGroupRuns(current.requestGroupId).filter((run) => ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status) || activeRunControllers.has(run.id));
+    const activeRuns = listCancellationScopeRuns(current);
     if (activeRuns.length === 0)
         return undefined;
     for (const run of activeRuns) {

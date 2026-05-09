@@ -16,6 +16,10 @@ export async function applyLoopDirective(params, moduleDependencies = defaultMod
             text: params.directive.text,
             source: params.source,
             onChunk: params.onChunk,
+            ...(params.suppressFinalDelivery ? { suppressFinalDelivery: true } : {}),
+            ...(params.suppressFinalDeliveryReasonCode
+                ? { suppressFinalDeliveryReasonCode: params.suppressFinalDeliveryReasonCode }
+                : {}),
             dependencies: params.finalizationDependencies,
         });
         return "break";

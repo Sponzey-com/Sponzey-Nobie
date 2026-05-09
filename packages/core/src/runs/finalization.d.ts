@@ -50,6 +50,8 @@ export declare function completeRunWithAssistantMessage(params: {
     text: string;
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
+    suppressFinalDelivery?: boolean;
+    suppressFinalDeliveryReasonCode?: string;
     dependencies: FinalizationDependencies;
 }): Promise<void>;
 export declare function emitStandaloneAssistantMessage(params: {

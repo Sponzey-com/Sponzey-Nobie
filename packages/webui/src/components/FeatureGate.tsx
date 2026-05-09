@@ -1,8 +1,23 @@
+import * as React from "react"
 import { DisabledPanel } from "./DisabledPanel"
 import { ErrorState } from "./ErrorState"
 import { PlannedState } from "./PlannedState"
+import type { FeatureCapability } from "../contracts/capabilities"
+import { TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY } from "../lib/topology-workspace-copy"
 import { useUiI18n } from "../lib/ui-i18n"
 import { useCapability } from "../stores/capabilities"
+
+const FEATURE_GATE_FALLBACKS: Record<string, FeatureCapability> = {
+  enterprise_topology_builder_ui: {
+    key: "enterprise_topology_builder_ui",
+    label: "Topology Workspace",
+    area: "gateway",
+    status: "disabled",
+    implemented: true,
+    enabled: false,
+    reason: TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo,
+  },
+}
 
 export function FeatureGate({
   capabilityKey,
@@ -13,7 +28,7 @@ export function FeatureGate({
   title?: string
   children: React.ReactNode
 }) {
-  const capability = useCapability(capabilityKey)
+  const capability = useCapability(capabilityKey) ?? FEATURE_GATE_FALLBACKS[capabilityKey]
   const { displayText, text } = useUiI18n()
 
   if (!capability || capability.status === "ready") {

@@ -10,6 +10,7 @@ import {
   api,
 } from "./api/client"
 import { connectWs, onWsConnect, onWsMessage } from "./api/ws"
+import { FeatureGate } from "./components/FeatureGate"
 import { Layout } from "./components/Layout"
 import { buildAdminShellView } from "./lib/admin-shell"
 import { uiCatalogText } from "./lib/message-catalog"
@@ -41,8 +42,8 @@ const SettingsPage = lazy(() =>
   import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })),
 )
 const PluginsPage = lazy(() => import("./pages/PluginsPage"))
-const TopologyPage = lazy(() =>
-  import("./pages/TopologyPage").then((module) => ({ default: module.TopologyPage })),
+const TopologyWorkspacePage = lazy(() =>
+  import("./pages/TopologyWorkspacePage").then((module) => ({ default: module.TopologyWorkspacePage })),
 )
 
 function LegacyAdvancedRedirect({ from }: { from: string }) {
@@ -551,7 +552,7 @@ function AdminShellPage() {
                           {call.approvalState}
                         </span>
                         <span className="rounded-full bg-white px-2 py-1 text-stone-700 ring-1 ring-stone-200">
-                          retry {call.retryCount}
+                          신호 {call.signalCount}
                         </span>
                       </div>
                     </div>
@@ -837,7 +838,7 @@ function AdminShellPage() {
               {memoryWritebacks.map((item) => (
                 <div key={item.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
                   <div className="text-xs font-semibold uppercase text-amber-700">
-                    {msg("admin.inspectors.writeback", { count: item.retryCount })} · {item.status}
+                    {msg("admin.inspectors.writeback", { count: item.signalCount })} · {item.status}
                   </div>
                   <p className="mt-2 text-sm leading-5 text-amber-950">{item.contentPreview}</p>
                   {item.lastError ? (
@@ -1386,6 +1387,10 @@ export default function App() {
             path="/topology/*"
             element={<LegacyAdvancedRedirect from="/advanced/topology" />}
           />
+          <Route
+            path="/enterprise-topology/*"
+            element={<LegacyAdvancedRedirect from="/advanced/topology" />}
+          />
           <Route path="/settings/*" element={<Navigate to="/advanced/ai" replace />} />
           <Route path="/ai/*" element={<LegacyAdvancedRedirect from="/advanced/ai" />} />
           <Route
@@ -1589,9 +1594,14 @@ export default function App() {
             element={
               setupCompleted ? (
                 <AdvancedOnly>
-                  <LazyPage>
-                    <TopologyPage />
-                  </LazyPage>
+                  <FeatureGate
+                    capabilityKey="enterprise_topology_builder_ui"
+                    title="토폴로지"
+                  >
+                    <LazyPage>
+                      <TopologyWorkspacePage />
+                    </LazyPage>
+                  </FeatureGate>
                 </AdvancedOnly>
               ) : (
                 <Navigate to="/setup" replace />
@@ -1603,14 +1613,27 @@ export default function App() {
             element={
               setupCompleted ? (
                 <AdvancedOnly>
-                  <LazyPage>
-                    <TopologyPage />
-                  </LazyPage>
+                  <FeatureGate
+                    capabilityKey="enterprise_topology_builder_ui"
+                    title="토폴로지"
+                  >
+                    <LazyPage>
+                      <TopologyWorkspacePage />
+                    </LazyPage>
+                  </FeatureGate>
                 </AdvancedOnly>
               ) : (
                 <Navigate to="/setup" replace />
               )
             }
+          />
+          <Route
+            path="/advanced/enterprise-topology"
+            element={<Navigate to="/advanced/topology?mode=build" replace />}
+          />
+          <Route
+            path="/advanced/enterprise-topology/*"
+            element={<Navigate to="/advanced/topology?mode=build" replace />}
           />
           <Route
             path="/advanced/orchestration"

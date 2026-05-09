@@ -251,7 +251,6 @@ function buildAgentInspector(input) {
         delegation: {
             enabled: delegation?.enabled ?? false,
             maxParallelSessions: delegation?.maxParallelSessions ?? 0,
-            retryBudget: delegation?.retryBudget ?? 0,
         },
         diagnostics: input.diagnostics.map((diagnostic) => diagnostic.reasonCode),
     };

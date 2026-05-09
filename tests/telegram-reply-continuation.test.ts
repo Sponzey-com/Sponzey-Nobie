@@ -57,7 +57,7 @@ describe("telegram reply continuation", () => {
     expect(findLatestChannelMessageRefForThreadMock).not.toHaveBeenCalled()
   })
 
-  it("falls back to the latest Nobie response in the Telegram topic when the replied message was not recorded", () => {
+  it("does not fall back to the latest Telegram topic response when the replied message was not recorded", () => {
     const ref = {
       id: "ref-topic-latest",
       source: "telegram",
@@ -72,15 +72,11 @@ describe("telegram reply continuation", () => {
     }
     findLatestChannelMessageRefForThreadMock.mockReturnValue(ref)
 
-    expect(findTelegramReplyTaskRef({ chatId: 42120565, replyToMessageId: 999, threadId: 7 })).toBe(ref)
-    expect(findLatestChannelMessageRefForThreadMock).toHaveBeenCalledWith({
-      source: "telegram",
-      externalChatId: "42120565",
-      externalThreadId: "7",
-    })
+    expect(findTelegramReplyTaskRef({ chatId: 42120565, replyToMessageId: 999, threadId: 7 })).toBeUndefined()
+    expect(findLatestChannelMessageRefForThreadMock).not.toHaveBeenCalled()
   })
 
-  it("falls back to the latest Nobie response in a main Telegram chat without a topic id", () => {
+  it("does not fall back to the latest main Telegram chat response when the replied message was not recorded", () => {
     const ref = {
       id: "ref-main-latest",
       source: "telegram",
@@ -95,10 +91,7 @@ describe("telegram reply continuation", () => {
     }
     findLatestChannelMessageRefForThreadMock.mockReturnValue(ref)
 
-    expect(findTelegramReplyTaskRef({ chatId: 42120565, replyToMessageId: 999 })).toBe(ref)
-    expect(findLatestChannelMessageRefForThreadMock).toHaveBeenCalledWith({
-      source: "telegram",
-      externalChatId: "42120565",
-    })
+    expect(findTelegramReplyTaskRef({ chatId: 42120565, replyToMessageId: 999 })).toBeUndefined()
+    expect(findLatestChannelMessageRefForThreadMock).not.toHaveBeenCalled()
   })
 })

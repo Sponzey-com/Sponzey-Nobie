@@ -78,10 +78,20 @@ export interface ChannelSmokeCapabilityFallbackTrace {
   message?: string
 }
 
+export interface ChannelSmokeRequestFlowTrace {
+  runId?: string
+  requestGroupId?: string
+  requestGroupMatchesRunId?: boolean
+  decisionTracePresent?: boolean
+  topologyRunCreated?: boolean
+  providerDirectUsed?: boolean
+}
+
 export interface ChannelSmokeTrace {
   sourceChannel: ChannelSmokeChannel
   responseChannel?: ChannelSmokeChannel
   correlationKey?: ChannelSmokeCorrelationKey
+  requestFlow?: ChannelSmokeRequestFlowTrace
   toolCalls?: ChannelSmokeToolTrace[]
   approval?: ChannelSmokeApprovalTrace
   artifacts?: ChannelSmokeArtifactTrace[]
@@ -382,6 +392,7 @@ export function validateChannelSmokeTrace(
   if (trace.correlationKey && trace.correlationKey !== scenario.correlationKey) {
     failures.push(`correlation_key_mismatch:${trace.correlationKey}`)
   }
+  validateRequestFlowTrace(trace, failures)
 
   for (const toolCall of trace.toolCalls ?? []) {
     if (toolCall.sourceChannel !== scenario.channel) {
@@ -438,6 +449,31 @@ export function validateChannelSmokeTrace(
     return { status: "failed", reason: failures[0] ?? "smoke_validation_failed", failures }
   }
   return { status: "passed", failures }
+}
+
+function validateRequestFlowTrace(trace: ChannelSmokeTrace, failures: string[]): void {
+  const flow = trace.requestFlow
+  if (!flow) {
+    failures.push("request_flow_missing")
+    return
+  }
+  if (!flow.runId) failures.push("run_id_missing")
+  if (!flow.requestGroupId) failures.push("request_group_id_missing")
+  if (flow.runId && flow.requestGroupId && flow.runId !== flow.requestGroupId) {
+    failures.push("request_group_id_not_run_id")
+  }
+  if (flow.requestGroupMatchesRunId === false) {
+    failures.push("request_group_id_not_run_id")
+  }
+  if (flow.decisionTracePresent !== true) {
+    failures.push("decision_trace_missing")
+  }
+  if (flow.topologyRunCreated !== true) {
+    failures.push("topology_run_missing")
+  }
+  if (flow.providerDirectUsed !== false) {
+    failures.push(flow.providerDirectUsed === true ? "provider_direct_used" : "provider_direct_state_missing")
+  }
 }
 
 function validateCapabilityFallbackTrace(
@@ -541,6 +577,14 @@ export function createDryRunChannelSmokeExecutor(input: {
       sourceChannel: scenario.channel,
       responseChannel: scenario.expectedTarget,
       correlationKey: scenario.correlationKey,
+      requestFlow: {
+        runId: `dry-run:${scenario.id}`,
+        requestGroupId: `dry-run:${scenario.id}`,
+        requestGroupMatchesRunId: true,
+        decisionTracePresent: true,
+        topologyRunCreated: true,
+        providerDirectUsed: false,
+      },
       auditLogId: `dry-audit-${scenario.id}`,
       toolCalls: scenario.expectedTool
         ? [{ toolName: scenario.expectedTool, sourceChannel: scenario.channel, deliveryChannel: scenario.expectedTarget }]

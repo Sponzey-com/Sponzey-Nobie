@@ -85,6 +85,7 @@ export interface ScheduleActionDependencies {
         originRunId: string;
         originRequestGroupId: string;
         model: string | undefined;
+        literalText?: string;
     }) => {
         scheduleId: string;
         targetSessionId?: string;
@@ -108,6 +109,9 @@ export declare function buildFollowupPrompt(params: {
     intake: TaskIntakeResult;
     action: TaskIntakeActionItem;
     taskProfile: string;
+    selectedExecutorId?: string | undefined;
+    selectedExecutorLabel?: string | undefined;
+    selectedExecutorReason?: string | undefined;
 }): string;
 export declare function executeScheduleActions(actions: TaskIntakeActionItem[], intake: TaskIntakeResult, params: ScheduleActionExecutionParams, dependencies: ScheduleActionDependencies): ScheduleActionExecutionResult;
 //# sourceMappingURL=action-execution.d.ts.map

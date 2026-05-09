@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { displayHomePath } from "./delivery.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
 export function buildRecoveryKey(parts) {
@@ -25,12 +27,24 @@ function normalizeRecoveryKeyPart(value) {
 export function isCommandFailureRecoveryTool(toolName) {
     return toolName === "shell_exec" || toolName === "app_launch" || toolName === "process_kill";
 }
-function normalizeCommandFailureKey(toolName, output) {
+function normalizeCommandFailureKey(toolName, output, params) {
     return buildRecoveryKey({
         action: "command_failure",
         toolName,
+        targetId: commandFailureTargetFingerprint(params),
         error: output,
     });
+}
+function commandFailureTargetFingerprint(params) {
+    if (!params || typeof params !== "object")
+        return undefined;
+    const command = params.command;
+    if (typeof command !== "string" || !command.trim())
+        return undefined;
+    return command
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 180);
 }
 export function describeCommandFailureReason(output) {
     // nobie-critical-decision-audit: recovery.command_failure_reason
@@ -57,7 +71,7 @@ export function selectCommandFailureRecovery(params) {
         const failedTool = params.failedTools[index];
         if (!failedTool)
             continue;
-        const key = normalizeCommandFailureKey(failedTool.toolName, failedTool.output);
+        const key = normalizeCommandFailureKey(failedTool.toolName, failedTool.output, failedTool.params);
         if (params.seenKeys.has(key))
             continue;
         return {
@@ -168,6 +182,7 @@ export function buildCommandFailureRecoveryPrompt(params) {
         return `${index + 1}. ${tool.toolName} 실패: ${preview}`;
     });
     const alternativeLines = params.alternatives?.map((alternative) => `- ${alternative.label}`) ?? [];
+    const pathAliasLines = buildPathAliasRecoveryHintLines(params.originalRequest, params.failedTools);
     return [
         "[Command Failure Recovery]",
         "이전 시도에서 로컬 명령 실행이 실패했습니다.",
@@ -176,12 +191,42 @@ export function buildCommandFailureRecoveryPrompt(params) {
         `실패 분석: ${params.reason}`,
         failedLines.length > 0 ? ["실패한 명령 기록:", ...failedLines].join("\n") : "",
         alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
+        pathAliasLines.length > 0 ? ["경로 별칭 후보:", ...pathAliasLines].join("\n") : "",
         params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
         "실패 원인을 먼저 확인하고, 같은 실패 명령을 그대로 반복하지 마세요.",
         "경로, 권한, 명령 형식, 대상 프로그램 상태를 점검한 뒤 다른 연장 메서드, 다른 연장 대상, 파일 도구 같은 비명령 대안을 검토하세요.",
         "로컬 명령 fallback은 허용되지 않습니다.",
         "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
     ].filter(Boolean).join("\n\n");
+}
+function buildPathAliasRecoveryHintLines(originalRequest, failedTools) {
+    const combined = [
+        originalRequest,
+        ...failedTools.map((tool) => {
+            const params = stringifyRecoveryParams(tool.params);
+            return `${tool.output}\n${params}`;
+        }),
+    ].join("\n");
+    const hints = [];
+    if (mentionsDownloadLocation(combined)) {
+        hints.push(`- 다운로드 위치 표현 후보: ${displayHomePath(join(homedir(), "Downloads"))}`);
+        hints.push("- `다운도르`, `다운로드`, `Downloads`, `Download folder`처럼 위치를 뜻하는 표현은 먼저 OS 표준 다운로드 폴더 후보로 확인하세요.");
+        hints.push("- 단, 따옴표로 감싼 폴더명이나 명시적 절대 경로는 사용자가 지정한 정확한 이름으로 보존하세요.");
+    }
+    return hints;
+}
+function mentionsDownloadLocation(value) {
+    return /(downloads?|download\s*folder|다운로드|다운\s*로드|다운도르|다운\s*도르)/iu.test(value);
+}
+function stringifyRecoveryParams(value) {
+    if (!value || typeof value !== "object")
+        return "";
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        return "";
+    }
 }
 export function buildExecutionRecoveryPrompt(params) {
     const toolLine = params.toolNames.length > 0

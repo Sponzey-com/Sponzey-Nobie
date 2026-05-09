@@ -710,8 +710,8 @@ export function SettingsPage() {
         return (
           <div className="space-y-4">
             <CompactSection
-              title={text("서브 에이전트 실행 모드", "Sub-agent execution mode")}
-              description={text("마스터 노비가 단독으로 처리할지, 토폴로지의 서브 에이전트로 작업을 위임할지 정합니다.", "Choose whether master Nobie runs alone or delegates work to sub-agents from the topology.")}
+              title={text("토폴로지 실행 모드", "Topology execution mode")}
+              description={text("저장된 토폴로지 노드를 실행자로 보고 채널 요청을 노드 흐름으로 위임할지 정합니다.", "Use saved topology nodes as executors and decide whether channel requests are delegated through the node flow.")}
             >
               <OrchestrationSettingsPanel
                 value={orchestrationDraft}
@@ -1708,7 +1708,7 @@ function OrchestrationSettingsPanel({
           <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.requestedMode ?? draft.mode}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("활성 에이전트", "Active agents")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("실행자 노드", "Executor nodes")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.activeSubAgentCount ?? 0}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
@@ -1738,8 +1738,19 @@ function OrchestrationSettingsPanel({
         </div>
       ) : null}
       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
-        {text("위임 작업 수와 대상 에이전트는 요청 내용, 토폴로지, 에이전트 역할을 기준으로 자동 결정됩니다.", "Delegated task count and target agents are decided automatically from the request, topology, and agent roles.")}
+        {text("위임 작업 수와 대상 실행자는 요청 내용, 저장된 토폴로지 연결, 각 노드의 이름과 성격을 기준으로 자동 결정됩니다.", "Delegated task count and target executors are decided automatically from the request, saved topology connections, and each node's name and definition.")}
       </div>
+      {runtime?.reasonCode === "no_active_sub_agents" ? (
+        <div
+          className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-800"
+          data-testid="orchestration-topology-guidance"
+        >
+          {text(
+            "토폴로지 화면에서 노드를 추가한 뒤 저장하면 이 화면의 활성 에이전트에 바로 반영됩니다. 저장하지 않은 캔버스 변경은 런타임 실행자 목록에 포함되지 않습니다.",
+            "Add nodes in the topology screen and save; they will be reflected here as active agents. Unsaved canvas changes are not included in the runtime executor list.",
+          )}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
@@ -1751,7 +1762,7 @@ function OrchestrationSettingsPanel({
             onChange={(event) => onChange({ mode: event.target.value as OrchestrationMode })}
           >
             <option value="single_nobie">{text("단일 노비", "Single Nobie")}</option>
-            <option value="orchestration">{text("서브 에이전트 사용", "Use sub-agents")}</option>
+            <option value="orchestration">{text("토폴로지 노드 사용", "Use topology nodes")}</option>
           </select>
         </div>
         <div>

@@ -48,6 +48,85 @@ function mapRecoveryKind(kind) {
             return "generic";
     }
 }
+function asRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : undefined;
+}
+function getStringField(record, key) {
+    const value = record?.[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+function getPromptSourceSnapshot(run) {
+    return asRecord(run.promptSourceSnapshot);
+}
+function getInboundMessageSnapshot(run) {
+    return asRecord(getPromptSourceSnapshot(run)?.inboundMessage);
+}
+function getRequestIsolationSnapshot(run) {
+    return asRecord(getPromptSourceSnapshot(run)?.requestIsolation);
+}
+function getUserMessageKey(run) {
+    return getStringField(getInboundMessageSnapshot(run), "messageKey");
+}
+function getRequestIsolationMode(run) {
+    return getStringField(getRequestIsolationSnapshot(run), "mode");
+}
+function getContinuationSource(run) {
+    return getStringField(getRequestIsolationSnapshot(run), "continuationSource");
+}
+function getRequestContextMode(run) {
+    return getStringField(getRequestIsolationSnapshot(run), "contextMode");
+}
+function resolveRootRun(run, runsById) {
+    let current = run;
+    const visited = new Set();
+    while (current.parentRunId && !visited.has(current.id)) {
+        visited.add(current.id);
+        const parent = runsById.get(current.parentRunId);
+        if (!parent)
+            break;
+        current = parent;
+    }
+    return current;
+}
+function resolveAttemptExecutionKind(kind) {
+    switch (kind) {
+        case "primary":
+            return "new_request";
+        case "followup":
+        case "approval_continuation":
+            return "followup_execution";
+        case "verification":
+            return "augmentation_verification";
+        case "filesystem_retry":
+        case "truncated_recovery":
+            return "recovery_execution";
+        case "intake_bridge":
+            return "system_intake";
+        case "scheduled_execution":
+            return "scheduled_execution";
+    }
+}
+function resolveRunRelationshipKind(run, kind, index) {
+    switch (kind) {
+        case "primary":
+            return "root_request";
+        case "verification":
+            return "augmentation_verification";
+        case "filesystem_retry":
+        case "truncated_recovery":
+            return "internal_recovery";
+        case "intake_bridge":
+            return "system_intake";
+        case "scheduled_execution":
+            return "scheduled_execution";
+        case "approval_continuation":
+            return "followup_execution";
+        case "followup":
+            return run.runScope === "child" || run.parentRunId ? "child_execution" : index === 0 ? "root_request" : "followup_execution";
+    }
+}
 function computeTaskStatus(params) {
     const statuses = params.groupRuns.map((run) => run.status);
     const activeVisibleAttempts = params.attempts.filter((attempt) => attempt.userVisible && ACTIVE_RUN_STATUSES.includes(attempt.status));
@@ -366,8 +445,13 @@ function buildTaskMonitor(attempts, recoveryAttempts, delivery) {
 function mapContinuitySnapshot(snapshot) {
     if (!snapshot)
         return undefined;
+    const identity = snapshot;
     return {
         lineageRootRunId: snapshot.lineageRootRunId,
+        ...(identity.requestGroupId ? { requestGroupId: identity.requestGroupId } : {}),
+        ...(identity.rootRunId ? { rootRunId: identity.rootRunId } : {}),
+        ...(identity.originRunId ? { originRunId: identity.originRunId } : {}),
+        ...(identity.userMessageKey ? { userMessageKey: identity.userMessageKey } : {}),
         ...(snapshot.parentRunId ? { parentRunId: snapshot.parentRunId } : {}),
         ...(snapshot.handoffSummary ? { handoffSummary: snapshot.handoffSummary } : {}),
         ...(snapshot.lastGoodState ? { lastGoodState: snapshot.lastGoodState } : {}),
@@ -676,14 +760,32 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
         if (!anchorRun || !latestRun)
             continue;
         const taskId = anchorRun.lineageRootRunId || anchorRun.requestGroupId || anchorRun.id;
+        const rootRun = resolveRootRun(anchorRun, runsById);
+        const userMessageKey = getUserMessageKey(anchorRun) ?? getUserMessageKey(rootRun);
+        const requestIsolationMode = getRequestIsolationMode(anchorRun) ?? getRequestIsolationMode(rootRun);
+        const continuationSource = getContinuationSource(anchorRun) ?? getContinuationSource(rootRun);
+        const contextMode = getRequestContextMode(anchorRun) ?? getRequestContextMode(rootRun);
         const summary = computeTaskSummary(groupRuns);
         const attempts = orderedRuns.map((run, index) => {
             const kind = classifyAttemptKind(run, index);
+            const executionKind = resolveAttemptExecutionKind(kind);
+            const relationshipKind = resolveRunRelationshipKind(run, kind, index);
+            const attemptRootRun = resolveRootRun(run, runsById);
+            const attemptUserMessageKey = getUserMessageKey(run) ?? getUserMessageKey(attemptRootRun) ?? userMessageKey;
+            const previousRun = index > 0 ? orderedRuns[index - 1] : undefined;
             return {
                 id: run.id,
                 taskId,
                 requestGroupId: run.requestGroupId,
                 kind,
+                executionKind,
+                relationshipKind,
+                rootRunId: attemptRootRun.id,
+                originRunId: anchorRun.id,
+                ...(attemptUserMessageKey ? { userMessageKey: attemptUserMessageKey } : {}),
+                ...(executionKind === "augmentation_verification"
+                    ? { augmentationOfRunId: run.parentRunId ?? previousRun?.id ?? attemptRootRun.id }
+                    : {}),
                 title: kind === "scheduled_execution"
                     ? extractPromptField(run.prompt, "Task")
                         || extractPromptField(run.prompt, "Goal")
@@ -730,6 +832,19 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
         tasks.push({
             id: taskId,
             requestGroupId: anchorRun.requestGroupId,
+            rootRunId: rootRun.id,
+            originRunId: anchorRun.id,
+            ...(userMessageKey ? { userMessageKey } : {}),
+            requestIdentity: {
+                originRunId: anchorRun.id,
+                rootRunId: rootRun.id,
+                requestGroupId: anchorRun.requestGroupId,
+                lineageRootRunId: taskId,
+                ...(userMessageKey ? { userMessageKey } : {}),
+                ...(requestIsolationMode ? { requestIsolationMode } : {}),
+                ...(continuationSource ? { continuationSource } : {}),
+                ...(contextMode ? { contextMode } : {}),
+            },
             sessionId: anchorRun.sessionId,
             source: anchorRun.source,
             anchorRunId: anchorRun.id,
@@ -754,6 +869,6 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
             activities,
         });
     }
-    return tasks.sort((a, b) => b.updatedAt - a.updatedAt);
+    return tasks.sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt));
 }
 //# sourceMappingURL=task-model.js.map

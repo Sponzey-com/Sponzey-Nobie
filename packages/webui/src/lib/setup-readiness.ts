@@ -321,7 +321,7 @@ function buildReviewTile(
           : t("활성 backend 없음", "No active backend"),
         details: [
           t(`활성 ${draft.aiBackends.filter((backend) => backend.enabled).length}개`, `${draft.aiBackends.filter((backend) => backend.enabled).length} active`),
-          t(`라우팅 대상 ${draft.routingProfiles[0]?.targets.length ?? 0}개`, `${draft.routingProfiles[0]?.targets.length ?? 0} routing targets`),
+          t(`실행 대상 ${draft.routingProfiles[0]?.targets.length ?? 0}개`, `${draft.routingProfiles[0]?.targets.length ?? 0} execution targets`),
         ],
         badges: ["single-ai", `configured:${draft.aiBackends.filter((backend) => backend.endpoint?.trim()).length}`],
       }

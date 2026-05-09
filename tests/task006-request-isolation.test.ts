@@ -79,6 +79,9 @@ describe("task006 request isolation", () => {
     expect(dependencies.compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("run-kospi")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
+    expect(result.effectiveContextMode).toBe("isolated")
   })
 
   it("starts a new root run for a Slack message with a different timestamp in the same thread", async () => {
@@ -95,6 +98,8 @@ describe("task006 request isolation", () => {
     expect(dependencies.compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("run-slack-next")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
+    expect(result.effectiveContextMode).toBe("isolated")
   })
 })
-

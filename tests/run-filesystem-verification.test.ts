@@ -64,4 +64,16 @@ describe("filesystem verification helpers", () => {
     expect(result.reason).toBe("실제 생성 증거가 충분하지 않습니다.")
     expect(result.remainingItems?.[0]).toContain("경로를 다시 확인")
   })
+
+  it("treats unquoted Korean download-folder typos as the OS Downloads candidate", () => {
+    const result = verifyFilesystemTargets({
+      originalRequest: "다운도르 밑에 \"nobie-path-alias-target\" 폴더를 만들어줘",
+      mutationPaths: [],
+      workDir: "/tmp/work",
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain("Downloads/nobie-path-alias-target")
+    expect(result.message).not.toContain("다운도르/nobie-path-alias-target")
+  })
 })

@@ -31,8 +31,8 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /추가 입력을 기다리고 있습니다\./g, replace: "Waiting for additional input." },
   { pattern: /실행 대기 중입니다\./g, replace: "Queued for execution." },
   { pattern: /실행 중 오류가 발생했습니다\./g, replace: "An execution error occurred." },
-  { pattern: /실제 파일\/폴더 변경이 확인되지 않아 로컬 도구 작업으로 재시도합니다\./g, replace: "No real file or folder changes were confirmed. Retrying with local tools." },
-  { pattern: /실제 파일\/폴더 작업을 다시 시도합니다\./g, replace: "Retrying the real file or folder operation." },
+  { pattern: /실제 파일\/폴더 변경이 확인되지 않아 로컬 도구 작업으로 재시도합니다\./g, replace: "No real file or folder changes were confirmed. Continuing with local tools." },
+  { pattern: /실제 파일\/폴더 작업을 다시 시도합니다\./g, replace: "Continuing the real file or folder operation." },
   { pattern: /실제 파일\/폴더 결과 검증을 완료했습니다\./g, replace: "Completed verification of the real file or folder result." },
   { pattern: /생성 결과를 확인 중입니다\./g, replace: "Checking the generated result." },
   { pattern: /결과 검증 시작/g, replace: "Verification started" },
@@ -50,7 +50,8 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /사용자가 실행을 취소했습니다\./g, replace: "The user cancelled the run." },
   { pattern: /자동 진행 중단 후 요청 취소/g, replace: "Request cancelled after automatic progress stopped" },
   { pattern: /중단 결과를 사용자에게 안내했습니다\./g, replace: "The stop result was sent to the user." },
-  { pattern: /중간에 끊긴 작업을 자동으로 다시 시도합니다\./g, replace: "Automatically retrying the truncated task." },
+  { pattern: /중간에 끊긴 작업을 자동으로 다시 시도합니다\./g, replace: "Continuing the truncated task with another path." },
+  { pattern: /중간에 끊긴 작업을 다른 방식으로 이어갑니다\./g, replace: "Continuing the truncated task with another path." },
   { pattern: /승인된 작업을 계속 진행합니다\./g, replace: "Continuing the approved task." },
   { pattern: /취소 요청/g, replace: "Cancellation requested" },
   { pattern: /기존 작업 수정 대상 확인 필요/g, replace: "Need confirmation for which existing task to update" },
@@ -75,7 +76,7 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /(\S+) 화면 준비 확인 요청/g, replace: (_m, tool) => `${tool} screen confirmation requested` },
   { pattern: /(\S+) 승인 시간 초과/g, replace: (_m, tool) => `${tool} approval timed out` },
   { pattern: /(\S+) 실행 거부/g, replace: (_m, tool) => `${tool} execution denied` },
-  { pattern: /자동 후속 처리/g, replace: "Automatic follow-up" },
+  { pattern: /후속 실행/g, replace: "Follow-up execution" },
   { pattern: /자동 처리 한도 도달/g, replace: "Automatic processing limit reached" },
   { pattern: /자동 복구 한도/g, replace: "Automatic recovery limit" },
   { pattern: /실행 복구 처리/g, replace: "Execution recovery" },
@@ -126,12 +127,13 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
 ]
 
 const USER_HIDDEN_OPERATIONAL_COUNTER_REPLACEMENTS: Replacement[] = [
-  { pattern: /후속 처리\s+\d+\/(무제한|\d+)/g, replace: "자동 후속 처리" },
-  { pattern: /후속 시도\s+\d+\/(무제한|\d+)/g, replace: "자동 후속 처리" },
+  { pattern: /후속 처리\s+\d+\/(무제한|\d+)/g, replace: "후속 실행" },
+  { pattern: /후속 시도\s+\d+\/(무제한|\d+)/g, replace: "후속 실행" },
   { pattern: /([^\n.]*?복구)\s*재시도\s+\d+\/(무제한|\d+)/g, replace: (_match, prefix) => `${prefix.trim()} 처리` },
+  { pattern: /([^\n.]*?복구)\s*신호\s+\d+/g, replace: (_match, prefix) => `${prefix.trim()} 처리` },
   { pattern: /복구 재시도 한도\(\d+회\)/g, replace: "자동 복구 한도" },
   { pattern: /자동 재시도 한도/g, replace: "자동 복구 한도" },
-  { pattern: /최대 자동 후속 처리 횟수 초과/g, replace: "자동 처리 한도 도달" },
+  { pattern: /최대 (?:자동 )?후속 (?:처리 )?횟수 초과/g, replace: "자동 처리 한도 도달" },
 ]
 
 export function sanitizeOperationalCounterText(text: string): string {

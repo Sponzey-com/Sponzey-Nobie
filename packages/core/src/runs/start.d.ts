@@ -1,4 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js";
+import type { ChannelSource } from "../channels/contracts.js";
 import { type TaskExecutionSemantics, type TaskIntentEnvelope, type TaskStructuredRequest } from "../agent/intake.js";
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
@@ -6,6 +7,7 @@ import type { RootRun, TaskProfile } from "./types.js";
 import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
+import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
 export interface StartRootRunParams {
     runId?: string | undefined;
     targetRunId?: string | undefined;
@@ -25,8 +27,10 @@ export interface StartRootRunParams {
     targetLabel?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
+    agentExecutionDecision?: AgentExecutionDecision | undefined;
+    agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined;
     workDir?: string | undefined;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     skipIntake?: boolean | undefined;
     toolsEnabled?: boolean | undefined;
     contextMode?: AgentContextMode | undefined;

@@ -1705,9 +1705,17 @@ function TopologyPageInner() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-              {text("Topology", "Topology")}
+              {text("Runtime Resource Topology", "Runtime Resource Topology")}
             </div>
-            <h1 className="mt-2 text-2xl font-semibold">Agent Topology</h1>
+            <h1 className="mt-2 text-2xl font-semibold">
+              {text("런타임 리소스 토폴로지", "Runtime Resource Topology")}
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-500">
+              {text(
+                "Agent와 Team의 실행 리소스, 멤버십, 런타임 연결을 관리합니다.",
+                "Manage agent and team runtime resources, memberships, and execution links.",
+              )}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button

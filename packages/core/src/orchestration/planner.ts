@@ -14,6 +14,7 @@ import {
   type OrchestrationRegistrySnapshot,
   buildOrchestrationRegistrySnapshot,
 } from "./registry.js"
+import type { AgentExecutionDecision } from "./execution-decision-contract.js"
 
 export const ORCHESTRATION_PLANNER_VERSION = "structured-v1"
 export const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100
@@ -74,6 +75,7 @@ export interface OrchestrationPlannerInput {
   taskScopes?: StructuredTaskScope[]
   intent?: OrchestrationPlannerIntent
   learningHints?: OrchestrationPlannerLearningHint[]
+  agentExecutionDecision?: AgentExecutionDecision
   parentAgentId?: string
   resourceLocks?: ResourceLockContract[]
   resourceLocksByTaskId?: Record<string, ResourceLockContract[]>
@@ -127,216 +129,16 @@ function hasRoutingIntent(intent: OrchestrationPlannerIntent | undefined): boole
   )
 }
 
-const DEVELOPMENT_REQUEST_PATTERN =
-  /(?:개발|구현|코드|프로젝트|앱|애플리케이션|어플|폴더|파일|차트|백테스트|시뮬레이션|투자\s*봇|만들어줘|작성해줘|implement|develop|build|create|code|project|app|application|folder|file|backtest|simulation)/iu
-
-function looksLikeDevelopmentRequest(request: string): boolean {
-  return DEVELOPMENT_REQUEST_PATTERN.test(request)
-}
-
-function normalizeTeamAlias(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\s"'`.,;:!?()[\]{}<>/\\|_+=~@#$%^&*·ㆍ-]+/g, "")
-}
-
-function removeDigits(value: string): string {
-  return value.replace(/[0-9０-９]+/g, "")
-}
-
-function teamAliases(team: OrchestrationRegistrySnapshot["teams"][number]): string[] {
-  return uniqueStrings([
-    team.teamId,
-    team.displayName,
-    team.nickname,
-    team.config.normalizedNickname,
-    removeDigits(team.displayName),
-    team.nickname ? removeDigits(team.nickname) : undefined,
-  ])
-}
-
-export function resolveExplicitTeamIdFromRequest(
-  userRequest: string,
-  registry: OrchestrationRegistrySnapshot,
-): string | undefined {
-  const normalizedRequest = normalizeTeamAlias(userRequest)
-  const digitlessRequest = removeDigits(normalizedRequest)
-  const matches = registry.teams.flatMap((team) => {
-    if (team.status !== "enabled") return []
-    const aliases = teamAliases(team)
-      .map((alias) => normalizeTeamAlias(alias))
-      .filter((alias) => alias.length >= 2)
-    const matchedAlias = aliases
-      .sort((left, right) => right.length - left.length || left.localeCompare(right))
-      .find((alias) => {
-        if (normalizedRequest.includes(alias)) return true
-        const digitlessAlias = removeDigits(alias)
-        return digitlessAlias.length >= 2 && digitlessRequest.includes(digitlessAlias)
-      })
-    return matchedAlias ? [{ teamId: team.teamId, alias: matchedAlias }] : []
-  })
-  if (matches.length === 0) return undefined
-  matches.sort((left, right) => right.alias.length - left.alias.length || left.teamId.localeCompare(right.teamId))
-  return matches[0]?.teamId
-}
-
-const CAPABILITY_GROUP_TOKENS: Record<string, string[]> = {
-  development: [
-    "development",
-    "develop",
-    "developer",
-    "dev",
-    "coding",
-    "code",
-    "codebase",
-    "implementation",
-    "implement",
-    "filesystem_write",
-    "shell_execution",
-    "개발",
-    "구현",
-    "코드",
-    "프로그래밍",
-  ],
-  research: ["research", "search", "retrieval", "investigation", "browser", "web_search", "조사", "검색", "리서치"],
-  review: ["review", "verify", "verification", "test", "qa", "검토", "리뷰", "검증", "테스트"],
-  operations: ["operations", "ops", "deploy", "deployment", "release", "monitoring", "운영", "배포", "릴리즈", "모니터링"],
-}
-
-function textTokens(value: string | undefined): string[] {
-  return value
-    ?.normalize("NFKC")
-    .toLowerCase()
-    .match(/[a-z0-9가-힣_:-]+/giu) ?? []
-}
-
-function requestCapabilityGroups(userRequest: string, scopes: StructuredTaskScope[]): string[] {
-  const haystack = [
-    userRequest,
-    ...scopes.flatMap((scope) => [
-      scope.goal,
-      scope.intentType,
-      scope.actionType,
-      ...scope.constraints,
-      ...scope.reasonCodes,
-    ]),
-  ].join(" ")
-  const groups: string[] = []
-  if (looksLikeDevelopmentRequest(haystack)) groups.push("development")
-  if (/(?:조사|검색|리서치|research|search|retrieval|investigation)/iu.test(haystack))
-    groups.push("research")
-  if (/(?:검토|리뷰|검증|테스트|review|verify|verification|test|qa)/iu.test(haystack))
-    groups.push("review")
-  if (/(?:운영|배포|릴리즈|모니터링|operations|ops|deploy|deployment|release|monitoring)/iu.test(haystack))
-    groups.push("operations")
-  return uniqueStrings(groups)
-}
-
-function teamIsExecutable(team: OrchestrationRegistrySnapshot["teams"][number]): boolean {
-  const activeMemberAgentIds = team.coverage?.activeMemberAgentIds ?? team.activeMemberAgentIds ?? []
-  return (
-    team.status === "enabled" &&
-    team.health?.status !== "invalid" &&
-    team.health?.executionCandidate !== false &&
-    activeMemberAgentIds.length > 0
-  )
-}
-
-function teamCapabilityTokens(team: OrchestrationRegistrySnapshot["teams"][number]): string[] {
-  return uniqueStrings([
-    ...textTokens(team.teamId),
-    ...textTokens(team.displayName),
-    ...textTokens(team.nickname),
-    ...textTokens(team.purpose),
-    ...textTokens(team.config.normalizedNickname),
-    ...team.roleHints.flatMap(textTokens),
-    ...(team.config.requiredTeamRoles ?? []).flatMap(textTokens),
-    ...(team.config.requiredCapabilityTags ?? []).flatMap(textTokens),
-  ])
-}
-
-function resolveCapableTeamIdForRequest(
-  userRequest: string,
-  registry: OrchestrationRegistrySnapshot,
-  scopes: StructuredTaskScope[],
-): string | undefined {
-  const groups = requestCapabilityGroups(userRequest, scopes)
-  if (groups.length === 0) return undefined
-  const matches = registry.teams.flatMap((team) => {
-    if (!teamIsExecutable(team)) return []
-    const teamTokens = new Set(teamCapabilityTokens(team))
-    let score = 0
-    for (const group of groups) {
-      const groupTokens = CAPABILITY_GROUP_TOKENS[group] ?? []
-      const overlap = groupTokens.filter((token) => teamTokens.has(token)).length
-      if (overlap > 0) score += 100 + overlap
-    }
-    if (score === 0) return []
-    score += team.health?.status === "healthy" ? 10 : 0
-    score += Math.min(5, team.coverage?.activeMemberAgentIds.length ?? team.activeMemberAgentIds.length)
-    return [{ teamId: team.teamId, score }]
-  })
-  if (matches.length === 0) return undefined
-  matches.sort((left, right) => right.score - left.score || left.teamId.localeCompare(right.teamId))
-  return matches[0]?.teamId
-}
-
-function looksLikeWorkflowRequest(request: string): boolean {
-  const normalized = request.toLowerCase()
-  return [
-    "매일",
-    "매주",
-    "반복",
-    "정기",
-    "예약",
-    "schedule",
-    "every day",
-    "every week",
-    "daily",
-    "weekly",
-    "cron",
-  ].some((token) => normalized.includes(token))
-}
-
-function looksLikeSimpleDirectRequest(request: string): boolean {
-  const trimmed = request.trim()
-  if (trimmed.length === 0) return true
-  if (trimmed.length > 80) return false
-  const normalized = trimmed.toLowerCase()
-  return [
-    "안녕",
-    "고마워",
-    "감사",
-    "도움말",
-    "help",
-    "hello",
-    "hi",
-    "thanks",
-    "thank you",
-    "who are you",
-  ].some((token) => normalized.includes(token))
-}
-
 export function classifyFastPath(input: FastPathClassifierInput): FastPathClassificationResult {
   const clock = input.now ?? (() => Date.now())
   const startedAt = clock()
-  const request = input.userRequest.trim()
-  let classification: FastPathClassification = "delegation_candidate"
-  const reasonCodes: string[] = []
-  let explanation = "요청은 서브 에이전트 후보 평가가 필요한 위임 후보입니다."
-
-  if (looksLikeWorkflowRequest(request)) {
-    classification = "workflow_candidate"
-    reasonCodes.push("fast_path_workflow_candidate")
-    explanation = "반복 또는 예약성 요청이라 deterministic workflow 후보로 표시했습니다."
-  } else if (!hasRoutingIntent(input.intent) && looksLikeSimpleDirectRequest(request)) {
-    classification = "direct_nobie"
-    reasonCodes.push("fast_path_direct_nobie")
-    explanation = "짧고 단순한 요청이라 노비가 직접 처리하는 후보로 분류했습니다."
-  } else {
-    reasonCodes.push("fast_path_delegation_candidate")
-  }
+  const classification: FastPathClassification = "delegation_candidate"
+  const reasonCodes = [
+    hasRoutingIntent(input.intent)
+      ? "fast_path_structured_intent_candidate"
+      : "fast_path_delegation_candidate",
+  ]
+  const explanation = "요청 텍스트를 규칙으로 해석하지 않고 구조화된 실행자 후보 평가로 넘깁니다."
 
   return {
     classification,
@@ -376,31 +178,18 @@ function defaultExpectedOutput(): ExpectedOutputContract {
 }
 
 export function buildDefaultStructuredTaskScope(userRequest: string): StructuredTaskScope {
-  const developmentRequest = looksLikeDevelopmentRequest(userRequest)
   return {
     goal: userRequest.trim() || "Process the user request.",
     intentType: "user_request",
-    actionType: developmentRequest ? "development" : "general",
+    actionType: "general",
     constraints: [],
     expectedOutputs: [defaultExpectedOutput()],
-    reasonCodes: [
-      "default_structured_scope",
-      ...(developmentRequest ? ["development_request_detected"] : []),
-    ],
+    reasonCodes: ["default_structured_scope"],
   }
 }
 
-function inferredRequiredCapabilitiesForScope(scope: StructuredTaskScope): string[] {
-  const haystack = [
-    scope.goal,
-    scope.intentType,
-    scope.actionType,
-    ...scope.constraints,
-    ...scope.reasonCodes,
-  ].join(" ")
-  return looksLikeDevelopmentRequest(haystack)
-    ? ["filesystem_write", "shell_execution"]
-    : []
+function inferredRequiredCapabilitiesForScope(_scope: StructuredTaskScope): string[] {
+  return []
 }
 
 function riskAllows(agent: AgentRegistryEntry, requiredRisk: CapabilityRiskLevel): boolean {
@@ -429,6 +218,14 @@ function plannerParentAgentId(
   registry: OrchestrationRegistrySnapshot,
 ): string {
   return input.parentAgentId ?? registry.hierarchy?.rootAgentId ?? "agent:nobie"
+}
+
+function plannerCurrentExecutorId(input: Pick<OrchestrationPlannerInput, "parentAgentId">): string {
+  return input.parentAgentId ?? "agent:nobie"
+}
+
+function isRootNobieExecutor(executorId: string | undefined): boolean {
+  return executorId === "agent:nobie"
 }
 
 function directChildAgentIdsFor(
@@ -555,7 +352,6 @@ function scoreCandidate(
     excludedReasonCodes.push(`agent_${agent.status}`)
   }
   if (!agent.delegationEnabled) excludedReasonCodes.push("delegation_disabled")
-  if (agent.retryBudget <= 0) excludedReasonCodes.push("retry_budget_exhausted")
   if (agent.currentLoad.activeSubSessions >= agent.currentLoad.maxParallelSessions)
     excludedReasonCodes.push("concurrency_limit_reached")
   if (!hasAll([agent.role], requiredRoles)) excludedReasonCodes.push("missing_required_role")
@@ -615,6 +411,11 @@ function scoreCandidate(
   if (skillMatches > 0) reasonCodes.push("required_skill_match")
   if (mcpMatches > 0) reasonCodes.push("required_mcp_match")
   if (toolMatches > 0) reasonCodes.push("required_tool_match")
+
+  if (agent.source === "topology") {
+    score += 15
+    reasonCodes.push("topology_executor_candidate")
+  }
 
   if (riskNeedsApproval(agent, requiredRisk) && riskAllows(agent, requiredRisk)) {
     reasonCodes.push("approval_required_for_risk")
@@ -689,6 +490,9 @@ function planTask(input: {
   resourceLockIds: string[]
   candidate?: OrchestrationCandidateScore
   assignedTeamId?: string
+  selectedSource?: "execution_decision"
+  rejectedExecutorId?: string
+  rejectedReasonCodes?: string[]
   reasonCodes: string[]
   explanation?: string
 }): OrchestrationTask {
@@ -702,9 +506,15 @@ function planTask(input: {
     resourceLockIds: input.resourceLockIds,
     planningTrace: {
       ...(input.candidate ? { score: input.candidate.score } : {}),
+      ...(input.selectedSource ? { selectedSource: input.selectedSource } : {}),
+      ...(input.candidate ? { selectedExecutorId: input.candidate.agentId } : {}),
+      ...(input.rejectedExecutorId ? { rejectedExecutorId: input.rejectedExecutorId } : {}),
       reasonCodes: input.reasonCodes,
       ...(input.candidate?.excludedReasonCodes.length
         ? { excludedReasonCodes: input.candidate.excludedReasonCodes }
+        : {}),
+      ...(input.rejectedReasonCodes?.length
+        ? { rejectedReasonCodes: input.rejectedReasonCodes }
         : {}),
       ...(input.explanation ? { explanation: input.explanation } : {}),
     },
@@ -725,6 +535,14 @@ function directFallbackPlan(input: {
   diagnostics?: OrchestrationPlannerDiagnostic[]
   fastPathClassification: FastPathClassificationResult
   status?: NonNullable<OrchestrationPlan["plannerMetadata"]>["status"]
+  fallbackMode?: OrchestrationPlan["fallbackStrategy"]["mode"]
+  currentExecutorId?: string
+  parentExecutorId?: string
+  requesterId?: string
+  rejectedExecutorId?: string
+  rejectedReasonCodes?: string[]
+  unresolvedReasonCode?: string
+  unresolvedReason?: string
   userMessage?: string
 }): OrchestrationPlanBuildResult {
   const planId = input.idProvider()
@@ -751,8 +569,14 @@ function directFallbackPlan(input: {
     parallelGroups: [],
     approvalRequirements: [],
     fallbackStrategy: {
-      mode: input.fallbackReasonCode.startsWith("explicit_") ? "ask_user" : "single_nobie",
+      mode: input.fallbackMode ??
+        (input.fallbackReasonCode.startsWith("explicit_") ? "ask_user" : "direct_current_agent"),
       reasonCode: input.fallbackReasonCode,
+      ...(input.currentExecutorId ? { currentExecutorId: input.currentExecutorId } : {}),
+      ...(input.parentExecutorId ? { parentExecutorId: input.parentExecutorId } : {}),
+      ...(input.requesterId ? { requesterId: input.requesterId } : {}),
+      ...(input.unresolvedReasonCode ? { unresolvedReasonCode: input.unresolvedReasonCode } : {}),
+      ...(input.unresolvedReason ? { unresolvedReason: input.unresolvedReason } : {}),
       ...(input.userMessage ? { userMessage: input.userMessage } : {}),
     },
     plannerMetadata: {
@@ -773,6 +597,12 @@ function directFallbackPlan(input: {
         excludedReasonCodes: candidate.excludedReasonCodes,
         explanation: candidate.explanation,
       })),
+      ...(input.rejectedExecutorId ? { rejectedExecutorId: input.rejectedExecutorId } : {}),
+      ...(input.rejectedReasonCodes?.length
+        ? { rejectedReasonCodes: input.rejectedReasonCodes }
+        : {}),
+      fallbackMode: input.fallbackMode ??
+        (input.fallbackReasonCode.startsWith("explicit_") ? "ask_user" : "direct_current_agent"),
       directReasonCodes: input.reasonCodes,
       fallbackReasonCodes: [input.fallbackReasonCode],
     },
@@ -853,6 +683,32 @@ function nonExecutionPlan(input: {
   }
 }
 
+function selectedExecutorFromDelegatingDecision(
+  decision: AgentExecutionDecision | undefined,
+): string | undefined {
+  if (!decision?.selected_executor_id?.trim()) return undefined
+  if (
+    decision.execution_route === "delegate_to_child" ||
+    decision.execution_route === "sub_agent" ||
+    decision.execution_route === "yeonjang"
+  ) {
+    return decision.selected_executor_id
+  }
+  return undefined
+}
+
+function directFallbackModeForExecutionDecision(
+  decision: AgentExecutionDecision,
+): OrchestrationPlan["fallbackStrategy"]["mode"] {
+  if (decision.execution_route === "ask_user") return "ask_user"
+  if (decision.execution_route === "ask_parent") return "ask_parent"
+  if (decision.execution_route === "return_to_parent") return "return_to_parent"
+  if (decision.execution_route === "root_nobie_direct") return "root_nobie_direct"
+  if (decision.execution_route === "explicit_provider") return "ask_user"
+  if (decision.execution_route === "self_solve") return "self_solve"
+  return "direct_current_agent"
+}
+
 export function buildOrchestrationPlan(
   input: OrchestrationPlannerInput,
 ): OrchestrationPlanBuildResult {
@@ -860,7 +716,11 @@ export function buildOrchestrationPlan(
   const now = input.now ?? (() => Date.now())
   const idProvider = input.idProvider ?? (() => crypto.randomUUID())
   const timeoutMs = Math.max(1, input.timeoutMs ?? 120)
-  let intent = input.intent ?? {}
+  const decisionSelectedExecutorId = selectedExecutorFromDelegatingDecision(input.agentExecutionDecision)
+  let intent = {
+    ...(input.intent ?? {}),
+    ...(decisionSelectedExecutorId ? { explicitAgentId: decisionSelectedExecutorId } : {}),
+  }
   const fastPathClassification = classifyFastPath({
     userRequest: input.userRequest,
     intent,
@@ -879,6 +739,7 @@ export function buildOrchestrationPlan(
       idProvider,
       timedOut: false,
       fastPathClassification,
+      currentExecutorId: plannerCurrentExecutorId(input),
     })
   }
 
@@ -895,6 +756,7 @@ export function buildOrchestrationPlan(
       timedOut: false,
       fastPathClassification,
       userMessage: fastPathClassification.explanation,
+      currentExecutorId: plannerCurrentExecutorId(input),
     })
   }
 
@@ -918,6 +780,7 @@ export function buildOrchestrationPlan(
     input.registrySnapshot ??
     input.loadRegistrySnapshot?.() ??
     buildOrchestrationRegistrySnapshot({ now })
+  const parentAgentId = plannerParentAgentId(input, registry)
   if (now() - startedAt > timeoutMs) {
     return directFallbackPlan({
       parentRunId: input.parentRunId,
@@ -925,31 +788,19 @@ export function buildOrchestrationPlan(
       userRequest: input.userRequest,
       modeSnapshot: input.modeSnapshot,
       reasonCodes: ["planning_timeout"],
-      fallbackReasonCode: "planning_timeout_single_nobie",
+      fallbackReasonCode: "planning_timeout_direct_current_agent",
       now: startedAt,
       idProvider,
       timedOut: true,
       status: "degraded",
       fastPathClassification,
+      currentExecutorId: parentAgentId,
     })
   }
 
   const scopes = input.taskScopes?.length
     ? input.taskScopes
     : [buildDefaultStructuredTaskScope(input.userRequest)]
-  const parentAgentId = plannerParentAgentId(input, registry)
-  const inferredExplicitTeamId =
-    intent.explicitTeamId || intent.explicitAgentId
-      ? undefined
-      : resolveExplicitTeamIdFromRequest(input.userRequest, registry)
-  const inferredCapabilityTeamId =
-    intent.explicitTeamId || intent.explicitAgentId || inferredExplicitTeamId
-      ? undefined
-      : resolveCapableTeamIdForRequest(input.userRequest, registry, scopes)
-  const inferredTeamTargetId = inferredExplicitTeamId ?? inferredCapabilityTeamId
-  if (inferredTeamTargetId) {
-    intent = { ...intent, explicitTeamId: inferredTeamTargetId }
-  }
   const directChildAgentIds = directChildAgentIdsFor(registry, parentAgentId)
   const candidateScores = registry.agents.map((agent) =>
     scoreCandidate(agent, registry, intent, {
@@ -972,6 +823,79 @@ export function buildOrchestrationPlan(
       ...(directChildAgentIds ? { directChildAgentIds } : {}),
     }),
   ]
+
+  const explicitTargetRequested = Boolean(decisionSelectedExecutorId)
+
+  if (input.agentExecutionDecision && !decisionSelectedExecutorId) {
+    return directFallbackPlan({
+      parentRunId: input.parentRunId,
+      parentRequestId: input.parentRequestId,
+      userRequest: input.userRequest,
+      modeSnapshot: input.modeSnapshot,
+      reasonCodes: [
+        "execution_decision_present",
+        `execution_decision_route_${input.agentExecutionDecision.execution_route}`,
+      ],
+      fallbackReasonCode: `execution_decision_${input.agentExecutionDecision.execution_route}`,
+      fallbackMode:
+        input.agentExecutionDecision.execution_route === "root_nobie_direct" &&
+        !isRootNobieExecutor(input.agentExecutionDecision.current_executor_id)
+          ? input.agentExecutionDecision.parent_executor_id
+            ? "return_to_parent"
+            : "ask_user"
+          : directFallbackModeForExecutionDecision(input.agentExecutionDecision),
+      now: startedAt,
+      idProvider,
+      timedOut: false,
+      candidateScores,
+      diagnostics,
+      fastPathClassification,
+      currentExecutorId: input.agentExecutionDecision.current_executor_id,
+      ...(input.agentExecutionDecision.parent_executor_id
+        ? { parentExecutorId: input.agentExecutionDecision.parent_executor_id }
+        : {}),
+      unresolvedReasonCode:
+        input.agentExecutionDecision.execution_route === "root_nobie_direct" &&
+        !isRootNobieExecutor(input.agentExecutionDecision.current_executor_id)
+          ? "root_nobie_direct_rejected_for_non_root_executor"
+          : `execution_decision_${input.agentExecutionDecision.execution_route}`,
+      ...(input.agentExecutionDecision.unresolved_reason
+        ? { unresolvedReason: input.agentExecutionDecision.unresolved_reason }
+        : {}),
+      userMessage: input.agentExecutionDecision.reason,
+    })
+  }
+
+  if (!explicitTargetRequested) {
+    return directFallbackPlan({
+      parentRunId: input.parentRunId,
+      parentRequestId: input.parentRequestId,
+      userRequest: input.userRequest,
+      modeSnapshot: input.modeSnapshot,
+      reasonCodes: [
+        "execution_decision_required",
+        "implicit_agent_selection_disabled",
+      ],
+      fallbackReasonCode: "execution_decision_required",
+      fallbackMode: "direct_current_agent",
+      now: startedAt,
+      idProvider,
+      timedOut: false,
+      candidateScores,
+      diagnostics,
+      fastPathClassification,
+      currentExecutorId: parentAgentId,
+      ...(intent.explicitAgentId || intent.explicitTeamId
+        ? {
+            rejectedExecutorId: intent.explicitAgentId ?? intent.explicitTeamId,
+            rejectedReasonCodes: ["explicit_target_requires_execution_decision"],
+          }
+        : {}),
+      unresolvedReasonCode: "execution_decision_missing",
+      userMessage:
+        "검증된 실행 결정이 없어 임의 실행자 선택 없이 현재 에이전트가 직접 처리합니다.",
+    })
+  }
 
   if (intent.explicitTeamId) {
     const explicitTeamId = intent.explicitTeamId
@@ -999,6 +923,10 @@ export function buildOrchestrationPlan(
         candidateScores,
         diagnostics,
         fastPathClassification,
+        currentExecutorId: parentAgentId,
+        rejectedExecutorId: explicitTeamId,
+        rejectedReasonCodes: reasonCodes,
+        unresolvedReasonCode: "selected_team_rejected",
         userMessage:
           "명시된 팀을 실행 후보로 사용할 수 없어 임의 대체 없이 사용자 확인이 필요합니다.",
       })
@@ -1016,12 +944,11 @@ export function buildOrchestrationPlan(
         ]),
         resourceLockIds: [],
         assignedTeamId: explicitTeamId,
+        selectedSource: "execution_decision",
         reasonCodes: [
           "explicit_team_target",
+          "execution_decision_selected_executor",
           "team_execution_plan_planned",
-          ...(inferredExplicitTeamId ? ["inferred_team_target_from_request"] : []),
-          ...(inferredCapabilityTeamId ? ["inferred_team_target_from_capability"] : []),
-          ...(inferredTeamTargetId ? ["mandatory_delegation_candidate_available"] : []),
           ...(teamHealthStatus ? [`team_health_${teamHealthStatus}`] : []),
         ],
         explanation: `${team.displayName} 팀 실행 계획으로 확장할 작업입니다.`,
@@ -1034,9 +961,6 @@ export function buildOrchestrationPlan(
       "structured_scoring",
       "explicit_team_target",
       "team_execution_plan_planned",
-      ...(inferredExplicitTeamId ? ["inferred_team_target_from_request"] : []),
-      ...(inferredCapabilityTeamId ? ["inferred_team_target_from_capability"] : []),
-      ...(inferredTeamTargetId ? ["mandatory_delegation_candidate_available"] : []),
     ]
     const plan: OrchestrationPlan = {
       identity: buildIdentity(planId, input.parentRunId, input.parentRequestId),
@@ -1050,8 +974,9 @@ export function buildOrchestrationPlan(
       parallelGroups: [],
       approvalRequirements: [],
       fallbackStrategy: {
-        mode: "single_nobie",
-        reasonCode: "delegate_failure_single_nobie",
+        mode: "direct_current_agent",
+        reasonCode: "delegated_team_runtime_failure_direct_current_agent",
+        currentExecutorId: parentAgentId,
       },
       plannerMetadata: {
         status: "planned",
@@ -1071,8 +996,11 @@ export function buildOrchestrationPlan(
           excludedReasonCodes: candidate.excludedReasonCodes,
           explanation: candidate.explanation,
         })),
+        selectedExecutorSource: "execution_decision",
+        ...(decisionSelectedExecutorId ? { selectedExecutorId: decisionSelectedExecutorId } : {}),
+        fallbackMode: "direct_current_agent",
         directReasonCodes: [],
-        fallbackReasonCodes: ["delegate_failure_single_nobie"],
+        fallbackReasonCodes: ["delegated_team_runtime_failure_direct_current_agent"],
       },
       createdAt: startedAt,
     }
@@ -1116,6 +1044,10 @@ export function buildOrchestrationPlan(
         candidateScores,
         diagnostics,
         fastPathClassification,
+        currentExecutorId: parentAgentId,
+        rejectedExecutorId: intent.explicitAgentId,
+        rejectedReasonCodes: reasonCodes,
+        unresolvedReasonCode: "selected_executor_rejected",
         userMessage:
           "명시된 에이전트가 직접 하위 후보 또는 권한 조건을 만족하지 않아 임의 대체하지 않았습니다.",
       })
@@ -1123,7 +1055,6 @@ export function buildOrchestrationPlan(
   }
 
   const eligible = sortedEligibleCandidates(candidateScores)
-  const explicitTargetRequested = Boolean(intent.explicitAgentId || intent.explicitTeamId)
 
   if (eligible.length === 0) {
     return directFallbackPlan({
@@ -1143,6 +1074,8 @@ export function buildOrchestrationPlan(
       candidateScores,
       diagnostics,
       fastPathClassification,
+      currentExecutorId: parentAgentId,
+      unresolvedReasonCode: "selected_executor_unavailable",
     })
   }
 
@@ -1171,10 +1104,11 @@ export function buildOrchestrationPlan(
         ]),
         resourceLockIds: locksForTask.map((lock) => lock.lockId),
         candidate,
+        selectedSource: "execution_decision",
         ...(intent.explicitTeamId ? { assignedTeamId: intent.explicitTeamId } : {}),
         reasonCodes: [
-          "mandatory_delegation_candidate_available",
-          "delegated_by_structured_score",
+          "execution_decision_selected_executor",
+          "planner_converted_validated_decision",
           ...candidate.reasonCodes,
         ],
         explanation: candidate.explanation,
@@ -1245,7 +1179,7 @@ export function buildOrchestrationPlan(
     fastPath: fastPathClassification,
     reasonCodes: [
       "structured_scoring",
-      "mandatory_delegation_candidate_available",
+      "execution_decision_selected_executor",
       delegatedTasks.length > 1
         ? parallelGroups.length > 0
           ? "parallel_group_planned"
@@ -1261,8 +1195,11 @@ export function buildOrchestrationPlan(
       excludedReasonCodes: candidate.excludedReasonCodes,
       explanation: candidate.explanation,
     })),
+    selectedExecutorSource: "execution_decision",
+    ...(decisionSelectedExecutorId ? { selectedExecutorId: decisionSelectedExecutorId } : {}),
+    fallbackMode: "direct_current_agent",
     directReasonCodes: [],
-    fallbackReasonCodes: ["delegate_failure_single_nobie"],
+    fallbackReasonCodes: ["delegated_executor_runtime_failure_direct_current_agent"],
   }
 
   const plan: OrchestrationPlan = {
@@ -1277,8 +1214,9 @@ export function buildOrchestrationPlan(
     parallelGroups,
     approvalRequirements,
     fallbackStrategy: {
-      mode: "single_nobie",
-      reasonCode: "delegate_failure_single_nobie",
+      mode: "direct_current_agent",
+      reasonCode: "delegated_executor_runtime_failure_direct_current_agent",
+      currentExecutorId: parentAgentId,
     },
     plannerMetadata,
     createdAt: startedAt,

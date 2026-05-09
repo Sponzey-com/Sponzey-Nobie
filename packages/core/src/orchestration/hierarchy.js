@@ -236,6 +236,8 @@ function configFromDependencies(dependencies) {
     return dependencies.getConfig?.() ?? getConfig();
 }
 function positiveIntegerOrDefault(value, fallback) {
+    if (value === 0)
+        return Number.MAX_SAFE_INTEGER;
     return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 export function createAgentHierarchyService(dependencies = {}) {

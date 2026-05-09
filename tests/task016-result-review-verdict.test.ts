@@ -144,7 +144,6 @@ function command(expectedOutputs: ExpectedOutputContract[] = [plainOutput]): Com
     taskScope: { ...taskScope, expectedOutputs },
     contextPackageIds: [],
     expectedOutputs,
-    retryBudget: 2,
   }
 }
 
@@ -205,7 +204,6 @@ describe("task016 result report review verdict", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(validation.ok).toBe(false)
@@ -229,7 +227,6 @@ describe("task016 result report review verdict", () => {
     const review = reviewSubAgentResult({
       resultReport: report,
       expectedOutputs: [artifactOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(validation.ok).toBe(false)
@@ -248,7 +245,6 @@ describe("task016 result report review verdict", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport({ risksOrGaps: ["source was stale but still usable"] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(review).toMatchObject({
@@ -273,7 +269,6 @@ describe("task016 result report review verdict", () => {
         impossibleReason,
       }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
     const invalid = validateResultReport(
       resultReport({
@@ -297,33 +292,31 @@ describe("task016 result report review verdict", () => {
       expect(invalid.issues.map((issue) => issue.path)).toContain("$.impossibleReason.kind")
   })
 
-  it("rejects blocking review failures when retry is not available", () => {
+  it("keeps blocking review failures retryable without numeric budget stops", () => {
     const review = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 0,
     })
 
     expect(review).toMatchObject({
       accepted: false,
-      status: "failed",
-      verdict: "reject",
-      parentIntegrationStatus: "blocked_rejected",
-      manualActionReason: "sub_agent_result_review_retry_budget_exhausted",
+      status: "needs_revision",
+      verdict: "insufficient_evidence",
+      parentIntegrationStatus: "blocked_insufficient_evidence",
     })
-    expect(review.feedbackRequest).toBeUndefined()
+    expect(review.feedbackRequest).toMatchObject({
+      reasonCode: "sub_agent_result_review:required_evidence_missing:answer:source:none",
+    })
   })
 
-  it("allows parent integration for limited success with explicit review status", () => {
+  it("requires parent aggregation for limited success with explicit review status", () => {
     const accepted = reviewSubAgentResult({
       resultReport: resultReport(),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
     const limited = reviewSubAgentResult({
       resultReport: resultReport({ risksOrGaps: ["non-blocking gap"] }),
       expectedOutputs: [evidenceOutput],
-      retryBudgetRemaining: 2,
     })
 
     expect(
@@ -332,10 +325,15 @@ describe("task016 result report review verdict", () => {
         { subSessionId: "sub:limited", review: limited },
       ]),
     ).toMatchObject({
-      finalDeliveryAllowed: true,
+      finalDeliveryAllowed: false,
       blockedSubSessionIds: [],
       limitedSubSessionIds: ["sub:limited"],
-      reasonCodes: ["all_sub_session_results_accepted", "limited_success_parent_integration"],
+      parentAggregationRequired: true,
+      parentAggregationNextAction: "self_solve",
+      reasonCodes: [
+        "parent_aggregation_required",
+        "limited_success_parent_integration_requires_parent_decision",
+      ],
     })
   })
 

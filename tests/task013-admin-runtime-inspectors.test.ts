@@ -298,7 +298,6 @@ describe("task013 admin memory scheduler channel inspectors", () => {
       agentDisplayName: "Task013 Agent",
       commandRequestId: "command-task013",
       status: "running",
-      retryBudgetRemaining: 1,
       promptBundleId: "bundle-task013",
       promptBundleSnapshot: {
         identity: {

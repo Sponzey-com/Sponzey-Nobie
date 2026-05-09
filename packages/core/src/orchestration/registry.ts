@@ -13,6 +13,7 @@ import {
   validateAgentConfig,
   validateTeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import type { EnterpriseMetadataValue, EnterpriseRelation, NodeContract } from "../contracts/enterprise-topology.js"
 import {
   type AgentConfigPersistenceOptions,
   type DbAgentConfig,
@@ -39,10 +40,7 @@ import {
   normalizeLegacyAgentConfigRow,
   normalizeLegacyTeamConfigRow,
 } from "./config-normalization.js"
-import {
-  DEFAULT_MODEL_RETRY_COUNT,
-  DEFAULT_MODEL_TIMEOUT_MS,
-} from "./model-execution-policy.js"
+import { createEnterpriseTopologyRegistry } from "../topology/registry.js"
 
 export interface AgentRuntimeLoadSnapshot {
   activeSubSessions: number
@@ -68,6 +66,23 @@ export interface AgentSkillMcpSummary {
   secretScopeId?: string
 }
 
+export const EXECUTOR_PROFILE_SCHEMA_VERSION = 1 as const
+export const EXECUTOR_PROFILE_METADATA_KEY = "executorProfile" as const
+
+export interface ExecutorProfile {
+  schemaVersion: typeof EXECUTOR_PROFILE_SCHEMA_VERSION
+  executorId: string
+  displayName: string
+  roleName: string
+  definition: string
+  does: string[]
+  delegationScope: string[]
+  expectedOutputs: string[]
+  handoffStyle: string
+  declineCriteria: string[]
+  riskBoundary: string[]
+}
+
 export type OrchestrationRegistryStatus = "ready" | "degraded"
 export type OrchestrationRegistryDiagnosticSeverity = "info" | "warning" | "invalid"
 
@@ -91,8 +106,7 @@ export interface AgentRegistryEntry {
   avoidTasks: string[]
   teamIds: string[]
   delegationEnabled: boolean
-  retryBudget: number
-  source: "db" | "config"
+  source: "db" | "config" | "topology"
   config: SubAgentConfig
   permissionProfile: PermissionProfile
   capabilityPolicy: CapabilityPolicy
@@ -102,6 +116,7 @@ export interface AgentRegistryEntry {
   degradedReasonCodes: string[]
   currentLoad: AgentRuntimeLoadSnapshot
   failureRate: AgentFailureRateSnapshot
+  executorProfile?: ExecutorProfile
 }
 
 export interface TeamRegistryEntry {
@@ -124,7 +139,8 @@ export interface RegistryHierarchyDirectChildSnapshot {
   parentAgentId: string
   childAgentId: string
   edgeId: string
-  relationshipStatus: AgentRelationship["status"] | "fallback"
+  relationshipStatus: AgentRelationship["status"] | "draft" | "inactive" | "fallback"
+  source: "topology_relation" | "agent_relationship" | "unparented_root"
   executionCandidate: boolean
   reasonCodes: string[]
 }
@@ -291,6 +307,15 @@ function sortedUniqueStrings(values: Array<string | undefined>): string[] {
   return uniqueStrings(values).sort((left, right) => left.localeCompare(right))
 }
 
+function timestampMs(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+  return fallback
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`
   if (value && typeof value === "object") {
@@ -343,8 +368,6 @@ function runtimeConfigModelProfile(config: Pick<NobieConfig, "orchestration"> & 
   return {
     providerId,
     modelId,
-    timeoutMs: DEFAULT_MODEL_TIMEOUT_MS,
-    retryCount: DEFAULT_MODEL_RETRY_COUNT,
   }
 }
 
@@ -367,6 +390,360 @@ function withRuntimeModelProfile(
     ...config,
     modelProfile: { ...runtimeModelProfile },
   }
+}
+
+function topologyAgentId(topologyId: string, executorId: string): string {
+  return `${topologyId}:${executorId}`
+}
+
+function metadataString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function metadataStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => (typeof entry === "string" && entry.trim() ? [entry.trim()] : []))
+    : []
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function firstStringArray(...values: unknown[]): string[] {
+  for (const value of values) {
+    const strings = metadataStringArray(value)
+    if (strings.length > 0) return sortedUniqueStrings(strings)
+  }
+  return []
+}
+
+export function normalizeExecutorProfile(
+  value: unknown,
+  fallback: {
+    executorId: string
+    displayName: string
+    roleName?: string | undefined
+    definition?: string | undefined
+    does?: string[] | undefined
+    delegationScope?: string[] | undefined
+    expectedOutputs?: string[] | undefined
+    handoffStyle?: string | undefined
+    declineCriteria?: string[] | undefined
+    riskBoundary?: string[] | undefined
+  },
+): ExecutorProfile {
+  const record = metadataRecord(value)
+  const roleName = metadataString(record?.roleName) ?? metadataString(fallback.roleName) ?? "executor"
+  const definition =
+    metadataString(record?.definition) ??
+    metadataString(fallback.definition) ??
+    `${fallback.displayName} executor`
+  const does = firstStringArray(record?.does, fallback.does, [definition])
+  const delegationScope = firstStringArray(record?.delegationScope, fallback.delegationScope, does)
+  const expectedOutputs = firstStringArray(
+    record?.expectedOutputs,
+    fallback.expectedOutputs,
+    ["처리 결과"],
+  )
+  const handoffStyle =
+    metadataString(record?.handoffStyle) ??
+    metadataString(fallback.handoffStyle) ??
+    "structured_handoff"
+  const declineCriteria = firstStringArray(record?.declineCriteria, fallback.declineCriteria)
+  const riskBoundary = firstStringArray(record?.riskBoundary, fallback.riskBoundary)
+  return {
+    schemaVersion: EXECUTOR_PROFILE_SCHEMA_VERSION,
+    executorId: metadataString(record?.executorId) ?? fallback.executorId,
+    displayName: metadataString(record?.displayName) ?? fallback.displayName,
+    roleName,
+    definition,
+    does,
+    delegationScope,
+    expectedOutputs,
+    handoffStyle,
+    declineCriteria,
+    riskBoundary,
+  }
+}
+
+function executorGraphMetadataRecord(node: NodeContract): Record<string, unknown> | undefined {
+  return metadataRecord(node.metadata?.executorGraph)
+}
+
+function executorProfileMetadataValue(node: NodeContract): EnterpriseMetadataValue | undefined {
+  const graphMetadata = executorGraphMetadataRecord(node)
+  return (
+    node.metadata?.[EXECUTOR_PROFILE_METADATA_KEY] ??
+    node.template?.metadata?.[EXECUTOR_PROFILE_METADATA_KEY] ??
+    (graphMetadata?.[EXECUTOR_PROFILE_METADATA_KEY] as EnterpriseMetadataValue | undefined)
+  )
+}
+
+export function buildExecutorProfileFromNode(
+  node: NodeContract,
+  overrides: { executorId?: string; displayName?: string } = {},
+): ExecutorProfile {
+  const displayName = overrides.displayName ?? node.displayName?.trim() ?? node.name.trim() ?? node.id
+  return normalizeExecutorProfile(executorProfileMetadataValue(node), {
+    executorId: overrides.executorId ?? node.id,
+    displayName,
+    roleName:
+      metadataString(node.metadata?.roleName) ??
+      metadataString(node.metadata?.role) ??
+      metadataString(node.template?.metadata?.roleName) ??
+      metadataString(node.template?.metadata?.role) ??
+      node.nodeType,
+    definition: node.description?.trim() || node.instruction?.trim() || displayName,
+    does: metadataStringArray(node.template?.metadata?.does),
+    delegationScope: sortedUniqueStrings([
+      ...node.tags,
+      ...metadataStringArray(node.metadata?.capabilityHints),
+      ...metadataStringArray(node.metadata?.inferredCapabilities),
+      ...metadataStringArray(node.template?.metadata?.capabilityHints),
+      ...metadataStringArray(node.template?.metadata?.inferredCapabilities),
+    ]),
+    expectedOutputs: [
+      ...metadataStringArray(node.template?.metadata?.expectedOutputs),
+      ...metadataStringArray(node.template?.metadata?.outputs),
+    ],
+    handoffStyle: metadataString(node.template?.metadata?.handoffStyle),
+    declineCriteria: [
+      ...metadataStringArray(node.metadata?.declineCriteria),
+      ...metadataStringArray(node.template?.metadata?.declineCriteria),
+    ],
+    riskBoundary: [
+      ...metadataStringArray(node.metadata?.riskBoundary),
+      ...metadataStringArray(node.template?.metadata?.riskBoundary),
+    ],
+  })
+}
+
+function topologyAgentRole(node: NodeContract): string {
+  return buildExecutorProfileFromNode(node).roleName
+}
+
+function topologyAgentCapabilityTags(node: NodeContract): string[] {
+  const profile = buildExecutorProfileFromNode(node)
+  return sortedUniqueStrings([
+    ...profile.delegationScope,
+    ...node.tags,
+    ...metadataStringArray(node.metadata?.capabilityHints),
+    ...metadataStringArray(node.metadata?.inferredCapabilities),
+    ...metadataStringArray(node.template?.metadata?.capabilityHints),
+    ...metadataStringArray(node.template?.metadata?.inferredCapabilities),
+    "topology",
+    "executor",
+  ])
+}
+
+function topologySubAgentConfigs(
+  now: number,
+  runtimeModelProfile: ModelProfile | undefined,
+  rootAgentId: string,
+): SubAgentConfig[] {
+  const registry = createEnterpriseTopologyRegistry()
+  return registry
+    .listTopologies()
+    .filter((topology) => topology.status !== "archived")
+    .flatMap((topologyRecord) => {
+      const exported = registry.exportTopology(topologyRecord.topologyId)
+      if (!exported) return []
+      return exported.version.topology.nodes
+        .filter((node) => node.status !== "archived")
+        .map((node): SubAgentConfig => {
+          const agentId = topologyAgentId(topologyRecord.topologyId, node.id)
+          const displayName = node.displayName?.trim() || node.name.trim() || node.id
+          const executorProfile = {
+            ...buildExecutorProfileFromNode(node, { executorId: agentId, displayName }),
+            executorId: agentId,
+            displayName,
+          }
+          const role = executorProfile.roleName
+          const specialtyTags = sortedUniqueStrings([
+            ...topologyAgentCapabilityTags(node),
+            ...executorProfile.delegationScope,
+          ])
+          const enabledToolNames = sortedUniqueStrings(node.allowedToolIds)
+          return {
+            schemaVersion: 1,
+            agentType: "sub_agent",
+            agentId,
+            displayName,
+            nickname: displayName,
+            normalizedNickname: displayName.normalize("NFKC").toLowerCase(),
+            status: "enabled",
+            role,
+            personality: executorProfile.definition,
+            specialtyTags,
+            avoidTasks: [...executorProfile.declineCriteria],
+            ...(runtimeModelProfile ? { modelProfile: { ...runtimeModelProfile } } : {}),
+            memoryPolicy: {
+              owner: { ownerType: "sub_agent", ownerId: agentId },
+              visibility: "coordinator_visible",
+              readScopes: [{ ownerType: "nobie", ownerId: rootAgentId }],
+              writeScope: { ownerType: "sub_agent", ownerId: agentId },
+              retentionPolicy: "short_term",
+              writebackReviewRequired: true,
+            },
+            capabilityPolicy: {
+              permissionProfile: {
+                profileId: `permission:${agentId}`,
+                riskCeiling: "dangerous",
+                approvalRequiredFrom: "sensitive",
+                allowExternalNetwork: false,
+                allowFilesystemWrite: true,
+                allowShellExecution: true,
+                allowScreenControl: false,
+                allowedPaths: [],
+              },
+              skillMcpAllowlist: {
+                enabledSkillIds: [],
+                enabledMcpServerIds: [],
+                enabledToolNames,
+                disabledToolNames: [],
+              },
+              rateLimit: { maxConcurrentCalls: 1_000_000 },
+            },
+            profileVersion: exported.version.version,
+            createdAt: timestampMs(topologyRecord.createdAt, now),
+            updatedAt: timestampMs(topologyRecord.updatedAt, now),
+            teamIds: [],
+            delegation: {
+              enabled: true,
+              maxParallelSessions: 1_000_000,
+            },
+            executorProfile,
+          } as SubAgentConfig & { executorProfile: ExecutorProfile }
+        })
+    })
+}
+
+interface RegistryHierarchyEdgeProjection {
+  parentAgentId: string
+  childAgentId: string
+  edgeId: string
+  relationshipStatus: RegistryHierarchyDirectChildSnapshot["relationshipStatus"]
+  source: RegistryHierarchyDirectChildSnapshot["source"]
+  sortOrder: number
+}
+
+interface TopologyHierarchyProjection {
+  edges: RegistryHierarchyEdgeProjection[]
+  diagnostics: OrchestrationRegistryDiagnostic[]
+}
+
+function topologyRelationRefId(
+  relation: EnterpriseRelation,
+  key: "from" | "to",
+): string | undefined {
+  const ref = (relation as Partial<EnterpriseRelation>)[key]
+  return ref?.entityType === "node" && typeof ref.id === "string" && ref.id.trim()
+    ? ref.id
+    : undefined
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
+}
+
+function appendTopologyChildrenMismatchDiagnostics(input: {
+  topologyId: string
+  topologyVersion: number
+  nodesById: Map<string, NodeContract>
+  relationChildIdsByParent: Map<string, string[]>
+  diagnostics: OrchestrationRegistryDiagnostic[]
+}): void {
+  for (const node of input.nodesById.values()) {
+    const declaredChildren = sortedUniqueStrings(
+      node.children.filter((childId) => input.nodesById.has(childId)),
+    )
+    const relationChildren = sortedUniqueStrings(input.relationChildIdsByParent.get(node.id) ?? [])
+    if (sameStringSet(declaredChildren, relationChildren)) continue
+    input.diagnostics.push({
+      code: "topology_children_relation_mismatch",
+      severity: "warning",
+      message:
+        `${input.topologyId}@${input.topologyVersion} node ${node.id} children metadata differs from delegates_to relations; relations are used as source of truth.`,
+      agentId: topologyAgentId(input.topologyId, node.id),
+    })
+  }
+}
+
+function topologyHierarchyProjections(): TopologyHierarchyProjection {
+  const registry = createEnterpriseTopologyRegistry()
+  const diagnostics: OrchestrationRegistryDiagnostic[] = []
+  const edges: RegistryHierarchyEdgeProjection[] = []
+  const seenEdgeIds = new Set<string>()
+
+  for (const topologyRecord of registry
+    .listTopologies()
+    .filter((topology) => topology.status !== "archived")
+    .sort((a, b) => a.topologyId.localeCompare(b.topologyId))) {
+    const exported = registry.exportTopology(topologyRecord.topologyId)
+    if (!exported) continue
+    const topology = exported.version.topology
+    const topologyVersion = exported.version.version
+    const nodesById = new Map(
+      topology.nodes
+        .filter((node) => node.status !== "archived")
+        .map((node) => [node.id, node]),
+    )
+    const relationChildIdsByParent = new Map<string, string[]>()
+
+    for (const relation of topology.relations) {
+      if (relation.status === "archived") continue
+      if (relation.relationType !== "delegates_to") continue
+      const fromNodeId = topologyRelationRefId(relation, "from")
+      const toNodeId = topologyRelationRefId(relation, "to")
+      if (!fromNodeId || !toNodeId) {
+        diagnostics.push({
+          code: "topology_relation_endpoint_missing",
+          severity: "invalid",
+          message:
+            `${topologyRecord.topologyId}@${topologyVersion} relation ${relation.id} is missing a node from/to endpoint.`,
+        })
+        continue
+      }
+      if (!nodesById.has(fromNodeId) || !nodesById.has(toNodeId)) {
+        diagnostics.push({
+          code: "topology_relation_endpoint_missing",
+          severity: "invalid",
+          message:
+            `${topologyRecord.topologyId}@${topologyVersion} relation ${relation.id} references a missing node endpoint.`,
+          parentAgentId: topologyAgentId(topologyRecord.topologyId, fromNodeId),
+          childAgentId: topologyAgentId(topologyRecord.topologyId, toNodeId),
+        })
+        continue
+      }
+      const childIds = relationChildIdsByParent.get(fromNodeId) ?? []
+      childIds.push(toNodeId)
+      relationChildIdsByParent.set(fromNodeId, childIds)
+      const edgeId = `topology:${topologyRecord.topologyId}:${relation.id}`
+      if (seenEdgeIds.has(edgeId)) continue
+      seenEdgeIds.add(edgeId)
+      edges.push({
+        parentAgentId: topologyAgentId(topologyRecord.topologyId, fromNodeId),
+        childAgentId: topologyAgentId(topologyRecord.topologyId, toNodeId),
+        edgeId,
+        relationshipStatus: relation.status,
+        source: "topology_relation",
+        sortOrder: edges.length,
+      })
+    }
+
+    appendTopologyChildrenMismatchDiagnostics({
+      topologyId: topologyRecord.topologyId,
+      topologyVersion,
+      nodesById,
+      relationChildIdsByParent,
+      diagnostics,
+    })
+  }
+
+  return { edges, diagnostics }
 }
 
 function tableFingerprint(tableName: string): RegistryInvalidationTableFingerprint {
@@ -402,6 +779,8 @@ function buildInvalidationSnapshot(
     mcp_server_catalog: tableFingerprint("mcp_server_catalog"),
     agent_capability_bindings: tableFingerprint("agent_capability_bindings"),
     run_subsessions: tableFingerprint("run_subsessions"),
+    enterprise_topologies: tableFingerprint("enterprise_topologies"),
+    enterprise_topology_versions: tableFingerprint("enterprise_topology_versions"),
   }
   const configHash = sha256(
     stableStringify({
@@ -489,11 +868,22 @@ function activeRelationships(): AgentRelationship[] {
   return listAgentRelationships({ status: "active" }).map(relationshipFromRow)
 }
 
+function agentRelationshipHierarchyProjections(): RegistryHierarchyEdgeProjection[] {
+  return activeRelationships().map((relationship): RegistryHierarchyEdgeProjection => ({
+    parentAgentId: relationship.parentAgentId,
+    childAgentId: relationship.childAgentId,
+    edgeId: relationship.edgeId,
+    relationshipStatus: relationship.status,
+    source: "agent_relationship",
+    sortOrder: relationship.sortOrder,
+  }))
+}
+
 function directChildBlockedReasons(
   agent: AgentRegistryEntry | undefined,
   rootAgentId: string,
   agentsById: Map<string, AgentRegistryEntry>,
-  active: AgentRelationship[],
+  active: RegistryHierarchyEdgeProjection[],
 ): string[] {
   if (!agent) return ["missing_agent"]
   const reasons: string[] = []
@@ -529,31 +919,43 @@ function buildHierarchySnapshot(input: {
   rootAgentId: string
   agentsById: Map<string, AgentRegistryEntry>
 }): RegistryHierarchySnapshot {
-  const active = activeRelationships()
+  const topologyProjection = topologyHierarchyProjections()
+  const relationshipEdges = [
+    ...agentRelationshipHierarchyProjections(),
+    ...topologyProjection.edges,
+  ]
+  const linkedChildIds = new Set(relationshipEdges.map((relationship) => relationship.childAgentId))
+  const rootFallbackEdges: RegistryHierarchyEdgeProjection[] = [...input.agentsById.values()]
+    .filter((agent) => agent.agentId !== input.rootAgentId && !linkedChildIds.has(agent.agentId))
+    .map((agent, index) => ({
+      parentAgentId: input.rootAgentId,
+      childAgentId: agent.agentId,
+      edgeId: `${agent.source}-root:${agent.agentId}`,
+      relationshipStatus: "fallback",
+      source: "unparented_root",
+      sortOrder: index,
+    }))
+  const active = [...relationshipEdges, ...rootFallbackEdges]
   const directChildren: RegistryHierarchyDirectChildSnapshot[] = []
   const directChildrenByParent = new Map<string, string[]>()
-  const diagnostics: OrchestrationRegistryDiagnostic[] = []
-  const appendDirectChild = (
-    parentAgentId: string,
-    childAgentId: string,
-    edgeId: string,
-    relationshipStatus: AgentRelationship["status"] | "fallback",
-  ) => {
-    const agent = input.agentsById.get(childAgentId)
+  const diagnostics: OrchestrationRegistryDiagnostic[] = [...topologyProjection.diagnostics]
+  const appendDirectChild = (edge: RegistryHierarchyEdgeProjection) => {
+    const agent = input.agentsById.get(edge.childAgentId)
     const reasonCodes = directChildBlockedReasons(
       agent,
       input.rootAgentId,
       input.agentsById,
       active,
     )
-    const children = directChildrenByParent.get(parentAgentId) ?? []
-    children.push(childAgentId)
-    directChildrenByParent.set(parentAgentId, children)
+    const children = directChildrenByParent.get(edge.parentAgentId) ?? []
+    children.push(edge.childAgentId)
+    directChildrenByParent.set(edge.parentAgentId, children)
     directChildren.push({
-      parentAgentId,
-      childAgentId,
-      edgeId,
-      relationshipStatus,
+      parentAgentId: edge.parentAgentId,
+      childAgentId: edge.childAgentId,
+      edgeId: edge.edgeId,
+      relationshipStatus: edge.relationshipStatus,
+      source: edge.source,
       executionCandidate: reasonCodes.length === 0,
       reasonCodes,
     })
@@ -562,10 +964,10 @@ function buildHierarchySnapshot(input: {
         code: reasonCode,
         severity:
           reasonCode === "missing_agent" || reasonCode === "cycle_detected" ? "invalid" : "warning",
-        message: `${parentAgentId} direct child ${childAgentId} is blocked by ${reasonCode}.`,
-        parentAgentId,
-        childAgentId,
-        agentId: childAgentId,
+        message: `${edge.parentAgentId} direct child ${edge.childAgentId} is blocked by ${reasonCode}.`,
+        parentAgentId: edge.parentAgentId,
+        childAgentId: edge.childAgentId,
+        agentId: edge.childAgentId,
       })
     }
   }
@@ -576,12 +978,7 @@ function buildHierarchySnapshot(input: {
       left.sortOrder - right.sortOrder ||
       left.edgeId.localeCompare(right.edgeId),
   )) {
-    appendDirectChild(
-      relationship.parentAgentId,
-      relationship.childAgentId,
-      relationship.edgeId,
-      relationship.status,
-    )
+    appendDirectChild(relationship)
   }
 
   const directChildrenRecord: Record<string, string[]> = {}
@@ -742,6 +1139,7 @@ function agentEntry(
   failureWindowMs: number,
 ): AgentRegistryEntry {
   const capabilityModelSummary = resolveAgentCapabilityModelSummary(config)
+  const executorProfile = (config as SubAgentConfig & { executorProfile?: ExecutorProfile }).executorProfile
   return {
     agentId: config.agentId,
     displayName: config.displayName,
@@ -752,7 +1150,6 @@ function agentEntry(
     avoidTasks: [...config.avoidTasks],
     teamIds: [...config.teamIds],
     delegationEnabled: config.delegation.enabled,
-    retryBudget: config.delegation.retryBudget,
     source,
     config,
     permissionProfile: config.capabilityPolicy.permissionProfile,
@@ -763,6 +1160,7 @@ function agentEntry(
     degradedReasonCodes: capabilityModelSummary.degradedReasonCodes,
     currentLoad: runtimeLoadForAgent(config),
     failureRate: failureRateForAgent(config.agentId, now, failureWindowMs),
+    ...(executorProfile ? { executorProfile } : {}),
   }
 }
 
@@ -1066,7 +1464,6 @@ function candidateReasonCodes(agent: AgentRegistryEntry | undefined): string[] {
   const reasons: string[] = []
   if (agent.status !== "enabled") reasons.push(`agent_${agent.status}`)
   if (!agent.delegationEnabled) reasons.push("delegation_disabled")
-  if (agent.retryBudget <= 0) reasons.push("retry_budget_exhausted")
   if (agent.currentLoad.activeSubSessions >= agent.currentLoad.maxParallelSessions) {
     reasons.push("concurrency_limit_reached")
   }
@@ -1235,6 +1632,11 @@ function buildOrchestrationRegistrySnapshotUnsafe(input: {
     }
     const runtimeAgent = withRuntimeModelProfile(subAgent, inheritedModelProfile)
     agentsById.set(runtimeAgent.agentId, agentEntry(runtimeAgent, "db", now, failureWindowMs))
+  }
+
+  for (const topologyAgent of topologySubAgentConfigs(now, inheritedModelProfile, rootAgentId)) {
+    if (archivedAgentIds.has(topologyAgent.agentId)) continue
+    agentsById.set(topologyAgent.agentId, agentEntry(topologyAgent, "topology", now, failureWindowMs))
   }
 
   for (const team of cfg.orchestration.teams ?? []) {

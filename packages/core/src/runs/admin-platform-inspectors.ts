@@ -790,7 +790,7 @@ function buildExportBundle(input: AdminDiagnosticExportStartInput): Record<strin
       approvalRequired: Boolean(event.approval_required),
       approvedBy: event.approved_by,
       errorCode: event.error_code,
-      retryCount: event.retry_count,
+      signalCount: event.retry_count,
       stopReason: event.stop_reason,
     })),
     report,

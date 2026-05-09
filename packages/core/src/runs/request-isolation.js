@@ -29,61 +29,80 @@ export function createInboundMessageRecord(input) {
         rootIsolation: "new_root_by_default",
     };
 }
-const EXPLICIT_REFERENCE_PATTERNS = [
-    /(?:방금|아까|이전|기존|위(?:의)?|앞(?:의)?|그(?:거|것| 작업| 파일| 결과)?|저(?:거|것)|이(?:거|것)).{0,24}(?:다시|이어|계속|보내|전송|수정|고쳐|바꿔|업데이트|취소|확인)/u,
-    /(?:다시|이어|계속|보내|전송|수정|고쳐|바꿔|업데이트|취소|확인)\s*(?:해줘|해|줘|해주세요)?\s*(?:그(?:거|것)?|방금(?: 것)?|아까(?: 것)?|이전(?: 것)?|기존(?: 작업)?)/u,
-    /(?:same|that|it|this|previous|last|above|earlier)\s+(?:again|continue|resume|send|resend|fix|update|cancel|change)/i,
-    /(?:continue|resume|send|resend|fix|update|cancel|change)\s+(?:that|it|this|previous|last|same)/i,
-    /\b(?:continue|resume)\b/i,
-    /(?:계속|이어서)\s*(?:해|진행|처리|이어|계속)?/u,
-];
-const SCREEN_CAPTURE_PATTERNS = [
-    /(?:화면|스크린|모니터|디스플레이|display|screen|monitor).*(?:캡처|캡쳐|스크린샷|찍어|보여|capture|screenshot|show)/iu,
-    /(?:캡처|캡쳐|스크린샷|capture|screenshot).*(?:화면|스크린|모니터|디스플레이|display|screen|monitor)/iu,
-];
-const WINDOW_LIST_PATTERN = /(?:창|윈도우|window).*(?:목록|리스트|list|보여|확인)|(?:window_list)/iu;
-const FILE_SEND_PATTERN = /(?:파일|artifact|첨부|이미지|스크린샷).*(?:보내|전송|send|upload|attach)/iu;
-const WEATHER_CURRENT_PATTERN = /(?:날씨|weather).*(?:지금|현재|오늘|어때|알려|current|now|today)|(?:지금|현재|오늘).*(?:날씨|weather)/iu;
-const FINANCE_INDEX_CURRENT_PATTERN = /(?:코스피|kospi|코스닥|kosdaq|나스닥|nasdaq|다우|dow|s&p|sp500|지수|index).*(?:지금|현재|오늘|얼마|알려|current|now|today|price|quote)|(?:지금|현재|오늘).*(?:코스피|kospi|코스닥|kosdaq|나스닥|nasdaq|지수|index)/iu;
 function contractRequiresToolExecution(contract) {
     return contract?.actionType === "run_tool" || contract?.requiresApproval === true;
 }
 function contractTargetsDisplay(contract) {
-    return contract?.target.kind === "display" || /display|screen|monitor|화면|모니터/i.test(contract?.target.id ?? contract?.target.displayName ?? "");
+    const targetId = contract?.target.id?.trim();
+    return contract?.target.kind === "display"
+        || targetId === "display"
+        || targetId?.startsWith("display:") === true
+        || targetId?.startsWith("screen:") === true
+        || targetId?.startsWith("monitor:") === true;
+}
+function contractTargetsWindowList(contract) {
+    const targetId = contract?.target.id?.trim();
+    return targetId === "window:list" || targetId === "windows:list" || targetId?.startsWith("window:") === true;
+}
+function contractTargetsFileDelivery(contract) {
+    return contract?.target.kind === "file"
+        || contract?.target.kind === "artifact"
+        || contract?.delivery.mode === "direct_artifact";
+}
+function contractTargetsWeather(contract) {
+    const targetId = contract?.target.id?.trim();
+    return targetId === "weather" || targetId?.startsWith("weather:") === true;
+}
+function contractTargetsFinanceIndex(contract) {
+    const targetId = contract?.target.id?.trim();
+    return targetId === "finance" || targetId?.startsWith("finance:") === true || targetId?.startsWith("market-index:") === true;
+}
+function contractReferencesActiveRunCandidate(contract) {
+    if (!contract)
+        return false;
+    const targetId = contract.target.id?.trim();
+    if (contract.intentType === "cancel" || contract.intentType === "update")
+        return true;
+    if (contract.target.kind === "run" || contract.target.kind === "artifact" || contract.target.kind === "schedule")
+        return true;
+    if (contract.delivery.explicitResend === true)
+        return true;
+    return targetId?.startsWith("run:") === true
+        || targetId?.startsWith("request-group:") === true
+        || targetId?.startsWith("approval:") === true
+        || targetId?.startsWith("artifact:") === true
+        || targetId?.startsWith("schedule:") === true;
 }
 export function detectExplicitToolIntent(message, contract) {
-    const text = message.trim();
-    if (!text)
+    void message;
+    if (!contractRequiresToolExecution(contract))
         return null;
-    if (SCREEN_CAPTURE_PATTERNS.some((pattern) => pattern.test(text)) || (contractRequiresToolExecution(contract) && contractTargetsDisplay(contract)))
+    if (contractTargetsDisplay(contract) || contract?.target.kind === "camera")
         return "screen_capture";
-    if (WINDOW_LIST_PATTERN.test(text))
+    if (contractTargetsWindowList(contract))
         return "window_list";
-    if (FILE_SEND_PATTERN.test(text))
+    if (contractTargetsFileDelivery(contract))
         return "file_send";
-    if (WEATHER_CURRENT_PATTERN.test(text))
+    if (contractTargetsWeather(contract))
         return "weather_current";
-    if (FINANCE_INDEX_CURRENT_PATTERN.test(text))
+    if (contractTargetsFinanceIndex(contract))
         return "finance_index_current";
     return null;
 }
 export function hasExplicitContinuationReference(message) {
-    const text = message.trim();
-    if (!text)
-        return false;
-    return EXPLICIT_REFERENCE_PATTERNS.some((pattern) => pattern.test(text));
+    void message;
+    return false;
 }
 export function shouldInspectActiveRunCandidates(params) {
+    void params.message;
     if (params.hasRequestGroupId)
         return false;
     if (params.hasExplicitCandidateId)
         return true;
     if (!params.hasStructuredIncomingContract)
         return false;
-    if (params.forceRequestGroupReuse || hasExplicitContinuationReference(params.message))
+    if (params.forceRequestGroupReuse)
         return true;
-    if (detectExplicitToolIntent(params.message, params.incomingIntentContract))
-        return false;
-    return false;
+    return contractReferencesActiveRunCandidate(params.incomingIntentContract);
 }
 //# sourceMappingURL=request-isolation.js.map

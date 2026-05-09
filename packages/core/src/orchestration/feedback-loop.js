@@ -18,13 +18,6 @@ export function decideFeedbackLoopContinuation(input) {
             normalizedFailureKey,
         };
     }
-    if (input.retryBudgetRemaining <= 0 || input.review.retryBudgetRemaining <= 0) {
-        return {
-            action: "blocked_retry_budget_exhausted",
-            reasonCode: "sub_agent_result_review_retry_budget_exhausted",
-            ...(normalizedFailureKey ? { normalizedFailureKey } : {}),
-        };
-    }
     if (!input.review.canRetry && !input.review.feedbackRequest) {
         return {
             action: "blocked_review_not_retryable",
@@ -92,9 +85,6 @@ export function buildFeedbackLoopPackage(input) {
     const reasonCode = input.review.normalizedFailureKey ?? "sub_agent_result_review_feedback_required";
     const exchangeId = `exchange:feedback:${feedbackRequestId}`;
     const additionalContextRefs = unique([...(input.additionalContextRefs ?? []), exchangeId]);
-    const retryBudgetRemaining = Math.max(0, input.retryBudgetRemaining ??
-        input.review.feedbackRequest?.retryBudgetRemaining ??
-        Math.max(0, input.review.retryBudgetRemaining - 1));
     const synthesizedContext = createDataExchangePackage({
         sourceOwner,
         recipientOwner,
@@ -186,7 +176,6 @@ export function buildFeedbackLoopPackage(input) {
         additionalConstraints,
         additionalContextRefs,
         expectedRevisionOutputs: input.expectedOutputs,
-        retryBudgetRemaining,
         reasonCode,
         createdAt: now,
     };
@@ -254,7 +243,6 @@ export function buildRedelegatedSubSessionInput(input) {
                 : []),
         ]),
         expectedOutputs,
-        retryBudget: input.feedbackRequest.retryBudgetRemaining,
     };
     const promptBundle = buildRedelegatedPromptBundle({
         source,

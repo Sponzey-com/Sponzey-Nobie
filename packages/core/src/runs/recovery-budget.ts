@@ -20,16 +20,9 @@ export function createRecoveryBudgetUsage(): RecoveryBudgetUsage {
 }
 
 export function getRecoveryBudgetLimit(kind: RecoveryBudgetKind, maxDelegationTurns: number): number {
-  if (maxDelegationTurns <= 0) return 0
-
-  switch (kind) {
-    case "interpretation":
-    case "execution":
-    case "delivery":
-    case "external":
-    default:
-      return maxDelegationTurns
-  }
+  void kind
+  void maxDelegationTurns
+  return 0
 }
 
 export function getRecoveryBudgetState(params: {
@@ -71,28 +64,19 @@ export function consumeRecoveryBudget(params: {
 }
 
 export function formatRecoveryBudgetProgress(state: RecoveryBudgetState): string {
-  return `${state.used}/${state.limit > 0 ? state.limit : "무제한"}`
+  return `신호 ${state.used}`
 }
 
 export function getSubSessionRevisionBudgetLimit(budgetClass: SubSessionRevisionBudgetClass = "default"): number {
-  switch (budgetClass) {
-    case "format_only":
-      return 3
-    case "risk_or_external":
-    case "expensive":
-      return 1
-    case "default":
-    default:
-      return 2
-  }
+  void budgetClass
+  return Number.MAX_SAFE_INTEGER
 }
 
 export function canRetrySubSessionRevision(params: {
-  retryBudgetRemaining: number
   budgetClass?: SubSessionRevisionBudgetClass
   repeatedFailure?: boolean
 }): boolean {
+  void params.budgetClass
   if (params.repeatedFailure) return false
-  const limit = getSubSessionRevisionBudgetLimit(params.budgetClass ?? "default")
-  return Math.min(Math.max(0, params.retryBudgetRemaining), limit) > 0
+  return true
 }

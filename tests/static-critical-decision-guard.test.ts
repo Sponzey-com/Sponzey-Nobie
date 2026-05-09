@@ -33,6 +33,7 @@ describe("static critical decision guard", () => {
 
       if (entry.languageSensitive || entry.category === "temporary-guard") {
         expect(entry.migrationTask, `${entry.id} needs a migration task`).toMatch(/^Task \d{3}(, Task \d{3})*$/)
+        expect(entry.migrationReason?.trim(), `${entry.id} needs a migration/removal reason`).not.toBe("")
       }
 
       if (FORBIDDEN_FINAL_SIGNAL_KINDS.has(entry.signalKind)) {
@@ -70,6 +71,8 @@ describe("static critical decision guard", () => {
       expect(entry?.file, `${rule.ruleId} should point to the same file as its entry`).toBe(rule.file)
       expect(entry?.category, `${rule.ruleId} must remain temporary/candidate/display until contract migration`).not.toBe("critical-decision")
       expect(FORBIDDEN_FINAL_SIGNAL_KINDS.has(entry?.signalKind ?? "structured-id-or-key")).toBe(true)
+      expect(rule.migrationTask, `${rule.ruleId} needs a migration task`).toMatch(/^Task \d{3}(, Task \d{3})*$/)
+      expect(rule.migrationReason.trim(), `${rule.ruleId} needs a migration/removal reason`).not.toBe("")
 
       const source = readRepoFile(rule.file)
       expect(source, `${rule.ruleId} no longer matches source; update the audit inventory before changing guard logic`).toMatch(rule.pattern)

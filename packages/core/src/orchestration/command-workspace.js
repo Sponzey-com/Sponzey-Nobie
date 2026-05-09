@@ -661,17 +661,15 @@ function templateAgentConfig(template, overrides) {
             }),
             rateLimit: { maxConcurrentCalls: 1 },
         },
-        delegationPolicy: {
-            enabled: false,
-            maxParallelSessions: 1,
-            retryBudget: 0,
-        },
+            delegationPolicy: {
+                enabled: false,
+                maxParallelSessions: 1,
+            },
         teamIds,
-        delegation: {
-            enabled: false,
-            maxParallelSessions: 1,
-            retryBudget: 0,
-        },
+            delegation: {
+                enabled: false,
+                maxParallelSessions: 1,
+            },
         profileVersion: 1,
         createdAt: now,
         updatedAt: now,
@@ -832,17 +830,15 @@ export function importExternalAgentProfileDraft(input) {
             },
             rateLimit: { maxConcurrentCalls: 1 },
         },
-        delegationPolicy: {
-            enabled: false,
-            maxParallelSessions: 1,
-            retryBudget: 0,
-        },
+            delegationPolicy: {
+                enabled: false,
+                maxParallelSessions: 1,
+            },
         teamIds: asStringArray(overrides.teamIds) ?? ["team:imported:drafts"],
-        delegation: {
-            enabled: false,
-            maxParallelSessions: 1,
-            retryBudget: 0,
-        },
+            delegation: {
+                enabled: false,
+                maxParallelSessions: 1,
+            },
         profileVersion: 1,
         createdAt: now,
         updatedAt: now,

@@ -9,8 +9,9 @@ export interface ReviewGateDecision {
     reason?: string;
 }
 export interface SubSessionReviewGateDecision {
-    kind: "allow_parent_completion" | "wait_for_revision" | "manual_action_required";
+    kind: "allow_parent_completion" | "wait_for_revision" | "parent_aggregation_required" | "manual_action_required";
     blockedSubSessionIds: string[];
+    limitedSubSessionIds?: string[];
     reasonCodes: string[];
 }
 export declare function decideReviewGate(params: {
@@ -24,6 +25,6 @@ export declare function decideReviewGate(params: {
 }): ReviewGateDecision;
 export declare function decideSubSessionReviewGate(reviews: Array<{
     subSessionId: string;
-    review: Pick<SubAgentResultReview, "accepted" | "canRetry" | "normalizedFailureKey" | "manualActionReason">;
+    review: Pick<SubAgentResultReview, "accepted" | "canRetry" | "normalizedFailureKey" | "manualActionReason"> & Partial<Pick<SubAgentResultReview, "verdict" | "parentIntegrationStatus">>;
 }>): SubSessionReviewGateDecision;
 //# sourceMappingURL=review-gate.d.ts.map

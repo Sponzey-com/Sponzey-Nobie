@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
+import { aggregateSubSessionResultsForParent, buildParentAggregationRuntimeEvent, reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
 import { recordControlEvent } from "../control-plane/timeline.js";
@@ -9,7 +9,7 @@ import { recordLateResultNoReply } from "../runs/channel-finalizer.js";
 import { recordMessageLedgerEvent } from "../runs/message-ledger.js";
 import { appendRunEvent, getRootRun } from "../runs/store.js";
 import { recordOrchestrationEvent } from "./event-ledger.js";
-import { buildModelExecutionAuditSummary, estimateTokenCount, resolveFallbackModelExecutionPolicy, resolveModelExecutionPolicy, } from "./model-execution-policy.js";
+import { buildModelExecutionAuditSummary, estimateTokenCount, resolveModelExecutionPolicy, } from "./model-execution-policy.js";
 import { validateNestedCommandRequest } from "./nested-delegation.js";
 import { createSubSessionProgressAggregator, } from "./sub-session-progress-aggregation.js";
 export const SUB_SESSION_STATUS_TRANSITIONS = {
@@ -258,7 +258,6 @@ export function buildSubSessionContract(input) {
         ...(agentNickname ? { agentNickname } : {}),
         commandRequestId: input.command.commandRequestId,
         status: "created",
-        retryBudgetRemaining: input.command.retryBudget,
         promptBundleId: input.promptBundle.bundleId,
         promptBundleSnapshot: input.promptBundle,
         ...(input.modelExecutionPolicy ? { modelExecutionSnapshot: input.modelExecutionPolicy } : {}),
@@ -719,12 +718,6 @@ export class SubSessionRunner {
             });
             const review = await this.reviewResultReport(effectiveInput, result, subSession);
             const terminalStatus = review.status;
-            if (terminalStatus === "failed") {
-                subSession.retryBudgetRemaining = Math.max(0, subSession.retryBudgetRemaining - 1);
-            }
-            else if (terminalStatus === "needs_revision") {
-                subSession.retryBudgetRemaining = Math.max(0, review.feedbackRequest?.retryBudgetRemaining ?? subSession.retryBudgetRemaining - 1);
-            }
             await this.changeStatus(subSession, terminalStatus);
             await this.flushProgressBatch(subSession.parentRunId, "terminal_flush");
             recordLatencyMetric({
@@ -756,6 +749,32 @@ export class SubSessionRunner {
                     issueCodes: review.issues.map((issue) => issue.code),
                     normalizedFailureKey: review.normalizedFailureKey ?? null,
                 },
+            });
+            const parentAggregationTrace = aggregateSubSessionResultsForParent({
+                parentRunId: subSession.parentRunId,
+                ...(subSession.parentAgentId
+                    ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
+                    : {}),
+                successCriteria: effectiveInput.command.expectedOutputs.map((output) => output.description || output.outputId),
+                childResults: [{
+                        subSessionId: subSession.subSessionId,
+                        resultReport: result,
+                        review,
+                        canUseSameChild: review.canRetry,
+                    }],
+            });
+            const parentAggregationEvent = buildParentAggregationRuntimeEvent(parentAggregationTrace);
+            await this.dependencies.appendParentEvent(subSession.parentRunId, `parent_child_result_aggregated:${subSession.subSessionId}:${parentAggregationTrace.nextAction}`);
+            recordOrchestrationEventSafely({
+                eventKind: "parent_child_result_aggregated",
+                runId: subSession.parentRunId,
+                subSessionId: subSession.subSessionId,
+                agentId: subSession.agentId,
+                correlationId: subSession.parentRunId,
+                dedupeKey: `orchestration:parent-child-result-aggregated:${subSession.parentRunId}:${subSession.subSessionId}:${result.resultReportId}`,
+                source: "sub-session-runner",
+                summary: parentAggregationEvent.summary,
+                payload: { ...parentAggregationEvent.payload },
             });
             try {
                 this.dependencies.recordReviewEvent({
@@ -795,18 +814,15 @@ export class SubSessionRunner {
             };
         }
         catch (error) {
-            if (!(error instanceof SubSessionTimeoutError) &&
-                (controller.signal.aborted || isAbortLike(error))) {
+            if (controller.signal.aborted || isAbortLike(error)) {
                 return this.markCancelled(effectiveInput, subSession, "sub_session_cancelled");
             }
             const errorReport = buildErrorReport({
                 idProvider: this.idProvider,
                 command: effectiveInput.command,
-                reasonCode: error instanceof SubSessionTimeoutError
-                    ? "sub_session_timeout"
-                    : "sub_session_handler_error",
+                reasonCode: "sub_session_handler_error",
                 safeMessage: asErrorMessage(error),
-                retryable: subSession.retryBudgetRemaining > 1,
+                retryable: true,
             });
             const failedModelExecution = lastModelExecution ??
                 (subSession.modelExecutionSnapshot && "status" in subSession.modelExecutionSnapshot
@@ -824,7 +840,6 @@ export class SubSessionRunner {
                     replayed: false,
                 };
             }
-            subSession.retryBudgetRemaining = Math.max(0, subSession.retryBudgetRemaining - 1);
             await this.changeStatus(subSession, "failed");
             await this.flushProgressBatch(subSession.parentRunId, "terminal_flush");
             await this.dependencies.appendParentEvent(subSession.parentRunId, `sub_session_failed:${subSession.subSessionId}:${errorReport.reasonCode}`);
@@ -975,7 +990,6 @@ export class SubSessionRunner {
                 agentNickname: subSession.agentNickname ?? null,
                 agentNicknameSnapshot: subSession.agentNickname ?? null,
                 status: subSession.status,
-                retryBudgetRemaining: subSession.retryBudgetRemaining,
                 ...detail,
             },
         });
@@ -991,7 +1005,6 @@ export class SubSessionRunner {
         return reviewSubAgentResult({
             resultReport,
             expectedOutputs: input.command.expectedOutputs,
-            retryBudgetRemaining: subSession.retryBudgetRemaining,
             retryClass: classifyRetryClass(input),
             additionalContextRefs: input.command.contextPackageIds,
         });
@@ -1001,125 +1014,73 @@ export class SubSessionRunner {
             throw new Error(input.modelPolicy.userMessage);
         }
         const initialSnapshot = input.modelPolicy.snapshot;
-        let policy = { ...input.modelPolicy, snapshot: initialSnapshot };
-        let attempts = 0;
-        let maxAttempts = Math.max(1, initialSnapshot.retryCount + 1);
         const startedAt = this.now();
-        let lastError;
-        while (attempts < maxAttempts) {
-            attempts += 1;
-            const attemptSnapshot = policy.snapshot;
-            if (!attemptSnapshot)
-                break;
-            const attemptController = new AbortController();
-            const abortAttempt = () => attemptController.abort();
-            input.rootController.signal.addEventListener("abort", abortAttempt, { once: true });
-            if (input.rootController.signal.aborted)
-                attemptController.abort();
-            try {
-                const result = await this.runWithTimeout(() => input.handler({ ...input.input, modelExecutionPolicy: attemptSnapshot }, {
-                    signal: attemptController.signal,
-                    modelExecution: attemptSnapshot,
-                    emitProgress: async (summary, status = input.subSession.status) => {
-                        if (status !== input.subSession.status) {
-                            await this.changeStatus(input.subSession, status);
-                        }
-                        const progress = buildProgressEvent({
-                            idProvider: this.idProvider,
-                            now: this.now(),
-                            command: input.input.command,
-                            status,
-                            summary,
-                        });
-                        await this.dependencies.appendParentEvent(input.subSession.parentRunId, `sub_session_progress:${input.subSession.subSessionId}:${summary}`);
-                        await this.recordSubSessionProgress(input.subSession, progress);
-                        return progress;
-                    },
-                }), attemptController, input.input.timeoutMs ?? attemptSnapshot.timeoutMs, input.setTimer);
-                const latencyMs = Math.max(0, this.now() - startedAt);
-                const audit = buildModelExecutionAuditSummary({
-                    snapshot: attemptSnapshot,
-                    status: "completed",
-                    attemptCount: attempts,
-                    latencyMs,
-                    outputText: JSON.stringify(result.outputs),
-                });
-                recordLatencyMetric({
-                    name: "model_execution_latency_ms",
-                    durationMs: latencyMs,
-                    runId: input.subSession.parentRunId,
-                    sessionId: input.subSession.parentSessionId,
-                    detail: {
-                        subSessionId: input.subSession.subSessionId,
-                        agentId: input.subSession.agentId,
-                        providerId: audit.providerId,
-                        modelId: audit.modelId,
-                        fallbackApplied: audit.fallbackApplied,
-                        attemptCount: attempts,
-                        estimatedCost: audit.estimatedCost,
-                        tokenUsage: audit.tokenUsage,
-                    },
-                });
-                this.recordSubSessionLifecycleEvent(input.subSession, "sub_session_completed", "succeeded", `model_execution_completed:${audit.providerId}:${audit.modelId}`, { modelExecution: audit });
-                return { result, audit };
-            }
-            catch (error) {
-                lastError = error;
-                input.rootController.signal.removeEventListener("abort", abortAttempt);
-                if (input.rootController.signal.aborted || isAbortLike(error))
-                    throw error;
-                if (error instanceof SubSessionTimeoutError) {
-                    const fallback = resolveFallbackModelExecutionPolicy({
-                        current: policy,
-                        reasonCode: "sub_session_timeout",
-                        promptBundle: input.input.promptBundle,
-                        ...(input.input.providerModelMatrix
-                            ? { providerMatrix: input.input.providerModelMatrix }
-                            : {}),
-                        ...(input.input.modelAvailabilityDoctor
-                            ? { doctor: input.input.modelAvailabilityDoctor }
-                            : {}),
-                    });
-                    if (fallback.snapshot && fallback.snapshot !== policy.snapshot) {
-                        policy = fallback;
-                        maxAttempts += 1;
-                        await this.dependencies.appendParentEvent(input.subSession.parentRunId, `sub_session_model_fallback:${input.subSession.subSessionId}:${fallback.snapshot.modelId}:sub_session_timeout`);
-                        continue;
+        const attemptController = new AbortController();
+        const abortAttempt = () => attemptController.abort();
+        input.rootController.signal.addEventListener("abort", abortAttempt, { once: true });
+        if (input.rootController.signal.aborted)
+            attemptController.abort();
+        try {
+            const result = await input.handler({ ...input.input, modelExecutionPolicy: initialSnapshot }, {
+                signal: attemptController.signal,
+                modelExecution: initialSnapshot,
+                emitProgress: async (summary, status = input.subSession.status) => {
+                    if (status !== input.subSession.status) {
+                        await this.changeStatus(input.subSession, status);
                     }
-                }
-                if (attempts < maxAttempts) {
-                    await this.dependencies.appendParentEvent(input.subSession.parentRunId, `sub_session_model_retry:${input.subSession.subSessionId}:${attempts}:${error instanceof SubSessionTimeoutError ? "sub_session_timeout" : "sub_session_handler_error"}`);
-                }
-            }
-            finally {
-                input.rootController.signal.removeEventListener("abort", abortAttempt);
-            }
-        }
-        const snapshot = policy.snapshot ?? input.modelPolicy.snapshot;
-        if (snapshot) {
+                    const progress = buildProgressEvent({
+                        idProvider: this.idProvider,
+                        now: this.now(),
+                        command: input.input.command,
+                        status,
+                        summary,
+                    });
+                    await this.dependencies.appendParentEvent(input.subSession.parentRunId, `sub_session_progress:${input.subSession.subSessionId}:${summary}`);
+                    await this.recordSubSessionProgress(input.subSession, progress);
+                    return progress;
+                },
+            });
+            const latencyMs = Math.max(0, this.now() - startedAt);
             const audit = buildModelExecutionAuditSummary({
-                snapshot,
+                snapshot: initialSnapshot,
+                status: "completed",
+                attemptCount: 1,
+                latencyMs,
+                outputText: JSON.stringify(result.outputs),
+            });
+            recordLatencyMetric({
+                name: "model_execution_latency_ms",
+                durationMs: latencyMs,
+                runId: input.subSession.parentRunId,
+                sessionId: input.subSession.parentSessionId,
+                detail: {
+                    subSessionId: input.subSession.subSessionId,
+                    agentId: input.subSession.agentId,
+                    providerId: audit.providerId,
+                    modelId: audit.modelId,
+                    fallbackApplied: audit.fallbackApplied,
+                    estimatedCost: audit.estimatedCost,
+                    tokenUsage: audit.tokenUsage,
+                },
+            });
+            this.recordSubSessionLifecycleEvent(input.subSession, "sub_session_completed", "succeeded", `model_execution_completed:${audit.providerId}:${audit.modelId}`, { modelExecution: audit });
+            return { result, audit };
+        }
+        catch (error) {
+            if (input.rootController.signal.aborted || isAbortLike(error))
+                throw error;
+            const audit = buildModelExecutionAuditSummary({
+                snapshot: initialSnapshot,
                 status: "failed",
-                attemptCount: attempts,
+                attemptCount: 1,
                 latencyMs: Math.max(0, this.now() - startedAt),
             });
             input.subSession.modelExecutionSnapshot = audit;
+            throw error instanceof Error ? error : new Error(String(error ?? "model failed"));
         }
-        throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "model failed"));
-    }
-    async runWithTimeout(run, controller, timeoutMs, setTimer) {
-        if (!timeoutMs || timeoutMs <= 0)
-            return run();
-        return Promise.race([
-            Promise.resolve().then(run),
-            new Promise((_resolve, reject) => {
-                const timer = setTimeout(() => {
-                    controller.abort();
-                    reject(new SubSessionTimeoutError());
-                }, timeoutMs);
-                setTimer(timer);
-            }),
-        ]);
+        finally {
+            input.rootController.signal.removeEventListener("abort", abortAttempt);
+        }
     }
 }
 function classifyRetryClass(input) {
@@ -1443,12 +1404,6 @@ function defaultIsParentFinalized(parentRunId) {
     }
     catch {
         return false;
-    }
-}
-class SubSessionTimeoutError extends Error {
-    constructor() {
-        super("sub-session execution timed out");
-        this.name = "SubSessionTimeoutError";
     }
 }
 export function createTextResultReport(input) {

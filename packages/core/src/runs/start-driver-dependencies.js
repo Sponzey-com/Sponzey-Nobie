@@ -3,7 +3,7 @@ import { insertMessage } from "../db/index.js";
 import { getConfig } from "../config/index.js";
 import { grantRunApprovalScope, grantRunSingleApproval } from "../tools/dispatcher.js";
 import { logAssistantReply } from "./delivery.js";
-import { appendRunEvent, cancelRootRun, clearActiveRunController, getRootRun, incrementDelegationTurnCount, setRunStepStatus, updateRunStatus, updateRunSummary, } from "./store.js";
+import { appendRunEvent, cancelRootRun, clearActiveRunController, getRootRun, incrementDelegationTurnCount, mergeRunPromptSourceSnapshot, setRunStepStatus, updateRunStatus, updateRunSummary, } from "./store.js";
 import { markAbortedRunCancelledIfActive, normalizeTaskProfile, rememberRunFailure, rememberRunSuccess, runFilesystemVerificationSubtask, tryHandleActiveQueueCancellation, } from "./start-support.js";
 import { buildStartFinalizationDependencies, executeStartLoopDirective, runStartIntakeBridge, } from "./start-bridges.js";
 import { enqueueSessionIntake } from "./intake-queue.js";
@@ -79,6 +79,10 @@ export function buildStartRootRunDriverDependencies(params) {
             onChunk: params.onChunk,
             directive,
             finalizationDependencies,
+            ...(params.suppressFinalDelivery ? {
+                suppressFinalDelivery: true,
+                suppressFinalDeliveryReasonCode: "child_result_parent_aggregation_required",
+            } : {}),
         }),
         tryHandleActiveQueueCancellation: () => tryHandleActiveQueueCancellation({
             runId: params.runId,
@@ -96,6 +100,8 @@ export function buildStartRootRunDriverDependencies(params) {
                 sessionId: params.sessionId,
                 requestGroupId: params.requestGroupId,
                 model: params.model,
+                ...(params.providerId ? { providerId: params.providerId } : {}),
+                ...(params.provider ? { provider: params.provider } : {}),
                 workDir: params.workDir,
                 source: params.source,
                 runId: params.runId,
@@ -120,6 +126,13 @@ export function buildStartRootRunDriverDependencies(params) {
                 emitScheduleCreated: (payload) => eventBus.emit("schedule.created", payload),
                 emitScheduleCancelled: (payload) => eventBus.emit("schedule.cancelled", payload),
                 normalizeTaskProfile,
+                recordExecutionDecisionTrace: ({ runId, agentExecutionDecision, executionDecisionTrace }) => {
+                    mergeRunPromptSourceSnapshot(runId, {
+                        agentExecutionDecision,
+                        executionDecisionSource: executionDecisionTrace.decision_source,
+                        executionDecisionTrace,
+                    });
+                },
                 logInfo: (message, payload) => {
                     params.logInfo(message, payload);
                 },

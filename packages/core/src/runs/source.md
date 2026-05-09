@@ -58,7 +58,7 @@
 - `external-recovery-pass.ts`: external recovery의 `plan -> apply -> next state` pass helper
 - `external-recovery-sequence.ts`: `ai -> worker_runtime` 외부 복구 순회와 next state 적용 helper
 - `external-retry-application.ts`: external recovery의 실패 기록, external budget 소모, retry/stop 적용 helper
-- `recovery-entry-pass.ts`: 실행 복구 한도 중단, external recovery sequence, failed/aborted 종료를 묶는 복구 진입 helper
+- `recovery-entry-pass.ts`: 실행 복구 중단, external recovery sequence, failed/aborted 종료를 묶는 복구 진입 helper
 - `filesystem-recovery.ts`: 실제 파일 변경 없음/검증 실패에 대한 `initial_retry/retry/stop/verified` decision helper
 - `filesystem-postpass.ts`: 파일 변경 없음/검증 subrun/verification decision을 묶는 filesystem post-pass helper
 - `filesystem-postpass-application.ts`: filesystem post-pass의 `stop/initial_retry/retry/verified` 적용 helper
@@ -183,14 +183,14 @@
 - 일정 생성 시 direct delivery 여부와 예약 전달 대상은 `followup_run_payload.literal_text`와 `followup_run_payload.destination`을 우선 사용해서, 등록 시점과 실행 시점 모두 같은 구조화 정보로 direct completion을 판단합니다.
 - 예약 등록/취소와 delegated follow-up prompt/receipt 조립은 이제 `action-execution.ts`에서 테스트 가능한 helper로 다루고, `start.ts`는 그 결과를 받아 루프에 반영하는 쪽으로 더 얇아졌습니다.
 - intake 단계의 일정 action이 전부 실패하면 그 실패 receipt를 바로 `completed`로 닫지 않고, 메인 루프 안에서 `retry_intake` directive로 다시 intake 재분석을 시도합니다.
-- 이때 재질의 예산도 함께 사용하며, 한도에 닿으면 `일정 해석 복구 재시도 한도`로 취소 상태에 정리합니다.
+- 이때 재질의 횟수 한도 때문에 멈추지 않고, 같은 실패키 반복 여부와 새 안전 대안 존재 여부로만 자동 재시도를 판단합니다.
 - schedule recovery용 intake 재분석은 현재 루프의 `currentMessage`를 사용하되, 후속 실행과 예약 등록에 남는 `originalRequest`는 계속 원래 사용자 요청을 유지합니다.
 - 실패 유형 분류, route change 판정, AI/worker/command recovery prompt 조립, 중간 절단 복구 판정은 `recovery.ts`로 분리해 `start.ts`에서 떼어내기 시작했습니다.
 - 이 분리 덕분에 `start.ts`는 메인 루프 상태 전환과 receipt 반영에 더 집중하고, recovery key/프롬프트/동일 실패 회피 규칙은 별도 테스트 대상으로 유지합니다.
 - direct artifact 전달 실패도 `recovery.ts`의 delivery recovery candidate로 분리해, 메신저 결과물 전달 재시도 요약/사유/remaining items를 메인 루프가 직접 만들지 않도록 정리하고 있습니다.
 - 최종 텍스트 전달 실패도 `recovery.ts`에서 채널/실패 단계별 설명으로 정리해, Telegram/WebUI/CLI의 delivery failure event를 같은 기준으로 남기는 방향으로 정리하고 있습니다.
 - recovery candidate는 이제 `alternatives`를 포함해 `다른 도구 / 다른 연장 / 다른 채널 / 다른 일정 / 같은 채널 재전송` 후보를 구조화합니다. 메인 루프는 이 구조를 event와 recovery prompt에 그대로 반영합니다.
-- recovery retry는 이제 전역 delegation count만 보지 않고 `interpretation / execution / delivery / external`별 budget도 따로 확인합니다. 전달 실패가 execution 복구 예산을 모두 소모하지 않도록 정리하기 시작했습니다.
+- recovery retry는 `interpretation / execution / delivery / external`별 사용량을 기록하되, 고정 횟수 한도로 일반 복구를 중단하지 않습니다. 반복 실패키, 새 대안 없음, 승인/개인정보/위험 작업 필요 여부가 중단 기준입니다.
 - 메인 루프의 완료/승인/직접 전달/절단 복구 판단은 이제 `request-semantics.ts`의 원문 해석보다 intake가 넘긴 `execution_semantics`와 `structured_request`를 우선 사용합니다.
 - request-group 재연결과 활성 실행 취소 같은 진입 해석은 `runs/entry-semantics.ts`에서 처리하고, `start.ts`는 그 결과만 사용합니다.
 - 일부 파일 검증 대상 추론은 아직 원 요청 문자열을 참고하지만, `Task Intake Bridge` 문구를 다시 파싱하는 방식은 제거했습니다.
@@ -220,7 +220,7 @@
 - `external-retry-application.ts`는 external recovery 재시도 적용 경계입니다. AI/worker runtime 복구 실패 기록, external budget 사용, retry/stop 상태 전환을 `start.ts` 밖으로 공통화합니다.
 - `filesystem-recovery.ts`는 파일 작업 복구 경계입니다. 실제 파일 변경이 없는 경우와 검증 실패 경우를 `initial_retry/retry/stop/verified` decision으로 구조화해, `start.ts`가 직접 문자열과 분기를 오래 들고 있지 않게 정리합니다.
 - `filesystem-postpass.ts`는 파일 변경/검증 post-pass orchestration 경계입니다. missing mutation decision, verification subrun 호출, verification decision 적용을 하나의 helper 결과로 묶어 `start.ts`가 큰 두 블록을 직접 들고 있지 않게 정리합니다.
-- `delivery-postpass.ts`는 전달 후처리 경계입니다. preview 보정, 직접 결과 전달 완료, direct artifact delivery 복구 재시도/중단 결정을 메인 루프 밖 helper로 공통화합니다.
+- `delivery-postpass.ts`는 전달 후처리 경계입니다. preview 보정, 직접 결과 전달 완료, direct artifact delivery 복구/중단 결정을 메인 루프 밖 helper로 공통화합니다.
 - `delivery-pass.ts`는 전달 후처리 계산 경계입니다. delivery outcome, preview 보정, direct delivery application을 한 번에 계산해 `start.ts`가 전달 후처리 계산을 흩어 들고 있지 않도록 정리합니다.
 - `delivery-application.ts`는 direct artifact 전달 decision의 실제 적용 경계입니다. `start.ts`는 성공/중단/재시도 상태 반영만 하고, 전달 복구의 title/detail/step summary는 helper가 구조화합니다.
 - `delivery.ts`의 `deliverTrackedChunk()`는 실행 루프가 `deliverChunk + applyChunkDeliveryReceipt`를 직접 묶지 않도록, chunk 전달과 receipt 적용을 delivery 계층에서 한 번에 처리합니다.
@@ -249,4 +249,4 @@
 - 예약/알림 취소 문장은 일반 active run 취소와 섞이지 않도록 분리하고, schedule action 경로에서는 실제 스케줄 비활성화와 system scheduler 엔트리 제거까지 같이 처리합니다.
 - 단순한 메신저 전달 예약(`"..." 라고 말해줘`)은 가능하면 채널 종류와 무관하게 AI 실행 없이 같은 채널로 직접 완료를 우선 시도하고, 직접 전달 정보를 만들 수 없을 때만 일반 예약 실행으로 폴백합니다.
 - AI/worker/execution 복구 프롬프트는 현재 실패 프롬프트를 다시 감싸지 않고 `originalUserRequest`만 기준으로 재구성해, 복구가 반복될수록 프롬프트가 자기 자신을 누적해서 비대해지는 현상을 줄입니다.
-- 작업이 멈추거나, 너무 빨리 끝나거나, 재시도가 이상하면 우선 이 폴더부터 보는 것이 맞습니다.
+- 작업이 멈추거나, 너무 빨리 끝나거나, 복구 신호가 이상하면 우선 이 폴더부터 보는 것이 맞습니다.

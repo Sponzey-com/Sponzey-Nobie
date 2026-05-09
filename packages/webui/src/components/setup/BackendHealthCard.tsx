@@ -351,7 +351,7 @@ export function BackendHealthCard({
 
         {showRoutingTags ? (
           <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-            <div className="text-sm font-semibold text-stone-900">{text("AI 라우팅 태그", "AI Routing Tags")}</div>
+            <div className="text-sm font-semibold text-stone-900">{text("AI 실행 대상", "AI execution targets")}</div>
             <div className="mt-3 flex flex-wrap gap-2">
               {routingProfiles.map((profile) => {
                 const active = profile.targets.includes(backend.id)

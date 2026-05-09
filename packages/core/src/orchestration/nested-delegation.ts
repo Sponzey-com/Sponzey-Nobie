@@ -6,6 +6,7 @@ import type {
   SubSessionContract,
 } from "../contracts/sub-agent-orchestration.js"
 import type { OrchestrationModeSnapshot } from "./mode.js"
+import type { AgentExecutionDecision } from "./execution-decision-contract.js"
 import {
   buildDefaultStructuredTaskScope,
   buildOrchestrationPlan,
@@ -51,6 +52,7 @@ export interface NestedDelegationPlannerInput {
   parentSubSessionDepth?: number
   taskScopes?: StructuredTaskScope[]
   intent?: OrchestrationPlannerIntent
+  agentExecutionDecision?: AgentExecutionDecision
   maxDepth?: number
   maxChildrenPerAgent?: number
   nestedSpawnBudgetRemaining?: number
@@ -71,7 +73,8 @@ export interface NestedDelegationPlanResult {
 }
 
 function normalizedPositiveInteger(value: number | undefined, fallback: number): number {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) return fallback
+  if (value === 0) return Number.MAX_SAFE_INTEGER
+  if (value === undefined || !Number.isFinite(value) || value < 0) return fallback
   return Math.floor(value)
 }
 
@@ -306,6 +309,9 @@ export function buildNestedDelegationPlan(
     taskScopes: budget.selectedTaskScopes,
     parentAgentId: input.parentAgentId,
     ...(input.intent ? { intent: input.intent } : {}),
+    ...(input.agentExecutionDecision
+      ? { agentExecutionDecision: input.agentExecutionDecision }
+      : {}),
     ...(input.now ? { now: input.now } : {}),
     ...(input.idProvider ? { idProvider: input.idProvider } : {}),
   })

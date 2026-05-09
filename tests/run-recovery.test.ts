@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildAiRecoveryKey,
+  buildCommandFailureRecoveryPrompt,
   buildRecoveryKey,
   summarizeRawErrorForUser,
   describeAssistantTextDeliveryFailure,
@@ -81,6 +82,53 @@ describe("run recovery helpers", () => {
     })
 
     expect(second).toBeNull()
+  })
+
+  it("keeps command recovery open when the failed command target changes", () => {
+    const first = selectCommandFailureRecovery({
+      failedTools: [{
+        toolName: "shell_exec",
+        output: "ls: /Users/demo/다운도르: No such file or directory",
+        params: { command: "ls -la /Users/demo/다운도르" },
+      }],
+      commandFailureSeen: true,
+      commandRecoveredWithinSamePass: false,
+      seenKeys: new Set<string>(),
+    })
+    expect(first).not.toBeNull()
+
+    const second = selectCommandFailureRecovery({
+      failedTools: [{
+        toolName: "shell_exec",
+        output: "ls: /Users/demo/Downloads/지뢰: No such file or directory",
+        params: { command: "ls -la /Users/demo/Downloads/지뢰" },
+      }],
+      commandFailureSeen: true,
+      commandRecoveredWithinSamePass: false,
+      seenKeys: new Set<string>([first?.key ?? ""]),
+    })
+
+    expect(second).not.toBeNull()
+  })
+
+  it("adds deterministic download-folder alias hints for Korean path typos", () => {
+    const prompt = buildCommandFailureRecoveryPrompt({
+      originalRequest: "다운도르 밑에 지뢰라는 폴더를 만들어줘",
+      previousResult: "",
+      summary: "shell_exec 실패 후 다른 방법을 자동으로 찾는 중입니다.",
+      reason: "대상 경로나 파일 이름이 맞지 않아 다른 경로나 다른 생성 방법을 찾아야 합니다.",
+      failedTools: [{
+        toolName: "shell_exec",
+        output: "ls: /Users/demo/다운도르: No such file or directory",
+        params: { command: "ls -la /Users/demo/다운도르" },
+      }],
+      alternatives: [],
+    })
+
+    expect(prompt).toContain("경로 별칭 후보")
+    expect(prompt).toContain("~/Downloads")
+    expect(prompt).toContain("다운도르")
+    expect(prompt).toContain("따옴표")
   })
 
   it("returns a delivery recovery candidate for missing direct artifact delivery", () => {

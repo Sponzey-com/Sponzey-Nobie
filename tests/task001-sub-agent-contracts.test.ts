@@ -105,7 +105,6 @@ const subAgentConfig: SubAgentConfig = {
   delegation: {
     enabled: true,
     maxParallelSessions: 2,
-    retryBudget: 2,
   },
 }
 
@@ -222,7 +221,7 @@ describe("task001 sub-agent orchestration contracts", () => {
       ...nobieConfig,
       agentType: "nobie",
       teamIds: ["team:research"],
-      delegation: { enabled: true, maxParallelSessions: 1, retryBudget: 1 },
+      delegation: { enabled: true, maxParallelSessions: 1 },
     })
 
     expect(invalid.ok).toBe(false)

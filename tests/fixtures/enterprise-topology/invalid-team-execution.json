@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "entityType": "topology",
+  "id": "topology:invalid-team-execution",
+  "name": "Invalid Team Execution Topology",
+  "status": "draft",
+  "createdAt": 1777392000000,
+  "updatedAt": 1777392000000,
+  "nodes": [],
+  "teams": [
+    {
+      "schemaVersion": 1,
+      "entityType": "team",
+      "id": "team:invalid",
+      "name": "Invalid Team",
+      "status": "draft",
+      "createdAt": 1777392000000,
+      "updatedAt": 1777392000000,
+      "nodeIds": [],
+      "tags": [],
+      "delegationPolicy": {
+        "enabled": true
+      }
+    }
+  ],
+  "orgUnits": [],
+  "positions": [],
+  "persons": [],
+  "memberships": [],
+  "authorityRules": [],
+  "responsibilities": [],
+  "systems": [],
+  "tools": [],
+  "processes": [],
+  "relations": []
+}

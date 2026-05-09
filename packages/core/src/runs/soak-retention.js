@@ -82,12 +82,12 @@ export const DEFAULT_RETENTION_POLICY = {
     schedule_history: { maxAgeMs: 90 * 24 * 60 * 60 * 1000, maxCount: 10_000, maxBytes: 256 * 1024 * 1024 },
 };
 export const DEFAULT_RETRY_POLICIES = {
-    model: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-    channel: { maxAttempts: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
-    yeonjang: { maxAttempts: 6, baseDelayMs: 5_000, maxDelayMs: 60_000 },
-    tool: { maxAttempts: 2, baseDelayMs: 1_000, maxDelayMs: 15_000 },
-    delivery: { maxAttempts: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
-    scheduler: { maxAttempts: 3, baseDelayMs: 5_000, maxDelayMs: 120_000 },
+    model: { strategyChangeSignalThreshold: 3, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+    channel: { strategyChangeSignalThreshold: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
+    yeonjang: { strategyChangeSignalThreshold: 6, baseDelayMs: 5_000, maxDelayMs: 60_000 },
+    tool: { strategyChangeSignalThreshold: 2, baseDelayMs: 1_000, maxDelayMs: 15_000 },
+    delivery: { strategyChangeSignalThreshold: 3, baseDelayMs: 2_000, maxDelayMs: 60_000 },
+    scheduler: { strategyChangeSignalThreshold: 3, baseDelayMs: 5_000, maxDelayMs: 120_000 },
 };
 export const DEFAULT_SOAK_HEALTH_THRESHOLDS = {
     runLatencyP95Ms: 15_000,
@@ -362,20 +362,19 @@ export function buildRetryFailureFingerprint(input) {
 }
 export function evaluateRetryBackoff(input) {
     const defaultPolicy = input.domain ? DEFAULT_RETRY_POLICIES[input.domain] : DEFAULT_RETRY_POLICIES.tool;
-    const attempt = Math.max(1, Math.trunc(input.attempt));
-    const maxAttempts = Math.max(1, Math.trunc(input.maxAttempts ?? defaultPolicy.maxAttempts));
+    const signalCount = Math.max(1, Math.trunc(input.signalCount));
+    const strategyChangeSignalThreshold = Math.max(1, Math.trunc(input.strategyChangeSignalThreshold ?? defaultPolicy.strategyChangeSignalThreshold));
     const baseDelayMs = Math.max(0, input.baseDelayMs ?? defaultPolicy.baseDelayMs);
     const maxDelayMs = Math.max(baseDelayMs, input.maxDelayMs ?? defaultPolicy.maxDelayMs);
-    const exhausted = attempt >= maxAttempts;
+    const strategyChangeRecommended = signalCount >= strategyChangeSignalThreshold;
     const decision = {
-        attempt,
-        maxAttempts,
-        shouldRetry: !exhausted,
-        exhausted,
-        reason: exhausted ? "retry_exhausted" : "retry_scheduled",
+        signalCount,
+        strategyChangeSignalThreshold,
+        shouldContinue: true,
+        strategyChangeRecommended,
+        reason: strategyChangeRecommended ? "strategy_change_recommended" : "continue_with_backoff",
     };
-    if (!exhausted)
-        decision.nextDelayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+    decision.nextDelayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** (signalCount - 1));
     return decision;
 }
 export function shouldStopRepeatedFailure(input) {
@@ -385,7 +384,8 @@ export function shouldStopRepeatedFailure(input) {
         fingerprint: input.fingerprint,
         seenCount,
         threshold,
-        shouldStop: seenCount >= threshold,
+        shouldStop: false,
+        strategyChangeRecommended: seenCount >= threshold,
     };
 }
 function buildSoakExecution(operation, iteration, startedAt, completedAt, result) {

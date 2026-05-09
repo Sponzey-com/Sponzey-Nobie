@@ -24,7 +24,6 @@ export type FeedbackLoopContinuationAction =
   | "feedback_request"
   | "limited_success_finalized"
   | "blocked_repeated_failure"
-  | "blocked_retry_budget_exhausted"
   | "blocked_review_not_retryable"
 
 export interface FeedbackLoopContinuationDecision {
@@ -66,7 +65,6 @@ export interface BuildFeedbackLoopPackageInput {
   conflictItems?: string[]
   additionalConstraints?: string[]
   additionalContextRefs?: string[]
-  retryBudgetRemaining?: number
   idProvider?: () => string
   now?: () => number
   persistSynthesizedContext?: boolean
@@ -92,7 +90,6 @@ export interface BuildRedelegatedSubSessionInput {
 
 export function decideFeedbackLoopContinuation(input: {
   review: SubAgentResultReview
-  retryBudgetRemaining: number
   previousFailureKeys?: string[]
 }): FeedbackLoopContinuationDecision {
   if (
@@ -111,14 +108,6 @@ export function decideFeedbackLoopContinuation(input: {
       action: "blocked_repeated_failure",
       reasonCode: "same_sub_agent_result_review_failure_repeated",
       normalizedFailureKey,
-    }
-  }
-
-  if (input.retryBudgetRemaining <= 0 || input.review.retryBudgetRemaining <= 0) {
-    return {
-      action: "blocked_retry_budget_exhausted",
-      reasonCode: "sub_agent_result_review_retry_budget_exhausted",
-      ...(normalizedFailureKey ? { normalizedFailureKey } : {}),
     }
   }
 
@@ -196,12 +185,6 @@ export function buildFeedbackLoopPackage(
     input.review.normalizedFailureKey ?? "sub_agent_result_review_feedback_required"
   const exchangeId = `exchange:feedback:${feedbackRequestId}`
   const additionalContextRefs = unique([...(input.additionalContextRefs ?? []), exchangeId])
-  const retryBudgetRemaining = Math.max(
-    0,
-    input.retryBudgetRemaining ??
-      input.review.feedbackRequest?.retryBudgetRemaining ??
-      Math.max(0, input.review.retryBudgetRemaining - 1),
-  )
 
   const synthesizedContext = createDataExchangePackage({
     sourceOwner,
@@ -295,7 +278,6 @@ export function buildFeedbackLoopPackage(
     additionalConstraints,
     additionalContextRefs,
     expectedRevisionOutputs: input.expectedOutputs,
-    retryBudgetRemaining,
     reasonCode,
     createdAt: now,
   }
@@ -368,7 +350,6 @@ export function buildRedelegatedSubSessionInput(
         : []),
     ]),
     expectedOutputs,
-    retryBudget: input.feedbackRequest.retryBudgetRemaining,
   }
   const promptBundle = buildRedelegatedPromptBundle({
     source,

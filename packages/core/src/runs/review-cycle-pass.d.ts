@@ -36,9 +36,8 @@ interface ReviewCyclePassModuleDependencies {
     getRootRun: typeof getRootRun;
 }
 export interface SubSessionFeedbackCycleDirective {
-    kind: "retry_sub_session" | "manual_action_required";
+    kind: "retry_sub_session";
     subSessionId: string;
-    retryBudgetRemaining: number;
     normalizedFailureKey: string;
     followupPrompt: string;
     missingItems: string[];

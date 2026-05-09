@@ -7,10 +7,18 @@ import {
 } from "../packages/core/src/runs/scheduled.ts"
 
 describe("scheduled run policy", () => {
-  it("disables tools for simple delayed utterance tasks", () => {
-    expect(shouldDisableToolsForScheduledTask("안녕하고 잘가 라고 해줘", "general_chat")).toBe(true)
+  it("disables tools only from stored execution semantics", () => {
+    const semantics = {
+      filesystemEffect: "none" as const,
+      privilegedOperation: "none" as const,
+      artifactDelivery: "none" as const,
+      approvalRequired: false,
+      approvalTool: "external_action" as const,
+    }
+    expect(shouldDisableToolsForScheduledTask("안녕하고 잘가 라고 해줘", "general_chat")).toBe(false)
+    expect(shouldDisableToolsForScheduledTask("안녕하고 잘가 라고 해줘", "general_chat", semantics)).toBe(true)
 
-    const options = getScheduledRunExecutionOptions("안녕하고 잘가 라고 해줘", "general_chat")
+    const options = getScheduledRunExecutionOptions("안녕하고 잘가 라고 해줘", "general_chat", semantics)
     expect(options.toolsEnabled).toBe(false)
     expect(options.contextMode).toBe("isolated")
   })
@@ -23,10 +31,10 @@ describe("scheduled run policy", () => {
     expect(options.contextMode).toBe("isolated")
   })
 
-  it("extracts quoted notification text from recurring schedule wording", () => {
-    expect(extractDirectChannelDeliveryText("매 1분마다 사용자에게 '알림' 메시지로 알려주기")).toBe("알림")
-    expect(extractDirectChannelDeliveryText("이 대화에 \"알람\" 메시지를 전송")).toBe("알람")
-    expect(extractDirectChannelDeliveryText("시스템 알람(소리/알림)으로 '일어나'라고 안내")).toBe("일어나")
+  it("does not extract direct delivery text from legacy wording", () => {
+    expect(extractDirectChannelDeliveryText("매 1분마다 사용자에게 '알림' 메시지로 알려주기")).toBeNull()
+    expect(extractDirectChannelDeliveryText("이 대화에 \"알람\" 메시지를 전송")).toBeNull()
+    expect(extractDirectChannelDeliveryText("시스템 알람(소리/알림)으로 '일어나'라고 안내")).toBeNull()
     expect(extractDirectChannelDeliveryText("매일 'report.txt' 파일을 읽고 요약해줘")).toBeNull()
   })
 

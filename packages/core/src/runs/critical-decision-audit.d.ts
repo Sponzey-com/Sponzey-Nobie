@@ -11,6 +11,7 @@ export interface CriticalDecisionAuditEntry {
     userFacingRisk: string;
     currentRole: string;
     migrationTask?: string;
+    migrationReason?: string;
     sourceMarker?: string;
 }
 export interface CriticalDecisionSourceScanRule {
@@ -18,6 +19,8 @@ export interface CriticalDecisionSourceScanRule {
     entryId: string;
     file: string;
     pattern: RegExp;
+    migrationTask: string;
+    migrationReason: string;
 }
 export declare const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[];
 export declare const criticalDecisionSourceScanRules: CriticalDecisionSourceScanRule[];

@@ -2,11 +2,12 @@ import crypto from "node:crypto";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { recordArtifactMetadata } from "../artifacts/lifecycle.js";
+import { buildCapabilityFallbackNotice } from "../channels/delivery-fallback.js";
 import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertChannelMessageRef, insertDiagnosticEvent, insertMessage, upsertTaskContinuity, } from "../db/index.js";
 import { eventBus } from "../events/index.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
 import { buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildLedgerTextDeliveryKey, findMessageLedgerEventByIdempotencyKey, messageLedgerEventSucceeded, recordMessageLedgerEvent, } from "./message-ledger.js";
-import { enqueueBackpressureTask, recordRetryBudgetAttempt } from "./queue-backpressure.js";
+import { enqueueBackpressureTask, recordQueueRecoveryAttempt } from "./queue-backpressure.js";
 import { getRootRun } from "./store.js";
 const defaultAssistantTextDeliveryDependencies = {
     now: () => Date.now(),
@@ -506,6 +507,9 @@ function summarizeReceiptsForOutbox(receipts) {
         threadId: receipt.threadId ?? null,
         retryAfterMs: receipt.retryAfterMs ?? null,
         errorCode: receipt.errorCode ?? null,
+        errorMessage: receipt.errorMessage ?? null,
+        capability: receipt.capability ?? null,
+        fallbackNotice: buildCapabilityFallbackNotice(receipt) ?? null,
         providerResponseRef: receipt.providerResponseRef ?? null,
     }));
 }
@@ -650,15 +654,13 @@ export async function deliverChunk(params) {
         });
         const rawMessage = error instanceof Error ? error.message : String(error);
         const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`);
-        const retryDecision = recordRetryBudgetAttempt({
+        const recoveryDecision = recordQueueRecoveryAttempt({
             queueName: "delivery",
             runId: params.runId,
             recoveryKey,
             reason: sanitized.kind,
         });
-        const message = retryDecision.allowed
-            ? `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage}`
-            : `runId=${params.runId} chunk delivery failed: ${retryDecision.userMessage}`;
+        const message = `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage} ${recoveryDecision.userMessage}`;
         params.onError?.(message);
         return undefined;
     }
@@ -875,7 +877,11 @@ function summarizeDeliveryReceiptsForLedger(receipts) {
         threadId: receipt.threadId ?? null,
         idempotencyKey: receipt.idempotencyKey,
         ...(receipt.errorCode ? { errorCode: receipt.errorCode } : {}),
+        ...(receipt.errorMessage ? { errorMessage: receipt.errorMessage } : {}),
         ...(receipt.capability ? { capability: receipt.capability } : {}),
+        ...(buildCapabilityFallbackNotice(receipt)
+            ? { fallbackNotice: buildCapabilityFallbackNotice(receipt) }
+            : {}),
     }));
 }
 export function logAssistantReply(source, text) {

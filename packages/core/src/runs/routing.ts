@@ -32,12 +32,21 @@ export function resolveRunRoute(input: RouteActionInput): ResolvedRunRoute {
   return resolveRunRouteFromDraft(buildSetupDraft(), input)
 }
 
+export function isExplicitProviderRouteTarget(value: string | undefined): boolean {
+  return normalizeTargetId(value) !== undefined
+}
+
 export function resolveRunRouteFromDraft(
   draft: SetupDraft,
   input: RouteActionInput,
   options?: RouteResolutionOptions,
 ): ResolvedRunRoute {
   const candidates = buildConfiguredCandidateTargets(draft, input)
+  if (candidates.length === 0) {
+    return {
+      reason: "routing:no-explicit-provider-target",
+    }
+  }
 
   for (const targetId of candidates) {
     const backend = draft.aiBackends.find((item) => item.id === targetId)
@@ -48,7 +57,7 @@ export function resolveRunRouteFromDraft(
         targetId: backend.id,
         targetLabel: backend.label,
         ...resolved,
-        reason: `routing:${backend.id}`,
+        reason: `explicit_provider:${backend.id}`,
       }
     }
   }
@@ -60,7 +69,6 @@ export function resolveRunRouteFromDraft(
 
 function buildConfiguredCandidateTargets(draft: SetupDraft, input: RouteActionInput): string[] {
   const result: string[] = []
-  const defaultTargets = draft.routingProfiles.find((item) => item.id === "default")?.targets ?? []
   const avoided = new Set(
     (input.avoidTargets ?? [])
       .flatMap((value) => expandAvoidTargetIds(normalizeTargetId(value) ?? value))
@@ -71,7 +79,7 @@ function buildConfiguredCandidateTargets(draft: SetupDraft, input: RouteActionIn
     result.push(value)
   }
 
-  add(defaultTargets[0])
+  add(normalizeTargetId(input.preferredTarget))
 
   return result
 }
@@ -125,6 +133,9 @@ function normalizeTargetId(value: string | undefined): string | undefined {
   if (!normalized || normalized === "auto" || normalized === "embedded" || normalized === "local_reasoner") {
     return undefined
   }
+  if (normalized.startsWith("provider:") || normalized.startsWith("model:") || normalized.startsWith("worker:")) {
+    return normalized
+  }
   if (normalized === "anthropic") {
     return "provider:anthropic"
   }
@@ -132,7 +143,7 @@ function normalizeTargetId(value: string | undefined): string | undefined {
   if (normalized === "gemini") return "provider:gemini"
   if (normalized === "ollama") return "provider:ollama"
   if (normalized === "llama" || normalized === "llama_cpp") return "provider:llama_cpp"
-  return normalized
+  return undefined
 }
 
 function resolveConfiguredModel(backend: AIBackendCard): string {

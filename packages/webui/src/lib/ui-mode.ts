@@ -73,7 +73,9 @@ const ADVANCED_NAV: UiNavItem[] = [
     path: "/advanced/topology",
     labelKo: "토폴로지",
     labelEn: "Topology",
-    capabilityKey: "settings.control",
+    capabilityKey: "enterprise_topology_builder_ui",
+    descriptionKo: "업무 흐름 만들기, 실행, 기록 확인",
+    descriptionEn: "Build, run, and inspect work flows",
   },
   {
     path: "/advanced/orchestration",

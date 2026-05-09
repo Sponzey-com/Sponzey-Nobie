@@ -26,7 +26,7 @@ import {
   messageLedgerEventSucceeded,
   recordMessageLedgerEvent,
 } from "./message-ledger.js"
-import { enqueueBackpressureTask, recordRetryBudgetAttempt } from "./queue-backpressure.js"
+import { enqueueBackpressureTask, recordQueueRecoveryAttempt } from "./queue-backpressure.js"
 import { getRootRun } from "./store.js"
 
 export interface SuccessfulFileDelivery {
@@ -883,15 +883,13 @@ export async function deliverChunk(params: {
     })
     const rawMessage = error instanceof Error ? error.message : String(error)
     const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`)
-    const retryDecision = recordRetryBudgetAttempt({
+    const recoveryDecision = recordQueueRecoveryAttempt({
       queueName: "delivery",
       runId: params.runId,
       recoveryKey,
       reason: sanitized.kind,
     })
-    const message = retryDecision.allowed
-      ? `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage}`
-      : `runId=${params.runId} chunk delivery failed: ${retryDecision.userMessage}`
+    const message = `runId=${params.runId} chunk delivery failed: ${sanitized.userMessage} ${recoveryDecision.userMessage}`
     params.onError?.(message)
     return undefined
   }

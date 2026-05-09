@@ -116,13 +116,11 @@ function subAgentConfig(
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: ["team:composition"],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -208,7 +206,6 @@ function subSession(agentId: string): SubSessionContract {
     agentNickname: agentId.replace("agent:", ""),
     commandRequestId: "command:task007",
     status: "running",
-    retryBudgetRemaining: 0,
     promptBundleId: "prompt:task007",
     startedAt: now,
   }
@@ -385,8 +382,8 @@ describe("task007 team composition API", () => {
       await createAgent(app, "agent:alpha", "Alpha", { specialtyTags: ["research"] })
       await createAgent(app, "agent:beta", "Beta", {
         specialtyTags: ["writing"],
-        delegation: { enabled: true, maxParallelSessions: 1, retryBudget: 1 },
-        delegationPolicy: { enabled: true, maxParallelSessions: 1, retryBudget: 1 },
+        delegation: { enabled: true, maxParallelSessions: 1 },
+        delegationPolicy: { enabled: true, maxParallelSessions: 1 },
       })
       await createRelationship(app, "agent:nobie", "agent:alpha")
       await createRelationship(app, "agent:nobie", "agent:beta")

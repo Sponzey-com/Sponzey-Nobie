@@ -126,13 +126,11 @@ function subAgent(
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: [],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,
@@ -240,7 +238,6 @@ function subSession(agentId: string): SubSessionContract {
     agentNickname: agentId.replace("agent:", ""),
     commandRequestId: "command:task011",
     status: "running",
-    retryBudgetRemaining: 0,
     promptBundleId: "prompt:task011",
     startedAt: now,
   }
@@ -254,8 +251,8 @@ function seedAgents(): void {
   upsertAgentConfig(subAgent("agent:reference", ["review"]), { now })
   upsertAgentConfig(
     subAgent("agent:primary", ["writing"], {
-      delegation: { enabled: true, maxParallelSessions: 1, retryBudget: 1 },
-      delegationPolicy: { enabled: true, maxParallelSessions: 1, retryBudget: 1 },
+      delegation: { enabled: true, maxParallelSessions: 1 },
+      delegationPolicy: { enabled: true, maxParallelSessions: 1 },
     }),
     { now },
   )

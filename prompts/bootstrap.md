@@ -25,9 +25,11 @@ Create the following sources if they do not exist.
 - `definitions`: `prompts/definitions.md`, shared terms and runtime concepts
 - `soul`: `prompts/soul.md`, long-term operating policy and completion rules
 - `planner`: `prompts/planner.md`, intake and execution-brief policy
+- `nobie_execution`: `prompts/nobie-execution.md`, shared execution decision policy for root Nobie and delegated agents
 - `memory_policy`: `prompts/memory_policy.md`, memory injection and write policy
 - `tool_policy`: `prompts/tool_policy.md`, tool selection and execution policy
 - `recovery_policy`: `prompts/recovery_policy.md`, failure classification and recovery policy
+- `topology_executor_policy`: `prompts/topology_executor_policy.md`, visible executor graph, delegation, count-signal recovery, and cancellation policy
 - `completion_policy`: `prompts/completion_policy.md`, completion decision policy
 - `output_policy`: `prompts/output_policy.md`, user-facing output and error presentation policy
 - `channel`: `prompts/channel.md`, request-channel and result-delivery boundary policy
@@ -63,6 +65,9 @@ Create the following definitions if they do not exist.
 - recovery definition: record a recovery key to avoid repeating the same target and same error.
 - sub-agent hierarchy definition: separate Nobie, SubAgent, ParentAgent, ChildAgent, Team, TeamLead, and OrchestrationPlan.
 - delegation contract definition: separate `CommandRequest`, `DataExchangePackage`, `ResultReport`, and `FeedbackRequest`.
+- execution decision definition: every current agent can decide domain, behavior pattern, delegation, self-solve, and fallback from its own hierarchy position.
+- topology executor definition: visible executor nodes map user-facing work to graph execution plans, and count signals trigger alternative search instead of failure.
+- prompt bundle source definition: user/request context, agent profile text, imported profile text, runtime policy sources, and tool policy sources are separate source classes for preflight and prompt assembly.
 - attribution definition: user-facing source attribution uses nickname snapshots, while storage and permission checks use internal IDs.
 - team execution definition: a Team is a planning group that expands into member-level work for the owner's direct child members, not an execution actor.
 

@@ -36,8 +36,6 @@ export interface ModelExecutionAuditSummary extends ModelExecutionSnapshot {
         estimated: true;
     };
 }
-export declare const DEFAULT_MODEL_TIMEOUT_MS = 30000;
-export declare const DEFAULT_MODEL_RETRY_COUNT = 0;
 export declare const DEFAULT_PROVIDER_MODEL_CAPABILITY_MATRIX: ProviderModelCapability[];
 export declare function estimateTokenCount(text: string | undefined): number;
 export declare function estimateModelExecutionCost(input: {

@@ -1,6 +1,8 @@
 import type { TaskContinuitySnapshot } from "../db/index.js";
 import type { RootRun, RunStatus } from "./types.js";
 export type TaskAttemptKind = "primary" | "followup" | "intake_bridge" | "approval_continuation" | "verification" | "filesystem_retry" | "truncated_recovery" | "scheduled_execution";
+export type TaskAttemptExecutionKind = "new_request" | "followup_execution" | "augmentation_verification" | "recovery_execution" | "system_intake" | "scheduled_execution";
+export type TaskRunRelationshipKind = "root_request" | "child_execution" | "followup_execution" | "augmentation_verification" | "internal_recovery" | "system_intake" | "scheduled_execution";
 export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic";
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed";
 export type TaskFailureKind = "execution" | "recovery" | "delivery";
@@ -12,6 +14,12 @@ export interface TaskAttemptModel {
     taskId: string;
     requestGroupId: string;
     kind: TaskAttemptKind;
+    executionKind?: TaskAttemptExecutionKind;
+    relationshipKind?: TaskRunRelationshipKind;
+    rootRunId?: string;
+    originRunId?: string;
+    userMessageKey?: string;
+    augmentationOfRunId?: string;
     title: string;
     prompt: string;
     status: RunStatus;
@@ -94,6 +102,10 @@ export interface TaskMonitorModel {
 }
 export interface TaskContinuityModel {
     lineageRootRunId: string;
+    requestGroupId?: string;
+    rootRunId?: string;
+    originRunId?: string;
+    userMessageKey?: string;
     parentRunId?: string;
     handoffSummary?: string;
     lastGoodState?: string;
@@ -125,9 +137,23 @@ export interface TaskPromptSourceDiagnosticModel {
     version?: string;
     checksum?: string;
 }
+export interface TaskRequestIdentityModel {
+    originRunId: string;
+    rootRunId: string;
+    requestGroupId: string;
+    lineageRootRunId: string;
+    userMessageKey?: string;
+    requestIsolationMode?: string;
+    continuationSource?: string;
+    contextMode?: string;
+}
 export interface TaskModel {
     id: string;
     requestGroupId: string;
+    rootRunId?: string;
+    originRunId?: string;
+    userMessageKey?: string;
+    requestIdentity?: TaskRequestIdentityModel;
     sessionId: string;
     source: RootRun["source"];
     anchorRunId: string;

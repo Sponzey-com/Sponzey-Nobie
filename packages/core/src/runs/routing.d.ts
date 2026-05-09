@@ -20,5 +20,6 @@ export interface ResolvedRunRoute {
 export interface RouteResolutionOptions {
 }
 export declare function resolveRunRoute(input: RouteActionInput): ResolvedRunRoute;
+export declare function isExplicitProviderRouteTarget(value: string | undefined): boolean;
 export declare function resolveRunRouteFromDraft(draft: SetupDraft, input: RouteActionInput, options?: RouteResolutionOptions): ResolvedRunRoute;
 //# sourceMappingURL=routing.d.ts.map

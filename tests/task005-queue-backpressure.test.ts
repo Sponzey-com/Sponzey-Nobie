@@ -11,7 +11,7 @@ import {
   buildBackpressureUserMessage,
   buildQueueBackpressureSnapshot,
   enqueueBackpressureTask,
-  recordRetryBudgetAttempt,
+  recordQueueRecoveryAttempt,
   resetQueueBackpressureState,
 } from "../packages/core/src/runs/queue-backpressure.ts"
 import { deliverChunk } from "../packages/core/src/runs/delivery.ts"
@@ -110,23 +110,22 @@ describe("task005 queue backpressure", () => {
     await expect(second).resolves.toBe("second")
   })
 
-  it("stops retry storms with a dead-letter event and audit timeline entry", () => {
-    const first = recordRetryBudgetAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery", budget: { retryCount: 2 } })
-    const second = recordRetryBudgetAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery", budget: { retryCount: 2 } })
-    const third = recordRetryBudgetAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery", budget: { retryCount: 2 } })
+  it("records recovery attempts without a retry budget stop", () => {
+    const first = recordQueueRecoveryAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery" })
+    const second = recordQueueRecoveryAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery" })
+    const third = recordQueueRecoveryAttempt({ queueName: "delivery", recoveryKey: "telegram:send:403", runId: "run-delivery" })
 
-    expect(first).toMatchObject({ allowed: true, retryCount: 1, retryBudgetRemaining: 1 })
-    expect(second).toMatchObject({ allowed: true, retryCount: 2, retryBudgetRemaining: 0 })
-    expect(third).toMatchObject({ allowed: false, actionTaken: "dead_letter" })
-    expect(third.userMessage).toContain("자동 재시도를 중단")
+    expect(first).toMatchObject({ allowed: true, signalCount: 1, actionTaken: "recovery_scheduled" })
+    expect(second).toMatchObject({ allowed: true, signalCount: 2, actionTaken: "recovery_scheduled" })
+    expect(third).toMatchObject({ allowed: true, signalCount: 3, actionTaken: "recovery_scheduled" })
 
-    const deadLetters = listQueueBackpressureEvents({ eventKind: "dead_letter", queueName: "delivery" })
-    expect(deadLetters[0]).toMatchObject({ recovery_key: "telegram:send:403", action_taken: "stop_auto_retry" })
+    const recoveries = listQueueBackpressureEvents({ eventKind: "recovery_scheduled", queueName: "delivery" })
+    expect(recoveries).toHaveLength(3)
     const audit = listAuditEvents({ kind: "queue_backpressure", limit: "10" })
-    expect(audit.items.some((item) => item.errorCode === "dead_letter" && item.toolName === "delivery")).toBe(true)
+    expect(audit.items.some((item) => item.errorCode === "recovery_scheduled" && item.toolName === "delivery")).toBe(true)
   })
 
-  it("routes channel chunk failures through the delivery retry budget", async () => {
+  it("routes channel chunk failures through delivery recovery attempts", async () => {
     const errors: string[] = []
     for (let index = 0; index < 4; index += 1) {
       await deliverChunk({
@@ -140,23 +139,22 @@ describe("task005 queue backpressure", () => {
     }
 
     expect(errors).toHaveLength(4)
-    expect(errors.at(-1)).toContain("자동 재시도를 중단")
-    expect(listQueueBackpressureEvents({ eventKind: "retry_scheduled", queueName: "delivery" })).toHaveLength(3)
-    expect(listQueueBackpressureEvents({ eventKind: "dead_letter", queueName: "delivery" })[0]).toMatchObject({
+    expect(errors.at(-1)).toContain("복구 중")
+    expect(listQueueBackpressureEvents({ eventKind: "recovery_scheduled", queueName: "delivery" })).toHaveLength(4)
+    expect(listQueueBackpressureEvents({ eventKind: "recovery_scheduled", queueName: "delivery" })[0]).toMatchObject({
       recovery_key: "chunk:run-delivery-chunk:text",
-      action_taken: "stop_auto_retry",
+      action_taken: "recovery_scheduled",
     })
   })
 
   it("surfaces backpressure status through doctor and user messages", () => {
-    recordRetryBudgetAttempt({ queueName: "tool_execution", recoveryKey: "yeonjang:mqtt:disconnect", budget: { retryCount: 0 } })
+    recordQueueRecoveryAttempt({ queueName: "tool_execution", recoveryKey: "yeonjang:mqtt:disconnect" })
 
     const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const queueCheck = report.checks.find((check) => check.name === "queue.backpressure")
-    expect(queueCheck?.status).toBe("blocked")
+    expect(queueCheck?.status).toBe("ok")
     expect(buildBackpressureUserMessage("waiting", "web_browser")).toContain("실패가 아니라")
     expect(buildBackpressureUserMessage("recovering", "delivery")).toContain("복구 중")
-    expect(buildBackpressureUserMessage("retry_stopped", "tool_execution")).toContain("명시적으로 다시 시도")
   })
 })
 

@@ -70,7 +70,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-stone-100 text-stone-900 lg:flex-row">
+    <div className="flex h-screen overflow-hidden flex-col bg-stone-100 text-stone-900 lg:flex-row">
       <aside className="relative z-[80] flex max-h-48 w-full shrink-0 flex-col border-b border-stone-200 bg-[#111111] text-stone-100 lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r">
         <div className="border-b border-white/10 px-6 py-5">
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">

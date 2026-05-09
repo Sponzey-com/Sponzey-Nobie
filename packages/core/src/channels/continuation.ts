@@ -1,7 +1,6 @@
 import type { DbChannelMessageRef, DbMessageLedgerEvent } from "../db/index.js"
 import {
   findChannelMessageRef,
-  findLatestChannelMessageRefForThread,
   getDb,
 } from "../db/index.js"
 import type { InboundEnvelope } from "./contracts.js"
@@ -13,9 +12,6 @@ export type ChannelContinuationCandidateSource =
   | "delivery_id"
   | "message_ref_exact"
   | "message_ref_parent"
-  | "message_ref_thread_root"
-  | "message_ref_latest_thread"
-  | "sender_room_window"
 
 export interface ChannelContinuationLookupCandidate {
   source: ChannelContinuationCandidateSource
@@ -40,8 +36,6 @@ export interface ChannelContinuationLookupResult {
   reasonCode:
     | "explicit_match"
     | "message_match"
-    | "thread_match"
-    | "window_match"
     | "ambiguous_candidates"
     | "no_candidates"
 }
@@ -54,10 +48,8 @@ export interface ChannelContinuationLookupInput {
   lookupWindowMs?: number | undefined
 }
 
-const DEFAULT_LOOKUP_WINDOW_MS = 24 * 60 * 60 * 1000
-
 export function resolveChannelContinuation(input: ChannelContinuationLookupInput): ChannelContinuationLookupResult {
-  const lookupWindowMs = input.lookupWindowMs ?? DEFAULT_LOOKUP_WINDOW_MS
+  void input.lookupWindowMs
   const candidates: ChannelContinuationLookupCandidate[] = []
   const explicitRunId = input.runId ?? input.envelope.continuationContext?.runId
   const explicitTaskId = input.taskId ?? input.envelope.continuationContext?.taskId
@@ -81,7 +73,9 @@ export function resolveChannelContinuation(input: ChannelContinuationLookupInput
     if (exactIncomingRef) return finalizeContinuationResult(candidates)
 
     const parentMessageId = input.envelope.replyToMessageId
-      ?? input.envelope.continuationContext?.parentMessageId
+      ?? (input.envelope.continuationContext?.source === "thread"
+        ? undefined
+        : input.envelope.continuationContext?.parentMessageId)
     if (parentMessageId) {
       const parentRef = findChannelMessageRef({
         source: input.envelope.provider,
@@ -91,42 +85,6 @@ export function resolveChannelContinuation(input: ChannelContinuationLookupInput
       })
       pushCandidate(candidates, candidateFromMessageRef(parentRef, "message_ref_parent", "exact"))
       if (parentRef) return finalizeContinuationResult(candidates)
-    }
-
-    if (input.envelope.threadId) {
-      if (input.envelope.threadId !== input.envelope.messageId) {
-        const threadRootRef = findChannelMessageRef({
-          source: input.envelope.provider,
-          externalChatId: roomId,
-          externalMessageId: input.envelope.threadId,
-          externalThreadId: input.envelope.threadId,
-        })
-        pushCandidate(candidates, candidateFromMessageRef(threadRootRef, "message_ref_thread_root", "high"))
-      }
-
-      const latestThreadRef = findLatestChannelMessageRefForThread({
-        source: input.envelope.provider,
-        externalChatId: roomId,
-        externalThreadId: input.envelope.threadId,
-      })
-      pushCandidate(candidates, candidateFromMessageRef(latestThreadRef, "message_ref_latest_thread", "medium"))
-    } else if (input.envelope.replyToMessageId) {
-      const latestMainRef = findLatestChannelMessageRefForThread({
-        source: input.envelope.provider,
-        externalChatId: roomId,
-      })
-      pushCandidate(candidates, candidateFromMessageRef(latestMainRef, "message_ref_latest_thread", "medium"))
-    }
-
-    if (!input.envelope.threadId && !input.envelope.replyToMessageId) {
-      for (const candidate of candidatesFromSenderRoomWindow({
-        provider: input.envelope.provider,
-        roomId,
-        timestamp: input.envelope.timestamp,
-        lookupWindowMs,
-      })) {
-        pushCandidate(candidates, candidate)
-      }
     }
   }
 
@@ -169,11 +127,7 @@ function finalizeContinuationResult(candidates: ChannelContinuationLookupCandida
       confirmationRequired: false,
       reasonCode: selected.source.startsWith("explicit")
         ? "explicit_match"
-        : selected.source.includes("thread")
-          ? "thread_match"
-          : selected.source === "sender_room_window"
-            ? "window_match"
-            : "message_match",
+        : "message_match",
     }
   }
 
@@ -265,30 +219,6 @@ function candidateFromMessageRef(
     confidence,
     createdAt: ref.created_at,
   }
-}
-
-function candidatesFromSenderRoomWindow(input: {
-  provider: string
-  roomId: string
-  timestamp: number
-  lookupWindowMs: number
-}): ChannelContinuationLookupCandidate[] {
-  const since = Math.max(0, input.timestamp - input.lookupWindowMs)
-  const rows = getDb()
-    .prepare<[string, string, number, number], DbChannelMessageRef>(
-      `SELECT *
-       FROM channel_message_refs
-       WHERE source = ?
-         AND external_chat_id = ?
-         AND created_at BETWEEN ? AND ?
-         AND role IN ('assistant', 'tool')
-       ORDER BY created_at DESC
-       LIMIT 10`,
-    )
-    .all(input.provider, input.roomId, since, input.timestamp)
-  return rows
-    .map((ref) => candidateFromMessageRef(ref, "sender_room_window", "low"))
-    .filter((candidate): candidate is ChannelContinuationLookupCandidate => candidate !== null)
 }
 
 function pushCandidate(

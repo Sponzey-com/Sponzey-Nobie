@@ -4,7 +4,6 @@ export type QueueName = typeof QUEUE_NAMES[number];
 export interface QueueBudget {
     concurrency: number;
     timeoutMs: number;
-    retryCount: number;
     backoffMs: number;
     maxPending: number;
 }
@@ -13,15 +12,13 @@ export interface QueueSnapshotItem extends QueueBudget {
     running: number;
     pending: number;
     oldestPendingAgeMs: number;
-    retryKeys: number;
-    deadLetterCount: number;
-    status: "ok" | "waiting" | "recovering" | "stopped";
+    recoveryKeys: number;
+    status: "ok" | "waiting" | "recovering";
 }
-export interface RetryBudgetDecision {
-    allowed: boolean;
-    retryCount: number;
-    retryBudgetRemaining: number;
-    actionTaken: "retry_scheduled" | "dead_letter";
+export interface QueueRecoveryAttemptDecision {
+    allowed: true;
+    signalCount: number;
+    actionTaken: "recovery_scheduled";
     userMessage: string;
 }
 export declare class QueueBackpressureError extends Error {
@@ -37,8 +34,7 @@ export declare function recordQueueBackpressureEvent(input: {
     runId?: string;
     requestGroupId?: string;
     pendingCount?: number;
-    retryCount?: number;
-    retryBudgetRemaining?: number | null;
+    signalCount?: number;
     recoveryKey?: string;
     detail?: Record<string, unknown>;
 }): void;
@@ -50,21 +46,20 @@ export declare function enqueueBackpressureTask<T>(input: {
     task: () => Promise<T>;
     budget?: Partial<QueueBudget>;
 }): Promise<T>;
-export declare function recordRetryBudgetAttempt(input: {
+export declare function recordQueueRecoveryAttempt(input: {
     queueName: QueueName;
     recoveryKey: string;
     runId?: string;
     requestGroupId?: string;
-    budget?: Partial<QueueBudget>;
     reason?: string;
-}): RetryBudgetDecision;
-export declare function resetRetryBudget(input: {
+}): QueueRecoveryAttemptDecision;
+export declare function resetQueueRecoveryAttempt(input: {
     queueName: QueueName;
     recoveryKey: string;
     runId?: string;
     requestGroupId?: string;
 }): void;
 export declare function buildQueueBackpressureSnapshot(): QueueSnapshotItem[];
-export declare function buildBackpressureUserMessage(kind: "waiting" | "recovering" | "retry_stopped", queueName: QueueName): string;
+export declare function buildBackpressureUserMessage(kind: "waiting" | "recovering", queueName: QueueName): string;
 export declare function resetQueueBackpressureState(): void;
 //# sourceMappingURL=queue-backpressure.d.ts.map

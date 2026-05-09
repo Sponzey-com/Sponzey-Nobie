@@ -118,13 +118,11 @@ function subAgentConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig
     delegationPolicy: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     teamIds: ["team:research"],
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     profileVersion: 1,
     createdAt: now,

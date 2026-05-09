@@ -143,7 +143,7 @@ describe("task008 provider capability matrix", () => {
     `)
 
     const draft = buildSetupDraft()
-    const route = resolveRunRouteFromDraft(draft, {})
+    const route = resolveRunRouteFromDraft(draft, { preferredTarget: "provider:ollama" })
     const snapshot = resolveProviderResolutionSnapshot()
     const doctor = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const resolverCheck = doctor.checks.find((check) => check.name === "provider.resolver")

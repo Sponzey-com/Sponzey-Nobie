@@ -21,6 +21,7 @@ import {
   listRunSubSessionsForParentRun,
   updateRunSubSession,
 } from "../db/index.js"
+import { eventBus } from "../events/index.js"
 import { recordLatencyMetric } from "../observability/latency.js"
 import { appendRunEvent, getRootRun } from "../runs/store.js"
 import {
@@ -71,7 +72,6 @@ export interface SubSessionInfo {
   agentNickname?: string
   commandRequestId: string
   status: SubSessionStatus
-  retryBudgetRemaining: number
   promptBundleId: string
   idempotencyKey: string
   auditCorrelationId?: string
@@ -425,7 +425,6 @@ export function getSubSessionInfo(
       ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
       commandRequestId: subSession.commandRequestId,
       status: subSession.status,
-      retryBudgetRemaining: subSession.retryBudgetRemaining,
       promptBundleId: subSession.promptBundleId,
       idempotencyKey: subSession.identity.idempotencyKey,
       ...(subSession.identity.auditCorrelationId
@@ -557,9 +556,6 @@ function feedbackLoopResult(
   body: unknown,
   auditCorrelationId?: string,
 ): SubSessionControlResult | { ok: false; statusCode: 409; reasonCode: string } {
-  if (subSession.retryBudgetRemaining <= 0) {
-    return { ok: false, statusCode: 409, reasonCode: "sub_session_feedback_budget_exhausted" }
-  }
   if (subSession.status !== "needs_revision" && subSession.status !== "failed") {
     return { ok: false, statusCode: 409, reasonCode: "sub_session_feedback_state_invalid" }
   }
@@ -574,14 +570,12 @@ function feedbackLoopResult(
   const review = reviewSubAgentResult({
     resultReport: resultReport.resultReport,
     expectedOutputs,
-    retryBudgetRemaining: subSession.retryBudgetRemaining,
     previousFailureKeys,
     additionalContextRefs: stringArray(record.additionalContextRefs),
     now: nowMs,
   })
   const continuation = decideFeedbackLoopContinuation({
     review,
-    retryBudgetRemaining: subSession.retryBudgetRemaining,
     previousFailureKeys,
   })
   if (continuation.action === "limited_success_finalized") {
@@ -667,9 +661,6 @@ function feedbackLoopResult(
       controlTextFor(action, body),
     ]),
     additionalContextRefs: stringArray(record.additionalContextRefs),
-    retryBudgetRemaining:
-      review.feedbackRequest?.retryBudgetRemaining ??
-      Math.max(0, subSession.retryBudgetRemaining - 1),
     idProvider: () => trimmedString(record.feedbackRequestId) ?? randomUUID(),
     now: nowMs,
   })
@@ -706,7 +697,6 @@ function feedbackLoopResult(
       synthesizedContextExchangeId: feedbackPackage.synthesizedContext.exchangeId,
       targetAgentPolicy,
       targetAgentId: targetAgentId ?? null,
-      retryBudgetRemaining: feedbackPackage.feedbackRequest.retryBudgetRemaining,
       normalizedFailureKey: review.normalizedFailureKey ?? null,
       ...(redelegatedSubSessionId ? { redelegatedSubSessionId } : {}),
     },
@@ -834,9 +824,6 @@ export function controlSubSession(input: {
     ) {
       return { ok: false, statusCode: 409, reasonCode: "sub_session_retry_state_invalid" }
     }
-    if (subSession.retryBudgetRemaining <= 0) {
-      return { ok: false, statusCode: 409, reasonCode: "sub_session_retry_budget_exhausted" }
-    }
     const controlEventId = recordSubSessionControlEvent({
       eventType: "subsession.retry.validated",
       parentRunId: subSession.parentRunId,
@@ -844,7 +831,7 @@ export function controlSubSession(input: {
       action: "retry",
       summary: `sub-session retry validated: ${subSession.subSessionId}`,
       auditCorrelationId,
-      detail: { retryBudgetRemaining: subSession.retryBudgetRemaining },
+      detail: {},
     })
     appendTimeline(subSession.parentRunId, `sub_session_retry_validated:${subSession.subSessionId}`)
     return {
@@ -969,3 +956,14 @@ export function killAllSubSessionsForRun(input: {
     affectedSubSessionIds: affected,
   }
 }
+
+eventBus.on("run.cancel.requested", ({ runId }) => {
+  try {
+    killAllSubSessionsForRun({
+      parentRunId: runId,
+      body: { auditCorrelationId: `run-cancel:${runId}` },
+    })
+  } catch {
+    // Cancellation must continue even if the sub-session control table is unavailable.
+  }
+})

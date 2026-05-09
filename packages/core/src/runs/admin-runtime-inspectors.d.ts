@@ -16,7 +16,7 @@ export interface AdminMemoryDocumentView {
     ftsStatus: "available" | "missing" | "empty";
     vectorStatus: "available" | "missing" | "empty";
     indexStatus: string | null;
-    indexRetryCount: number;
+    indexSignalCount: number;
     indexLastError: string | null;
     runId: string | null;
     requestGroupId: string | null;
@@ -29,7 +29,7 @@ export interface AdminMemoryWritebackView {
     ownerKind: AdminMemoryOwnerKind;
     sourceType: string;
     status: string;
-    retryCount: number;
+    signalCount: number;
     lastError: string | null;
     runId: string | null;
     requestGroupId: string | null;

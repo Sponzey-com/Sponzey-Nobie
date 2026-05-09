@@ -37,14 +37,36 @@ Platform binaries are optional on a single-host local release build, but must be
 3. Build packages: `pnpm -r build`.
 4. Typecheck packages: `pnpm -r typecheck`.
 5. Run automated tests: `pnpm test`.
-6. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
-7. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
-8. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-9. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
-10. Run channel smoke dry-run: `pnpm run smoke:channels`.
-11. Build Yeonjang packages for each target OS.
-12. Generate release manifest and checksum files: `pnpm run release:package`.
-13. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+6. Run Phase 022 execution decision regression gate: `pnpm run test:phase022`.
+7. Run Phase 027 topology delegation/runtime cleanup gate: `pnpm run test:phase027`.
+8. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
+9. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
+10. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
+11. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+12. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
+13. Run channel smoke dry-run: `pnpm run smoke:channels`.
+14. Build Yeonjang packages for each target OS.
+15. Generate release manifest and checksum files: `pnpm run release:package`.
+16. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## Execution Decision Regression Gate
+
+Before release, `pnpm run test:phase022` must pass. The gate is defined in `docs/execution-decision-regression.md` and covers prompt source loading, prompt bundles, no-keyword execution decisions, orchestration planner compatibility, topology execution, explicit target validation, multilingual executor selection, risk boundaries, WebUI simple run UX, and Runtime Inspector evidence.
+
+This gate is intentionally separate from long-running smoke and soak gates. It should remain fast enough to run frequently in CI, while live channels, Yeonjang smoke, backup rehearsal, and package release checks remain release-only evidence.
+
+## Phase 027 Topology Delegation Gate
+
+Before release, `pnpm run test:phase027` must pass. The gate protects the current topology runtime rules: Nobie and every current agent select from accessible direct children, deleted entry-selection fallback concepts stay out of runtime source, model profile timeout/retry fields do not terminate sub-sessions, provider direct routing is not used when topology executors are available, child results wait for parent aggregation, and Runtime Inspector/WebUI show selected executor, pending result, aggregation, and redelegation states instead of internal numeric execution limits.
+
+The phase gate is split into:
+
+- `pnpm run test:phase027:static`: removed routing/model-limit concepts do not return to source.
+- `pnpm run test:phase027:routing`: execution-decision-first routing, topology executor selection, provider-direct blocking, and redelegation after child failure.
+- `pnpm run test:phase027:runtime`: slow sub-session handling, late result aggregation, and no direct child-channel delivery.
+- `pnpm run test:phase027:webui`: runtime inspector and topology trace display.
+
+Release smoke must also confirm that a fresh channel request records no deleted entry-selection route reason, does not use provider direct when a matching direct child exists, and does not produce a model-timeout sub-session failure.
 
 ## Channel Release Gate
 
@@ -101,6 +123,55 @@ Do not proceed to full enablement when `subAgentReleaseGate.gateStatus` is `fail
 
 MVP scope includes explicit sub-agent delegation, team target expansion, nested delegation within configured depth, memory/capability isolation, WebUI topology/runtime projection, benchmark evidence, and rollback by feature flag off. MVP excludes advanced automatic learning, complete external tool sandbox coverage, and cross-tree reference group UI.
 
+## Enterprise Topology Rollout Gate
+
+Enterprise Topology must ship behind an explicit staged flag matrix. The release manifest must include `enterpriseTopologyReleaseGate`, and public routing must not be enabled when this gate is failed.
+
+Rollout stages:
+
+1. `contracts_validator_only`: `enterprise_topology_validator=shadow`, `topology_runtime_enabled=off`. Contracts, relation rules, validator, and enterprise rule tests may run, but routing cannot change.
+2. `dry_run_shadow`: registry, compiler, and declared/observed analysis may run in shadow or dual-write mode. Active topology selection and root-run routing remain off.
+3. `gated_mode`: operators can validate activation, unified Workspace controls, Executor-first usability, runtime smoke, and rollback evidence. `topology_runtime_enabled` remains off.
+4. `opt_in_routing`: registry, validator, compiler, and `topology_runtime_mvp` must be enforced before `topology_runtime_enabled=enforced` is allowed. Advanced recursive delegation, tool runtime, and exhaustion failure flags stay separately gated.
+
+Required regression gates:
+
+- Feature flag off path must fall back before topology registry lookup.
+- Single Nobie fallback and existing sub-agent release gate must pass.
+- Channel finalizer regression must preserve duplicate-final zero tolerance and late-result no-reply behavior.
+- WebUI build gate must pass because the builder is GUI-first and should limit ordinary setup typing to executor name, executor work, and run input.
+- Topology Workspace route gate must prove `/advanced/topology` is the only visible topology menu entry, `/advanced/enterprise-topology` redirects to `/advanced/topology?mode=build`, and the old Runtime Topology menu is removed.
+- Topology Workspace layer gate must cover the visible Build, Run, Trace, and Improve layers. Runtime resource projection is internal evidence and must not be exposed as `/advanced/topology?mode=resources`.
+- Executor-first usability gate must pass the happy path: `+ 실행자 추가`, executor name, executor work, `노비가 이해한 내용`, second executor, Smart Connect recommendation chip, run input, 실행, and 기록/고칠 점 review.
+- Default UX leak gate must prove Task/Decision/Approval/Tool/Data/Group palette labels, WorkOrder Template, Context, AgentConfig, SubSession, CompiledSnapshot, Node Contract, Runtime Resource Topology, and JSON/YAML are hidden from the default surface.
+- Internal stability gate must prove ExecutorGraph compiles to EnterpriseTopology, ExecutorGraph metadata remains projection-only, rule-based inference works without AI-assisted inference, feature flag off keeps single Nobie fallback, and the old Advanced/Developer topology surfaces are no longer exposed.
+- Executor observability gate must prove confirmed understanding version, inference evidence id, runtime profile snapshot id, inferred WorkOrder template/context, trace event ids, and FailureReport evidence links can reconstruct `user description -> inference -> NodeContract -> WorkOrder -> FailureReport`.
+- Topology runtime smoke must prove MVP execution with Nobie-owned final answer synthesis.
+- Rollback smoke must restore the previous active topology and matching compiled snapshot without deleting runtime trace evidence.
+
+Do not enable `topology_runtime_enabled` unless `enterpriseTopologyReleaseGate.gateStatus` is `passed`, the requested mode is `opt_in_routing`, and rollback evidence includes active topology plus compiled snapshot restore verification.
+
+Workspace flag matrix meaning:
+
+- `enterprise_topology_builder_ui`: controls the unified `/advanced/topology` Workspace. Off hides Workspace controls; the legacy enterprise builder URL still redirects to the canonical route and then follows the same feature gate.
+- `declared_observed_topology_analysis`: controls Trace and Improve evidence that compares declared topology with observed runtime paths. Off must not delete trace tables.
+- `topology_runtime_enabled`: controls Run layer root-run routing only. Off must preserve the existing single Nobie root-run path even when drafts, validation, or Workspace navigation are present.
+
+Topology rollback checks:
+
+- Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
+- Removed surface rollback check: open `/advanced/topology?mode=resources`, `/advanced/topology?ux=advanced`, and `/advanced/topology?ux=developer&mode=build`; each must stay on the simple Executor Graph surface without Resources, Compile Preview, JSON/YAML, Developer tools, relation toolbar, Run Target, or advanced inspector settings.
+- Rollback evidence must record which area failed: Simple UX regression, removed advanced surface regression, or runtime routing regression.
+- Rollback evidence must also include `nobie.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=enterprise_topology`.
+
+Executor evidence audit checks:
+
+- In Simple mode, raw evidence ids stay hidden in the default result screen. Users see 실패 위치, 노비가 시도한 것, 다음 조치 first.
+- Internal evidence audit may inspect sanitized developer logs outside the default topology surface, but the topology UI must not expose WorkOrder id, NodeContract id, raw trace ids, or JSON/YAML controls by default.
+- If an inference was confirmed by the user, `confirmedUnderstandingVersion` must be present in topology metadata and node-level `executorGraph.inferenceEvidence`.
+- Failure investigations must be able to follow: userDescription, normalizedUnderstanding, inferenceRuleIds, NodeContract id, WorkOrder id, traceEventIds, and FailureReport id.
+- Rollback is incomplete if EnterpriseTopology version restores but ExecutorGraph projection metadata is missing or no longer matches the restored topology.
+
 ## UI Mode Release Gate
 
 The release manifest must include `uiModeEvidence`. This evidence is a release blocker, not a UI-only checklist.
@@ -129,6 +200,19 @@ Before updating a running installation:
 - Run migration preflight and block update when backup is missing, DB lock exists, checksum fails, or write permission is denied.
 - Confirm Yeonjang `protocolVersion` compatibility before replacing Gateway or Yeonjang binaries.
 
+## Topology V2 Migration Gate
+
+Before enabling topology execution for a user DB, preserve history and materialize only the active runtime read model.
+
+1. Stop channel writers or put the instance in maintenance mode.
+2. Create a verified backup snapshot that includes `enterprise_topologies`, `enterprise_topology_versions`, `enterprise_topology_history`, `compiled_topology_snapshots`, `topology_validation_snapshots`, `topology_runs`, `topology_node_runs`, `topology_work_orders`, `topology_result_reports`, `topology_failure_reports`, `topology_trace_events`, `decision_traces`, `root_runs`, `run_events`, `run_subsessions`, and `orchestration_events`.
+3. Run `PRAGMA integrity_check` and confirm migration lock status is clear.
+4. Run the V2 dry-run path through `previewExecutorTopologyV2RegistryMigration`. The preview must report the source topology version, validation result, stale issue count, and a materialized topology payload without `metadata.executorGraph.workspace`, missing tool/system hints, default-entry metadata, or node permission caches.
+5. Only after the dry run is clean, run `materializeExecutorTopologyV2ReadModelInRegistry`. This appends a new topology version and activates it; old versions remain audit history.
+6. Do not physically delete old topology versions or run history unless the user explicitly requests DB initialization or physical cleanup.
+7. Run `pnpm run test:phase026:db` and confirm Runtime Inspector shows topology schema `v2` and a materialization source such as `executor_topology_v2_materialized_read_model`.
+8. Restart the local stack and run WebUI save/reload plus channel smoke before live validation.
+
 ## Restore Rehearsal
 
 Restore into a rehearsal directory first:
@@ -154,14 +238,21 @@ Rollback steps:
 1. Verify target release manifest and target backup snapshot checksums.
 2. Copy current runtime state aside as rollback-of-rollback evidence.
 3. Set `sub_agent_orchestration=off` before restoring binaries or state when the incident involves delegation, channel finalization, memory isolation, WebUI projection, or nested delegation.
-4. Confirm the single Nobie path can create a run and produce one final answer without deleting data.
-5. Restore previous Gateway/CLI/Core bundle when feature flag rollback alone is not enough.
-6. Restore previous WebUI static build.
-7. Restore DB, memory DB, prompt seed files, setup state, and prompt registry from the verified snapshot only after rehearsal passes.
-8. Restore config skeleton and re-enter secrets if the restored release requires them.
-9. Restore Yeonjang binary and protocol/permission files compatible with the Gateway release.
-10. Start Gateway and Yeonjang.
-11. Confirm `/api/status`, prompt checksum, schedule list, memory search, Yeonjang capability status, and channel smoke.
+4. Set `topology_runtime_enabled=off` before restoring binaries, active topology state, or compiled snapshots when the incident involves Enterprise Topology routing, Builder activation, validator/compiler output, or topology finalization.
+5. Set `enterprise_topology_builder_ui=off` when the incident involves `/advanced/topology`, operator activation controls, `/advanced/enterprise-topology` compatibility routing, or the removed Runtime Topology menu entry.
+6. Set `declared_observed_topology_analysis=off` when the incident involves Trace, Improve, observed edges, or gap analysis. Keep trace tables as evidence.
+7. Record current active topology id, active version, validation snapshot id, and compiled snapshot id as rollback-of-rollback evidence.
+8. Restore the previous active topology through `rollbackTopologyVersion(topologyId, targetVersion)` or from the verified backup.
+9. Restore the compiled snapshot that matches the target topology version and source hash.
+10. Confirm the single Nobie path can create a run and produce one final answer without deleting data.
+11. Confirm `/advanced/topology` no longer exposes activation controls and `/advanced/enterprise-topology` still redirects to `/advanced/topology?mode=build`.
+12. Restore previous Gateway/CLI/Core bundle when feature flag rollback alone is not enough.
+13. Restore previous WebUI static build.
+14. Restore DB, memory DB, prompt seed files, setup state, and prompt registry from the verified snapshot only after rehearsal passes.
+15. Restore config skeleton and re-enter secrets if the restored release requires them.
+16. Restore Yeonjang binary and protocol/permission files compatible with the Gateway release.
+17. Start Gateway and Yeonjang.
+18. Confirm `/api/status`, prompt checksum, schedule list, memory search, Yeonjang capability status, active topology version, compiled snapshot hash, `/advanced/topology` simple surface, and channel smoke.
 
 Do not retry rollback automatically when:
 
@@ -181,5 +272,6 @@ Store these files with every release candidate:
 - Restore rehearsal report.
 - UI mode release gate summary from `manifest.json` under `uiModeEvidence`.
 - Sub-agent release readiness summary from `manifest.json` under `subAgentReleaseGate`.
+- Enterprise Topology release readiness summary from `manifest.json` under `enterpriseTopologyReleaseGate`.
 - Channel delivery release gate and channel smoke result, including live/manual gate notes for external channels.
 - Yeonjang smoke result.

@@ -40,6 +40,8 @@ describe("task002 UI navigation policy", () => {
     expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
+    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
     expect(resolveLegacyAdvancedRoute("/chat")).toBeNull()
   })
 

@@ -353,7 +353,6 @@ function validateDelegationPolicy(value, path, issues) {
     }
     hasBoolean(value, "enabled", path, issues);
     hasFiniteNumber(value, "maxParallelSessions", path, issues, { min: 1 });
-    hasFiniteNumber(value, "retryBudget", path, issues, { min: 0 });
     return true;
 }
 function validateExpectedOutputContract(value, path, issues) {
@@ -562,10 +561,28 @@ function validateOrchestrationTask(value, path, issues, expectedExecutionKind) {
             if ("score" in value.planningTrace && value.planningTrace.score !== undefined) {
                 hasFiniteNumber(value.planningTrace, "score", `${path}.planningTrace`, issues);
             }
+            if ("selectedSource" in value.planningTrace &&
+                value.planningTrace.selectedSource !== undefined &&
+                value.planningTrace.selectedSource !== "execution_decision") {
+                addIssue(issues, `${path}.planningTrace.selectedSource`, "selectedSource must be execution_decision when present.");
+            }
+            for (const key of ["selectedExecutorId", "rejectedExecutorId"]) {
+                if (key in value.planningTrace &&
+                    value.planningTrace[key] !== undefined &&
+                    typeof value.planningTrace[key] !== "string") {
+                    addIssue(issues, `${path}.planningTrace.${key}`, `${key} must be a string when present.`);
+                }
+            }
             validateStringArray(value.planningTrace.reasonCodes, `${path}.planningTrace.reasonCodes`, issues, { requireNonEmptyItems: true });
             if ("excludedReasonCodes" in value.planningTrace &&
                 value.planningTrace.excludedReasonCodes !== undefined) {
                 validateStringArray(value.planningTrace.excludedReasonCodes, `${path}.planningTrace.excludedReasonCodes`, issues, {
+                    requireNonEmptyItems: true,
+                });
+            }
+            if ("rejectedReasonCodes" in value.planningTrace &&
+                value.planningTrace.rejectedReasonCodes !== undefined) {
+                validateStringArray(value.planningTrace.rejectedReasonCodes, `${path}.planningTrace.rejectedReasonCodes`, issues, {
                     requireNonEmptyItems: true,
                 });
             }
@@ -1054,12 +1071,50 @@ export function validateOrchestrationPlan(value) {
         addIssue(issues, "$.fallbackStrategy", "fallbackStrategy must be an object.");
     }
     else {
-        if (value.fallbackStrategy.mode !== "single_nobie" &&
-            value.fallbackStrategy.mode !== "ask_user" &&
-            value.fallbackStrategy.mode !== "fail_with_reason") {
-            addIssue(issues, "$.fallbackStrategy.mode", "fallbackStrategy.mode must be single_nobie, ask_user, or fail_with_reason.");
+        const fallbackMode = value.fallbackStrategy.mode;
+        if (fallbackMode !== "self_solve" &&
+            fallbackMode !== "direct_current_agent" &&
+            fallbackMode !== "return_to_parent" &&
+            fallbackMode !== "ask_parent" &&
+            fallbackMode !== "ask_user" &&
+            fallbackMode !== "fail_with_reason" &&
+            fallbackMode !== "root_nobie_direct" &&
+            fallbackMode !== "explicit_provider" &&
+            fallbackMode !== "single_nobie") {
+            addIssue(issues, "$.fallbackStrategy.mode", "fallbackStrategy.mode must be self_solve, direct_current_agent, return_to_parent, ask_parent, ask_user, fail_with_reason, root_nobie_direct, explicit_provider, or legacy single_nobie.");
         }
         hasNonEmptyString(value.fallbackStrategy, "reasonCode", "$.fallbackStrategy", issues);
+        for (const key of [
+            "currentExecutorId",
+            "parentExecutorId",
+            "requesterId",
+            "providerTargetId",
+            "unresolvedReasonCode",
+            "unresolvedReason",
+            "legacyWarning",
+        ]) {
+            if (key in value.fallbackStrategy &&
+                value.fallbackStrategy[key] !== undefined &&
+                typeof value.fallbackStrategy[key] !== "string") {
+                addIssue(issues, `$.fallbackStrategy.${key}`, `${key} must be a string when present.`);
+            }
+        }
+        if (fallbackMode === "explicit_provider" &&
+            (typeof value.fallbackStrategy.providerTargetId !== "string" ||
+                value.fallbackStrategy.providerTargetId.trim().length === 0)) {
+            addIssue(issues, "$.fallbackStrategy.providerTargetId", "providerTargetId is required when fallbackStrategy.mode is explicit_provider.");
+        }
+        if (fallbackMode === "root_nobie_direct" &&
+            value.fallbackStrategy.currentExecutorId !== "agent:nobie") {
+            addIssue(issues, "$.fallbackStrategy.currentExecutorId", "currentExecutorId must be agent:nobie when fallbackStrategy.mode is root_nobie_direct.");
+        }
+        if ((fallbackMode === "return_to_parent" || fallbackMode === "ask_parent") &&
+            (typeof value.fallbackStrategy.parentExecutorId !== "string" ||
+                value.fallbackStrategy.parentExecutorId.trim().length === 0) &&
+            (typeof value.fallbackStrategy.requesterId !== "string" ||
+                value.fallbackStrategy.requesterId.trim().length === 0)) {
+            addIssue(issues, "$.fallbackStrategy.parentExecutorId", "parentExecutorId or requesterId is required when fallbackStrategy.mode returns or asks the parent.");
+        }
         if ("userMessage" in value.fallbackStrategy &&
             value.fallbackStrategy.userMessage !== undefined &&
             typeof value.fallbackStrategy.userMessage !== "string") {
@@ -1103,7 +1158,6 @@ export function validateCommandRequest(value) {
     else {
         addIssue(issues, "$.expectedOutputs", "expectedOutputs must be an array.");
     }
-    hasFiniteNumber(value, "retryBudget", "$", issues, { min: 0 });
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }
         : { ok: false, issues };
@@ -1370,7 +1424,6 @@ export function validateFeedbackRequest(value) {
     else {
         addIssue(issues, "$.expectedRevisionOutputs", "expectedRevisionOutputs must be an array.");
     }
-    hasFiniteNumber(value, "retryBudgetRemaining", "$", issues, { min: 0 });
     hasNonEmptyString(value, "reasonCode", "$", issues);
     if ("createdAt" in value && value.createdAt !== undefined) {
         hasFiniteNumber(value, "createdAt", "$", issues, { min: 0 });

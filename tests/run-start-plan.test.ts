@@ -33,10 +33,10 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
 }
 
 describe("build start plan", () => {
-  it("reuses reconnect target when AI comparison selects an active task", async () => {
+  it("starts a new root for provider target contracts without explicit continuation", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
-      message: "continue the calendar work",
+      message: "run a new provider-backed task",
       sessionId: "session-1",
       runId: "run-1",
       taskProfile: "coding",
@@ -48,12 +48,16 @@ describe("build start plan", () => {
       }),
     }, dependencies)
 
-    expect(result.requestGroupId).toBe("group-prev")
-    expect(result.isRootRequest).toBe(false)
+    expect(dependencies.listActiveSessionRequestGroups).not.toHaveBeenCalled()
+    expect(dependencies.compareRequestContinuation).not.toHaveBeenCalled()
+    expect(result.requestGroupId).toBe("run-1")
+    expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
     expect(result.reconnectNeedsClarification).toBe(false)
-    expect(result.initialDelegationTurnCount).toBe(2)
+    expect(result.initialDelegationTurnCount).toBe(0)
     expect(result.effectiveTaskProfile).toBe("coding")
-    expect(result.effectiveContextMode).toBe("request_group")
+    expect(result.effectiveContextMode).toBe("isolated")
     expect(result.workerSessionId).toBe("worker-session-1")
   })
 
@@ -96,6 +100,8 @@ describe("build start plan", () => {
     expect(result.reconnectNeedsClarification).toBe(true)
     expect(result.requestGroupId).toBe("run-2")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("explicit_contract_clarification")
   })
 
   it("treats closed request groups as new roots unless force reuse is set", async () => {
@@ -116,6 +122,8 @@ describe("build start plan", () => {
     expect(result.requestedClosedRequestGroup).toBe(true)
     expect(result.requestGroupId).toBe("run-3")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
     expect(result.effectiveContextMode).toBe("isolated")
   })
 
@@ -166,6 +174,8 @@ describe("build start plan", () => {
     expect(result.reconnectNeedsClarification).toBe(false)
     expect(result.requestGroupId).toBe("run-raw-question")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
   })
 
   it("skips active-run reconnect comparison for standalone local execution requests", async () => {
@@ -192,6 +202,8 @@ describe("build start plan", () => {
     expect(result.reconnectNeedsClarification).toBe(false)
     expect(result.requestGroupId).toBe("run-capture")
     expect(result.isRootRequest).toBe(true)
+    expect(result.requestIsolation).toBe("root")
+    expect(result.continuationSource).toBe("new_root")
   })
 
   it("uses explicit reusable request group without contract projection comparison", async () => {
@@ -217,6 +229,8 @@ describe("build start plan", () => {
     expect(compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("group-explicit")
     expect(result.isRootRequest).toBe(false)
+    expect(result.requestIsolation).toBe("continuation")
+    expect(result.continuationSource).toBe("explicit_request_group")
   })
 
   it("uses explicit target run id as a fast path without AI comparison", async () => {
@@ -239,5 +253,7 @@ describe("build start plan", () => {
     expect(compareRequestContinuation).not.toHaveBeenCalled()
     expect(result.requestGroupId).toBe("group-prev")
     expect(result.isRootRequest).toBe(false)
+    expect(result.requestIsolation).toBe("continuation")
+    expect(result.continuationSource).toBe("explicit_id")
   })
 })

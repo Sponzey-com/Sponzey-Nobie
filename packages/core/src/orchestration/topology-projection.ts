@@ -88,7 +88,7 @@ export interface AgentTopologyAgentInspector {
   role: string
   specialtyTags: string[]
   teamIds: string[]
-  source: "db" | "config" | "synthetic"
+  source: "db" | "config" | "topology" | "synthetic"
   model: {
     providerId?: string
     modelId?: string
@@ -132,7 +132,6 @@ export interface AgentTopologyAgentInspector {
   delegation: {
     enabled: boolean
     maxParallelSessions: number
-    retryBudget: number
   }
   diagnostics: string[]
 }
@@ -535,7 +534,6 @@ function buildAgentInspector(input: {
     delegation: {
       enabled: delegation?.enabled ?? false,
       maxParallelSessions: delegation?.maxParallelSessions ?? 0,
-      retryBudget: delegation?.retryBudget ?? 0,
     },
     diagnostics: input.diagnostics.map((diagnostic) => diagnostic.reasonCode),
   }

@@ -6,7 +6,9 @@ import type { RootRun, TaskProfile } from "./types.js";
 import type { InboundMessageRecord } from "./request-isolation.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import { buildStartPlan, type StartPlan } from "./start-plan.js";
+import { resolveTopologyRootRunRouting } from "../topology-runtime/harness.js";
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
+import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
 import { applyStartInitialization } from "./start-initialization.js";
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups, createRootRun } from "./store.js";
 interface StartLaunchDependencies {
@@ -29,6 +31,7 @@ interface StartLaunchDependencies {
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
     resolveOrchestrationMode?: Parameters<typeof buildStartPlan>[1]["resolveOrchestrationMode"];
     buildOrchestrationPlan?: Parameters<typeof buildStartPlan>[1]["buildOrchestrationPlan"];
+    resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting;
     ensureSessionExists: (sessionId: string, source: RootRun["source"], now: number) => void;
     createRootRun: typeof createRootRun;
     applyStartInitialization: typeof applyStartInitialization;
@@ -70,6 +73,8 @@ export declare function prepareStartLaunch(params: {
     model?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
+    agentExecutionDecision?: AgentExecutionDecision | undefined;
+    agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined;
     inboundMessage?: InboundMessageRecord | undefined;
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean;
 }, dependencies?: StartLaunchDependencies): Promise<PreparedStartLaunch>;

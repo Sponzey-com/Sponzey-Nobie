@@ -21,6 +21,10 @@ import {
   buildNestedDelegationPlan,
   validateNestedCommandRequest,
 } from "../packages/core/src/orchestration/nested-delegation.ts"
+import {
+  AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+  type AgentExecutionDecision,
+} from "../packages/core/src/orchestration/execution-decision-contract.ts"
 import type {
   AgentRegistryEntry,
   OrchestrationRegistrySnapshot,
@@ -70,6 +74,44 @@ const expectedOutput: ExpectedOutputContract = {
   acceptance: { requiredEvidenceKinds: [], artifactRequired: false, reasonCodes: ["done"] },
 }
 
+function executionDecision(
+  selectedExecutorId: string,
+  currentExecutorId: string,
+): AgentExecutionDecision {
+  return {
+    contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+    current_executor_id: currentExecutorId,
+    ...(currentExecutorId === "agent:nobie" ? {} : { parent_executor_id: "agent:nobie" }),
+    domain: "nested_delegation_test",
+    behavior_pattern: "delegate",
+    execution_route: "delegate_to_child",
+    selected_executor_id: selectedExecutorId,
+    selected_connection_path: [currentExecutorId, selectedExecutorId],
+    task_profile: {
+      title: "nested delegation target",
+      summary: "The parent executor selected its direct child before nested planning.",
+      goals: ["Create only a direct child nested plan."],
+      task_units: [
+        {
+          id: "unit:1",
+          title: "delegate",
+          goal: "Delegate nested work.",
+          preferred_executor_id: selectedExecutorId,
+        },
+      ],
+      success_criteria: ["Planner does not select siblings or cross-tree agents."],
+    },
+    required_outputs: [{ id: "answer", label: "answer" }],
+    risk_boundary: {
+      requires_user_approval: false,
+      reason: "test fixture",
+    },
+    confidence: 0.94,
+    fallback_if_unavailable: "direct_current_agent",
+    reason: "test nested execution decision",
+  }
+}
+
 function taskScope(goal: string): StructuredTaskScope {
   return {
     goal,
@@ -114,7 +156,6 @@ function registryAgent(agentId: string): AgentRegistryEntry {
     avoidTasks: [],
     teamIds: [],
     delegationEnabled: true,
-    retryBudget: 2,
     source: "db",
     config: {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -135,9 +176,9 @@ function registryAgent(agentId: string): AgentRegistryEntry {
         writebackReviewRequired: true,
       },
       capabilityPolicy,
-      delegationPolicy: { enabled: true, maxParallelSessions: 2, retryBudget: 2 },
+      delegationPolicy: { enabled: true, maxParallelSessions: 2 },
       teamIds: [],
-      delegation: { enabled: true, maxParallelSessions: 2, retryBudget: 2 },
+      delegation: { enabled: true, maxParallelSessions: 2 },
       profileVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -278,7 +319,6 @@ function command(
     taskScope: taskScope(`run ${subSessionId}`),
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 1,
   }
 }
 
@@ -410,6 +450,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
       modeSnapshot,
       registrySnapshot: registry(),
       taskScopes: [taskScope("child task")],
+      agentExecutionDecision: executionDecision("agent:b", "agent:a"),
       maxDepth: 3,
       now: () => now,
       idProvider: () => "plan:nested",
@@ -430,6 +471,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
       modeSnapshot,
       registrySnapshot: registry(),
       intent: { explicitAgentId: "agent:c" },
+      agentExecutionDecision: executionDecision("agent:c", "agent:a"),
       taskScopes: [taskScope("cross tree")],
       maxDepth: 3,
       now: () => now,
@@ -452,6 +494,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
       modeSnapshot,
       registrySnapshot: registry(),
       intent: { explicitAgentId: "agent:c" },
+      agentExecutionDecision: executionDecision("agent:c", "agent:nobie"),
       taskScopes: [taskScope("root cannot target grandchild")],
       maxDepth: 3,
       now: () => now,

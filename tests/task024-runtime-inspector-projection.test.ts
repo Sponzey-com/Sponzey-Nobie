@@ -144,7 +144,6 @@ function promptBundle(agentId: string, nickname: string): AgentPromptBundle {
 function subSession(
   id: string,
   status: SubSessionStatus,
-  retryBudgetRemaining: number,
   agentId = "agent:researcher",
   nickname = "Researcher",
 ): SubSessionContract {
@@ -161,7 +160,6 @@ function subSession(
     agentNickname: nickname,
     commandRequestId: `command:${id}`,
     status,
-    retryBudgetRemaining,
     promptBundleId: `bundle:${agentId}`,
     promptBundleSnapshot: promptBundle(agentId, nickname),
     modelExecutionSnapshot: modelSnapshot(),
@@ -288,9 +286,9 @@ afterEach(() => {
 
 describe("task024 runtime inspector projection", () => {
   it("projects sub-sessions, reviews, approvals, data exchanges, model cost, and finalizer state without raw payloads", () => {
-    insertRunSubSession(subSession("sub:running", "running", 2))
+    insertRunSubSession(subSession("sub:running", "running"))
     insertRunSubSession(
-      subSession("sub:revision", "needs_revision", 1, "agent:reviewer", "Reviewer"),
+      subSession("sub:revision", "needs_revision", "agent:reviewer", "Reviewer"),
     )
     insertAgentDataExchange(dataExchange())
 
@@ -422,6 +420,11 @@ describe("task024 runtime inspector projection", () => {
     const serialized = JSON.stringify(projection)
 
     expect(projection.orchestrationMode).toBe("orchestration")
+    expect(projection.requestIdentity).toMatchObject({
+      runId: "run:task024",
+      requestGroupId: "group:task024",
+      rootRunId: "group:task024",
+    })
     expect(projection.plan.delegatedTaskCount).toBe(1)
     expect(running?.allowedControlActions.map((item) => item.action)).toEqual(
       expect.arrayContaining(["send", "steer", "kill"]),

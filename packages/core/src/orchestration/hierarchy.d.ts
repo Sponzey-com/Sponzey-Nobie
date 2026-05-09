@@ -23,7 +23,7 @@ export interface AgentHierarchyAgentSummary {
     displayName: string;
     nickname?: string;
     status: AgentStatus;
-    source: "db" | "config" | "synthetic";
+    source: "db" | "config" | "topology" | "synthetic";
 }
 export interface DirectChildProjection {
     relationship: AgentRelationship;

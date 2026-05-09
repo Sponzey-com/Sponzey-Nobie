@@ -127,7 +127,7 @@ describe("task012 admin tool calls and web retrieval lab", () => {
         status: "succeeded",
         approvalState: "approved",
         durationMs: 42,
-        retryCount: 1,
+        signalCount: 1,
       }))
       expect(JSON.stringify(call)).not.toMatch(/sk-task012|Bearer sk-/i)
       expect(call.redactionApplied).toBe(true)

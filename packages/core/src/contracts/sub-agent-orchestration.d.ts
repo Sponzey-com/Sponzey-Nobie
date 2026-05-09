@@ -4,6 +4,8 @@ export type AgentEntityType = "nobie" | "sub_agent";
 export type RelationshipEntityType = AgentEntityType | "team" | "session" | "sub_session" | "capability" | "data_exchange";
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded";
 export type OrchestrationMode = "single_nobie" | "orchestration";
+export type OrchestrationFallbackStrategyMode = "self_solve" | "direct_current_agent" | "return_to_parent" | "ask_parent" | "ask_user" | "fail_with_reason" | "root_nobie_direct" | "explicit_provider" | "single_nobie";
+export type OrchestrationSelectedExecutorSource = "execution_decision";
 export type SubSessionStatus = "created" | "queued" | "running" | "waiting_for_input" | "awaiting_approval" | "completed" | "needs_revision" | "failed" | "cancelled";
 export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent";
 export type ResourceLockKind = "file" | "display" | "channel" | "mcp_server" | "secret_scope" | "external_target" | "custom";
@@ -38,7 +40,7 @@ export interface ModelExecutionSnapshot {
     fallbackFromModelId?: string;
     fallbackReasonCode?: string;
     timeoutMs?: number;
-    retryCount: number;
+    retryCount?: number;
     costBudget?: number;
     maxOutputTokens?: number;
     estimatedInputTokens: number;
@@ -51,7 +53,6 @@ export interface ModelExecutionSnapshot {
 export interface DelegationPolicy {
     enabled: boolean;
     maxParallelSessions: number;
-    retryBudget: number;
 }
 export interface NicknameSnapshot {
     entityType: NicknameEntityType;
@@ -301,7 +302,6 @@ export interface SubSessionContract {
     agentNickname?: string;
     commandRequestId: string;
     status: SubSessionStatus;
-    retryBudgetRemaining: number;
     promptBundleId: string;
     promptBundleSnapshot?: AgentPromptBundle;
     modelExecutionSnapshot?: ModelExecutionSnapshot;
@@ -339,8 +339,12 @@ export interface OrchestrationTask {
     resourceLockIds: string[];
     planningTrace?: {
         score?: number;
+        selectedSource?: OrchestrationSelectedExecutorSource;
+        selectedExecutorId?: string;
+        rejectedExecutorId?: string;
         reasonCodes: string[];
         excludedReasonCodes?: string[];
+        rejectedReasonCodes?: string[];
         explanation?: string;
     };
 }
@@ -363,11 +367,7 @@ export interface OrchestrationPlan {
     resourceLocks: ResourceLockContract[];
     parallelGroups: ParallelSubSessionGroup[];
     approvalRequirements: ApprovalRequirementContract[];
-    fallbackStrategy: {
-        mode: "single_nobie" | "ask_user" | "fail_with_reason";
-        reasonCode: string;
-        userMessage?: string;
-    };
+    fallbackStrategy: OrchestrationFallbackStrategy;
     plannerMetadata?: {
         status: "planned" | "degraded" | "requires_team_expansion" | "requires_workflow_recommendation";
         plannerVersion: string;
@@ -392,10 +392,27 @@ export interface OrchestrationPlan {
             excludedReasonCodes: string[];
             explanation?: string;
         }>;
+        selectedExecutorSource?: OrchestrationSelectedExecutorSource;
+        selectedExecutorId?: string;
+        rejectedExecutorId?: string;
+        rejectedReasonCodes?: string[];
+        fallbackMode?: OrchestrationFallbackStrategyMode;
         directReasonCodes: string[];
         fallbackReasonCodes: string[];
     };
     createdAt: number;
+}
+export interface OrchestrationFallbackStrategy {
+    mode: OrchestrationFallbackStrategyMode;
+    reasonCode: string;
+    currentExecutorId?: string;
+    parentExecutorId?: string;
+    requesterId?: string;
+    providerTargetId?: string;
+    unresolvedReasonCode?: string;
+    unresolvedReason?: string;
+    userMessage?: string;
+    legacyWarning?: string;
 }
 export interface AgentPromptBundle {
     identity: RuntimeIdentity;
@@ -430,7 +447,7 @@ export interface AgentPromptBundle {
     completionCriteria?: ExpectedOutputContract[];
     createdAt: number;
 }
-export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "model_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule" | "self_nickname_rule" | "nickname_attribution_rule" | "capability_catalog" | "capability_binding";
+export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "model_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule" | "self_nickname_rule" | "nickname_attribution_rule" | "capability_catalog" | "capability_binding" | "executor_profile_projection";
 export type AgentPromptFragmentStatus = "active" | "inactive" | "review" | "blocked";
 export interface AgentPromptFragment {
     fragmentId: string;
@@ -459,7 +476,6 @@ export interface CommandRequest {
     taskScope: StructuredTaskScope;
     contextPackageIds: string[];
     expectedOutputs: ExpectedOutputContract[];
-    retryBudget: number;
 }
 export interface ProgressEvent {
     identity: RuntimeIdentity;
@@ -526,7 +542,6 @@ export interface FeedbackRequest {
     additionalConstraints: string[];
     additionalContextRefs: string[];
     expectedRevisionOutputs: ExpectedOutputContract[];
-    retryBudgetRemaining: number;
     reasonCode: string;
     createdAt?: number;
 }

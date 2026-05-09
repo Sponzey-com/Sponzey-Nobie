@@ -307,7 +307,7 @@ export function listRootRuns(limit = 50): RootRun[] {
     .prepare<[number], RootRunRow>(
       `SELECT *
        FROM root_runs
-       ORDER BY updated_at DESC
+       ORDER BY created_at DESC, updated_at DESC
        LIMIT ?`,
     )
     .all(limit)
@@ -320,7 +320,7 @@ export function listActiveRootRuns(limit = 100): RootRun[] {
       `SELECT *
        FROM root_runs
        WHERE status IN ('queued', 'running', 'awaiting_approval', 'awaiting_user')
-       ORDER BY updated_at DESC
+       ORDER BY created_at DESC, updated_at DESC
        LIMIT ?`,
     )
     .all(limit)
@@ -489,6 +489,32 @@ export function listRequestGroupRuns(requestGroupId: string): RootRun[] {
     )
     .all(requestGroupId)
     .map(hydrateRun)
+}
+
+function listCancellationScopeRuns(current: RootRun): RootRun[] {
+  const lineageKey = current.lineageRootRunId || current.requestGroupId || current.id
+  const rows = getDb()
+    .prepare<[string, string, string, string], RootRunRow>(
+      `SELECT *
+       FROM root_runs
+       WHERE id = ?
+          OR request_group_id = ?
+          OR parent_run_id = ?
+          OR COALESCE(lineage_root_run_id, request_group_id, id) = ?
+       ORDER BY created_at ASC, updated_at ASC`,
+    )
+    .all(current.id, current.requestGroupId, current.id, lineageKey)
+    .map(hydrateRun)
+
+  const deduped = new Map<string, RootRun>()
+  for (const run of rows) {
+    if (deduped.has(run.id)) continue
+    deduped.set(run.id, run)
+  }
+
+  return [...deduped.values()].filter((run) =>
+    ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status) || activeRunControllers.has(run.id),
+  )
 }
 
 export function hasActiveRequestGroupRuns(requestGroupId: string): boolean {
@@ -716,7 +742,7 @@ export function createRootRun(params: {
       params.workerSessionId ?? null,
       params.contextMode ?? "full",
       params.delegationTurnCount ?? 0,
-      params.maxDelegationTurns ?? 5,
+      params.maxDelegationTurns ?? 0,
       "received",
       1,
       totalSteps,
@@ -782,6 +808,25 @@ export function appendRunEvent(runId: string, label: string): void {
   getDb()
     .prepare(`INSERT INTO run_events (id, run_id, at, label) VALUES (?, ?, ?, ?)`)
     .run(crypto.randomUUID(), runId, at, label)
+}
+
+export function mergeRunPromptSourceSnapshot(
+  runId: string,
+  patch: Record<string, unknown>,
+): RootRun | undefined {
+  const current = getRootRun(runId)
+  if (!current) return undefined
+  const nextSnapshot = {
+    ...(current.promptSourceSnapshot ?? {}),
+    ...patch,
+  }
+  const now = Date.now()
+  getDb()
+    .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(nextSnapshot), now, runId)
+  const updated = getRootRun(runId)
+  if (updated) eventBus.emit("run.progress", { run: updated })
+  return updated
 }
 
 export function updateRunSummary(runId: string, summary: string): RootRun | undefined {
@@ -964,9 +1009,7 @@ export function cancelRootRun(runId: string, options: CancelRootRunOptions = {})
   const current = getRootRun(runId)
   if (!current) return undefined
 
-  const activeRuns = listRequestGroupRuns(current.requestGroupId).filter((run) =>
-    ACTIVE_REQUEST_GROUP_STATUSES.includes(run.status) || activeRunControllers.has(run.id),
-  )
+  const activeRuns = listCancellationScopeRuns(current)
   if (activeRuns.length === 0) return undefined
 
   for (const run of activeRuns) {

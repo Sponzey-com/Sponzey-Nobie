@@ -5,7 +5,7 @@ import type { AIProvider } from "../ai/index.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
 import type { RunChunkDeliveryHandler, logAssistantReply } from "./delivery.js";
 import { createExecutionLoopRuntimeState } from "./execution-profile.js";
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import { type FinalizationDependencies, type FinalizationSource } from "./finalization.js";
 import type { LoopDirective } from "./loop-directive.js";
 import { applyRootRunDriverFailure } from "./root-run-driver-failure.js";
 import { prepareRootLoopLaunch } from "./root-loop-launch.js";
@@ -13,6 +13,7 @@ import { runRootLoop } from "./root-loop.js";
 import type { ReconnectRequestGroupSelection } from "./store.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import { runTopologyRootRun, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
 export interface RootRunDriverDependencies {
     appendRunEvent: (runId: string, message: string) => void;
     updateRunSummary: (runId: string, summary: string) => void;
@@ -66,6 +67,7 @@ interface RootRunDriverModuleDependencies {
     prepareRootLoopLaunch: typeof prepareRootLoopLaunch;
     runRootLoop: typeof runRootLoop;
     applyRootRunDriverFailure: typeof applyRootRunDriverFailure;
+    runTopologyRootRun: typeof runTopologyRootRun;
 }
 export declare function executeRootRunDriver(params: {
     runId: string;
@@ -95,8 +97,10 @@ export declare function executeRootRunDriver(params: {
     workerSessionId?: string;
     toolsEnabled?: boolean;
     isRootRequest: boolean;
+    suppressFinalDelivery?: boolean;
     contextMode: AgentContextMode;
     taskProfile: TaskProfile;
+    topologyRouting?: TopologyRootRunRoutingDecision;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     defaultMaxDelegationTurns: number;
 }, dependencies: RootRunDriverDependencies, moduleDependencies?: RootRunDriverModuleDependencies): Promise<void>;

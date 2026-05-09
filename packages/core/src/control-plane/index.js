@@ -24,7 +24,7 @@ const KNOWN_BACKENDS = [
 ];
 const GENERIC_BACKEND_REASONS = new Set([
     "계획·리서치 특화 provider runtime은 아직 gateway에 연결되지 않았습니다.",
-    "엔드포인트와 모델 조회는 가능하지만 실제 라우팅 런타임은 아직 연결되지 않았습니다.",
+    "엔드포인트와 모델 조회는 가능하지만 실제 실행 경로는 아직 연결되지 않았습니다.",
     "로컬 경량 추론 provider runtime은 후속 Phase에서 연결합니다.",
     "사용자 추가 backend이며 실제 연결 테스트는 setup에서 확인합니다.",
 ]);
@@ -93,8 +93,16 @@ function toNumberArrayString(value) {
 function parseIdString(value) {
     return value
         .split(/[\s,]+/)
-        .map((item) => Number(item.trim()))
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => Number(item))
         .filter((item) => Number.isFinite(item));
+}
+function parseStringList(value) {
+    return value
+        .split(/[\s,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
 }
 function ensureParentDir(filePath) {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -498,6 +506,54 @@ export function buildSetupDraft() {
             slackAppToken: config.slack?.appToken ?? "",
             slackAllowedUserIds: (config.slack?.allowedUserIds ?? []).join("\n"),
             slackAllowedChannelIds: (config.slack?.allowedChannelIds ?? []).join("\n"),
+            discordEnabled: config.discord?.enabled ?? false,
+            discordBotToken: config.discord?.botToken ?? "",
+            discordApplicationId: config.discord?.applicationId ?? "",
+            discordPublicKey: config.discord?.publicKey ?? "",
+            discordAllowedUserIds: (config.discord?.allowedUserIds ?? []).join("\n"),
+            discordAllowedGuildIds: (config.discord?.allowedGuildIds ?? []).join("\n"),
+            discordAllowedChannelIds: (config.discord?.allowedChannelIds ?? []).join("\n"),
+            discordGrantedIntents: (config.discord?.grantedIntents ?? []).join("\n"),
+            discordBotPermissions: (config.discord?.botPermissions ?? []).join("\n"),
+            discordInstalledGuildIds: (config.discord?.installedGuildIds ?? []).join("\n"),
+            discordLargeGuildMode: config.discord?.largeGuildMode === true,
+            googleChatEnabled: config.googleChat?.enabled ?? false,
+            googleChatProjectId: config.googleChat?.projectId ?? "",
+            googleChatAppCredentialJson: config.googleChat?.appCredentialJson ?? "",
+            googleChatServiceAccountEmail: config.googleChat?.serviceAccountEmail ?? "",
+            googleChatWebhookUrl: config.googleChat?.webhookUrl ?? "",
+            googleChatVerificationToken: config.googleChat?.verificationToken ?? "",
+            googleChatAllowedUserIds: (config.googleChat?.allowedUserIds ?? []).join("\n"),
+            googleChatAllowedSpaceIds: (config.googleChat?.allowedSpaceIds ?? []).join("\n"),
+            googleChatDeployedSpaceIds: (config.googleChat?.deployedSpaceIds ?? []).join("\n"),
+            googleChatGrantedScopes: (config.googleChat?.grantedScopes ?? []).join("\n"),
+            googleChatAppPublished: config.googleChat?.appPublished === true,
+            googleChatDomainWideDelegation: config.googleChat?.domainWideDelegation === true,
+            imessageEnabled: config.imessage?.enabled ?? false,
+            imessageMode: config.imessage?.mode ?? "manual_confirm",
+            imessageLocalBridgeEnabled: config.imessage?.localBridgeEnabled === true,
+            imessageYeonjangBridgeEnabled: config.imessage?.yeonjangBridgeEnabled === true,
+            imessageRiskAcknowledged: config.imessage?.riskAcknowledged === true,
+            imessageMessagesAppAvailable: config.imessage?.messagesAppAvailable === true,
+            imessageUserSessionActive: config.imessage?.userSessionActive === true,
+            imessageAutomationPermissionGranted: config.imessage?.automationPermissionGranted === true,
+            imessageAllowedRecipientIds: (config.imessage?.allowedRecipientIds ?? []).join("\n"),
+            imessageManualConfirmationRequired: config.imessage?.manualConfirmationRequired !== false,
+            kakaoTalkEnabled: config.kakaoTalk?.enabled ?? false,
+            kakaoTalkMode: config.kakaoTalk?.mode ?? "local_bridge",
+            kakaoTalkBusinessApiEnabled: config.kakaoTalk?.businessApiEnabled === true,
+            kakaoTalkBusinessApiKey: config.kakaoTalk?.businessApiKey ?? "",
+            kakaoTalkChannelId: config.kakaoTalk?.channelId ?? "",
+            kakaoTalkLocalBridgeEnabled: config.kakaoTalk?.localBridgeEnabled === true,
+            kakaoTalkYeonjangBridgeEnabled: config.kakaoTalk?.yeonjangBridgeEnabled === true,
+            kakaoTalkRiskAcknowledged: config.kakaoTalk?.riskAcknowledged === true,
+            kakaoTalkAppAvailable: config.kakaoTalk?.kakaoTalkAppAvailable === true,
+            kakaoTalkUserSessionActive: config.kakaoTalk?.userSessionActive === true,
+            kakaoTalkAutomationPermissionGranted: config.kakaoTalk?.automationPermissionGranted === true,
+            kakaoTalkAllowedUserIds: (config.kakaoTalk?.allowedUserIds ?? []).join("\n"),
+            kakaoTalkAllowedRoomIds: (config.kakaoTalk?.allowedRoomIds ?? []).join("\n"),
+            kakaoTalkManualConfirmationRequired: config.kakaoTalk?.manualConfirmationRequired !== false,
+            kakaoTalkRateLimitPerMinute: config.kakaoTalk?.rateLimitPerMinute ?? 6,
         },
         mqtt: {
             enabled: config.mqtt.enabled,
@@ -604,6 +660,66 @@ export function saveSetupDraft(draft, state) {
             .map((value) => value.trim())
             .filter(Boolean),
     };
+    raw.discord = {
+        ...toObject(raw.discord),
+        enabled: draft.channels.discordEnabled,
+        botToken: draft.channels.discordBotToken,
+        applicationId: draft.channels.discordApplicationId.trim(),
+        publicKey: draft.channels.discordPublicKey.trim(),
+        allowedUserIds: parseStringList(draft.channels.discordAllowedUserIds),
+        allowedGuildIds: parseStringList(draft.channels.discordAllowedGuildIds),
+        allowedChannelIds: parseStringList(draft.channels.discordAllowedChannelIds),
+        grantedIntents: parseStringList(draft.channels.discordGrantedIntents),
+        botPermissions: parseStringList(draft.channels.discordBotPermissions),
+        installedGuildIds: parseStringList(draft.channels.discordInstalledGuildIds),
+        largeGuildMode: draft.channels.discordLargeGuildMode,
+    };
+    raw.googleChat = {
+        ...toObject(raw.googleChat),
+        enabled: draft.channels.googleChatEnabled,
+        projectId: draft.channels.googleChatProjectId.trim(),
+        appCredentialJson: draft.channels.googleChatAppCredentialJson,
+        serviceAccountEmail: draft.channels.googleChatServiceAccountEmail.trim(),
+        webhookUrl: draft.channels.googleChatWebhookUrl.trim(),
+        verificationToken: draft.channels.googleChatVerificationToken,
+        allowedUserIds: parseStringList(draft.channels.googleChatAllowedUserIds),
+        allowedSpaceIds: parseStringList(draft.channels.googleChatAllowedSpaceIds),
+        deployedSpaceIds: parseStringList(draft.channels.googleChatDeployedSpaceIds),
+        grantedScopes: parseStringList(draft.channels.googleChatGrantedScopes),
+        appPublished: draft.channels.googleChatAppPublished,
+        domainWideDelegation: draft.channels.googleChatDomainWideDelegation,
+    };
+    raw.imessage = {
+        ...toObject(raw.imessage),
+        enabled: draft.channels.imessageEnabled,
+        mode: draft.channels.imessageMode,
+        localBridgeEnabled: draft.channels.imessageLocalBridgeEnabled,
+        yeonjangBridgeEnabled: draft.channels.imessageYeonjangBridgeEnabled,
+        riskAcknowledged: draft.channels.imessageRiskAcknowledged,
+        messagesAppAvailable: draft.channels.imessageMessagesAppAvailable,
+        userSessionActive: draft.channels.imessageUserSessionActive,
+        automationPermissionGranted: draft.channels.imessageAutomationPermissionGranted,
+        allowedRecipientIds: parseStringList(draft.channels.imessageAllowedRecipientIds),
+        manualConfirmationRequired: draft.channels.imessageManualConfirmationRequired,
+    };
+    raw.kakaoTalk = {
+        ...toObject(raw.kakaoTalk),
+        enabled: draft.channels.kakaoTalkEnabled,
+        mode: draft.channels.kakaoTalkMode,
+        businessApiEnabled: draft.channels.kakaoTalkBusinessApiEnabled,
+        businessApiKey: draft.channels.kakaoTalkBusinessApiKey,
+        channelId: draft.channels.kakaoTalkChannelId.trim(),
+        localBridgeEnabled: draft.channels.kakaoTalkLocalBridgeEnabled,
+        yeonjangBridgeEnabled: draft.channels.kakaoTalkYeonjangBridgeEnabled,
+        riskAcknowledged: draft.channels.kakaoTalkRiskAcknowledged,
+        kakaoTalkAppAvailable: draft.channels.kakaoTalkAppAvailable,
+        userSessionActive: draft.channels.kakaoTalkUserSessionActive,
+        automationPermissionGranted: draft.channels.kakaoTalkAutomationPermissionGranted,
+        allowedUserIds: parseStringList(draft.channels.kakaoTalkAllowedUserIds),
+        allowedRoomIds: parseStringList(draft.channels.kakaoTalkAllowedRoomIds),
+        manualConfirmationRequired: draft.channels.kakaoTalkManualConfirmationRequired,
+        rateLimitPerMinute: Math.max(1, Math.floor(Number.isFinite(draft.channels.kakaoTalkRateLimitPerMinute) ? draft.channels.kakaoTalkRateLimitPerMinute : 6)),
+    };
     raw.mqtt = {
         ...toObject(raw.mqtt),
         enabled: draft.mqtt.enabled,
@@ -702,6 +818,21 @@ export function createSetupChecks() {
 }
 export function createTransientAuthToken() {
     return randomBytes(32).toString("hex");
+}
+function createEnterpriseTopologyBuilderCapability() {
+    const rawFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase();
+    const explicitlyDisabled = rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off";
+    return {
+        key: "enterprise_topology_builder_ui",
+        label: "Enterprise Topology Builder",
+        area: "gateway",
+        status: explicitlyDisabled ? "disabled" : "ready",
+        implemented: true,
+        enabled: !explicitlyDisabled,
+        ...(explicitlyDisabled
+            ? { reason: "Enterprise Topology Builder UI 기능 플래그가 꺼져 있습니다." }
+            : {}),
+    };
 }
 export function createCapabilities() {
     const config = getConfig();
@@ -857,9 +988,10 @@ export function createCapabilities() {
         },
         { key: "ai.backends", label: "AI Backends", area: "ai", status: "ready", implemented: true, enabled: true },
         mcpCapability,
-        { key: "ai.routing", label: "AI Routing", area: "ai", status: "ready", implemented: true, enabled: true },
+        { key: "ai.routing", label: "AI execution path", area: "ai", status: "ready", implemented: true, enabled: true },
         { key: "instructions.chain", label: "Active Instructions", area: "gateway", status: "ready", implemented: true, enabled: true },
         { key: "settings.control", label: "Settings Control", area: "security", status: "ready", implemented: true, enabled: true },
+        createEnterpriseTopologyBuilderCapability(),
         {
             key: "audit.viewer",
             label: "Audit Viewer",

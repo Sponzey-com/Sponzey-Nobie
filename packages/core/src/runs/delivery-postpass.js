@@ -1,7 +1,6 @@
 import { buildImplicitExecutionSummary } from "./execution.js";
 import { buildSuccessfulDeliverySummary, } from "./delivery.js";
 import { buildDirectArtifactDeliveryRecoveryPrompt, selectDirectArtifactDeliveryRecovery, } from "./recovery.js";
-import { looksLikePlainTextInformationRequest } from "./execution-profile.js";
 export function buildDeliveryPostPassPreview(params) {
     if (params.deliveryOutcome.hasSuccessfulArtifactDelivery && params.deliveryOutcome.deliverySummary) {
         return {
@@ -36,16 +35,6 @@ export function decideDirectArtifactDeliveryFlow(params) {
     if (!params.deliveryOutcome.requiresDirectArtifactRecovery) {
         return { kind: "none" };
     }
-    if (looksLikePlainTextInformationRequest(params.originalRequest)
-        && params.previousResult.trim()
-        && ((params.successfulTextDeliveries?.length ?? 0) > 0 || params.successfulTools.length > 0)) {
-        return {
-            kind: "complete",
-            deliverySummary: "텍스트 결과 전달 완료",
-            finalText: params.previousResult,
-            eventLabel: "텍스트 결과 전달 요청 완료",
-        };
-    }
     const deliveryRecovery = selectDirectArtifactDeliveryRecovery({
         source: params.source,
         successfulFileDeliveries: params.successfulFileDeliveries,
@@ -62,9 +51,9 @@ export function decideDirectArtifactDeliveryFlow(params) {
     if (!params.canRetry) {
         return {
             kind: "stop",
-            summary: `전달 복구 재시도 한도(${params.deliveryBudgetLimit > 0 ? params.deliveryBudgetLimit : params.maxTurns}회)에 도달했습니다.`,
+            summary: "전달 복구를 자동으로 계속할 수 없습니다.",
             reason: "사용자는 결과물 자체를 보여주거나 보내달라고 요청했지만 실제 전달이 완료되지 않았습니다.",
-            remainingItems: ["결과물 자체를 메신저로 실제 전달하는 단계가 남아 있습니다."],
+            remainingItems: ["결과물 자체를 전달할 수 있는 안전한 전달 경로나 사용자 확인이 필요합니다."],
         };
     }
     return {

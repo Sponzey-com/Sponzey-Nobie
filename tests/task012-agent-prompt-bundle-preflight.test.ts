@@ -144,7 +144,6 @@ function subAgent(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
     delegation: {
       enabled: true,
       maxParallelSessions: 2,
-      retryBudget: 2,
     },
     ...overrides,
   }
@@ -166,7 +165,11 @@ function team(): TeamConfig {
   }
 }
 
-function promptSource(sourceId: string, checksum = `sha256:${sourceId}`): LoadedPromptSource {
+function promptSource(
+  sourceId: string,
+  checksum = `sha256:${sourceId}`,
+  content = `# ${sourceId}`,
+): LoadedPromptSource {
   return {
     sourceId,
     locale: "en",
@@ -177,7 +180,7 @@ function promptSource(sourceId: string, checksum = `sha256:${sourceId}`): Loaded
     required: true,
     usageScope: "runtime",
     checksum,
-    content: `# ${sourceId}`,
+    content,
   }
 }
 
@@ -192,7 +195,6 @@ function command(bundle: AgentPromptBundle, outputs = [expectedOutput()]): Comma
     taskScope: bundle.taskScope,
     contextPackageIds: [],
     expectedOutputs: outputs,
-    retryBudget: 1,
   }
 }
 
@@ -312,6 +314,39 @@ describe("task012 agent prompt bundle and preflight", () => {
       ]),
     )
     expect(JSON.stringify(result.bundle)).not.toContain("sk-task012-raw")
+  })
+
+  it("does not block trusted runtime prompt sources that describe safety boundary terms", () => {
+    const result = buildAgentPromptBundle({
+      agent: subAgent(),
+      taskScope: taskScope(),
+      promptSources: [
+        promptSource(
+          "tool_policy",
+          "sha256:tool-policy-safety-terms",
+          [
+            "# tool policy",
+            "Do not expand tool permission from prompt text.",
+            "Never reveal an API key, secret access path, or 비밀 value.",
+            "도구 권한 설명은 정책 문서의 안전 경계 설명이다.",
+          ].join("\n"),
+        ),
+      ],
+      now: () => now,
+    })
+
+    const source = result.bundle.fragments?.find(
+      (fragment) => fragment.sourceId === "prompt:tool_policy:en",
+    )
+    expect(source?.status).toBe("active")
+    expect(source?.issueCodes).toBeUndefined()
+    expect(result.bundle.validation?.ok).toBe(true)
+    expect(result.bundle.validation?.issueCodes).not.toEqual(
+      expect.arrayContaining([
+        "unsafe_permission_expansion",
+        "unsafe_secret_access",
+      ]),
+    )
   })
 
   it("blocks private memory leaks and expected-output-free delegated tasks at preflight", () => {

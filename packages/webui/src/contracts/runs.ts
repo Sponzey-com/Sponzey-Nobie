@@ -171,8 +171,8 @@ export interface RunRuntimeInspectorModel {
   fallbackFromModelId?: string
   fallbackReasonCode?: string
   effort?: string
-  retryCount: number
-  attemptCount?: number
+  signalCount: number
+  strategyChangeCount?: number
   estimatedInputTokens: number
   estimatedOutputTokens: number
   estimatedCost: number
@@ -198,7 +198,6 @@ export interface RunRuntimeInspectorSubSession {
     | "cancelled"
   commandSummary: string
   expectedOutputs: RunRuntimeInspectorExpectedOutput[]
-  retryBudgetRemaining: number
   promptBundleId: string
   startedAt?: number
   finishedAt?: number
@@ -255,6 +254,10 @@ export interface RunRuntimeInspectorPlanTask {
   goal: string
   assignedAgentId?: string
   assignedTeamId?: string
+  assignmentSource?: "topology" | "agent" | "team" | "direct"
+  assignedTopologyId?: string
+  assignedExecutorId?: string
+  assignedExecutorName?: string
   reasonCodes: string[]
 }
 
@@ -282,20 +285,94 @@ export interface RunRuntimeInspectorFinalizer {
   at?: number
 }
 
+export interface RunRuntimeInspectorTopologyRun {
+  topologyRunId: string
+  topologyId: string
+  status: string
+  entryNodeId?: string
+  startedAt: number
+  finishedAt?: number
+  nodeRunCount: number
+  workOrderCount: number
+  traceEventCount: number
+  toolCallCount: number
+  failureCount: number
+  observedEdgeCount: number
+  projection: Record<string, unknown>
+}
+
+export interface RunRuntimeInspectorTopologyRouting {
+  mode: "route" | "fallback" | "unknown"
+  reasonCode?: string
+  featureFlagMode?: string
+  executionDecisionSource?: string
+  executionDecisionGraphId?: string
+  executionDecisionGraphSource?: string
+  executionDecisionCurrentExecutorId?: string
+  executionDecisionAvailableExecutorIds?: string[]
+  executionDecisionDiagnosticExecutorIds?: string[]
+  executionDecisionAllExecutorIds?: string[]
+  executionDecisionAllRegisteredExecutorIds?: string[]
+  executionDecisionSelectedExecutorId?: string
+  executionDecisionSelectedConnectionPath?: string[]
+  executionDecisionNormalizedConnectionPath?: string[]
+  executionDecisionRoute?: string
+  executionDecisionFallbackReason?: string
+  executionDecisionValidationStatus?: string
+  executionDecisionValidationIssues?: string[]
+  executionDecisionResolvedExecutorId?: string
+  executionDecisionExecutorNameById?: Record<string, string>
+  providerFallbackBlocked: boolean
+  providerFallbackBlockedReasonCode?: string
+  riskBoundaryRequiresUserApproval?: boolean
+  riskBoundaryKind?: string
+  riskBoundaryReason?: string
+  topologyId?: string
+  topologyName?: string
+  topologyVersion?: number
+  topologySchemaVersion?: number
+  topologyMigrationSource?: string
+  entryNodeId?: string
+  entryNodeName?: string
+  explicit?: boolean
+  providerFallback: boolean
+  providerFallbackReasonCode?: string
+  activeTopologyCount?: number
+  selectedExecutorIds: string[]
+  selectedEdgeIds: string[]
+  assignedTopologyAgentIds: string[]
+  issues: string[]
+}
+
 export interface RunRuntimeInspectorProjection {
   schemaVersion: 1
   runId: string
   requestGroupId: string
+  requestIdentity: RunRuntimeInspectorRequestIdentity
   generatedAt: number
   orchestrationMode: RunOrchestrationMode
+  topologyRouting: RunRuntimeInspectorTopologyRouting
   plan: RunRuntimeInspectorPlanProjection
   subSessions: RunRuntimeInspectorSubSession[]
   dataExchanges: RunRuntimeInspectorDataExchangeSummary[]
   approvals: RunRuntimeInspectorApprovalSummary[]
   timeline: RunRuntimeInspectorTimelineEvent[]
+  topologyRuns: RunRuntimeInspectorTopologyRun[]
   finalizer: RunRuntimeInspectorFinalizer
   redaction: {
     payloadsRedacted: true
     rawPayloadVisible: false
   }
+}
+
+export interface RunRuntimeInspectorRequestIdentity {
+  runId: string
+  requestGroupId: string
+  lineageRootRunId?: string
+  parentRunId?: string
+  rootRunId: string
+  userMessageKey?: string
+  requestIsolationMode?: string
+  continuationSource?: string
+  contextMode?: string
 }

@@ -128,7 +128,7 @@ describe("start preflight", () => {
       model: "gpt-5",
       executionSemantics: {
         filesystemEffect: "none",
-        privilegedOperation: "none",
+        privilegedOperation: "required",
         artifactDelivery: "direct",
         approvalRequired: false,
         approvalTool: "screen_capture",
@@ -138,7 +138,7 @@ describe("start preflight", () => {
     expect(failure?.code).toBe("yeonjang_unavailable")
   })
 
-  it("marks direct screen capture messages as Yeonjang-bound before intake semantics are available", () => {
+  it("does not infer Yeonjang preflight from raw screen capture text before intake semantics exist", () => {
     const failure = resolveStartPreflightFailure({
       source: "telegram",
       message: "메인 화면 캡쳐해서 보여줘",
@@ -155,8 +155,8 @@ describe("start preflight", () => {
       onChunk: vi.fn(),
     })
 
-    expect(failure?.code).toBe("yeonjang_unavailable")
-    expect(plan.toolPolicy.requiresYeonjang).toBe(true)
+    expect(failure).toBeNull()
+    expect(plan.toolPolicy.requiresYeonjang).toBe(false)
   })
 
   it("allows Yeonjang-bound requests to reach request-time method refresh when a snapshot is connected", () => {
@@ -178,7 +178,7 @@ describe("start preflight", () => {
       model: "gpt-5",
       executionSemantics: {
         filesystemEffect: "none",
-        privilegedOperation: "none",
+        privilegedOperation: "required",
         artifactDelivery: "direct",
         approvalRequired: false,
         approvalTool: "screen_capture",
@@ -206,7 +206,7 @@ describe("start preflight", () => {
       onChunk: vi.fn(),
       executionSemantics: {
         filesystemEffect: "none",
-        privilegedOperation: "none",
+        privilegedOperation: "required",
         artifactDelivery: "direct",
         approvalRequired: true,
         approvalTool: "screen_capture",

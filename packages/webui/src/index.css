@@ -3,7 +3,17 @@
 @tailwind utilities;
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
 
 .prose { font-size: 0.875rem; line-height: 1.6; }
 .prose p { margin: 0.5em 0; }
@@ -29,6 +39,23 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
   animation: topology-working-pulse 1.2s ease-in-out infinite;
 }
 
+.executor-flow-edge-running path {
+  stroke-dasharray: 10 7;
+  animation: executor-flow-edge-run 0.85s linear infinite;
+}
+
+.executor-flow-edge-completed path {
+  stroke: #059669;
+}
+
+.executor-flow-edge-failed path {
+  stroke: #e11d48;
+}
+
+.executor-flow-edge-cancelled path {
+  stroke-dasharray: 5 5;
+}
+
 @keyframes topology-working-pulse {
   0%, 100% {
     opacity: 0.35;
@@ -40,9 +67,19 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
   }
 }
 
+@keyframes executor-flow-edge-run {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .topology-working-node::after {
     animation: none;
     opacity: 0.9;
+  }
+
+  .executor-flow-edge-running path {
+    animation: none;
   }
 }

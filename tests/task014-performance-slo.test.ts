@@ -149,7 +149,6 @@ function command(id: string): CommandRequest {
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
-    retryBudget: 2,
   }
 }
 
@@ -307,7 +306,6 @@ describe("task014 performance slo", () => {
                 agentDisplayName: "Researcher",
                 commandRequestId: "command:left",
                 status: "completed",
-                retryBudgetRemaining: 1,
                 promptBundleId: "prompt-bundle:researcher",
               },
               status: "completed" as const,
@@ -331,7 +329,6 @@ describe("task014 performance slo", () => {
                 agentDisplayName: "Researcher",
                 commandRequestId: "command:right",
                 status: "completed",
-                retryBudgetRemaining: 1,
                 promptBundleId: "prompt-bundle:researcher",
               },
               status: "completed" as const,

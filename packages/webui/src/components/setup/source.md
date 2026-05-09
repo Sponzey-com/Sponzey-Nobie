@@ -6,7 +6,7 @@
 
 ## 주요 파일
 
-- AI backend와 라우팅 편집: `BackendComposer`, `BackendHealthCard`, `RoutingPriorityEditor`
+- AI backend와 실행 대상 순서 편집: `BackendComposer`, `BackendHealthCard`, `RoutingPriorityEditor`
 - 채널과 보안 설정: `TelegramSettingsForm`, `SecuritySettingsForm`, `AuthTokenPanel`
 - MQTT 관리: `MqttSettingsForm`, `MqttRuntimePanel`
 - 설정 가이드와 검토: `SetupAssistPanel`, `ReviewSummaryPanel`, `SetupChecksPanel`

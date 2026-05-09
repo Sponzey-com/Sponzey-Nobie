@@ -53,6 +53,7 @@ export declare function createRootRun(params: {
     orchestrationMode?: RootRun["orchestrationMode"];
 }): RootRun;
 export declare function appendRunEvent(runId: string, label: string): void;
+export declare function mergeRunPromptSourceSnapshot(runId: string, patch: Record<string, unknown>): RootRun | undefined;
 export declare function updateRunSummary(runId: string, summary: string): RootRun | undefined;
 export declare function updateRunStatus(runId: string, status: RunStatus, summary?: string, canCancel?: boolean): RootRun | undefined;
 export declare function incrementDelegationTurnCount(runId: string, summary?: string): RootRun | undefined;

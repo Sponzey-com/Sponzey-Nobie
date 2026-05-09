@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 import { applyExecutionRecoveryAttempt } from "../packages/core/src/runs/execution-retry-application.ts"
 
 describe("execution retry application", () => {
-  it("stops when the execution recovery limit is reached", () => {
+  it("continues ordinary execution recovery past the old fixed retry count", () => {
     const rememberRunFailure = vi.fn()
     const appendRunEvent = vi.fn()
+    const incrementDelegationTurnCount = vi.fn()
+    const setRunStepStatus = vi.fn()
+    const updateRunStatus = vi.fn()
 
     const result = applyExecutionRecoveryAttempt({
       runId: "run-1",
@@ -25,10 +28,10 @@ describe("execution retry application", () => {
       },
     }, {
       rememberRunFailure,
-      incrementDelegationTurnCount: vi.fn(),
+      incrementDelegationTurnCount,
       appendRunEvent,
-      setRunStepStatus: vi.fn(),
-      updateRunStatus: vi.fn(),
+      setRunStepStatus,
+      updateRunStatus,
     })
 
     expect(rememberRunFailure).toHaveBeenCalledWith({
@@ -39,13 +42,16 @@ describe("execution retry application", () => {
       detail: "tool failed",
       title: "execution_recovery: shell_exec",
     })
-    expect(appendRunEvent).toHaveBeenCalledWith("run-1", "실행 복구 한도 도달 0/2")
+    expect(incrementDelegationTurnCount).toHaveBeenCalledWith("run-1", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.")
+    expect(appendRunEvent).toHaveBeenCalledWith("run-1", "실행 복구 신호 1")
+    expect(setRunStepStatus).toHaveBeenCalledWith("run-1", "executing", "running", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.")
+    expect(updateRunStatus).toHaveBeenCalledWith("run-1", "running", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.", true)
     expect(result).toEqual({
-      kind: "stop",
-      stop: {
-        summary: "실행 복구 재시도 한도(2회)에 도달했습니다.",
+      kind: "retry",
+      payload: {
+        summary: "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.",
         reason: "tool failed",
-        remainingItems: ["shell_exec 실행 실패에 대한 추가 대안 탐색이 필요하지만 자동 한도에 도달했습니다."],
+        toolNames: ["shell_exec"],
       },
     })
   })
@@ -91,7 +97,7 @@ describe("execution retry application", () => {
       title: "execution_recovery: shell_exec, screen_capture",
     })
     expect(incrementDelegationTurnCount).toHaveBeenCalledWith("run-2", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.")
-    expect(appendRunEvent).toHaveBeenCalledWith("run-2", "실행 복구 재시도 1/2")
+    expect(appendRunEvent).toHaveBeenCalledWith("run-2", "실행 복구 신호 1")
     expect(setRunStepStatus).toHaveBeenCalledWith("run-2", "executing", "running", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.")
     expect(updateRunStatus).toHaveBeenCalledWith("run-2", "running", "실행 오류를 분석하고 다른 도구 조합으로 재시도합니다.", true)
     expect(result).toEqual({

@@ -42,10 +42,19 @@ export interface ChannelSmokeApprovalTrace {
     uiVisible?: boolean;
     uiKind?: "button" | "text_fallback" | "inline" | "none";
 }
+export interface ChannelSmokeRequestFlowTrace {
+    runId?: string;
+    requestGroupId?: string;
+    requestGroupMatchesRunId?: boolean;
+    decisionTracePresent?: boolean;
+    topologyRunCreated?: boolean;
+    providerDirectUsed?: boolean;
+}
 export interface ChannelSmokeTrace {
     sourceChannel: ChannelSmokeChannel;
     responseChannel?: ChannelSmokeChannel;
     correlationKey?: ChannelSmokeCorrelationKey;
+    requestFlow?: ChannelSmokeRequestFlowTrace;
     toolCalls?: ChannelSmokeToolTrace[];
     approval?: ChannelSmokeApprovalTrace;
     artifacts?: ChannelSmokeArtifactTrace[];

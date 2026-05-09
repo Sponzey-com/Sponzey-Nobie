@@ -114,11 +114,35 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   {
     path: "/topology",
     mode: "advanced",
-    component: "TopologyPage",
-    apiCalls: ["/api/agent-topology"],
+    component: "TopologyWorkspacePage",
+    apiCalls: [
+      "/api/topologies",
+      "/api/topology-templates",
+      "/api/relation-templates",
+      "/api/agent-topology",
+      "/api/work-order-templates",
+    ],
     status: "redirect",
     replacementPath: "/advanced/topology",
-    notes: "Legacy topology URL.",
+    notes: "Legacy runtime topology URL now opens the simple topology workspace.",
+  },
+  {
+    path: "/enterprise-topology",
+    mode: "advanced",
+    component: "TopologyWorkspacePage",
+    apiCalls: [
+      "/api/topologies",
+      "/api/topology-templates",
+      "/api/relation-templates",
+      "/api/topologies/:topologyId/gui-draft/issues",
+      "/api/topologies/:topologyId/gui-draft/compiled-preview",
+      "/api/work-order-templates",
+      "/api/topology-runs/:topologyRunId/trace",
+      "/api/topology-runs/:topologyRunId/failure-reports",
+    ],
+    status: "redirect",
+    replacementPath: "/advanced/topology",
+    notes: "Legacy enterprise builder URL now opens the unified topology workspace in build mode.",
   },
   {
     path: "/settings",
@@ -241,11 +265,46 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   {
     path: "/advanced/topology",
     mode: "advanced",
-    component: "TopologyPage",
-    apiCalls: ["/api/agent-topology", "/api/agent-topology/edges/validate"],
+    component: "TopologyWorkspacePage",
+    apiCalls: [
+      "/api/topologies",
+      "/api/topology-templates",
+      "/api/relation-templates",
+      "/api/topologies/:topologyId/gui-draft/issues",
+      "/api/topologies/:topologyId/gui-draft/validate",
+      "/api/topologies/:topologyId/gui-draft/compile",
+      "/api/topologies/:topologyId/gui-draft/compiled-preview",
+      "/api/topologies/:topologyId/gui-draft/run",
+      "/api/work-order-templates",
+      "/api/topology-runs/:topologyRunId/trace",
+      "/api/topology-runs/:topologyRunId/failure-reports",
+      "/api/agent-topology",
+    ],
     status: "kept",
     replacementPath: null,
-    notes: "Agent hierarchy and team membership topology editor.",
+    notes: "Unified simple topology workspace for build, run, trace, and improve layers.",
+  },
+  {
+    path: "/advanced/enterprise-topology",
+    mode: "advanced",
+    component: "Navigate",
+    apiCalls: [
+      "/api/topologies",
+      "/api/topology-templates",
+      "/api/relation-templates",
+      "/api/topologies/:topologyId/gui-draft/issues",
+      "/api/topologies/:topologyId/gui-draft/validate",
+      "/api/topologies/:topologyId/gui-draft/compile",
+      "/api/topologies/:topologyId/gui-draft/compiled-preview",
+      "/api/topologies/:topologyId/gui-draft/run",
+      "/api/work-order-templates",
+      "/api/topology-runs/:topologyRunId/trace",
+      "/api/topology-runs/:topologyRunId/failure-reports",
+      "/api/topologies/:topologyId/versions",
+    ],
+    status: "compatibility",
+    replacementPath: "/advanced/topology?mode=build",
+    notes: "Compatibility alias for old enterprise builder bookmarks.",
   },
   {
     path: "/advanced/orchestration",
@@ -424,6 +483,7 @@ export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode
     normalized.startsWith("/advanced/audit") ||
     normalized.startsWith("/advanced/plugins") ||
     normalized.startsWith("/advanced/schedules") ||
+    normalized.startsWith("/advanced/enterprise-topology") ||
     normalized.startsWith("/advanced/topology") ||
     normalized.startsWith("/admin")
   ) {

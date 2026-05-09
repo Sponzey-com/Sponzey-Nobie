@@ -1,4 +1,6 @@
 import { listAgentDataExchangesForRecipient, listAgentDataExchangesForSource, listMessageLedgerEvents, listOrchestrationEvents, listRunSubSessionsForParentRun, } from "../db/index.js";
+import { listTopologyRunsForRootRun, } from "../topology-runtime/trace.js";
+import { createEnterpriseTopologyRegistry } from "../topology/registry.js";
 import { redactUiValue } from "../ui/redaction.js";
 const ACTIVE_CONTROL_STATUSES = new Set([
     "created",
@@ -122,7 +124,6 @@ function fallbackSubSessionContract(row) {
         ...(row.agent_nickname ? { agentNickname: row.agent_nickname } : {}),
         commandRequestId: row.command_request_id,
         status: row.status,
-        retryBudgetRemaining: row.retry_budget_remaining,
         promptBundleId: row.prompt_bundle_id,
         ...(row.started_at ? { startedAt: row.started_at } : {}),
         ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
@@ -163,7 +164,11 @@ function modelProjectionFrom(value) {
     const fallbackFromModelId = stringValue(source.fallbackFromModelId);
     const fallbackReasonCode = stringValue(source.fallbackReasonCode);
     const effort = stringValue(source.effort);
-    const attemptCount = numberValue(source.attemptCount);
+    const signalCount = numberValue(source.signalCount) ??
+        numberValue(source.attemptCount) ??
+        numberValue(source.retryCount) ??
+        0;
+    const strategyChangeCount = numberValue(source.strategyChangeCount);
     const latencyMs = numberValue(source.latencyMs);
     const status = stringValue(source.status);
     return {
@@ -173,8 +178,8 @@ function modelProjectionFrom(value) {
         ...(fallbackFromModelId ? { fallbackFromModelId: redactedText(fallbackFromModelId) } : {}),
         ...(fallbackReasonCode ? { fallbackReasonCode: redactedText(fallbackReasonCode) } : {}),
         ...(effort ? { effort: redactedText(effort) } : {}),
-        retryCount: numberValue(source.retryCount) ?? 0,
-        ...(attemptCount !== undefined ? { attemptCount } : {}),
+        signalCount,
+        ...(strategyChangeCount !== undefined ? { strategyChangeCount } : {}),
         estimatedInputTokens: numberValue(source.estimatedInputTokens) ?? 0,
         estimatedOutputTokens: numberValue(source.estimatedOutputTokens) ?? 0,
         estimatedCost: numberValue(source.estimatedCost) ?? 0,
@@ -191,7 +196,7 @@ function modelFor(contract, ledgerEvents) {
     return (modelProjectionFrom(ledgerDetail?.modelExecution) ??
         modelProjectionFrom(contract.modelExecutionSnapshot));
 }
-function allowedControlActionsFor(status, retryBudgetRemaining) {
+function allowedControlActionsFor(status) {
     if (ACTIVE_CONTROL_STATUSES.has(status)) {
         return [
             { action: "send", reasonCode: "sub_session_active_control_allowed" },
@@ -202,8 +207,7 @@ function allowedControlActionsFor(status, retryBudgetRemaining) {
     }
     if (TERMINAL_STATUSES.has(status) &&
         status !== "completed" &&
-        status !== "cancelled" &&
-        retryBudgetRemaining > 0) {
+        status !== "cancelled") {
         return [
             { action: "retry", reasonCode: "sub_session_retry_state_allowed" },
             { action: "feedback", reasonCode: "sub_session_feedback_state_allowed" },
@@ -489,17 +493,345 @@ function collectDataExchanges(subSessions, now) {
         .sort((left, right) => left.created_at - right.created_at || left.exchange_id.localeCompare(right.exchange_id))
         .map(dataExchangeProjection);
 }
-function planProjection(plan) {
+function topologyAgentAssignmentFor(agentId, context) {
+    if (!agentId)
+        return undefined;
+    const marker = ":node:";
+    const markerIndex = agentId.indexOf(marker);
+    if (markerIndex < 0)
+        return undefined;
+    const topologyId = agentId.slice(0, markerIndex);
+    const executorId = agentId.slice(markerIndex + 1);
+    if (!topologyId || !executorId)
+        return undefined;
+    const executorName = context.topologyNodeNameByKey.get(`${topologyId}:${executorId}`);
+    return {
+        topologyId,
+        executorId,
+        ...(executorName ? { executorName } : {}),
+    };
+}
+function topologyRoutingSnapshotFrom(run) {
+    const snapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {};
+    return isRecord(snapshot.topologyRouting) ? snapshot.topologyRouting : {};
+}
+function agentExecutionDecisionSnapshotFrom(run) {
+    const snapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {};
+    return isRecord(snapshot.agentExecutionDecision) ? snapshot.agentExecutionDecision : {};
+}
+function agentExecutionDecisionTraceSnapshotFrom(run) {
+    const snapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {};
+    return isRecord(snapshot.executionDecisionTrace) ? snapshot.executionDecisionTrace : {};
+}
+function requestIdentityFrom(run) {
+    const snapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {};
+    const inboundMessage = isRecord(snapshot.inboundMessage) ? snapshot.inboundMessage : {};
+    const requestIsolation = isRecord(snapshot.requestIsolation) ? snapshot.requestIsolation : {};
+    const lineageRootRunId = stringValue(run.lineageRootRunId);
+    const rootRunId = lineageRootRunId ?? stringValue(run.requestGroupId) ?? run.id;
+    const userMessageKey = stringValue(inboundMessage.messageKey);
+    const requestIsolationMode = stringValue(requestIsolation.mode);
+    const continuationSource = stringValue(requestIsolation.continuationSource);
+    const contextMode = stringValue(requestIsolation.contextMode);
+    return {
+        runId: redactedText(run.id),
+        requestGroupId: redactedText(run.requestGroupId || run.id),
+        rootRunId: redactedText(rootRunId),
+        ...(lineageRootRunId ? { lineageRootRunId: redactedText(lineageRootRunId) } : {}),
+        ...(run.parentRunId ? { parentRunId: redactedText(run.parentRunId) } : {}),
+        ...(userMessageKey ? { userMessageKey: redactedText(userMessageKey) } : {}),
+        ...(requestIsolationMode ? { requestIsolationMode: redactedText(requestIsolationMode) } : {}),
+        ...(continuationSource ? { continuationSource: redactedText(continuationSource) } : {}),
+        ...(contextMode ? { contextMode: redactedText(contextMode) } : {}),
+    };
+}
+function loadTopologyById(topologyIds) {
+    const registry = createEnterpriseTopologyRegistry();
+    const result = new Map();
+    for (const topologyId of topologyIds) {
+        if (!topologyId.trim() || result.has(topologyId))
+            continue;
+        const exported = registry.exportTopology(topologyId);
+        const topology = exported?.version.topology;
+        if (topology)
+            result.set(topologyId, topology);
+    }
+    return result;
+}
+function topologyNodeNames(topologyById) {
+    const result = new Map();
+    for (const [topologyId, topology] of topologyById) {
+        for (const node of topology.nodes) {
+            result.set(`${topologyId}:${node.id}`, redactedText(node.name || node.id));
+        }
+    }
+    return result;
+}
+function topologyEdgeIdsFromExecutors(topology, executorIds) {
+    if (!topology || executorIds.length === 0)
+        return [];
+    const selected = new Set(executorIds);
+    return topology.relations
+        .filter((relation) => relation.status !== "archived" &&
+        relation.from.entityType === "node" &&
+        relation.to.entityType === "node" &&
+        selected.has(relation.from.id) &&
+        selected.has(relation.to.id))
+        .map((relation) => redactedText(relation.id));
+}
+function topologyReachableExecutorIds(topology, entryNodeId) {
+    if (!topology || !entryNodeId)
+        return [];
+    const nodeIds = new Set(topology.nodes.filter((node) => node.status !== "archived").map((node) => node.id));
+    if (!nodeIds.has(entryNodeId))
+        return [];
+    const outgoing = new Map();
+    for (const relation of topology.relations) {
+        if (relation.status === "archived" ||
+            relation.from.entityType !== "node" ||
+            relation.to.entityType !== "node" ||
+            !nodeIds.has(relation.from.id) ||
+            !nodeIds.has(relation.to.id)) {
+            continue;
+        }
+        outgoing.set(relation.from.id, [...(outgoing.get(relation.from.id) ?? []), relation.to.id]);
+    }
+    const visited = new Set();
+    const queue = [entryNodeId];
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current || visited.has(current))
+            continue;
+        visited.add(current);
+        for (const next of outgoing.get(current) ?? []) {
+            if (!visited.has(next))
+                queue.push(next);
+        }
+    }
+    return [...visited].map((id) => redactedText(id));
+}
+function topologyIdsFromRunAndPlan(run, plan) {
+    const ids = new Set();
+    const routing = topologyRoutingSnapshotFrom(run);
+    const executionDecision = agentExecutionDecisionSnapshotFrom(run);
+    const routingTopologyId = stringValue(routing.topologyId) ?? stringValue(routing.explicitTopologyId);
+    if (routingTopologyId)
+        ids.add(routingTopologyId);
+    const decisionAssignment = topologyAgentAssignmentIdParts(stringValue(executionDecision.selected_executor_id));
+    if (decisionAssignment)
+        ids.add(decisionAssignment.topologyId);
+    for (const task of [...(plan?.directNobieTasks ?? []), ...(plan?.delegatedTasks ?? [])]) {
+        const assigned = topologyAgentAssignmentIdParts(task.assignedAgentId);
+        if (assigned)
+            ids.add(assigned.topologyId);
+    }
+    return [...ids];
+}
+function topologyAgentAssignmentIdParts(agentId) {
+    if (!agentId)
+        return undefined;
+    const marker = ":node:";
+    const markerIndex = agentId.indexOf(marker);
+    if (markerIndex < 0)
+        return undefined;
+    const topologyId = agentId.slice(0, markerIndex);
+    const executorId = agentId.slice(markerIndex + 1);
+    if (!topologyId || !executorId)
+        return undefined;
+    return { topologyId, executorId };
+}
+function buildTopologyRoutingContext(run, plan) {
+    const snapshot = topologyRoutingSnapshotFrom(run);
+    const executionDecision = agentExecutionDecisionSnapshotFrom(run);
+    const executionDecisionTrace = agentExecutionDecisionTraceSnapshotFrom(run);
+    const mode = stringValue(snapshot.mode);
+    const reasonCode = stringValue(snapshot.reasonCode);
+    const topologyId = stringValue(snapshot.topologyId);
+    const topologyName = stringValue(snapshot.topologyName);
+    const entryNodeId = stringValue(snapshot.entryNodeId);
+    const topologyById = loadTopologyById(topologyIdsFromRunAndPlan(run, plan));
+    const topologyNodeNameByKey = topologyNodeNames(topologyById);
+    const entryNodeName = topologyId && entryNodeId
+        ? topologyNodeNameByKey.get(`${topologyId}:${entryNodeId}`)
+        : undefined;
+    const assignedTopologyAgentIds = [...(plan?.delegatedTasks ?? []), ...(plan?.directNobieTasks ?? [])]
+        .map((task) => task.assignedAgentId)
+        .filter((agentId) => Boolean(topologyAgentAssignmentIdParts(agentId)))
+        .map((agentId) => redactedText(agentId));
+    const assignedExecutorIds = assignedTopologyAgentIds
+        .map((agentId) => topologyAgentAssignmentIdParts(agentId)?.executorId)
+        .filter((executorId) => Boolean(executorId));
+    const decisionSelectedExecutorId = stringValue(executionDecision.selected_executor_id);
+    const decisionSelectedAssignment = topologyAgentAssignmentIdParts(decisionSelectedExecutorId);
+    const decisionExecutorId = decisionSelectedAssignment?.executorId ?? decisionSelectedExecutorId;
+    const decisionRoute = stringValue(executionDecision.execution_route);
+    const decisionFallbackReason = stringValue(executionDecision.fallback_if_unavailable);
+    const decisionRiskBoundary = isRecord(executionDecision.risk_boundary)
+        ? executionDecision.risk_boundary
+        : {};
+    const riskBoundaryRequiresUserApproval = booleanValue(decisionRiskBoundary.requires_user_approval);
+    const riskBoundaryKind = stringValue(decisionRiskBoundary.boundary_kind);
+    const riskBoundaryReason = stringValue(decisionRiskBoundary.reason);
+    const routeExecutorIds = topologyReachableExecutorIds(topologyId ? topologyById.get(topologyId) : undefined, entryNodeId);
+    const topologyVersion = numberValue(snapshot.topologyVersion);
+    const activeTopologyCount = numberValue(snapshot.activeTopologyCount);
+    const explicit = booleanValue(snapshot.explicit);
+    const promptSnapshot = isRecord(run.promptSourceSnapshot) ? run.promptSourceSnapshot : {};
+    const executionDecisionSource = stringValue(executionDecisionTrace.decision_source) ??
+        stringValue(promptSnapshot.executionDecisionSource);
+    const executionDecisionGraphId = stringValue(executionDecisionTrace.graph_id);
+    const executionDecisionGraphSource = stringValue(executionDecisionTrace.graph_source);
+    const executionDecisionCurrentExecutorId = stringValue(executionDecisionTrace.current_executor_id) ??
+        stringValue(executionDecision.current_executor_id);
+    const executionDecisionAvailableExecutorIds = stringArray(executionDecisionTrace.available_executor_ids);
+    const executionDecisionDiagnosticExecutorIds = stringArray(executionDecisionTrace.diagnostic_executor_ids);
+    const executionDecisionAllExecutorIds = stringArray(executionDecisionTrace.all_active_executor_ids);
+    const executionDecisionAllRegisteredExecutorIds = stringArray(executionDecisionTrace.all_registered_executor_ids);
+    const executionDecisionSelectedConnectionPath = stringArray(executionDecisionTrace.selected_connection_path).length > 0
+        ? stringArray(executionDecisionTrace.selected_connection_path)
+        : stringArray(executionDecision.selected_connection_path);
+    const executionDecisionNormalizedConnectionPath = stringArray(executionDecisionTrace.normalized_connection_path);
+    const executionDecisionValidationStatus = stringValue(executionDecisionTrace.validation_status);
+    const executionDecisionValidationIssues = Array.isArray(executionDecisionTrace.validation_issues)
+        ? executionDecisionTrace.validation_issues
+            .filter(isRecord)
+            .map((issue) => stringValue(issue.code) ?? stringValue(issue.message))
+            .filter((value) => Boolean(value))
+        : [];
+    const executionDecisionResolvedExecutorId = stringValue(executionDecisionTrace.resolved_selected_executor_id);
+    const selectedExecutorIds = [
+        ...new Set([
+            ...(entryNodeId ? [redactedText(entryNodeId)] : []),
+            ...routeExecutorIds,
+            ...assignedExecutorIds.map((id) => redactedText(id)),
+            ...(decisionExecutorId ? [redactedText(decisionExecutorId)] : []),
+        ]),
+    ];
+    const providerTarget = typeof run.targetId === "string" && run.targetId.startsWith("provider:");
+    const directFallback = mode === "fallback" &&
+        assignedTopologyAgentIds.length === 0 &&
+        (plan?.directNobieTasks.length ?? 0) > 0;
+    const providerFallback = providerTarget || directFallback;
+    const providerFallbackBlockedEvent = [...run.recentEvents].reverse().find((event) => event.label.includes("provider_direct_blocked_without_explicit_target"));
+    const providerFallbackBlocked = Boolean(providerFallbackBlockedEvent);
+    const providerFallbackBlockedReasonCode = providerFallbackBlocked
+        ? "provider_direct_blocked_without_explicit_target"
+        : undefined;
+    const issues = stringArray(snapshot.issues);
+    const routing = {
+        mode: mode === "route" || mode === "fallback" ? mode : "unknown",
+        ...(reasonCode ? { reasonCode: redactedText(reasonCode) } : {}),
+        ...(stringValue(snapshot.featureFlagMode)
+            ? { featureFlagMode: redactedText(snapshot.featureFlagMode) }
+            : {}),
+        ...(executionDecisionSource
+            ? { executionDecisionSource: redactedText(executionDecisionSource) }
+            : {}),
+        ...(executionDecisionGraphId ? { executionDecisionGraphId: redactedText(executionDecisionGraphId) } : {}),
+        ...(executionDecisionGraphSource
+            ? { executionDecisionGraphSource: redactedText(executionDecisionGraphSource) }
+            : {}),
+        ...(executionDecisionCurrentExecutorId
+            ? { executionDecisionCurrentExecutorId: redactedText(executionDecisionCurrentExecutorId) }
+            : {}),
+        ...(executionDecisionAvailableExecutorIds.length > 0
+            ? { executionDecisionAvailableExecutorIds: executionDecisionAvailableExecutorIds.map((id) => redactedText(id)) }
+            : {}),
+        ...(executionDecisionDiagnosticExecutorIds.length > 0
+            ? { executionDecisionDiagnosticExecutorIds: executionDecisionDiagnosticExecutorIds.map((id) => redactedText(id)) }
+            : {}),
+        ...(executionDecisionAllExecutorIds.length > 0
+            ? { executionDecisionAllExecutorIds: executionDecisionAllExecutorIds.map((id) => redactedText(id)) }
+            : {}),
+        ...(executionDecisionAllRegisteredExecutorIds.length > 0
+            ? {
+                executionDecisionAllRegisteredExecutorIds: executionDecisionAllRegisteredExecutorIds.map((id) => redactedText(id)),
+            }
+            : {}),
+        ...(decisionSelectedExecutorId
+            ? { executionDecisionSelectedExecutorId: redactedText(decisionSelectedExecutorId) }
+            : {}),
+        ...(executionDecisionSelectedConnectionPath.length > 0
+            ? {
+                executionDecisionSelectedConnectionPath: executionDecisionSelectedConnectionPath.map((id) => redactedText(id)),
+            }
+            : {}),
+        ...(executionDecisionNormalizedConnectionPath.length > 0
+            ? {
+                executionDecisionNormalizedConnectionPath: executionDecisionNormalizedConnectionPath.map((id) => redactedText(id)),
+            }
+            : {}),
+        ...(decisionRoute ? { executionDecisionRoute: redactedText(decisionRoute) } : {}),
+        ...(decisionFallbackReason
+            ? { executionDecisionFallbackReason: redactedText(decisionFallbackReason) }
+            : {}),
+        ...(executionDecisionValidationStatus
+            ? { executionDecisionValidationStatus: redactedText(executionDecisionValidationStatus) }
+            : {}),
+        ...(executionDecisionValidationIssues.length > 0
+            ? { executionDecisionValidationIssues: executionDecisionValidationIssues.map((issue) => redactedText(issue)) }
+            : {}),
+        ...(executionDecisionResolvedExecutorId
+            ? { executionDecisionResolvedExecutorId: redactedText(executionDecisionResolvedExecutorId) }
+            : {}),
+        providerFallbackBlocked,
+        ...(providerFallbackBlockedReasonCode
+            ? { providerFallbackBlockedReasonCode: redactedText(providerFallbackBlockedReasonCode) }
+            : {}),
+        ...(riskBoundaryRequiresUserApproval !== undefined
+            ? { riskBoundaryRequiresUserApproval }
+            : {}),
+        ...(riskBoundaryKind ? { riskBoundaryKind: redactedText(riskBoundaryKind) } : {}),
+        ...(riskBoundaryReason ? { riskBoundaryReason: redactedText(riskBoundaryReason) } : {}),
+        ...(topologyId ? { topologyId: redactedText(topologyId) } : {}),
+        ...(topologyName ? { topologyName: redactedText(topologyName) } : {}),
+        ...(topologyVersion !== undefined ? { topologyVersion } : {}),
+        ...(entryNodeId ? { entryNodeId: redactedText(entryNodeId) } : {}),
+        ...(entryNodeName ? { entryNodeName } : {}),
+        ...(explicit !== undefined ? { explicit } : {}),
+        providerFallback,
+        ...(providerFallback && reasonCode ? { providerFallbackReasonCode: redactedText(reasonCode) } : {}),
+        ...(activeTopologyCount !== undefined ? { activeTopologyCount } : {}),
+        selectedExecutorIds,
+        selectedEdgeIds: topologyId
+            ? topologyEdgeIdsFromExecutors(topologyById.get(topologyId), selectedExecutorIds)
+            : [],
+        assignedTopologyAgentIds,
+        issues,
+    };
+    return { routing, topologyById, topologyNodeNameByKey };
+}
+function planProjection(plan, topologyContext) {
     const directTasks = plan?.directNobieTasks ?? [];
     const delegatedTasks = plan?.delegatedTasks ?? [];
-    const taskSummaries = [...directTasks, ...delegatedTasks].slice(0, 12).map((task) => ({
-        taskId: redactedText(task.taskId),
-        executionKind: redactedText(task.executionKind),
-        goal: redactedText(task.scope.goal),
-        ...(task.assignedAgentId ? { assignedAgentId: redactedText(task.assignedAgentId) } : {}),
-        ...(task.assignedTeamId ? { assignedTeamId: redactedText(task.assignedTeamId) } : {}),
-        reasonCodes: task.scope.reasonCodes.map((code) => redactedText(code)),
-    }));
+    const taskSummaries = [...directTasks, ...delegatedTasks].slice(0, 12).map((task) => {
+        const topologyAssignment = topologyAgentAssignmentFor(task.assignedAgentId, topologyContext);
+        const assignmentSource = topologyAssignment
+            ? "topology"
+            : task.assignedAgentId
+                ? "agent"
+                : task.assignedTeamId
+                    ? "team"
+                    : "direct";
+        return {
+            taskId: redactedText(task.taskId),
+            executionKind: redactedText(task.executionKind),
+            goal: redactedText(task.scope.goal),
+            ...(task.assignedAgentId ? { assignedAgentId: redactedText(task.assignedAgentId) } : {}),
+            ...(task.assignedTeamId ? { assignedTeamId: redactedText(task.assignedTeamId) } : {}),
+            assignmentSource,
+            ...(topologyAssignment
+                ? {
+                    assignedTopologyId: redactedText(topologyAssignment.topologyId),
+                    assignedExecutorId: redactedText(topologyAssignment.executorId),
+                }
+                : {}),
+            ...(topologyAssignment?.executorName
+                ? { assignedExecutorName: redactedText(topologyAssignment.executorName) }
+                : {}),
+            reasonCodes: task.scope.reasonCodes.map((code) => redactedText(code)),
+        };
+    });
     return {
         ...(plan?.planId ? { planId: redactedText(plan.planId) } : {}),
         ...(plan?.parentRequestId ? { parentRequestId: redactedText(plan.parentRequestId) } : {}),
@@ -517,6 +849,23 @@ function planProjection(plan) {
             : {}),
         ...(plan?.fallbackStrategy.reasonCode
             ? { fallbackReasonCode: redactedText(plan.fallbackStrategy.reasonCode) }
+            : {}),
+        ...(plan?.plannerMetadata?.selectedExecutorSource
+            ? { selectedExecutorSource: redactedText(plan.plannerMetadata.selectedExecutorSource) }
+            : {}),
+        ...(plan?.plannerMetadata?.selectedExecutorId
+            ? { selectedExecutorId: redactedText(plan.plannerMetadata.selectedExecutorId) }
+            : {}),
+        ...(plan?.plannerMetadata?.rejectedExecutorId
+            ? { rejectedExecutorId: redactedText(plan.plannerMetadata.rejectedExecutorId) }
+            : {}),
+        ...(plan?.plannerMetadata?.rejectedReasonCodes?.length
+            ? {
+                rejectedReasonCodes: plan.plannerMetadata.rejectedReasonCodes.map((code) => redactedText(code)),
+            }
+            : {}),
+        ...(plan?.fallbackStrategy.mode === "single_nobie"
+            ? { fallbackWarnings: ["legacy_single_nobie_fallback_mode_deprecated"] }
             : {}),
         taskSummaries,
     };
@@ -642,7 +991,6 @@ function collectSubSessions(run, contracts, ledgerEvents, orchestrationEvents, a
             status: contract.status,
             commandSummary: commandSummaryFor(contract),
             expectedOutputs: expectedOutputsFor(contract),
-            retryBudgetRemaining: contract.retryBudgetRemaining,
             promptBundleId: redactedText(contract.promptBundleId),
             ...(contract.startedAt !== undefined ? { startedAt: contract.startedAt } : {}),
             ...(contract.finishedAt !== undefined ? { finishedAt: contract.finishedAt } : {}),
@@ -652,7 +1000,7 @@ function collectSubSessions(run, contracts, ledgerEvents, orchestrationEvents, a
             feedback: feedbackFor(contract.subSessionId, orchestrationEvents, run.recentEvents),
             approvalState: approvalStateForSubSession(contract, approvals, run.orchestrationPlanSnapshot),
             ...(model ? { model } : {}),
-            allowedControlActions: allowedControlActionsFor(contract.status, contract.retryBudgetRemaining),
+            allowedControlActions: allowedControlActionsFor(contract.status),
         };
     });
 }
@@ -719,6 +1067,29 @@ function collectLedgerEvents(run, limit) {
             : []),
     ]).sort((left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id));
 }
+function collectTopologyRuns(run, limit) {
+    return listTopologyRunsForRootRun(run.id, { limit })
+        .map((projection) => {
+        const item = {
+            topologyRunId: redactedText(projection.run.topologyRunId),
+            topologyId: redactedText(projection.run.topologyId),
+            status: projection.run.status,
+            startedAt: projection.run.startedAt,
+            nodeRunCount: projection.nodeRuns.length,
+            workOrderCount: projection.workOrders.length,
+            traceEventCount: projection.traceEvents.length,
+            toolCallCount: projection.toolCalls.length,
+            failureCount: projection.failureReports.length,
+            observedEdgeCount: projection.observedEdges.length,
+            projection,
+        };
+        if (projection.run.entryNodeId !== undefined)
+            item.entryNodeId = redactedText(projection.run.entryNodeId);
+        if (projection.run.finishedAt !== undefined)
+            item.finishedAt = projection.run.finishedAt;
+        return item;
+    });
+}
 export function buildRunRuntimeInspectorProjection(run, options = {}) {
     const now = options.now ?? Date.now();
     const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 120)));
@@ -726,18 +1097,22 @@ export function buildRunRuntimeInspectorProjection(run, options = {}) {
     const ledgerEvents = collectLedgerEvents(run, Math.max(limit, 500));
     const approvals = collectApprovals(orchestrationEvents, ledgerEvents);
     const subSessionContracts = subSessionContractsFor(run);
+    const topologyContext = buildTopologyRoutingContext(run, run.orchestrationPlanSnapshot);
     const subSessions = collectSubSessions(run, subSessionContracts, ledgerEvents, orchestrationEvents, approvals);
     return {
         schemaVersion: 1,
         runId: redactedText(run.id),
         requestGroupId: redactedText(run.requestGroupId || run.id),
+        requestIdentity: requestIdentityFrom(run),
         generatedAt: now,
         orchestrationMode: run.orchestrationMode ?? "single_nobie",
-        plan: planProjection(run.orchestrationPlanSnapshot),
+        topologyRouting: topologyContext.routing,
+        plan: planProjection(run.orchestrationPlanSnapshot, topologyContext),
         subSessions,
         dataExchanges: collectDataExchanges(subSessionContracts, now),
         approvals,
         timeline: collectTimeline(run, orchestrationEvents, ledgerEvents, limit),
+        topologyRuns: collectTopologyRuns(run, limit),
         finalizer: finalizerFromLedger(ledgerEvents),
         redaction: {
             payloadsRedacted: true,

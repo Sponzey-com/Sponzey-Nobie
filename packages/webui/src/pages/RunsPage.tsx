@@ -47,12 +47,12 @@ import { useUiI18n } from "../lib/ui-i18n"
 import { useRunsStore } from "../stores/runs"
 
 function TaskMonitorBadges({
-  attemptCount,
+  executionRecordCount,
   checklistLabel,
   deliveryLabel,
   text,
 }: {
-  attemptCount: number
+  executionRecordCount: number
   checklistLabel: string
   deliveryLabel: string
   text: (ko: string, en: string) => string
@@ -60,7 +60,7 @@ function TaskMonitorBadges({
   return (
     <div className="flex flex-wrap gap-2">
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-        {text("실행", "Runs")} {attemptCount}
+        {text("실행 기록", "Run records")} {executionRecordCount}
       </span>
       <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
         {text("진행 단계", "Progress")} {checklistLabel}
@@ -1514,7 +1514,7 @@ export function RunsPage() {
                       />
                     ) : null}
                     <TaskMonitorBadges
-                      attemptCount={card.attempts.length}
+                      executionRecordCount={card.attempts.length}
                       checklistLabel={describeTaskChecklistProgress(card.checklist, text)}
                       deliveryLabel={describeTaskDeliveryStatus(card.delivery.status, text)}
                       text={text}
