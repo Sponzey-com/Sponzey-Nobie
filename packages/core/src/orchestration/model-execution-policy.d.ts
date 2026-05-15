@@ -63,7 +63,7 @@ export declare function resolveFallbackModelExecutionPolicy(input: {
 export declare function buildModelExecutionAuditSummary(input: {
     snapshot: ModelExecutionSnapshot;
     status: ModelExecutionAuditSummary["status"];
-    attemptCount: number;
+    modelInvocationCount: number;
     latencyMs: number;
     outputText?: string;
 }): ModelExecutionAuditSummary;

@@ -686,6 +686,27 @@ export type {
   MessageLedgerEventKind,
 } from "./runs/message-ledger.js"
 export {
+  ValidateAndFinalize,
+  completeRunWithAssistantMessage,
+  markRunCompleted,
+  validateAndFinalize,
+} from "./runs/finalization.js"
+export type {
+  FinalValidationConflict,
+  FinalValidationDecision,
+  FinalValidationInput,
+  FinalValidationMissingValue,
+  FinalValidationMode,
+  FinalValidationObservedValue,
+  FinalValidationRequiredValue,
+  FinalValidationScope,
+  FinalValidationSourceRef,
+  FinalValidationStatus,
+  FinalValidationTrace,
+  FinalValidationValueConfidence,
+  FinalizationOutcome,
+} from "./runs/finalization.js"
+export {
   buildFinalDeliveryAttributions,
   buildNamedResultDeliveryEvent,
   buildNobieFinalAnswer,
@@ -713,6 +734,7 @@ export type {
   RunRuntimeInspectorExpectedOutput,
   RunRuntimeInspectorFeedback,
   RunRuntimeInspectorFinalizer,
+  RunRuntimeInspectorFinalValidation,
   RunRuntimeInspectorModel,
   RunRuntimeInspectorPlanProjection,
   RunRuntimeInspectorPlanTask,
@@ -731,6 +753,7 @@ export type {
   RuntimeInspectorControlAction,
 } from "./runs/runtime-inspector-projection.js"
 export {
+  buildCurrentFactFinalValidationInput,
   buildFinancialInformationBoundaryNotice,
   buildRetrievalVerificationPlan,
   chooseNextRetrievalVerificationSource,
@@ -1201,6 +1224,7 @@ export {
   EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
   NOBIE_ROOT_AGENT_ID,
   buildExecutorRuntimeGraphSnapshotV2,
+  buildExecutorTopologyV2MigrationDryRunReport,
   buildExecutorTopologyV2RuntimeReadModelFromEnterpriseTopology,
   enterpriseTopologyFromExecutorTopologyV2,
   isExecutorTopologyV2,
@@ -1541,14 +1565,20 @@ export type {
   ExecutorTopologyV2,
   ExecutorTopologyV2Metadata,
   ExecutorTopologyV2MetadataValue,
+  ExecutorTopologyV2MigrationDryRunChange,
+  ExecutorTopologyV2MigrationDryRunChangeKind,
+  ExecutorTopologyV2MigrationDryRunFieldCategory,
+  ExecutorTopologyV2MigrationDryRunReport,
   ExecutorTopologyV2MigrationIssue,
   ExecutorTopologyV2MigrationIssueSeverity,
   ExecutorTopologyV2MigrationResult,
   ExecutorTopologyV2PersistenceRepairResult,
+  ExecutorTopologyV2ProjectionField,
   ExecutorTopologyV2RegistryMaterializationResult,
   ExecutorTopologyV2RegistryMigrationPreview,
   ExecutorTopologyV2RegistryReadModelResult,
   ExecutorTopologyV2SchemaVersion,
+  ExecutorTopologyV2SourceField,
   ExecutorTopologyV2Status,
   ExecutorTopologyV2Timestamp,
   ExecutorTopologyV2ValidationIssue,
@@ -2667,11 +2697,11 @@ export {
   shouldStopRepeatedFailure,
 } from "./runs/soak-retention.js"
 export {
-  FORBIDDEN_TERMINAL_FAILURE_REASONS,
+  COUNT_BASED_FAILURE_SIGNAL_REASONS,
   NON_TERMINAL_RECOVERY_REASONS,
   TERMINAL_FAILURE_REASONS,
   createDefaultExecutionPolicySnapshot,
-  isForbiddenTerminalFailureReason,
+  isCountBasedFailureSignalReason,
   isTerminalFailureReason,
   normalizeFailureReason,
 } from "./runs/execution-policy.js"
@@ -2683,6 +2713,7 @@ export {
   chooseRecoveryAlternative,
 } from "./runs/recovery-controller.js"
 export {
+  RECOVERY_STRATEGY_CHANGE_AXES,
   createRecoveryStrategyLedger,
   hasRecoveryStrategyAttempt,
   recordRecoveryStrategyAttempt,
@@ -2730,7 +2761,7 @@ export type {
   ExplicitLimit,
   FailureReasonNormalizationInput,
   FailureReasonNormalizationResult,
-  ForbiddenTerminalFailureReason,
+  CountBasedFailureSignalReason,
   NonTerminalRecoveryReason,
   TerminalFailureReason,
 } from "./runs/execution-policy.js"
@@ -2743,6 +2774,7 @@ export type {
 } from "./runs/recovery-controller.js"
 export type {
   RecoveryStrategyAttempt,
+  RecoveryStrategyChangeAxis,
   RecoveryStrategyKey,
   RecoveryStrategyLedger,
 } from "./runs/recovery-strategy-ledger.js"

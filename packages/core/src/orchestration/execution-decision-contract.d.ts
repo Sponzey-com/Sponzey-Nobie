@@ -1,4 +1,7 @@
 export declare const AGENT_EXECUTION_DECISION_CONTRACT_VERSION: "agent-execution-decision:v1";
+export declare const AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION: "agent-execution-decision:v2";
+export declare const AGENT_EXECUTION_DECISION_V2_ACTIONS: readonly ["delegate", "self_solve", "ask_user", "return_to_parent", "fail_with_reason"];
+export type AgentExecutionDecisionV2Action = (typeof AGENT_EXECUTION_DECISION_V2_ACTIONS)[number];
 export declare const AgentExecutionFallbackReason: {
     readonly SelfSolve: "self_solve";
     readonly DirectCurrentAgent: "direct_current_agent";
@@ -6,13 +9,15 @@ export declare const AgentExecutionFallbackReason: {
     readonly ReturnToParent: "return_to_parent";
     readonly RootNobieDirect: "root_nobie_direct";
     readonly ExplicitProvider: "explicit_provider";
+    readonly ExplicitProviderTarget: "explicit_provider_target";
+    readonly BoundaryFailure: "boundary_failure";
     readonly NobieDirect: "nobie_direct";
     readonly AskParent: "ask_parent";
     readonly AskUser: "ask_user";
 };
 export type AgentExecutionFallbackReason = (typeof AgentExecutionFallbackReason)[keyof typeof AgentExecutionFallbackReason];
 export declare const AGENT_EXECUTION_FALLBACK_REASONS: readonly AgentExecutionFallbackReason[];
-export declare const AGENT_EXECUTION_ROUTES: readonly ["self_solve", "direct_current_agent", "delegate_to_child", "return_to_parent", "root_nobie_direct", "explicit_provider", "nobie_direct", "ask_parent", "ask_user", "sub_agent", "yeonjang"];
+export declare const AGENT_EXECUTION_ROUTES: readonly ["self_solve", "direct_current_agent", "delegate_to_child", "return_to_parent", "root_nobie_direct", "explicit_provider", "explicit_provider_target", "boundary_failure", "nobie_direct", "ask_parent", "ask_user", "sub_agent", "yeonjang"];
 export type AgentExecutionRoute = (typeof AGENT_EXECUTION_ROUTES)[number];
 export declare const AGENT_EXECUTION_BEHAVIOR_PATTERNS: readonly ["answer", "plan", "split", "delegate", "execute", "review", "aggregate", "clarify", "recover"];
 export type AgentExecutionBehaviorPattern = (typeof AGENT_EXECUTION_BEHAVIOR_PATTERNS)[number];
@@ -40,6 +45,12 @@ export interface AgentExecutionTaskProfile {
     success_criteria: string[];
     constraints?: string[];
 }
+export interface AgentExecutionTaskSplitUnitV2 {
+    executor_id: string;
+    objective: string;
+    expected_return: string;
+    depends_on_executor_ids?: string[];
+}
 export interface AgentExecutionRiskBoundary {
     requires_user_approval: boolean;
     reason: string;
@@ -60,6 +71,23 @@ export interface AgentExecutionDecision {
     risk_boundary: AgentExecutionRiskBoundary;
     confidence: number;
     fallback_if_unavailable: AgentExecutionFallbackReason;
+    unresolved_reason?: string;
+    reason: string;
+}
+export interface AgentExecutionDecisionV2 {
+    contract_version: typeof AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION;
+    current_executor_id: string;
+    parent_executor_id?: string;
+    domain: string;
+    behavior_pattern: AgentExecutionBehaviorPattern;
+    action: AgentExecutionDecisionV2Action;
+    selected_executor_ids: string[];
+    selected_connection_path: string[];
+    task_profile: AgentExecutionTaskProfile;
+    task_split?: AgentExecutionTaskSplitUnitV2[];
+    required_outputs: AgentExecutionRequiredOutput[];
+    risk_boundary: AgentExecutionRiskBoundary;
+    confidence: number;
     unresolved_reason?: string;
     reason: string;
 }
@@ -224,8 +252,25 @@ export interface AgentExecutionDecisionShapeValidation {
     ok: boolean;
     issues: string[];
 }
+export interface AgentExecutionDecisionV2ValidationIssue {
+    code: "invalid_contract_version" | "invalid_current_executor" | "invalid_action" | "missing_selected_executor" | "selected_executor_not_direct_child" | "selected_executor_not_in_context" | "invalid_selected_connection_path" | "invalid_task_profile" | "invalid_required_outputs" | "invalid_risk_boundary" | "invalid_confidence" | "invalid_reason" | "invalid_task_split_executor" | "invalid_task_split_objective" | "invalid_task_split_expected_return";
+    message: string;
+    executor_id?: string;
+    connection_path?: string[];
+}
+export interface AgentExecutionDecisionV2Validation {
+    ok: boolean;
+    issues: AgentExecutionDecisionV2ValidationIssue[];
+}
 export declare function isAgentExecutionFallbackReason(value: unknown): value is AgentExecutionFallbackReason;
 export declare function isAgentExecutionRoute(value: unknown): value is AgentExecutionRoute;
 export declare function normalizeAgentExecutionConfidence(value: unknown): number;
 export declare function validateAgentExecutionDecisionShape(decision: unknown): AgentExecutionDecisionShapeValidation;
+export declare function isAgentExecutionDecisionV2Action(value: unknown): value is AgentExecutionDecisionV2Action;
+export declare function isAgentExecutionDecisionV2(value: unknown): value is AgentExecutionDecisionV2;
+export declare function validateAgentExecutionDecisionV2AgainstContext(input: {
+    context: AgentExecutionContext;
+    decision: unknown;
+}): AgentExecutionDecisionV2Validation;
+export declare function convertAgentExecutionDecisionV2ToV1(decision: AgentExecutionDecisionV2): AgentExecutionDecision;
 //# sourceMappingURL=execution-decision-contract.d.ts.map

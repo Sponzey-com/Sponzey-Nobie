@@ -19,6 +19,14 @@ export interface UiShellDomainState {
             telegramEnabled: boolean;
             slackConfigured: boolean;
             slackEnabled: boolean;
+            discordConfigured: boolean;
+            discordEnabled: boolean;
+            googleChatConfigured: boolean;
+            googleChatEnabled: boolean;
+            imessageConfigured: boolean;
+            imessageEnabled: boolean;
+            kakaoTalkConfigured: boolean;
+            kakaoTalkEnabled: boolean;
         };
         yeonjang: {
             mqttEnabled: boolean;

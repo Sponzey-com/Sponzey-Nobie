@@ -69,6 +69,7 @@ function identityFor(input) {
     };
 }
 function commandRequestFor(input) {
+    const topologyAssignment = topologyAssignmentFromAgentId(input.agent);
     return {
         identity: identityFor({
             entityType: "sub_session",
@@ -85,6 +86,16 @@ function commandRequestFor(input) {
         subSessionId: input.subSessionId,
         targetAgentId: input.agent.agentId,
         ...(input.agent.nickname ? { targetNicknameSnapshot: input.agent.nickname } : {}),
+        ...(topologyAssignment.topologyId
+            ? {
+                topologyExecutor: {
+                    graphExecutionPlanId: topologyAssignment.topologyId,
+                    ...(topologyAssignment.topologyExecutorId
+                        ? { executorId: topologyAssignment.topologyExecutorId }
+                        : {}),
+                },
+            }
+            : {}),
         taskScope: input.task.scope,
         contextPackageIds: [],
         expectedOutputs: input.task.scope.expectedOutputs,
@@ -168,6 +179,51 @@ function topologyAssignmentFromAgentId(agent) {
         topologyExecutorId: `node:${agent.agentId.slice(markerIndex + marker.length)}`,
     };
 }
+export function validateDispatchToChildExecutorInput(input) {
+    if (input.agent.source !== "topology") {
+        return { ok: true, reasonCodes: ["registry_executor_selected"] };
+    }
+    const selectedExecutorId = input.task.planningTrace?.selectedExecutorId?.trim();
+    const reasonCodes = new Set([
+        ...input.task.scope.reasonCodes,
+        ...(input.task.planningTrace?.reasonCodes ?? []),
+    ]);
+    const validatedByDecision = reasonCodes.has("execution_decision_selected_executor") ||
+        reasonCodes.has("explicit_topology_target");
+    if (!validatedByDecision) {
+        return {
+            ok: false,
+            reasonCode: "validated_execution_decision_required",
+            summary: "Topology executor dispatch was blocked because no validated executor selection was attached.",
+            ...(selectedExecutorId ? { selectedExecutorId } : {}),
+        };
+    }
+    if (!selectedExecutorId) {
+        return {
+            ok: false,
+            reasonCode: "validated_execution_decision_executor_missing",
+            summary: "Topology executor dispatch was blocked because the selected executor id is missing.",
+        };
+    }
+    if (selectedExecutorId !== input.agent.agentId) {
+        return {
+            ok: false,
+            reasonCode: "validated_execution_decision_executor_mismatch",
+            summary: "Topology executor dispatch was blocked because the selected executor differs from the dispatch target.",
+            selectedExecutorId,
+        };
+    }
+    return {
+        ok: true,
+        reasonCodes: [...reasonCodes].filter((code) => code.trim()),
+        selectedExecutorId,
+    };
+}
+export class DispatchToChildExecutor {
+    validate(input) {
+        return validateDispatchToChildExecutorInput(input);
+    }
+}
 function teamDispatchBlockReason(task) {
     const reasonCodes = new Set([
         ...task.scope.reasonCodes,
@@ -236,7 +292,45 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
     const originalRequest = params.originalRequest?.trim() || params.message;
     const outcomes = [];
     let attempted = 0;
+    const now = dependencies.now ?? (() => Date.now());
+    const childDispatch = new DispatchToChildExecutor();
     const dispatchAgentTask = async (task, agent) => {
+        const topologyAssignment = topologyAssignmentFromAgentId(agent);
+        const validation = childDispatch.validate({ task, agent });
+        if (!validation.ok) {
+            const failedAt = now();
+            attempted += 1;
+            outcomes.push({
+                taskId: task.taskId,
+                agentId: agent.agentId,
+                agentDisplayName: agent.displayName,
+                agentSource: agent.source,
+                ...topologyAssignment,
+                status: "failed",
+                reasonCode: validation.reasonCode,
+                summary: validation.summary,
+                completedAt: failedAt,
+                lifecycle: [{
+                        status: "failed",
+                        at: failedAt,
+                        reasonCode: validation.reasonCode,
+                        parentRunId: params.parentRunId,
+                        ...(validation.selectedExecutorId ? { selectedExecutorId: validation.selectedExecutorId } : {}),
+                        summary: validation.summary,
+                    }],
+            });
+            appendParentEvent(params.parentRunId, [
+                "dispatch_to_child_executor_blocked",
+                task.taskId,
+                agent.source,
+                agent.agentId,
+                validation.reasonCode,
+                validation.selectedExecutorId ? `selected=${validation.selectedExecutorId}` : undefined,
+                topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+                topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+            ].filter(Boolean).join(":"));
+            return;
+        }
         const subSessionId = `sub-session:${randomUUID()}`;
         const command = commandRequestFor({
             task,
@@ -261,6 +355,43 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
             originalRequest,
         });
         attempted += 1;
+        const startedAt = now();
+        const outcomeRecord = {
+            taskId: task.taskId,
+            subSessionId,
+            agentId: agent.agentId,
+            agentDisplayName: agent.displayName,
+            agentSource: agent.source,
+            ...topologyAssignment,
+            status: "running",
+            startedAt,
+            lifecycle: [{
+                    status: "running",
+                    at: startedAt,
+                    parentRunId: params.parentRunId,
+                    selectedExecutorId: validation.selectedExecutorId ?? agent.agentId,
+                    subSessionId,
+                    summary: "Sub-agent dispatch started.",
+                }],
+        };
+        outcomes.push(outcomeRecord);
+        appendParentEvent(params.parentRunId, [
+            "sub_agent_dispatch_running",
+            task.taskId,
+            agent.source,
+            agent.agentId,
+            topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+            topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+        ].filter(Boolean).join(":"));
+        appendParentEvent(params.parentRunId, [
+            "dispatch_to_child_executor_validated",
+            task.taskId,
+            agent.agentId,
+            `parent=${params.parentRunId}`,
+            `subSession=${subSessionId}`,
+            `selected=${validation.selectedExecutorId ?? agent.agentId}`,
+            topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+        ].filter(Boolean).join(":"));
         const outcome = await runner.runSubSession({
             command,
             agent: {
@@ -273,29 +404,71 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
             parentAbortSignal: params.controller.signal,
         }, async (input, controls) => {
             await controls.emitProgress("서브 에이전트 실행을 시작했습니다.", "running");
-            const started = dependencies.startSubAgentRun({
-                message: prompt,
-                sessionId: params.parentSessionId,
-                requestGroupId: `${params.parentRunId}:${input.command.subSessionId}`,
-                lineageRootRunId: params.parentRequestGroupId,
-                forceRequestGroupReuse: true,
+            let started;
+            try {
+                started = dependencies.startSubAgentRun({
+                    message: prompt,
+                    sessionId: params.parentSessionId,
+                    requestGroupId: `${params.parentRunId}:${input.command.subSessionId}`,
+                    lineageRootRunId: params.parentRequestGroupId,
+                    forceRequestGroupReuse: true,
+                    parentRunId: params.parentRunId,
+                    originRunId: params.parentRunId,
+                    originRequestGroupId: params.parentRequestGroupId,
+                    model: controls.modelExecution.modelId,
+                    providerId: controls.modelExecution.providerId,
+                    targetId: agent.agentId,
+                    targetLabel: agent.displayName,
+                    source: params.source,
+                    skipIntake: true,
+                    toolsEnabled: true,
+                    contextMode: "handoff",
+                    taskProfile: taskProfileForScope(task.scope),
+                    runScope: "child",
+                    handoffSummary: task.scope.goal,
+                    originalRequest,
+                    workDir: params.workDir,
+                });
+            }
+            catch (error) {
+                const failedAt = now();
+                const safeMessage = error instanceof Error ? error.message : String(error);
+                outcomeRecord.status = "failed";
+                outcomeRecord.reasonCode = "child_run_creation_failed";
+                outcomeRecord.completedAt = failedAt;
+                outcomeRecord.summary = safeMessage;
+                outcomeRecord.lifecycle?.push({
+                    status: "failed",
+                    at: failedAt,
+                    reasonCode: "child_run_creation_failed",
+                    parentRunId: params.parentRunId,
+                    selectedExecutorId: validation.selectedExecutorId ?? agent.agentId,
+                    subSessionId: input.command.subSessionId,
+                    summary: safeMessage,
+                });
+                appendParentEvent(params.parentRunId, [
+                    "sub_agent_child_run_creation_failed",
+                    task.taskId,
+                    agent.agentId,
+                    input.command.subSessionId,
+                    safeMessage,
+                ].filter(Boolean).join(":"));
+                throw new Error(`child_run_creation_failed:${safeMessage}`);
+            }
+            const pendingAt = now();
+            outcomeRecord.status = "pending_result";
+            outcomeRecord.childRunId = started.runId;
+            outcomeRecord.lifecycle?.push({
+                status: "pending_result",
+                at: pendingAt,
                 parentRunId: params.parentRunId,
-                originRunId: params.parentRunId,
-                originRequestGroupId: params.parentRequestGroupId,
-                model: controls.modelExecution.modelId,
-                providerId: controls.modelExecution.providerId,
-                targetId: agent.agentId,
-                targetLabel: agent.displayName,
-                source: params.source,
-                skipIntake: true,
-                toolsEnabled: true,
-                contextMode: "handoff",
-                taskProfile: taskProfileForScope(task.scope),
-                runScope: "child",
-                handoffSummary: task.scope.goal,
-                originalRequest,
-                workDir: params.workDir,
+                selectedExecutorId: validation.selectedExecutorId ?? agent.agentId,
+                subSessionId: input.command.subSessionId,
+                childRunId: started.runId,
+                summary: "Child run started; awaiting result report.",
             });
+            appendParentEvent(params.parentRunId, `sub_agent_dispatch_pending_result:${task.taskId}:${agent.agentId}:${started.runId}`);
+            updateParentSummary(params.parentRunId, "서브 에이전트 결과를 기다리고 있습니다.");
             const childRun = await started.finished;
             const failedStatuses = new Set(["failed", "cancelled", "interrupted"]);
             const reportStatus = childRun && !failedStatuses.has(childRun.status) ? "completed" : "failed";
@@ -316,21 +489,41 @@ export async function dispatchDelegatedSubAgentTasks(params, dependencies) {
             });
         });
         const summary = resultSummary(outcome.resultReport);
-        const topologyAssignment = topologyAssignmentFromAgentId(agent);
-        outcomes.push({
-            taskId: task.taskId,
+        const completedAt = now();
+        const finalStatus = outcome.status === "completed" ? "completed" : "failed";
+        outcomeRecord.subSessionId = outcome.subSession.subSessionId;
+        outcomeRecord.status = finalStatus;
+        outcomeRecord.completedAt = completedAt;
+        if (outcomeRecord.reasonCode !== "child_run_creation_failed" && outcome.errorReport?.reasonCode) {
+            outcomeRecord.reasonCode = outcome.errorReport.reasonCode;
+        }
+        if (outcome.resultReport?.evidence[0]?.sourceRef) {
+            outcomeRecord.childRunId = outcome.resultReport.evidence[0].sourceRef;
+        }
+        if (summary)
+            outcomeRecord.summary = summary;
+        if (outcome.parentAggregationTrace?.nextAction) {
+            outcomeRecord.parentAggregationNextAction = outcome.parentAggregationTrace.nextAction;
+        }
+        if (outcome.feedbackRequest?.feedbackRequestId) {
+            outcomeRecord.feedbackRequestId = outcome.feedbackRequest.feedbackRequestId;
+        }
+        outcomeRecord.lifecycle?.push({
+            status: finalStatus,
+            at: completedAt,
+            ...(outcomeRecord.reasonCode ? { reasonCode: outcomeRecord.reasonCode } : {}),
+            parentRunId: params.parentRunId,
+            selectedExecutorId: validation.selectedExecutorId ?? agent.agentId,
             subSessionId: outcome.subSession.subSessionId,
-            agentId: agent.agentId,
-            agentDisplayName: agent.displayName,
-            agentSource: agent.source,
-            ...topologyAssignment,
-            status: outcome.status === "completed" ? "completed" : "failed",
-            ...(outcome.errorReport?.reasonCode ? { reasonCode: outcome.errorReport.reasonCode } : {}),
-            ...(outcome.resultReport?.evidence[0]?.sourceRef
-                ? { childRunId: outcome.resultReport.evidence[0].sourceRef }
-                : {}),
+            ...(outcomeRecord.childRunId ? { childRunId: outcomeRecord.childRunId } : {}),
             ...(summary ? { summary } : {}),
         });
+        if (outcomeRecord.reasonCode === "prompt_bundle_preflight_failed") {
+            appendParentEvent(params.parentRunId, `sub_agent_dispatch_preflight_failed:${task.taskId}:${agent.agentId}:${outcome.subSession.subSessionId}`);
+        }
+        if (outcome.status === "cancelled") {
+            appendParentEvent(params.parentRunId, `sub_agent_dispatch_cancelled:${task.taskId}:${agent.agentId}:${outcome.subSession.subSessionId}`);
+        }
         appendParentEvent(params.parentRunId, [
             "delegated_task_result",
             task.taskId,

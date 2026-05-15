@@ -101,11 +101,16 @@ export type ParentFacingChildResultStatus = "completed" | "partial" | "failed"
 export interface ParentFacingChildResult {
   subSessionId: string
   resultReportId?: string
+  sourceExecutorId?: string
+  sourceExecutorName?: string
+  resultStatus?: ResultReport["status"]
   status: ParentFacingChildResultStatus
   confirmedFacts: string[]
   unverifiedItems: string[]
+  missingItems: string[]
   attemptedMethods: string[]
   remainingAlternatives: string[]
+  evidence: ResultReport["evidence"]
   artifacts: ResultReport["artifacts"]
   riskNotes: string[]
   handoffSummary: string
@@ -544,19 +549,24 @@ export function summarizeChildResultForParent(
     ...input.review.risksOrGaps,
     ...(input.review.impossibleReason ? [input.review.impossibleReason.detail] : []),
   ])
-  const unverifiedItems = uniqueNonEmpty([
-    ...input.review.missingItems,
-    ...reportUnverifiedItems,
-  ])
+  const missingItems = uniqueNonEmpty(input.review.missingItems)
+  const unverifiedItems = uniqueNonEmpty([...missingItems, ...reportUnverifiedItems])
 
   return {
     subSessionId: input.subSessionId,
     ...(report?.resultReportId ? { resultReportId: report.resultReportId } : {}),
+    ...(report?.source?.entityId ? { sourceExecutorId: report.source.entityId } : {}),
+    ...(report?.source?.nicknameSnapshot
+      ? { sourceExecutorName: report.source.nicknameSnapshot }
+      : {}),
+    ...(report?.status ? { resultStatus: report.status } : {}),
     status,
     confirmedFacts,
     unverifiedItems,
+    missingItems,
     attemptedMethods,
     remainingAlternatives: uniqueNonEmpty(input.remainingAlternatives ?? []),
+    evidence: report?.evidence ?? [],
     artifacts: report?.artifacts ?? [],
     riskNotes,
     handoffSummary: [
@@ -578,6 +588,7 @@ export function aggregateSubSessionResultsForParent(
   input: ParentAggregationInput,
 ): ParentAggregationTrace {
   const childResults = input.childResults.map(summarizeChildResultForParent)
+  const conflictSubSessionIds = conflictingChildResultSubSessionIds(input.childResults)
   const blockedSubSessionIds = input.childResults
     .filter((item) => !item.review.accepted || item.review.status === "failed")
     .map((item) => item.subSessionId)
@@ -598,6 +609,7 @@ export function aggregateSubSessionResultsForParent(
 
   const hasProblem =
     input.childResults.length === 0 ||
+    conflictSubSessionIds.length > 0 ||
     blockedSubSessionIds.length > 0 ||
     limitedSubSessionIds.length > 0 ||
     unverifiedSubSessionIds.length > 0
@@ -610,6 +622,7 @@ export function aggregateSubSessionResultsForParent(
     blockedSubSessionIds,
     limitedSubSessionIds,
     unverifiedSubSessionIds,
+    conflictSubSessionIds,
     nextAction,
   })
 
@@ -763,14 +776,17 @@ function buildParentAggregationReasonCodes(input: {
   blockedSubSessionIds: string[]
   limitedSubSessionIds: string[]
   unverifiedSubSessionIds: string[]
+  conflictSubSessionIds: string[]
   nextAction: ParentAggregationNextAction
 }): string[] {
   return uniqueNonEmpty([
     "parent_aggregation_trace_recorded",
     input.input.childResults.length === 0 ? "no_child_results_to_aggregate" : "",
+    input.input.childResults.length > 1 ? "multiple_child_results_aggregated" : "",
     input.blockedSubSessionIds.length > 0 ? "child_result_blocked" : "",
     input.limitedSubSessionIds.length > 0 ? "child_result_limited" : "",
     input.unverifiedSubSessionIds.length > 0 ? "child_result_unverified" : "",
+    input.conflictSubSessionIds.length > 0 ? "child_result_conflict_detected" : "",
     input.input.childResults.some((item) => item.canUseSameChild ?? item.review.canRetry)
       ? "same_child_augmentation_available"
       : "",
@@ -782,6 +798,29 @@ function buildParentAggregationReasonCodes(input: {
     input.nextAction === "fail_with_reason" ? "no_safe_alternative_remaining" : "",
     `next_action:${input.nextAction}`,
   ]).sort()
+}
+
+function conflictingChildResultSubSessionIds(
+  childInputs: ParentAggregationChildInput[],
+): string[] {
+  const valuesByOutputId = new Map<string, Array<{ subSessionId: string; value: string }>>()
+  for (const child of childInputs) {
+    for (const output of child.resultReport?.outputs ?? []) {
+      if (output.status !== "satisfied") continue
+      const value = summarizeOutputValue(output.outputId, output.value)
+      if (!value.trim()) continue
+      const values = valuesByOutputId.get(output.outputId) ?? []
+      values.push({ subSessionId: child.subSessionId, value })
+      valuesByOutputId.set(output.outputId, values)
+    }
+  }
+
+  const conflicted = new Set<string>()
+  for (const values of valuesByOutputId.values()) {
+    if (new Set(values.map((item) => item.value)).size <= 1) continue
+    for (const item of values) conflicted.add(item.subSessionId)
+  }
+  return [...conflicted]
 }
 
 function summarizeOutputValue(outputId: string, value: ResultReport["outputs"][number]["value"]): string {

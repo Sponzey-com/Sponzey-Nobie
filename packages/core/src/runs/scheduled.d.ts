@@ -1,4 +1,4 @@
-import { type TaskExecutionSemantics } from "../agent/intake.js";
+import type { TaskExecutionSemantics } from "../agent/intake.js";
 export interface ScheduledRunExecutionOptions {
     toolsEnabled: boolean;
     contextMode: "isolated";

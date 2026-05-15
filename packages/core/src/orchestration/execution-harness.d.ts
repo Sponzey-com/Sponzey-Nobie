@@ -1,4 +1,5 @@
 import { type AgentExecutionContext, type AgentExecutionDecision, type AgentExecutionDecisionTraceSnapshot, type DelegationValidationResult, type SelfSolveAttempt, validateAgentExecutionDecisionShape } from "./execution-decision-contract.js";
+import type { LoadedPromptSource } from "../memory/nobie-md.js";
 export type AgentExecutionHarnessReasonCode = "accepted" | "model_unavailable" | "model_timeout" | "model_call_failed" | "non_json_output" | "schema_invalid" | DelegationValidationResult["status"];
 export interface AgentExecutionModelCallInput {
     prompt: string;
@@ -38,12 +39,20 @@ export interface RunAgentExecutionHarnessInput {
     callModel?: AgentExecutionModelCaller;
     timeoutMs?: number;
     allowExplicitTarget?: boolean;
+    workDir?: string;
+    locale?: "ko" | "en";
+    promptSources?: LoadedPromptSource[];
     now?: () => number;
     idProvider?: () => string;
 }
 export declare function createAgentExecutionDecision(input: RunAgentExecutionHarnessInput): Promise<AgentExecutionDecision>;
 export declare function runAgentExecutionHarness(input: RunAgentExecutionHarnessInput): Promise<AgentExecutionHarnessResult>;
-export declare function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext): string;
+export interface AgentExecutionDecisionPromptOptions {
+    promptSources?: LoadedPromptSource[];
+    workDir?: string;
+    locale?: "ko" | "en";
+}
+export declare function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext, options?: AgentExecutionDecisionPromptOptions): string;
 export declare function parseAgentExecutionDecisionModelOutput(output: string): {
     ok: true;
     value: unknown;

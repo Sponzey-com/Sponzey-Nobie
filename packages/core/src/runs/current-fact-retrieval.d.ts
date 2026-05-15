@@ -1,6 +1,7 @@
 import type { SourceEvidence, SourceFreshnessPolicy, SourceKind, SourceReliability } from "./web-retrieval-policy.js";
 import type { RetrievalSourceMethod, RetrievalTargetContract } from "./web-retrieval-session.js";
 import type { RetrievalVerificationVerdict } from "./web-retrieval-verification.js";
+import type { FinalValidationInput } from "./finalization.js";
 export type CurrentFactSourceRole = "search_candidate" | "verification_source";
 export type CurrentFactSourceState = "live" | "delayed" | "market_closed" | "dynamic_blocked" | "unavailable" | "unknown";
 export type CurrentFactVerificationStatus = "candidate_only" | "verified" | "no_value" | "fetch_failed" | "dynamic_blocked" | "market_closed_or_delayed" | "conflict" | "blocked";
@@ -77,7 +78,12 @@ export declare function formatCurrentFactVerificationAnswer(input: {
     plan: RetrievalVerificationPlan;
     decision: CurrentFactVerificationDecision;
 }): CurrentFactAnswerSummary;
+export declare function buildCurrentFactFinalValidationInput(input: {
+    plan: RetrievalVerificationPlan;
+    decision: CurrentFactVerificationDecision;
+}): FinalValidationInput;
 export declare function buildFinancialInformationBoundaryNotice(input: {
     boundary: FinancialInformationBoundary;
     checkedAt?: string | null;
 }): FinancialInformationBoundaryNotice;
+//# sourceMappingURL=current-fact-retrieval.d.ts.map

@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { ExecutorCardNode } from "../packages/webui/src/components/topology/ExecutorCardNode.tsx"
 import {
+  executorFlowPositionMap,
+  mergeInteractiveExecutorFlowNodes,
+} from "../packages/webui/src/components/topology/ExecutorGraphCanvas.tsx"
+import {
   addExecutorNodeV2,
   applyExecutorDraftToExecutorTopologyV2,
   connectExecutorNodesV2,
@@ -32,6 +36,7 @@ describe("topology V2 default WebUI basic flow", () => {
       ...graph.executors[0]!,
       name: "CTO",
       description: "개발 요청을 분석하고 적절한 실행자에게 작은 작업으로 위임한다.",
+      definitionQuickChips: ["분석자", "협업하기 좋게"],
       executorProfile: {
         ...graph.executors[0]!.executorProfile!,
         displayName: "CTO",
@@ -49,6 +54,7 @@ describe("topology V2 default WebUI basic flow", () => {
     expect(edited.nodes.find((node) => node.id === first.node.id)).toEqual(expect.objectContaining({
       name: "CTO",
       roleName: "기술 책임자",
+      definitionQuickChips: ["분석자", "협업하기 좋게"],
       position: { x: 450, y: 181 },
     }))
     expect(edited.edges).toEqual([
@@ -61,6 +67,7 @@ describe("topology V2 default WebUI basic flow", () => {
     expect(reloaded.nodes.find((node) => node.id === first.node.id)).toEqual(expect.objectContaining({
       name: "CTO",
       roleName: "기술 책임자",
+      definitionQuickChips: ["분석자", "협업하기 좋게"],
       position: { x: 450, y: 181 },
     }))
     expect(reloaded.edges).toHaveLength(1)
@@ -95,5 +102,45 @@ describe("topology V2 default WebUI basic flow", () => {
     expect(source).toContain("position={Position.Bottom}")
     expect(source).toContain("onConnectExecutors")
     expect(source).toContain("onMoveExecutor")
+  })
+
+  it("keeps the live drag position when selection or execution state refreshes the same graph", () => {
+    const sourceNodes = [
+      { id: "node:cto", position: { x: 120, y: 80 }, data: { selected: false } },
+    ]
+    const draggedNodes = [
+      { id: "node:cto", position: { x: 280, y: 160 }, data: { selected: false } },
+    ]
+    const refreshedNodes = [
+      { id: "node:cto", position: { x: 120, y: 80 }, data: { selected: true } },
+    ]
+    const merged = mergeInteractiveExecutorFlowNodes({
+      current: draggedNodes,
+      next: refreshedNodes,
+      previousSourcePositions: executorFlowPositionMap(sourceNodes),
+    })
+
+    expect(merged).toEqual([
+      { id: "node:cto", position: { x: 280, y: 160 }, data: { selected: true } },
+    ])
+  })
+
+  it("accepts persisted position changes such as auto layout or saved reloads", () => {
+    const sourceNodes = [
+      { id: "node:cto", position: { x: 120, y: 80 }, data: { selected: false } },
+    ]
+    const draggedNodes = [
+      { id: "node:cto", position: { x: 280, y: 160 }, data: { selected: false } },
+    ]
+    const autoLayoutNodes = [
+      { id: "node:cto", position: { x: 460, y: 210 }, data: { selected: true } },
+    ]
+    const merged = mergeInteractiveExecutorFlowNodes({
+      current: draggedNodes,
+      next: autoLayoutNodes,
+      previousSourcePositions: executorFlowPositionMap(sourceNodes),
+    })
+
+    expect(merged).toEqual(autoLayoutNodes)
   })
 })

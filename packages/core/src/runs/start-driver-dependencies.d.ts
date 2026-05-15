@@ -17,6 +17,8 @@ export declare function buildStartRootRunDriverDependencies(params: {
     onChunk: RunChunkDeliveryHandler | undefined;
     message: string;
     model: string | undefined;
+    providerId?: string | undefined;
+    provider?: AIProvider | undefined;
     workDir: string;
     reuseConversationContext: boolean;
     suppressFinalDelivery?: boolean;

@@ -473,6 +473,10 @@ function directFallbackModeForExecutionDecision(decision) {
         return "root_nobie_direct";
     if (decision.execution_route === "explicit_provider")
         return "ask_user";
+    if (decision.execution_route === "explicit_provider_target")
+        return "ask_user";
+    if (decision.execution_route === "boundary_failure")
+        return "ask_user";
     if (decision.execution_route === "self_solve")
         return "self_solve";
     return "direct_current_agent";

@@ -47,6 +47,10 @@ const COLLECTION_ENTITY_TYPE_BY_KEY = {
 export const TOPOLOGY_VALIDATOR_QUICK_FIX_CODES = [
     "missing_entity_reference",
     "duplicate_entity_id",
+];
+export const ENTERPRISE_TOPOLOGY_COMPATIBILITY_QUICK_FIX_CODES = [
+    "missing_entity_reference",
+    "duplicate_entity_id",
     "authority_rule_conflict",
     "invalid_authority_rule_action",
     "approval_authority_missing",
@@ -96,6 +100,12 @@ export function createTopologyValidatorIssue(input) {
     };
 }
 export function validateTopology(value, options = {}) {
+    return validateTopologyInternal(value, options, { compatibilityRules: "auto" });
+}
+export function validateEnterpriseTopologyCompatibility(value, options = {}) {
+    return validateTopologyInternal(value, options, { compatibilityRules: "always" });
+}
+function validateTopologyInternal(value, options, mode) {
     const contractValidation = validateEnterpriseTopology(value);
     if (!contractValidation.ok) {
         return buildTopologyValidationResult(contractValidation.issues.map((issue) => convertContractIssue(value, issue)));
@@ -105,7 +115,9 @@ export function validateTopology(value, options = {}) {
     const indexes = buildTopologyEntityIndexes(topology, issues);
     validateTopologyReferences(topology, indexes, issues);
     validateDelegationGraph(topology, indexes, issues, options.maxDelegationDepth ?? DEFAULT_TOPOLOGY_MAX_DELEGATION_DEPTH);
-    validateEnterpriseRules(topology, indexes, issues, options);
+    if (mode.compatibilityRules === "always" || !isExecutorTopologyV2PersistenceProjection(topology)) {
+        validateEnterpriseRules(topology, indexes, issues, options);
+    }
     return buildTopologyValidationResult(issues);
 }
 export function isTopologyValidationExecutable(result) {
@@ -178,6 +190,13 @@ function inferEntityContextFromPath(value, path) {
 }
 function isTopologyCollectionKey(value) {
     return typeof value === "string" && Object.prototype.hasOwnProperty.call(COLLECTION_ENTITY_TYPE_BY_KEY, value);
+}
+function isExecutorTopologyV2PersistenceProjection(topology) {
+    const marker = recordFromMetadata(topology.metadata?.executorTopologyV2);
+    return marker?.schemaVersion === 2 && marker.sourceOfTruth === "executor_topology_v2";
+}
+function recordFromMetadata(value) {
+    return isRecord(value) ? value : undefined;
 }
 function buildTopologyEntityIndexes(topology, issues) {
     const indexes = {

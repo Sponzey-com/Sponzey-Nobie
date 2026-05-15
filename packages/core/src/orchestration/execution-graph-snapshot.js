@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { getConfig } from "../config/index.js";
 import { listAgentRelationships } from "../db/index.js";
-import { createEnterpriseTopologyRegistry, } from "../topology/registry.js";
+import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 import { buildExecutorProfileFromNode, buildOrchestrationRegistrySnapshot, normalizeExecutorProfile, } from "./registry.js";
 export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:nobie";
 export const WORKSPACE_DRAFT_TOPOLOGY_ID = "workspace:draft";
@@ -591,15 +591,24 @@ function finalizeSnapshot(input) {
     };
 }
 function buildTopologyExecutionGraphSnapshot(input) {
+    const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(input.selected.envelope);
+    const selected = {
+        ...input.selected,
+        envelope: adapted.envelope,
+        issues: [
+            ...input.selected.issues,
+            ...adapted.issues.map((issue) => ({ ...issue })),
+        ],
+    };
     const agentsById = projectTopologyAgents({
-        envelope: input.selected.envelope,
-        graphSource: input.selected.graphSource,
+        envelope: selected.envelope,
+        graphSource: selected.graphSource,
     });
     const edges = [];
     const directChildren = new Map();
-    const validationIssues = [...input.selected.issues];
+    const validationIssues = [...selected.issues];
     appendTopologyEdges({
-        envelope: input.selected.envelope,
+        envelope: selected.envelope,
         agentsById,
         rootAgentId: input.rootAgentId,
         edges,
@@ -607,12 +616,12 @@ function buildTopologyExecutionGraphSnapshot(input) {
         issues: validationIssues,
     });
     return finalizeSnapshot({
-        graphSource: input.selected.graphSource,
+        graphSource: selected.graphSource,
         generatedAt: input.generatedAt,
         rootAgentId: input.rootAgentId,
         currentExecutorId: input.currentExecutorId,
-        topologyId: input.selected.envelope.version.topologyId,
-        topologyVersion: input.selected.envelope.version.version,
+        topologyId: selected.envelope.version.topologyId,
+        topologyVersion: selected.envelope.version.version,
         agentsById,
         edges,
         directChildren,
@@ -660,7 +669,7 @@ export function buildExecutionGraphSnapshot(input = {}) {
     const rootAgentId = rootAgentIdFromInput(input);
     const currentExecutorId = input.currentExecutorId ?? rootAgentId;
     const mode = input.mode ?? "workspace";
-    const topologyRegistry = input.topologyRegistry ?? createEnterpriseTopologyRegistry(input.now ? { now: input.now } : {});
+    const topologyRegistry = input.topologyRegistry ?? createLegacyTopologyRegistry(input.now ? { now: input.now } : {});
     const selectedTopology = selectTopologyGraph({ mode, registry: topologyRegistry });
     if (selectedTopology) {
         return buildTopologyExecutionGraphSnapshot({

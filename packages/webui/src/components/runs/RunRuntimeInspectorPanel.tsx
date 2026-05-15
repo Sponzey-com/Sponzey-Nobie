@@ -1,17 +1,11 @@
 import * as React from "react"
 import type { RunRuntimeInspectorProjection } from "../../contracts/runs"
 import {
+  buildRuntimeInspectorViewModels,
   buildRuntimeInspectorSummaryCards,
   describeRuntimeApprovalState,
   describeRuntimeFinalizerStatus,
-  describeRuntimeTopologyRouting,
-  runtimeDecisionSourceLabel,
-  runtimeExecutionRouteLabel,
-  runtimeFallbackReasonLabel,
-  runtimeTopologyReasonLabel,
-  runtimeValidationStatusLabel,
   runtimeControlActionLabels,
-  runtimeExecutorDisplayName,
   selectRuntimeSubSession,
 } from "../../lib/runtime-inspector"
 import { useUiI18n } from "../../lib/ui-i18n"
@@ -133,12 +127,8 @@ export function RunRuntimeInspectorPanel({
   const { text, displayText, formatTime } = useUiI18n()
   const selectedSubSession = selectRuntimeSubSession(projection, selectedSubSessionId)
   const summaryCards = buildRuntimeInspectorSummaryCards(projection, text)
+  const viewModels = buildRuntimeInspectorViewModels(projection, text)
   const actionLabels = runtimeControlActionLabels(selectedSubSession, text)
-  const executorDisplayText = React.useCallback((executorId: string) => {
-    if (!projection) return displayText(executorId)
-    return displayText(runtimeExecutorDisplayName(projection.topologyRouting, executorId))
-  }, [displayText, projection])
-
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
       <div className="flex items-start justify-between gap-3">
@@ -189,243 +179,114 @@ export function RunRuntimeInspectorPanel({
       ) : (
         <div className="mt-4 space-y-4">
           <div
-            className="rounded-xl border border-stone-100 bg-white px-3 py-2 text-xs leading-5 text-stone-500"
-            data-testid="runtime-inspector-request-identity"
+            className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs leading-5 text-emerald-900"
+            data-testid="runtime-inspector-basic-view"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-semibold text-stone-700">
-                {text("요청 식별", "Request identity")}
+              <div className="font-semibold text-stone-950">
+                {text("실행 흐름", "Execution flow")}
               </div>
-              <div className="flex flex-wrap gap-1.5 text-[10px] text-stone-400">
-                {projection.requestIdentity.requestIsolationMode ? (
-                  <span className="rounded-full bg-stone-50 px-2 py-0.5">
-                    {text("격리", "Isolation")} {displayText(projection.requestIdentity.requestIsolationMode)}
-                  </span>
-                ) : null}
-                {projection.requestIdentity.continuationSource ? (
-                  <span className="rounded-full bg-stone-50 px-2 py-0.5">
-                    {text("연결", "Continuation")} {displayText(projection.requestIdentity.continuationSource)}
-                  </span>
-                ) : null}
-                {projection.requestIdentity.contextMode ? (
-                  <span className="rounded-full bg-stone-50 px-2 py-0.5">
-                    {text("컨텍스트", "Context")} {displayText(projection.requestIdentity.contextMode)}
-                  </span>
-                ) : null}
+              <div className="flex flex-wrap gap-1.5 text-[10px] text-emerald-800">
+                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
+                  {displayText(viewModels.basic.topologyLabel)}
+                </span>
+                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
+                  {displayText(viewModels.basic.validationStatus)}
+                </span>
               </div>
             </div>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-              <RuntimeInspectorIdentityValue
-                label={text("요청 그룹", "Request group")}
-                value={projection.requestIdentity.requestGroupId}
-                emptyLabel={text("정보 없음", "Unknown")}
-                displayText={displayText}
-              />
-              <RuntimeInspectorIdentityValue
-                label={text("Root run", "Root run")}
-                value={projection.requestIdentity.rootRunId}
-                emptyLabel={text("정보 없음", "Unknown")}
-                displayText={displayText}
-              />
-              <RuntimeInspectorIdentityValue
-                label={text("사용자 메시지", "User message")}
-                value={projection.requestIdentity.userMessageKey}
-                emptyLabel={text("메시지 키 없음", "No message key")}
-                displayText={displayText}
-              />
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-lg bg-white px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
+                  {text("현재 실행자", "Current executor")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-stone-950">
+                  {displayText(viewModels.basic.currentExecutorName)}
+                </div>
+              </div>
+              <div className="rounded-lg bg-white px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
+                  {text("선택된 실행자", "Selected executor")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-stone-950">
+                  {displayText(viewModels.basic.selectedExecutorName)}
+                </div>
+                {viewModels.basic.selectedExecutorRoleName ? (
+                  <div className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                    {displayText(viewModels.basic.selectedExecutorRoleName)}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-lg bg-white px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
+                  {text("위임 경로", "Delegation path")}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-semibold text-stone-950">
+                  {viewModels.basic.selectedPathNames.length > 0 ? (
+                    viewModels.basic.selectedPathNames.map((name, index) => (
+                      <React.Fragment key={`${name}:${index}`}>
+                        {index > 0 ? <span className="text-stone-300">→</span> : null}
+                        <span className="rounded-full bg-stone-50 px-2 py-0.5">
+                          {displayText(name)}
+                        </span>
+                      </React.Fragment>
+                    ))
+                  ) : (
+                    <span className="text-stone-500">{text("경로 없음", "No path")}</span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg bg-white px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
+                  {text("결과 취합", "Aggregation")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-stone-950">
+                  {displayText(viewModels.basic.aggregationStatus)}
+                </div>
+              </div>
+            </div>
+            {viewModels.basic.warningLabels.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {viewModels.basic.warningLabels.map((warning) => (
+                  <span key={warning} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                    {displayText(warning)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-2 rounded-lg bg-white px-3 py-2 text-[11px] font-semibold text-emerald-900">
+              {displayText(viewModels.basic.delegationStatus)}
             </div>
           </div>
 
           <div
             className={`rounded-xl border px-3 py-3 text-xs leading-5 ${
-              projection.topologyRouting.mode === "route"
+              viewModels.basic.routingTone === "route"
                 ? "border-sky-100 bg-sky-50 text-sky-800"
-                : projection.topologyRouting.mode === "fallback"
+                : viewModels.basic.routingTone === "fallback"
                   ? "border-amber-100 bg-amber-50 text-amber-800"
                   : "border-stone-200 bg-stone-50 text-stone-600"
             }`}
             data-testid="runtime-inspector-topology-routing"
-            data-routing-mode={projection.topologyRouting.mode}
-            data-entry-node-id={projection.topologyRouting.entryNodeId ?? ""}
+            data-routing-mode={viewModels.basic.routingMode}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-stone-900">
                 {text("실행 판단", "Execution decision")}
               </div>
               <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold">
-                {projection.topologyRouting.mode}
+                {viewModels.basic.routingMode}
               </span>
             </div>
             <div className="mt-2">
-              {describeRuntimeTopologyRouting(projection.topologyRouting, text)}
+              {viewModels.basic.routingSummary}
             </div>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-              {projection.topologyRouting.topologyName || projection.topologyRouting.topologyId ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {displayText(
-                    projection.topologyRouting.topologyName ??
-                      projection.topologyRouting.topologyId ??
-                      "",
-                  )}
+              {viewModels.basic.routingPills.map((pill) => (
+                <span key={pill} className="rounded-full bg-white px-2 py-0.5 font-semibold">
+                  {displayText(pill)}
                 </span>
-              ) : null}
-              {projection.topologyRouting.entryNodeName || projection.topologyRouting.entryNodeId ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {displayText(
-                    projection.topologyRouting.entryNodeName ??
-                      projection.topologyRouting.entryNodeId ??
-                      "",
-                  )}
-                </span>
-              ) : null}
-              {projection.topologyRouting.topologySchemaVersion !== undefined ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("스키마", "Schema")} v{projection.topologyRouting.topologySchemaVersion}
-                </span>
-              ) : null}
-              {projection.topologyRouting.topologyMigrationSource ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("출처", "Source")} {displayText(projection.topologyRouting.topologyMigrationSource)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.reasonCode ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {runtimeTopologyReasonLabel(projection.topologyRouting.reasonCode, text)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.executionDecisionSource ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {runtimeDecisionSourceLabel(projection.topologyRouting.executionDecisionSource, text)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.executionDecisionRoute ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("위임 흐름", "Delegation flow")} {runtimeExecutionRouteLabel(projection.topologyRouting.executionDecisionRoute, text)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.executionDecisionFallbackReason ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("대안", "Fallback")} {runtimeFallbackReasonLabel(projection.topologyRouting.executionDecisionFallbackReason, text)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.riskBoundaryRequiresUserApproval !== undefined ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {projection.topologyRouting.riskBoundaryRequiresUserApproval
-                    ? text("검토 필요", "review needed")
-                    : text("검토 불필요", "no review")}
-                </span>
-              ) : null}
-              {projection.topologyRouting.riskBoundaryKind ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("위험", "risk")} {displayText(projection.topologyRouting.riskBoundaryKind)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.providerFallback ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("직접 실행 대안 사용", "Direct execution fallback used")}
-                </span>
-              ) : null}
-              {projection.topologyRouting.providerFallbackBlocked ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {runtimeTopologyReasonLabel(projection.topologyRouting.providerFallbackBlockedReasonCode, text)}
-                </span>
-              ) : null}
-              {projection.topologyRouting.selectedExecutorIds.length > 0 ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("노드", "nodes")} {projection.topologyRouting.selectedExecutorIds.length}
-                </span>
-              ) : null}
-              {projection.topologyRouting.selectedEdgeIds.length > 0 ? (
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("연결선", "edges")} {projection.topologyRouting.selectedEdgeIds.length}
-                </span>
-              ) : null}
-            </div>
-            <div
-              className="mt-3 rounded-lg border border-white/70 bg-white/70 px-3 py-2 text-[11px] leading-5 text-stone-700"
-              data-testid="runtime-inspector-executor-scope"
-              data-current-executor-id={projection.topologyRouting.executionDecisionCurrentExecutorId ?? ""}
-              data-available-executor-count={projection.topologyRouting.executionDecisionAvailableExecutorIds?.length ?? 0}
-              data-all-executor-count={
-                projection.topologyRouting.executionDecisionAllRegisteredExecutorIds?.length
-                ?? projection.topologyRouting.executionDecisionAllExecutorIds?.length
-                ?? 0
-              }
-              data-provider-fallback-blocked={projection.topologyRouting.providerFallbackBlocked}
-            >
-              <div className="font-semibold text-stone-900">
-                {text("노비 실행 판단", "Nobie execution decision")}
-              </div>
-              <div className="mt-2 grid gap-2 md:grid-cols-2">
-                <RuntimeInspectorIdList
-                  label={text("현재 실행자", "Current executor")}
-                  values={projection.topologyRouting.executionDecisionCurrentExecutorId ? [projection.topologyRouting.executionDecisionCurrentExecutorId] : []}
-                  emptyLabel={text("정보 없음", "Unknown")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-                <RuntimeInspectorIdList
-                  label={text("현재 판단 후보", "Current decision candidates")}
-                  values={projection.topologyRouting.executionDecisionAvailableExecutorIds ?? []}
-                  emptyLabel={text("직접 하위 후보 없음", "No direct child candidates")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-                <RuntimeInspectorIdList
-                  label={text("전체 등록 실행자", "All registered executors")}
-                  values={
-                    projection.topologyRouting.executionDecisionAllRegisteredExecutorIds
-                    ?? projection.topologyRouting.executionDecisionAllExecutorIds
-                    ?? []
-                  }
-                  emptyLabel={text("등록된 실행자 없음", "No registered executors")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-                <RuntimeInspectorIdList
-                  label={text("참고용 실행자", "Reference executors")}
-                  values={projection.topologyRouting.executionDecisionDiagnosticExecutorIds ?? []}
-                  emptyLabel={text("참고용 실행자 없음", "No reference executors")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-                <RuntimeInspectorIdList
-                  label={text("선택된 실행자", "Selected executor")}
-                  values={projection.topologyRouting.executionDecisionSelectedExecutorId ? [projection.topologyRouting.executionDecisionSelectedExecutorId] : []}
-                  emptyLabel={text("선택 전", "Not selected")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-                <RuntimeInspectorIdList
-                  label={text("선택된 연결 경로", "Selected connection path")}
-                  values={projection.topologyRouting.executionDecisionNormalizedConnectionPath?.length
-                    ? projection.topologyRouting.executionDecisionNormalizedConnectionPath
-                    : projection.topologyRouting.executionDecisionSelectedConnectionPath ?? []}
-                  emptyLabel={text("경로 없음", "No path")}
-                  displayText={displayText}
-                  displayValue={executorDisplayText}
-                />
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {text("검증", "Validation")} {runtimeValidationStatusLabel(projection.topologyRouting.executionDecisionValidationStatus, text)}
-                </span>
-                {projection.topologyRouting.executionDecisionValidationIssues?.length ? (
-                  <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                    {text("실패 사유", "Failure reason")}{" "}
-                    {projection.topologyRouting.executionDecisionValidationIssues
-                      .map((issue) => runtimeValidationStatusLabel(issue, text))
-                      .join(", ")}
-                  </span>
-                ) : null}
-                <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
-                  {projection.topologyRouting.providerFallbackBlocked
-                    ? text("직접 실행 대안 차단됨", "Direct execution fallback blocked")
-                    : projection.topologyRouting.providerFallback
-                      ? text("직접 실행 대안 사용됨", "Direct execution fallback used")
-                      : text("직접 실행 대안 미사용", "Direct execution fallback unused")}
-                </span>
-              </div>
+              ))}
             </div>
           </div>
 
@@ -463,11 +324,18 @@ export function RunRuntimeInspectorPanel({
                     />
                     <div className="mt-1 break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]">
                       {task.executionKind}
-                      {task.assignedExecutorName || task.assignedExecutorId
-                        ? ` · ${displayText(task.assignedExecutorName ?? task.assignedExecutorId ?? "")}`
-                        : task.assignedAgentId
-                          ? ` · ${task.assignedAgentId}`
-                          : ""}
+                      {task.assignedExecutorName || task.assignedExecutorId || task.assignedAgentId
+                        ? ` · ${displayText(
+                          task.assignedExecutorName ??
+                          (task.assignedExecutorId
+                            ? projection.topologyRouting.executionDecisionExecutorNameById?.[task.assignedExecutorId]
+                            : undefined) ??
+                          (task.assignedAgentId
+                            ? projection.topologyRouting.executionDecisionExecutorNameById?.[task.assignedAgentId]
+                            : undefined) ??
+                          text("실행자", "Executor"),
+                        )}`
+                        : ""}
                       {task.assignmentSource ? ` · ${task.assignmentSource}` : ""}
                     </div>
                   </div>
@@ -531,9 +399,6 @@ export function RunRuntimeInspectorPanel({
                     {displayText(
                       selectedSubSession.agentNickname ?? selectedSubSession.agentDisplayName,
                     )}
-                  </div>
-                  <div className="mt-1 break-words text-stone-500 [overflow-wrap:anywhere]">
-                    {displayText(selectedSubSession.subSessionId)}
                   </div>
                 </div>
                 <span
@@ -814,7 +679,7 @@ export function RunRuntimeInspectorPanel({
                   <div key={topologyRun.topologyRunId} className="rounded-lg bg-white px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-stone-900">
-                        {displayText(topologyRun.topologyId)}
+                        {displayText(projection.topologyRouting.topologyName ?? text("업무 흐름 실행", "Workflow run"))}
                       </span>
                       <span
                         className={`rounded-full border px-2 py-0.5 text-[11px] ${statusToneClassName(topologyRun.status)}`}
@@ -823,7 +688,11 @@ export function RunRuntimeInspectorPanel({
                       </span>
                       {topologyRun.entryNodeId ? (
                         <span className="rounded-full bg-stone-50 px-2 py-0.5 text-[11px] font-semibold text-stone-600">
-                          {displayText(topologyRun.entryNodeId)}
+                          {displayText(
+                            projection.topologyRouting.entryNodeName ??
+                              projection.topologyRouting.executionDecisionExecutorNameById?.[topologyRun.entryNodeId] ??
+                              topologyRun.entryNodeId,
+                          )}
                         </span>
                       ) : null}
                     </div>
@@ -837,6 +706,69 @@ export function RunRuntimeInspectorPanel({
               </div>
             </div>
           ) : null}
+
+          <details
+            className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600"
+            data-testid="runtime-inspector-diagnostic-view"
+          >
+            <summary className="cursor-pointer font-semibold text-stone-900">
+              {text("진단 정보", "Diagnostics")}
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-2 sm:grid-cols-3">
+                {viewModels.diagnostic.identity.map((item) => (
+                  <RuntimeInspectorIdentityValue
+                    key={item.id}
+                    label={item.label}
+                    value={item.value}
+                    emptyLabel={text("정보 없음", "Unknown")}
+                    displayText={displayText}
+                  />
+                ))}
+              </div>
+              {viewModels.diagnostic.routing.length > 0 ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {viewModels.diagnostic.routing.map((item) => (
+                    <div key={item.id} className="rounded-lg bg-white px-3 py-2">
+                      <div className="font-semibold text-stone-600">{item.label}</div>
+                      <div className="mt-1 break-words font-mono text-[11px] text-stone-500 [overflow-wrap:anywhere]">
+                        {displayText(item.value)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div
+                className="rounded-lg border border-white/70 bg-white/70 px-3 py-2 text-[11px] leading-5 text-stone-700"
+                data-testid="runtime-inspector-executor-scope"
+              >
+                <div className="font-semibold text-stone-900">
+                  {text("실행자 ID", "Executor IDs")}
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {viewModels.diagnostic.executorIds.map((item) => (
+                    <RuntimeInspectorIdList
+                      key={item.id}
+                      label={item.label}
+                      values={item.values}
+                      emptyLabel={text("없음", "None")}
+                      displayText={displayText}
+                    />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white px-2 py-0.5 font-semibold">
+                    {viewModels.diagnostic.providerFallbackLabel}
+                  </span>
+                  {viewModels.diagnostic.issues.map((issue) => (
+                    <span key={issue} className="rounded-full bg-white px-2 py-0.5 font-semibold">
+                      {displayText(issue)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
       )}
     </div>

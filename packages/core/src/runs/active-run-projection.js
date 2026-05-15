@@ -154,9 +154,9 @@ export function buildActiveRunProjection(run) {
                     parentRunId: subSession.parentRunId,
                     agentId: subSession.agentId,
                     agentDisplayName: subSession.agentDisplayName,
-                        ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
-                        status: subSession.status,
-                    })),
+                    ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
+                    status: subSession.status,
+                })),
             }
             : {}),
         updatedAt: run.updatedAt,

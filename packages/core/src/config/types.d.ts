@@ -40,6 +40,62 @@ export interface SlackConfig {
     allowedUserIds: string[];
     allowedChannelIds: string[];
 }
+export interface DiscordConfig {
+    enabled: boolean;
+    botToken: string;
+    applicationId: string;
+    publicKey: string;
+    allowedUserIds: string[];
+    allowedGuildIds: string[];
+    allowedChannelIds: string[];
+    grantedIntents?: string[];
+    botPermissions?: string[];
+    installedGuildIds?: string[];
+    largeGuildMode?: boolean;
+}
+export interface GoogleChatConfig {
+    enabled: boolean;
+    projectId: string;
+    appCredentialJson: string;
+    serviceAccountEmail: string;
+    webhookUrl: string;
+    verificationToken: string;
+    allowedUserIds: string[];
+    allowedSpaceIds: string[];
+    deployedSpaceIds?: string[];
+    grantedScopes?: string[];
+    appPublished?: boolean;
+    domainWideDelegation?: boolean;
+}
+export interface IMessageConfig {
+    enabled: boolean;
+    mode: "outgoing_only" | "manual_confirm";
+    localBridgeEnabled: boolean;
+    yeonjangBridgeEnabled: boolean;
+    riskAcknowledged: boolean;
+    messagesAppAvailable?: boolean;
+    userSessionActive?: boolean;
+    automationPermissionGranted?: boolean;
+    allowedRecipientIds: string[];
+    manualConfirmationRequired: boolean;
+}
+export interface KakaoTalkConfig {
+    enabled: boolean;
+    mode: "official" | "local_bridge";
+    businessApiEnabled: boolean;
+    businessApiKey: string;
+    channelId: string;
+    localBridgeEnabled: boolean;
+    yeonjangBridgeEnabled: boolean;
+    riskAcknowledged: boolean;
+    kakaoTalkAppAvailable?: boolean;
+    userSessionActive?: boolean;
+    automationPermissionGranted?: boolean;
+    allowedUserIds: string[];
+    allowedRoomIds: string[];
+    manualConfirmationRequired: boolean;
+    rateLimitPerMinute: number;
+}
 export interface WebuiConfig {
     enabled: boolean;
     port: number;
@@ -133,6 +189,10 @@ export interface NobieConfig {
     security: SecurityConfig;
     telegram?: TelegramConfig;
     slack?: SlackConfig;
+    discord?: DiscordConfig;
+    googleChat?: GoogleChatConfig;
+    imessage?: IMessageConfig;
+    kakaoTalk?: KakaoTalkConfig;
     webui: WebuiConfig;
     scheduler: SchedulerConfig;
     mqtt: MqttConfig;

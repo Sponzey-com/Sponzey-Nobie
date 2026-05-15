@@ -4,6 +4,15 @@ This file covers only request-channel and result-delivery boundaries.
 
 ---
 
+## Runtime Usage
+
+- Owner: channel runtime, delivery finalizer, approval handling, and user-facing progress formatting.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly and agent prompt bundles.
+- It must not define identity, tool capability, topology selection, or completion criteria except by referencing their owning policy files.
+
+---
+
 ## Default Boundary
 
 - Use the channel where the current request arrived as the default reply and artifact-delivery channel.

@@ -40,22 +40,28 @@ describe("legacy routing static audit", () => {
     expect(matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix)))).toEqual([])
 
     const intakeBridgePass = source("packages/core/src/runs/intake-bridge-pass.ts")
-    const explicitProviderStart = intakeBridgePass.indexOf("function resolveExplicitProviderRoute")
-    const decisionRouteStart = intakeBridgePass.indexOf("async function resolveDelegatedDecisionRoute")
+    const decisionRouteSource = source("packages/core/src/orchestration/decide-execution-route.ts")
+    const explicitProviderStart = decisionRouteSource.indexOf(
+      "if (isExplicitProviderExecutionTarget(input.preferredTarget))",
+    )
+    const graphSelectionStart = decisionRouteSource.indexOf("const buildGraph =")
     const runBridgeStart = intakeBridgePass.indexOf("export async function runIntakeBridgePass")
+    const decisionRouteStart = intakeBridgePass.indexOf("const decisionRoute = await decideExecutionRoute({")
     expect(explicitProviderStart).toBeGreaterThanOrEqual(0)
-    expect(decisionRouteStart).toBeGreaterThan(explicitProviderStart)
-    expect(runBridgeStart).toBeGreaterThan(decisionRouteStart)
+    expect(graphSelectionStart).toBeGreaterThan(explicitProviderStart)
+    expect(runBridgeStart).toBeGreaterThanOrEqual(0)
+    expect(decisionRouteStart).toBeGreaterThan(runBridgeStart)
 
-    const explicitProviderSection = intakeBridgePass.slice(explicitProviderStart, decisionRouteStart)
-    const decisionRouteSection = intakeBridgePass.slice(decisionRouteStart, runBridgeStart)
+    const explicitProviderSection = decisionRouteSource.slice(explicitProviderStart, graphSelectionStart)
     const runBridgeSection = intakeBridgePass.slice(runBridgeStart)
 
-    expect(explicitProviderSection).toContain("input.moduleDependencies.resolveRunRoute")
-    expect(decisionRouteSection).not.toContain("resolveRunRoute(")
-    expect(runBridgeSection).not.toContain("resolveRunRoute(")
-    expect(runBridgeSection).toContain("resolveExplicitProviderRoute")
-    expect(runBridgeSection).toContain("resolveDelegatedDecisionRoute")
+    expect(explicitProviderSection).toContain("input.resolveExplicitProviderTarget?.")
+    expect(explicitProviderSection).toContain('kind: "explicit_provider_target"')
+    expect(runBridgeSection).toContain("decideExecutionRoute({")
+    expect(runBridgeSection).toContain("resolveExplicitProviderTarget: (routeInput) =>")
+    expect(runBridgeSection).toContain("moduleDependencies.resolveRunRoute({")
+    expect(runBridgeSection).not.toContain("resolveExplicitProviderRoute")
+    expect(runBridgeSection).not.toContain("resolveDelegatedDecisionRoute")
   })
 
   it("does not keep removed phase022 topology route helpers", () => {
@@ -178,6 +184,15 @@ describe("legacy routing static audit", () => {
     expect(source("packages/core/src/topology-runtime/harness.ts")).not.toContain(removedDefaultRouteReason)
     expect(source("packages/core/src/topology-runtime/harness.js")).not.toContain(removedDefaultRouteReason)
     expect(source("packages/core/src/topology-runtime/harness.d.ts")).not.toContain(removedDefaultRouteReason)
+  })
+
+  it("does not keep compiled default entry strings in runtime routing or prompts", () => {
+    expect(rg("compiled_default_entry|compiled_default", [
+      "packages/core/src/runs",
+      "packages/core/src/orchestration",
+      "packages/core/src/topology-runtime",
+      "prompts",
+    ])).toEqual([])
   })
 
   it("does not generate new planner fallback plans through single_nobie", () => {

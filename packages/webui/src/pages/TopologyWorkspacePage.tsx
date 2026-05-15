@@ -8,6 +8,7 @@ import type {
   EnterpriseTopology,
   NodeContract,
 } from "../contracts/enterprise-topology"
+import type { TaskModel } from "../contracts/tasks"
 import { ExecutorGraphCanvas } from "../components/topology/ExecutorGraphCanvas"
 import { ExecutorInspector } from "../components/topology/ExecutorInspector"
 import { ExecutorWorkspaceShell } from "../components/topology/ExecutorWorkspaceShell"
@@ -28,6 +29,7 @@ import {
   type ExecutorEdgeV2,
   type ExecutorNodeV2,
   type ExecutorTopologyV2,
+  type ExecutorTopologyV2ValidationIssue,
 } from "../lib/executor-topology-v2"
 import {
   resolveTopologyWorkspaceExposureModeForRoute,
@@ -63,6 +65,7 @@ const TOPOLOGY_WORKSPACE_LAYER_SET = new Set<TopologyWorkspaceLayer>([
 type ExecutorProfileDraft = NonNullable<ExecutorDraft["executorProfile"]>
 type TopologySaveStatus = "idle" | "loading" | "saved" | "failed"
 type TopologyLoadStatus = "idle" | "loading" | "ready" | "failed"
+type TopologyTraceEmptyReason = "none" | "no_recent_task" | "no_topology_run_for_latest_task"
 
 export function resolveTopologyWorkspaceInitialLayer(
   search: string,
@@ -74,6 +77,18 @@ export function resolveTopologyWorkspaceInitialLayer(
   return requested && TOPOLOGY_WORKSPACE_LAYER_SET.has(requested as TopologyWorkspaceLayer)
     ? requested as TopologyWorkspaceLayer
     : "build"
+}
+
+export function selectLatestTaskRootRunIdForTopologyTrace(
+  tasks: Pick<TaskModel, "createdAt" | "updatedAt" | "rootRunId" | "anchorRunId" | "requestIdentity">[],
+): string | null {
+  const latestTask = [...tasks].sort((a, b) =>
+    (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt)
+  )[0]
+  return latestTask?.rootRunId
+    ?? latestTask?.requestIdentity?.rootRunId
+    ?? latestTask?.anchorRunId
+    ?? null
 }
 
 export interface TopologyWorkspaceRouteShellProps {
@@ -249,18 +264,18 @@ export function addExecutorNodeV2(
   topology: ExecutorTopologyV2,
   now: number | string = Date.now(),
 ): { topology: ExecutorTopologyV2; node: ExecutorNodeV2 } {
-  const nodeNumber = topology.nodes.length + 1
+  const nodeName = nextExecutorNodeName(topology)
   const id = nextExecutorNodeId(topology, now)
   const node: ExecutorNodeV2 = {
     id,
-    name: `새 실행자 ${nodeNumber}`,
+    name: nodeName,
     roleName: "실행자",
     description: "이 실행자가 맡을 일을 적어주세요.",
     position: nextExecutorPosition(topology.nodes.length),
     status: "active",
     profile: defaultExecutorProfile({
       id,
-      name: `새 실행자 ${nodeNumber}`,
+      name: nodeName,
       roleName: "실행자",
       description: "이 실행자가 맡을 일을 적어주세요.",
     }) as unknown as ExecutorNodeV2["profile"],
@@ -359,6 +374,7 @@ export function applyExecutorDraftToExecutorTopologyV2(
     name: executor.name,
     ...(roleName ? { roleName } : {}),
     description: executor.description,
+    ...(executor.definitionQuickChips?.length ? { definitionQuickChips: [...executor.definitionQuickChips] } : {}),
     position: executor.position ?? existingNode?.position ?? nextExecutorPosition(topology.nodes.length),
     status: existingNode?.status ?? "active",
     profile: profile as unknown as ExecutorNodeV2["profile"],
@@ -432,6 +448,7 @@ function ExecutorTopologyV2Workspace({
   const [traceProjection, setTraceProjection] = React.useState<EnterpriseTopologyRunTraceProjection | null>(null)
   const [traceLoadStatus, setTraceLoadStatus] = React.useState<TopologyLoadStatus>("idle")
   const [traceErrorMessage, setTraceErrorMessage] = React.useState<string | null>(null)
+  const [traceEmptyReason, setTraceEmptyReason] = React.useState<TopologyTraceEmptyReason>("none")
   const topologyRef = React.useRef(topology)
 
   React.useEffect(() => {
@@ -499,11 +516,26 @@ function ExecutorTopologyV2Workspace({
     const loadLatestTrace = async () => {
       setTraceLoadStatus((current) => current === "idle" ? "loading" : current)
       try {
-        const runs = await api.topologyRuns({ topologyId: topologyRef.current.id, limit: 1 })
+        const tasks = await api.tasks()
+        if (cancelled) return
+        const latestRootRunId = selectLatestTaskRootRunIdForTopologyTrace(tasks.tasks)
+        if (!latestRootRunId) {
+          setTraceProjection(null)
+          setTraceEmptyReason("no_recent_task")
+          setTraceLoadStatus("ready")
+          setTraceErrorMessage(null)
+          return
+        }
+        const runs = await api.topologyRuns({
+          topologyId: topologyRef.current.id,
+          rootRunId: latestRootRunId,
+          limit: 1,
+        })
         if (cancelled) return
         const latest = runs.topologyRuns[0]
         if (!latest) {
           setTraceProjection(null)
+          setTraceEmptyReason("no_topology_run_for_latest_task")
           setTraceLoadStatus("ready")
           setTraceErrorMessage(null)
           return
@@ -511,11 +543,13 @@ function ExecutorTopologyV2Workspace({
         const projection = await api.topologyRun(latest.topologyRunId, { limit: 500 })
         if (cancelled) return
         setTraceProjection(projection.topologyRun)
+        setTraceEmptyReason("none")
         setTraceLoadStatus("ready")
         setTraceErrorMessage(null)
       } catch (error) {
         if (cancelled) return
         setTraceLoadStatus("failed")
+        setTraceEmptyReason("none")
         setTraceErrorMessage(error instanceof Error ? error.message : text("실행 흐름을 불러오지 못했습니다.", "Failed to load execution trace."))
       }
     }
@@ -536,17 +570,27 @@ function ExecutorTopologyV2Workspace({
     const validationResult = validateExecutorTopologyV2(repaired)
     if (!validationResult.ok) {
       setSaveStatus("failed")
-      setErrorMessage(text("이름과 성격과 하는 일을 입력한 뒤 저장하세요.", "Enter name and work description before saving."))
+      setErrorMessage(validationIssueMessage(validationResult.issues, text))
       return
     }
     setSaveStatus("loading")
     try {
-      await api.startEnterpriseTopologyGuiDraft(repaired.id, {
+      const saved = await api.startEnterpriseTopologyGuiDraft(repaired.id, {
         topology: enterpriseTopologyFromExecutorTopologyV2(repaired),
         reset: true,
         persist: true,
+        activate: true,
         importSource: "executor_topology_v2_default_workspace",
       })
+      if (saved.activation && saved.activation.ok !== true) {
+        setSaveStatus("failed")
+        setErrorMessage(
+          saved.activation.issues?.join(", ") ||
+            saved.activation.reasonCode ||
+            text("저장했지만 실행 토폴로지로 활성화하지 못했습니다.", "Saved, but failed to activate the executable topology."),
+        )
+        return
+      }
       topologyRef.current = repaired
       setTopology(repaired)
       setSaveStatus("saved")
@@ -613,7 +657,7 @@ function ExecutorTopologyV2Workspace({
   const savedStatusLabel = saveStatusLabel(saveStatus, loadStatus, text)
   const validationLabel = validation.ok
     ? text("저장 가능", "Ready to save")
-    : text("입력 필요", "Needs input")
+    : validationIssueShortLabel(validation.issues, text)
 
   return (
     <ExecutorWorkspaceShell
@@ -632,10 +676,10 @@ function ExecutorTopologyV2Workspace({
       onAutoLayout={handleAutoLayout}
     >
       <section
-        className="grid h-full min-h-0 gap-3 overflow-hidden p-3 md:grid-cols-[minmax(0,1fr)_360px]"
+        className="grid h-full min-h-0 gap-3 overflow-y-auto overscroll-contain p-3 md:grid-cols-[minmax(0,1fr)_360px] md:overflow-hidden"
         data-testid="topology-v2-workspace"
       >
-        <div className="min-h-0 overflow-hidden rounded-lg border border-stone-200 bg-white" data-testid="topology-v2-canvas-pane">
+        <div className="min-h-[360px] overflow-hidden rounded-lg border border-stone-200 bg-white md:min-h-0" data-testid="topology-v2-canvas-pane">
           <ExecutorGraphCanvas
             graph={graph}
             selectedLayer={selectedLayer}
@@ -650,7 +694,7 @@ function ExecutorTopologyV2Workspace({
           />
         </div>
         <aside
-          className="min-h-0 overflow-y-auto overscroll-contain rounded-lg border border-stone-200 bg-white p-3 pb-4"
+          className="min-h-[320px] overflow-y-auto overscroll-contain rounded-lg border border-stone-200 bg-white p-3 pb-4 md:min-h-0"
           data-testid="topology-v2-sidebar"
         >
           <TopologyV2FlowStatusCard
@@ -662,6 +706,7 @@ function ExecutorTopologyV2Workspace({
             connectionCount={activeEdges.length}
             traceView={traceView}
             traceLoadStatus={traceLoadStatus}
+            traceEmptyReason={traceEmptyReason}
             traceErrorMessage={traceErrorMessage}
             text={text}
           />
@@ -690,6 +735,7 @@ export function TopologyV2FlowStatusCard({
   connectionCount,
   traceView,
   traceLoadStatus,
+  traceEmptyReason = "none",
   traceErrorMessage,
   text,
 }: {
@@ -701,6 +747,7 @@ export function TopologyV2FlowStatusCard({
   connectionCount: number
   traceView: TopologyExecutionTraceViewModel
   traceLoadStatus: TopologyLoadStatus
+  traceEmptyReason?: TopologyTraceEmptyReason
   traceErrorMessage: string | null
   text: ReturnType<typeof useUiI18n>["text"]
 }) {
@@ -744,9 +791,7 @@ export function TopologyV2FlowStatusCard({
             className="rounded-md border border-dashed border-stone-200 bg-white px-2 py-2 text-[11px] leading-5 text-stone-500"
             data-testid="topology-v2-trace-empty"
           >
-            {traceLoadStatus === "loading"
-              ? text("최근 실행 흐름을 불러오는 중입니다.", "Loading the latest execution flow.")
-              : text("최근 실행 기록이 아직 없습니다.", "There is no recent execution record yet.")}
+            {traceEmptyMessage(traceLoadStatus, traceEmptyReason, text)}
           </div>
         )}
       </div>
@@ -793,6 +838,65 @@ export function TopologyV2FlowStatusCard({
       ) : null}
     </section>
   )
+}
+
+function traceEmptyMessage(
+  loadStatus: TopologyLoadStatus,
+  reason: TopologyTraceEmptyReason,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  if (loadStatus === "loading") {
+    return text("최근 실행 흐름을 불러오는 중입니다.", "Loading the latest execution flow.")
+  }
+  if (reason === "no_recent_task") {
+    return text("실행 현황에서 확인할 최근 요청이 아직 없습니다.", "No recent request exists in the activity monitor yet.")
+  }
+  if (reason === "no_topology_run_for_latest_task") {
+    return text(
+      "실행 현황의 최근 요청에 연결된 토폴로지 실행 기록이 없습니다.",
+      "The latest activity-monitor request has no linked topology execution record.",
+    )
+  }
+  return text("최근 실행 기록이 아직 없습니다.", "There is no recent execution record yet.")
+}
+
+function validationIssueShortLabel(
+  issues: readonly ExecutorTopologyV2ValidationIssue[],
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  if (issues.some((issue) => issue.code === "duplicate_node_name")) {
+    return text("이름 중복", "Duplicate name")
+  }
+  return text("입력 필요", "Needs input")
+}
+
+function validationIssueMessage(
+  issues: readonly ExecutorTopologyV2ValidationIssue[],
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  if (issues.some((issue) => issue.code === "duplicate_node_name")) {
+    return text(
+      "같은 이름의 실행자가 있습니다. 실행자 이름은 서로 달라야 저장할 수 있습니다.",
+      "Executor names must be unique before saving.",
+    )
+  }
+  return text("이름과 성격과 하는 일을 입력한 뒤 저장하세요.", "Enter name and work description before saving.")
+}
+
+function nextExecutorNodeName(topology: ExecutorTopologyV2): string {
+  const usedNames = new Set(
+    topology.nodes
+      .filter((node) => node.status === "active")
+      .map((node) => normalizeExecutorNodeNameForUi(node.name))
+      .filter((name) => name.length > 0),
+  )
+  let index = topology.nodes.length + 1
+  while (usedNames.has(normalizeExecutorNodeNameForUi(`새 실행자 ${index}`))) index += 1
+  return `새 실행자 ${index}`
+}
+
+function normalizeExecutorNodeNameForUi(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
 }
 
 function TraceEventRow({
@@ -912,6 +1016,7 @@ function executorDraftFromExecutorNodeV2(node: ExecutorNodeV2, now: number | str
     ...inferred,
     name: node.name,
     description: node.description,
+    ...(node.definitionQuickChips?.length ? { definitionQuickChips: [...node.definitionQuickChips] } : {}),
     position: node.position,
     executorProfile: profile,
     ...(confirmed ? {
@@ -973,6 +1078,9 @@ function enterpriseNodeFromExecutorNodeV2(node: ExecutorNodeV2, now: number | st
     executorProfile: profile as unknown as EnterpriseMetadataValue,
     executorGraph: {
       position: node.position as unknown as EnterpriseMetadataValue,
+      ...(node.definitionQuickChips?.length
+        ? { definitionQuickChips: node.definitionQuickChips as unknown as EnterpriseMetadataValue }
+        : {}),
     },
     executorTopologyV2: {
       schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,

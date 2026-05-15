@@ -219,6 +219,7 @@ export interface EnterpriseTopologyGuiDraftStartRequest {
   version?: number
   reset?: boolean
   persist?: boolean
+  activate?: boolean
   createdBy?: string
   importSource?: string
 }
@@ -236,6 +237,11 @@ export interface EnterpriseTopologyGuiDraftResponse {
     version: number
     versionId: string
     topologyId: string
+  }
+  activation?: {
+    ok: boolean
+    reasonCode?: string
+    issues?: string[]
   }
 }
 

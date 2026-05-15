@@ -2,10 +2,14 @@ import crypto from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import JSON5 from "json5";
-import { TelegramChannel, buildSettingsChannelConnectionSnapshot, defineChannelCapabilities, recordChannelRuntimeEvent, startChannels, } from "../../channels/index.js";
+import { TelegramChannel, buildSettingsChannelConnectionSnapshot, DiscordChannelAdapter, buildDiscordPermissionDoctor, GoogleChatChannelAdapter, buildGoogleChatWorkspaceDoctor, defineChannelCapabilities, recordChannelRuntimeEvent, startChannels, } from "../../channels/index.js";
+import { buildIMessageCapabilityManifest, buildIMessageLocalBridgeDoctor, } from "../../channels/imessage/adapter.js";
+import { buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeDoctor, buildKakaoTalkOfficialCapabilityManifest, buildKakaoTalkOfficialDoctor, } from "../../channels/kakaotalk/adapter.js";
 import { SlackChannel } from "../../channels/slack/bot.js";
 import { getActiveSlackChannel, getSlackRuntimeStatus, setActiveSlackChannel, setSlackRuntimeError, stopActiveSlackChannel, } from "../../channels/slack/runtime.js";
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel, } from "../../channels/telegram/runtime.js";
+import { getDiscordRuntimeStatus, setDiscordRuntimeError, stopDiscordRuntime, } from "../../channels/discord/runtime.js";
+import { getGoogleChatRuntimeStatus, setGoogleChatRuntimeError, stopGoogleChatRuntime, } from "../../channels/google-chat/runtime.js";
 import { getConfig, reloadConfig } from "../../config/index.js";
 import { PATHS } from "../../config/paths.js";
 import { getDb, listMessageLedgerEvents, } from "../../db/index.js";
@@ -24,6 +28,9 @@ const FINAL_DELIVERY_EVENT_KINDS = new Set([
 ]);
 const TERMINAL_DELIVERY_STATUSES = new Set(["delivered", "succeeded", "suppressed"]);
 const LOCAL_BRIDGE_PROVIDERS = new Set(["imessage", "kakaotalk"]);
+const IMESSAGE_LOCAL_CONNECTION_ID = "imessage:local";
+const KAKAOTALK_OFFICIAL_CONNECTION_ID = "kakaotalk:official";
+const KAKAOTALK_LOCAL_CONNECTION_ID = "kakaotalk:local";
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -76,6 +83,9 @@ function writeRawConfig(raw) {
     writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8");
     reloadConfig();
 }
+function rawConfigKeyForProvider(provider) {
+    return provider === "google_chat" ? "googleChat" : provider;
+}
 function ensureRawSection(raw, key) {
     if (!isRecord(raw[key]))
         raw[key] = {};
@@ -83,7 +93,7 @@ function ensureRawSection(raw, key) {
 }
 function updateRawChannelEnabled(provider, enabled) {
     const raw = readRawConfig();
-    const section = ensureRawSection(raw, provider);
+    const section = ensureRawSection(raw, rawConfigKeyForProvider(provider));
     section.enabled = enabled;
     const current = getConfig();
     if (provider === "telegram" && !section.botToken && current.telegram?.botToken) {
@@ -95,23 +105,221 @@ function updateRawChannelEnabled(provider, enabled) {
         if (!section.appToken && current.slack?.appToken)
             section.appToken = current.slack.appToken;
     }
+    if (provider === "discord") {
+        if (!section.botToken && current.discord?.botToken)
+            section.botToken = current.discord.botToken;
+        if (!section.applicationId && current.discord?.applicationId)
+            section.applicationId = current.discord.applicationId;
+        if (!section.publicKey && current.discord?.publicKey)
+            section.publicKey = current.discord.publicKey;
+    }
+    if (provider === "google_chat") {
+        if (!section.projectId && current.googleChat?.projectId)
+            section.projectId = current.googleChat.projectId;
+        if (!section.appCredentialJson && current.googleChat?.appCredentialJson)
+            section.appCredentialJson = current.googleChat.appCredentialJson;
+        if (!section.serviceAccountEmail && current.googleChat?.serviceAccountEmail)
+            section.serviceAccountEmail = current.googleChat.serviceAccountEmail;
+        if (!section.webhookUrl && current.googleChat?.webhookUrl)
+            section.webhookUrl = current.googleChat.webhookUrl;
+        if (!section.verificationToken && current.googleChat?.verificationToken)
+            section.verificationToken = current.googleChat.verificationToken;
+    }
     writeRawConfig(raw);
     const connection = requireConnection(`${provider}:primary`);
     recordRuntime(connection, enabled ? "enabled" : "disabled", enabled ? "Channel enabled." : "Channel disabled.");
     return connection;
 }
+function updateRawLocalBridgeEnabled(connection, enabled, acknowledgeRisk) {
+    const raw = readRawConfig();
+    if (connection.connectionId === IMESSAGE_LOCAL_CONNECTION_ID) {
+        const section = isRecord(raw.imessage) ? raw.imessage : {};
+        section.enabled = enabled;
+        if (enabled) {
+            section.mode = section.mode === "outgoing_only" ? "outgoing_only" : "manual_confirm";
+            if (acknowledgeRisk)
+                section.riskAcknowledged = true;
+            if (typeof section.manualConfirmationRequired !== "boolean")
+                section.manualConfirmationRequired = true;
+        }
+        raw.imessage = section;
+    }
+    else if (connection.connectionId === KAKAOTALK_LOCAL_CONNECTION_ID) {
+        const section = isRecord(raw.kakaoTalk) ? raw.kakaoTalk : {};
+        section.enabled = enabled;
+        if (enabled) {
+            section.mode = "local_bridge";
+            if (acknowledgeRisk)
+                section.riskAcknowledged = true;
+            if (typeof section.manualConfirmationRequired !== "boolean")
+                section.manualConfirmationRequired = true;
+        }
+        raw.kakaoTalk = section;
+    }
+    else {
+        throw new Error(`Unsupported local bridge connection: ${connection.connectionId}`);
+    }
+    writeRawConfig(raw);
+    const updated = requireConnection(connection.connectionId);
+    recordRuntime(updated, enabled ? "enabled" : "disabled", enabled ? "Local bridge channel enabled." : "Local bridge channel disabled.", {
+        providerRuntime: "not_started",
+        classification: "channel_state",
+    });
+    return updated;
+}
 function buildRuntimeSnapshot() {
     return {
         telegram: getTelegramRuntimeStatus(),
         slack: getSlackRuntimeStatus(),
+        discord: getDiscordRuntimeStatus(),
+        googleChat: getGoogleChatRuntimeStatus(),
     };
 }
 function listConnections() {
-    return buildSettingsChannelConnectionSnapshot({
+    const connections = buildSettingsChannelConnectionSnapshot({
         config: getConfig(),
         runtime: buildRuntimeSnapshot(),
         persist: true,
     });
+    const knownFutureConnections = [
+        IMESSAGE_LOCAL_CONNECTION_ID,
+        KAKAOTALK_OFFICIAL_CONNECTION_ID,
+        KAKAOTALK_LOCAL_CONNECTION_ID,
+    ];
+    for (const connectionId of knownFutureConnections) {
+        if (connections.some((connection) => connection.connectionId === connectionId))
+            continue;
+        const fallback = buildKnownFutureConnection(connectionId, Date.now());
+        if (fallback)
+            connections.push(fallback);
+    }
+    return connections;
+}
+function buildAllowedPrincipals(provider, kind, ids) {
+    return ids.map((id) => ({
+        namespaceId: `${provider}:${kind}:${id}`,
+        provider,
+        kind,
+        providerIdentityId: id,
+    }));
+}
+function defaultDeliveryPolicy() {
+    return {
+        inbound: { requireAllowedPrincipal: true, allowUnlisted: false },
+        outbound: { defaultThreadPolicy: "reuse_origin_thread", fallbackChannel: "webui" },
+    };
+}
+function localBridgeHealth(enabled, configured, doctor, now) {
+    const error = doctor.issues.find((issue) => issue.severity === "error");
+    const warning = doctor.issues.find((issue) => issue.severity === "warning");
+    return {
+        status: error && enabled ? "failed" : warning && enabled && configured ? "degraded" : "stopped",
+        message: error?.message ?? warning?.message ?? null,
+        checkedAt: now,
+    };
+}
+function buildKnownFutureConnection(channelId, now) {
+    const config = getConfig();
+    if (channelId === IMESSAGE_LOCAL_CONNECTION_ID) {
+        const imessage = config.imessage;
+        const enabled = imessage?.enabled === true;
+        const configured = Boolean(imessage?.localBridgeEnabled === true
+            && imessage?.riskAcknowledged === true
+            && imessage?.messagesAppAvailable === true
+            && imessage?.userSessionActive === true
+            && imessage?.automationPermissionGranted === true
+            && (imessage?.allowedRecipientIds.length ?? 0) > 0);
+        const provider = "imessage";
+        const capabilityManifest = buildIMessageCapabilityManifest(imessage);
+        return {
+            connectionId: IMESSAGE_LOCAL_CONNECTION_ID,
+            provider,
+            displayName: "iMessage Local Bridge",
+            connectionMode: "local_bridge",
+            enabled,
+            configured,
+            health: localBridgeHealth(enabled, configured, buildIMessageLocalBridgeDoctor(imessage), now),
+            capabilityManifest,
+            authSecretRefs: [],
+            allowedUsers: buildAllowedPrincipals(provider, "user", imessage?.allowedRecipientIds ?? []),
+            allowedRooms: [],
+            defaultDeliveryPolicy: defaultDeliveryPolicy(),
+            source: provider,
+            configSource: "compat",
+            createdAt: now,
+            updatedAt: now,
+            schemaVersion: 1,
+        };
+    }
+    if (channelId === KAKAOTALK_OFFICIAL_CONNECTION_ID) {
+        const kakaoTalk = config.kakaoTalk;
+        const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "official";
+        const hasApiKey = Boolean(kakaoTalk?.businessApiKey?.trim());
+        const hasChannelId = Boolean(kakaoTalk?.channelId?.trim());
+        const configured = kakaoTalk?.businessApiEnabled === true && hasApiKey && hasChannelId;
+        const provider = "kakaotalk";
+        const doctor = buildKakaoTalkOfficialDoctor(kakaoTalk);
+        const error = doctor.issues.find((issue) => issue.severity === "error");
+        return {
+            connectionId: KAKAOTALK_OFFICIAL_CONNECTION_ID,
+            provider,
+            displayName: "KakaoTalk Business",
+            connectionMode: "webhook",
+            enabled,
+            configured,
+            health: {
+                status: error && enabled ? "failed" : "stopped",
+                message: error?.message ?? null,
+                checkedAt: now,
+            },
+            capabilityManifest: buildKakaoTalkOfficialCapabilityManifest(),
+            authSecretRefs: [
+                { key: "businessApiKey", ref: "config:kakaoTalk.businessApiKey", source: "config", present: hasApiKey, redacted: true },
+                { key: "channelId", ref: "config:kakaoTalk.channelId", source: "config", present: hasChannelId, redacted: true },
+            ],
+            allowedUsers: buildAllowedPrincipals(provider, "user", kakaoTalk?.allowedUserIds ?? []),
+            allowedRooms: buildAllowedPrincipals(provider, "room", kakaoTalk?.allowedRoomIds ?? []),
+            defaultDeliveryPolicy: defaultDeliveryPolicy(),
+            source: provider,
+            configSource: "compat",
+            createdAt: now,
+            updatedAt: now,
+            schemaVersion: 1,
+        };
+    }
+    if (channelId === KAKAOTALK_LOCAL_CONNECTION_ID) {
+        const kakaoTalk = config.kakaoTalk;
+        const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "local_bridge";
+        const allowedIds = [...(kakaoTalk?.allowedUserIds ?? []), ...(kakaoTalk?.allowedRoomIds ?? [])];
+        const configured = Boolean(kakaoTalk?.localBridgeEnabled === true
+            && kakaoTalk?.riskAcknowledged === true
+            && kakaoTalk?.kakaoTalkAppAvailable === true
+            && kakaoTalk?.userSessionActive === true
+            && kakaoTalk?.automationPermissionGranted === true
+            && allowedIds.length > 0);
+        const provider = "kakaotalk";
+        const capabilityManifest = buildKakaoTalkLocalBridgeCapabilityManifest(kakaoTalk);
+        return {
+            connectionId: KAKAOTALK_LOCAL_CONNECTION_ID,
+            provider,
+            displayName: "KakaoTalk Local Bridge",
+            connectionMode: "local_bridge",
+            enabled,
+            configured,
+            health: localBridgeHealth(enabled, configured, buildKakaoTalkLocalBridgeDoctor(kakaoTalk), now),
+            capabilityManifest,
+            authSecretRefs: [],
+            allowedUsers: buildAllowedPrincipals(provider, "user", kakaoTalk?.allowedUserIds ?? []),
+            allowedRooms: buildAllowedPrincipals(provider, "room", kakaoTalk?.allowedRoomIds ?? []),
+            defaultDeliveryPolicy: defaultDeliveryPolicy(),
+            source: provider,
+            configSource: "compat",
+            createdAt: now,
+            updatedAt: now,
+            schemaVersion: 1,
+        };
+    }
+    return undefined;
 }
 function buildPlaceholderCapabilities(provider, connectionKind) {
     return defineChannelCapabilities({
@@ -132,6 +340,7 @@ function buildPlaceholderCapabilities(provider, connectionKind) {
         requiresWebhook: connectionKind === "webhook",
         requiresLocalBridge: connectionKind === "local_bridge",
         requiresUserSession: connectionKind === "local_bridge",
+        manualConfirmationRequired: connectionKind === "local_bridge",
         riskLevel: connectionKind === "local_bridge" ? "high" : "medium",
         deliveryStates: {
             supportsAccepted: true,
@@ -143,20 +352,21 @@ function buildPlaceholderCapabilities(provider, connectionKind) {
 }
 function getPlaceholderConnection(channelId) {
     const provider = channelId.split(":")[0];
-    if (!provider || !["discord", "google_chat", "imessage", "kakaotalk"].includes(provider))
+    if (!provider || !["imessage", "kakaotalk"].includes(provider))
         return undefined;
     const now = Date.now();
-    const connectionKind = LOCAL_BRIDGE_PROVIDERS.has(provider) ? "local_bridge" : "webhook";
+    const known = buildKnownFutureConnection(channelId, now);
+    if (known)
+        return known;
+    const connectionKind = channelId === "kakaotalk:official" ? "webhook" : LOCAL_BRIDGE_PROVIDERS.has(provider) ? "local_bridge" : "webhook";
     return {
         connectionId: channelId.includes(":") ? channelId : `${provider}:primary`,
         provider,
-        displayName: provider === "google_chat"
-            ? "Google Chat"
-            : provider === "imessage"
-                ? "iMessage"
-                : provider === "kakaotalk"
-                    ? "KakaoTalk"
-                    : "Discord",
+        displayName: provider === "imessage"
+            ? "iMessage"
+            : provider === "kakaotalk"
+                ? "KakaoTalk"
+                : "Local Bridge",
         connectionMode: connectionKind,
         enabled: false,
         configured: false,
@@ -206,6 +416,10 @@ function providerRuntimeStatus(provider) {
         return { ...getTelegramRuntimeStatus(), runtimeBuild };
     if (provider === "slack")
         return { ...getSlackRuntimeStatus(), runtimeBuild };
+    if (provider === "discord")
+        return { ...getDiscordRuntimeStatus(), runtimeBuild };
+    if (provider === "google_chat")
+        return { ...getGoogleChatRuntimeStatus(), runtimeBuild };
     return {
         isRunning: false,
         lastStartedAt: null,
@@ -238,6 +452,36 @@ function connectionValidation(connection) {
             message: "Local bridge providers require explicit user consent before enablement.",
         });
     }
+    if (connection.provider === "imessage") {
+        const doctor = buildIMessageLocalBridgeDoctor(getConfig().imessage);
+        for (const issue of doctor.issues) {
+            issues.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+            });
+        }
+    }
+    if (connection.provider === "kakaotalk" && connection.connectionId === KAKAOTALK_LOCAL_CONNECTION_ID) {
+        const doctor = buildKakaoTalkLocalBridgeDoctor(getConfig().kakaoTalk);
+        for (const issue of doctor.issues) {
+            issues.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+            });
+        }
+    }
+    if (connection.provider === "kakaotalk" && connection.connectionId === "kakaotalk:official") {
+        const doctor = buildKakaoTalkOfficialDoctor(getConfig().kakaoTalk);
+        for (const issue of doctor.issues) {
+            issues.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+            });
+        }
+    }
     const runtime = providerRuntimeStatus(connection.provider);
     const runtimeBuild = runtime.runtimeBuild;
     if (runtimeBuild?.buildRequired) {
@@ -268,6 +512,26 @@ function connectionValidation(connection) {
             message: "Runtime is active while the channel is disabled in config.",
         });
     }
+    if (connection.provider === "discord") {
+        const doctor = buildDiscordPermissionDoctor(getConfig().discord);
+        for (const issue of doctor.issues) {
+            issues.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+            });
+        }
+    }
+    if (connection.provider === "google_chat") {
+        const doctor = buildGoogleChatWorkspaceDoctor(getConfig().googleChat);
+        for (const issue of doctor.issues) {
+            issues.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+            });
+        }
+    }
     return {
         ok: !issues.some((issue) => issue.severity === "error"),
         issues,
@@ -296,6 +560,7 @@ function channelSummary(connection) {
             requiresWebhook: capabilities.requiresWebhook,
             requiresLocalBridge: capabilities.requiresLocalBridge,
             requiresUserSession: capabilities.requiresUserSession,
+            manualConfirmationRequired: capabilities.manualConfirmationRequired === true,
         },
         validation: connectionValidation(connection),
     };
@@ -330,7 +595,7 @@ function recordRuntime(connection, eventKind, summary, detail) {
     }
 }
 function asRuntimeProvider(provider) {
-    return provider === "telegram" || provider === "slack" ? provider : undefined;
+    return provider === "telegram" || provider === "slack" || provider === "discord" || provider === "google_chat" ? provider : undefined;
 }
 async function restartConnection(connection, body, reply) {
     if (!asRuntimeProvider(connection.provider)) {
@@ -369,13 +634,25 @@ async function restartConnection(connection, body, reply) {
             await channel.start();
             setActiveTelegramChannel(channel);
         }
-        else {
+        else if (connection.provider === "slack") {
             if (getActiveSlackChannel())
                 stopActiveSlackChannel();
             setSlackRuntimeError(null);
             const channel = new SlackChannel(cfg.slack);
             await channel.start();
             setActiveSlackChannel(channel);
+        }
+        else if (connection.provider === "discord") {
+            stopDiscordRuntime();
+            setDiscordRuntimeError(null);
+            const adapter = new DiscordChannelAdapter({ config: cfg.discord });
+            await adapter.start();
+        }
+        else {
+            stopGoogleChatRuntime();
+            setGoogleChatRuntimeError(null);
+            const adapter = new GoogleChatChannelAdapter({ config: cfg.googleChat });
+            await adapter.start();
         }
         const started = requireConnection(connection.connectionId);
         recordRuntime(started, "restarted", "Channel runtime restarted.", { initiatedBy: body.initiatedBy ?? "webui" });
@@ -385,8 +662,12 @@ async function restartConnection(connection, body, reply) {
         const message = error instanceof Error ? error.message : String(error);
         if (connection.provider === "telegram")
             setTelegramRuntimeError(message);
-        else
+        else if (connection.provider === "slack")
             setSlackRuntimeError(message);
+        else if (connection.provider === "discord")
+            setDiscordRuntimeError(message);
+        else
+            setGoogleChatRuntimeError(message);
         const failed = requireConnection(connection.connectionId);
         recordRuntime(failed, "restart_failed", "Channel runtime restart failed.", { message });
         return reply.status(500).send({ ok: false, error: message, channel: channelSummary(failed) });
@@ -636,6 +917,10 @@ export function registerChannelsRoute(app) {
                     channel: channelSummary(connection),
                 });
             }
+            if (connection.capabilityManifest.requiresLocalBridge) {
+                const updated = updateRawLocalBridgeEnabled(connection, true, true);
+                return { ok: true, channel: channelDetail(updated) };
+            }
             recordRuntime(connection, "enable_unsupported_provider", "Channel enable blocked because provider runtime is not implemented.");
             return reply.status(501).send({
                 ok: false,
@@ -651,12 +936,21 @@ export function registerChannelsRoute(app) {
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
         const runtimeProvider = asRuntimeProvider(connection.provider);
-        if (!runtimeProvider)
+        if (!runtimeProvider) {
+            if (connection.capabilityManifest.requiresLocalBridge) {
+                const updated = updateRawLocalBridgeEnabled(connection, false, false);
+                return { ok: true, channel: channelDetail(updated) };
+            }
             return reply.status(501).send({ ok: false, error: "provider runtime is not implemented yet", channel: channelSummary(connection) });
+        }
         if (runtimeProvider === "telegram")
             stopActiveTelegramChannel();
         if (runtimeProvider === "slack")
             stopActiveSlackChannel();
+        if (runtimeProvider === "discord")
+            stopDiscordRuntime();
+        if (runtimeProvider === "google_chat")
+            stopGoogleChatRuntime();
         const updated = updateRawChannelEnabled(runtimeProvider, false);
         return { ok: true, channel: channelDetail(updated) };
     });

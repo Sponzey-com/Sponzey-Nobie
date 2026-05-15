@@ -107,7 +107,9 @@ export interface ModelProfile {
   effort?: string
   temperature?: number
   maxOutputTokens?: number
+  /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
   timeoutMs?: number
+  /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
   retryCount?: number
   costBudget?: number
   fallbackModelId?: string
@@ -120,13 +122,16 @@ export interface ModelExecutionSnapshot {
   fallbackApplied: boolean
   fallbackFromModelId?: string
   fallbackReasonCode?: string
+  /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
   timeoutMs?: number
+  /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
   retryCount?: number
   costBudget?: number
   maxOutputTokens?: number
   estimatedInputTokens: number
   estimatedOutputTokens: number
   estimatedCost: number
+  /** Legacy audit field: model invocation telemetry, not a retry or failure limit. */
   attemptCount?: number
   latencyMs?: number
   reasonCodes: string[]

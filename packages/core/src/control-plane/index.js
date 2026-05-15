@@ -637,7 +637,7 @@ export function saveSetupDraft(draft, state) {
     };
     raw.orchestration = {
         ...toObject(raw.orchestration),
-        maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 5)),
+        maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)),
     };
     raw.telegram = {
         ...toObject(raw.telegram),
@@ -781,7 +781,7 @@ export function saveSetupDraft(draft, state) {
     persistMcpSetupDraft(raw, draft.mcp);
     persistSkillsSetupDraft(raw, draft.skills);
     writeRawConfig(raw);
-    updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 5)));
+    updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)));
     const nextState = state ? writeSetupState(state) : readSetupState();
     return { draft: buildSetupDraft(), state: nextState };
 }

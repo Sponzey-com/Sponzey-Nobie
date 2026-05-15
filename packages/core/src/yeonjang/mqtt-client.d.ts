@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import { type MqttExtensionSnapshot } from "../mqtt/broker.js";
 export interface YeonjangRequestEnvelope {
     id: string;
@@ -9,7 +10,7 @@ export interface YeonjangRequestMetadata {
     runId?: string;
     requestGroupId?: string;
     sessionId?: string;
-    source?: "webui" | "cli" | "telegram" | "slack";
+    source?: ChannelSource;
     agentId?: string;
     auditId?: string;
     capabilityDelegationId?: string;

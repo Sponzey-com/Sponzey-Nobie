@@ -87,6 +87,7 @@ interface GuiDraftBody {
   version?: unknown
   reset?: unknown
   persist?: unknown
+  activate?: unknown
   createdBy?: unknown
   importSource?: unknown
 }
@@ -260,7 +261,14 @@ function getTopologyDraftSource(
 function persistGuiDraftTopology(
   topology: EnterpriseTopology,
   body: GuiDraftBody | undefined,
-): { ok: true; version: ReturnType<ReturnType<typeof createEnterpriseTopologyRegistry>["appendTopologyVersion"]>["version"] } | { ok: false; error: string; issues: unknown } | undefined {
+):
+  | {
+    ok: true
+    version: ReturnType<ReturnType<typeof createEnterpriseTopologyRegistry>["appendTopologyVersion"]>["version"]
+    activation?: TopologyActivationResult
+  }
+  | { ok: false; error: string; issues: unknown }
+  | undefined {
   if (!isRecord(body) || body.persist !== true) return undefined
   const validation = validateEnterpriseTopology(topology)
   if (!validation.ok) {
@@ -278,7 +286,10 @@ function persistGuiDraftTopology(
     ...(createdBy !== undefined ? { createdBy } : {}),
     importSource,
   })
-  return { ok: true, version: persisted.version }
+  const activation = body.activate === true
+    ? registry.activateTopologyVersion(topology.id, persisted.version.version)
+    : undefined
+  return { ok: true, version: persisted.version, ...(activation ? { activation } : {}) }
 }
 
 function guiDraftPersistencePayload(
@@ -289,6 +300,7 @@ function guiDraftPersistencePayload(
     return {
       persisted: true,
       persistedVersion: persisted.version,
+      ...(persisted.activation ? { activation: persisted.activation } : {}),
     }
   }
   return {

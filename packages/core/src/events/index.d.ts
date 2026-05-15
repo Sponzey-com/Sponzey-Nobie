@@ -1,4 +1,5 @@
 import type { RootRun, RunStep } from "../runs/types.js";
+import type { ChannelSource } from "../channels/contracts.js";
 export type ApprovalDecision = "allow_once" | "allow_run" | "deny";
 export type ApprovalKind = "approval" | "screen_confirmation";
 export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system";
@@ -14,7 +15,7 @@ export interface NobieEvents {
         port: number;
     };
     "channel.connected": {
-        channel: "webui" | "telegram" | "slack" | "mqtt";
+        channel: ChannelSource | "mqtt";
         sessionId?: string | null;
         detail?: Record<string, unknown>;
     };
@@ -180,7 +181,7 @@ export interface NobieEvents {
         registrationKind: "one_time" | "recurring";
         title: string;
         task: string;
-        source: "webui" | "cli" | "telegram" | "slack";
+        source: ChannelSource;
         scheduleText: string;
         scheduleId?: string;
         runAtMs?: number;

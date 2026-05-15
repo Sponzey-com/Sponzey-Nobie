@@ -217,6 +217,7 @@ describe("task023 execution harness", () => {
         current_executor_id: "node:intake",
         action: "delegate_to_child",
         selected_executor_ids: "node:planner",
+        selected_connection_path: ["node:planner"],
         reason: "The planner direct child can own the structured planning work.",
       }),
     })
@@ -224,7 +225,7 @@ describe("task023 execution harness", () => {
     expect(result.ok).toBe(true)
     expect(result.decision.execution_route).toBe("delegate_to_child")
     expect(result.decision.selected_executor_id).toBe("node:planner")
-    expect(result.decision.selected_connection_path).toEqual([])
+    expect(result.decision.selected_connection_path).toEqual(["node:planner"])
     expect(result.decisionTrace.selected_executor_id).toBe("node:planner")
   })
 
@@ -236,6 +237,7 @@ describe("task023 execution harness", () => {
         current_executor_id: "node:intake",
         action: "delegate",
         selected_executor_ids: ["계획"],
+        selected_connection_path: ["node:planner"],
         task_split: [{
           executor: { display_name: "계획" },
           goal: "요청을 실행 가능한 계획으로 나눈다.",

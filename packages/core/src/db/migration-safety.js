@@ -38,6 +38,11 @@ const REQUIRED_TABLES = [
     "topology_metrics_daily",
     "observed_topology_edges",
     "topology_gap_findings",
+    "graph_execution_plans",
+    "node_task_analyses",
+    "node_delegation_resolutions",
+    "graph_execution_events",
+    "recovery_strategy_ledger",
 ];
 const REQUIRED_INDEXES = [
     "idx_migration_locks_status",
@@ -77,6 +82,13 @@ const REQUIRED_INDEXES = [
     "idx_topology_metrics_daily_topology",
     "idx_observed_topology_edges_topology",
     "idx_topology_gap_findings_topology",
+    "idx_graph_execution_plans_topology",
+    "idx_graph_execution_plans_status",
+    "idx_node_task_analyses_plan",
+    "idx_node_delegation_resolutions_plan",
+    "idx_graph_execution_events_plan",
+    "idx_graph_execution_events_executor",
+    "idx_recovery_strategy_ledger_plan",
 ];
 export const MIGRATION_ROLLBACK_RUNBOOK_REF = "migration-rollback-runbook";
 export function ensureMigrationSafetyTables(db) {

@@ -322,6 +322,7 @@ export interface RunRuntimeInspectorTopologyRouting {
   executionDecisionValidationIssues?: string[]
   executionDecisionResolvedExecutorId?: string
   executionDecisionExecutorNameById?: Record<string, string>
+  executionDecisionExecutorRoleNameById?: Record<string, string>
   providerFallbackBlocked: boolean
   providerFallbackBlockedReasonCode?: string
   riskBoundaryRequiresUserApproval?: boolean

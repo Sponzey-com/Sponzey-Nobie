@@ -1,10 +1,11 @@
-import { buildScheduleRegistrationCancelledEvent, buildScheduleRegistrationCreatedEvent, } from "../scheduler/lifecycle.js";
 import { detectAvailableProvider, getDefaultModel, getProvider, } from "../ai/index.js";
+import { buildScheduleRegistrationCancelledEvent, buildScheduleRegistrationCreatedEvent, } from "../scheduler/lifecycle.js";
 import { analyzeTaskIntake, } from "../agent/intake.js";
+import { reviewTaskCompletion, } from "../agent/completion-review.js";
 import { resolveRunRoute } from "./routing.js";
 import { normalizeDirectArtifactDeliverySemantics } from "./execution-profile.js";
 import { buildFollowupPrompt, createDefaultScheduleActionDependencies, executeScheduleActions, inferDelegatedTaskProfile, } from "./action-execution.js";
-import { buildAgentExecutionContextFromGraphSnapshot, } from "../orchestration/execution-context-builder.js";
+import { decideExecutionRoute, } from "../orchestration/decide-execution-route.js";
 import { buildExecutionGraphSnapshot, EXECUTION_GRAPH_ROOT_AGENT_ID, } from "../orchestration/execution-graph-snapshot.js";
 import { formatAgentExecutionDecisionTraceRunEvent, runAgentExecutionHarness, } from "../orchestration/execution-harness.js";
 const defaultModuleDependencies = {
@@ -16,27 +17,8 @@ const defaultModuleDependencies = {
     buildFollowupPrompt,
     buildExecutionGraphSnapshot,
     runAgentExecutionHarness,
+    reviewTaskCompletion,
 };
-function normalizedExplicitTarget(value) {
-    const trimmed = value?.trim();
-    if (!trimmed || trimmed === "auto" || trimmed === "embedded" || trimmed === "local_reasoner")
-        return undefined;
-    return trimmed;
-}
-function isExplicitDirectExecutionTarget(value) {
-    const normalized = normalizedExplicitTarget(value)?.toLowerCase();
-    if (!normalized)
-        return false;
-    return normalized.startsWith("provider:")
-        || normalized.startsWith("worker:")
-        || normalized.startsWith("model:")
-        || normalized === "openai"
-        || normalized === "anthropic"
-        || normalized === "gemini"
-        || normalized === "ollama"
-        || normalized === "llama"
-        || normalized === "llama_cpp";
-}
 function buildExecutionDecisionModelCaller(input) {
     const providerId = input.providerId?.trim() || detectAvailableProvider();
     let provider = input.provider;
@@ -68,29 +50,6 @@ function buildExecutionDecisionModelCaller(input) {
         return output.trim();
     };
 }
-function executorLabel(graph, executorId) {
-    return graph.agentsById[executorId]?.displayName?.trim() || executorId;
-}
-function isDelegationDecision(decision) {
-    return decision.execution_route === "delegate_to_child" && Boolean(decision.selected_executor_id?.trim());
-}
-function decisionFallbackKind(decision) {
-    if (decision.execution_route === "ask_user")
-        return "ask_user";
-    if (decision.execution_route === "ask_parent" || decision.execution_route === "return_to_parent") {
-        return "return_to_parent";
-    }
-    return "self_solve";
-}
-function resolveExplicitProviderRoute(input) {
-    if (!isExplicitDirectExecutionTarget(input.preferredTarget))
-        return undefined;
-    return input.moduleDependencies.resolveRunRoute({
-        preferredTarget: input.preferredTarget,
-        taskProfile: input.delegatedTaskProfile,
-        fallbackModel: input.fallbackModel,
-    });
-}
 function recordExecutionDecisionTraceForRun(dependencies, runId, decisionRoute) {
     dependencies.recordExecutionDecisionTrace?.({
         runId,
@@ -98,75 +57,69 @@ function recordExecutionDecisionTraceForRun(dependencies, runId, decisionRoute) 
         executionDecisionTrace: decisionRoute.decisionResult.decisionTrace,
     });
 }
-async function resolveDelegatedDecisionRoute(input) {
-    if (isExplicitDirectExecutionTarget(input.preferredTarget))
-        return undefined;
-    const buildGraph = input.moduleDependencies.buildExecutionGraphSnapshot ?? buildExecutionGraphSnapshot;
-    const executionGraph = buildGraph({
-        mode: "active_deployment",
-        currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
+async function reviewDelegatedChildCompletion(input) {
+    const reviewer = input.moduleDependencies.reviewTaskCompletion;
+    if (!reviewer)
+        return null;
+    return reviewer({
+        originalRequest: input.params.originalRequest,
+        latestAssistantMessage: input.childSummary,
+        ...(input.params.model ? { model: input.params.model } : {}),
+        ...(input.params.providerId ? { providerId: input.params.providerId } : {}),
+        ...(input.params.provider ? { provider: input.params.provider } : {}),
+        workDir: input.params.workDir,
+    }).catch((error) => {
+        input.dependencies.appendRunEvent(input.params.runId, `parent_run_child_result_review_failed:intake_followup;child_run=${input.childRunId};error=${error instanceof Error ? error.message : String(error)}`);
+        return null;
     });
-    const explicitTarget = normalizedExplicitTarget(input.preferredTarget);
-    const context = buildAgentExecutionContextFromGraphSnapshot({
-        graph: executionGraph,
-        request: {
-            kind: "user_message",
-            latest_user_message: input.originalRequest,
-            structured_goal: input.delegatedTitle.trim() || input.originalRequest,
-            required_outputs: [{
-                    id: "answer",
-                    label: "사용자에게 전달할 최종 결과",
-                    acceptance_criteria: ["요청의 핵심 결과와 남은 이슈를 분명히 전달한다."],
-                }],
-            channel_id: input.params.sessionId,
-        },
-        requester: {
-            requester_id: input.params.sessionId,
-            requester_type: "channel",
-            display_name: input.params.source,
-        },
-        directExecutionRequested: false,
-        ...(explicitTarget ? { explicitTargetExecutorId: explicitTarget } : {}),
-    });
-    const runDecisionHarness = input.moduleDependencies.runAgentExecutionHarness ?? runAgentExecutionHarness;
-    const callModel = buildExecutionDecisionModelCaller({
-        providerId: input.params.providerId,
-        provider: input.params.provider,
-        model: input.params.model,
-    });
-    const decisionResult = await runDecisionHarness({
-        context,
-        ...(callModel ? { callModel } : {}),
-    });
-    const decision = decisionResult.decision;
-    if (!isDelegationDecision(decision)) {
+}
+function buildDelegatedChildCompletionFollowupPrompt(params) {
+    return [
+        "[Delegated Child Completion Follow-up]",
+        "The previous delegated child result did not fully satisfy the original request.",
+        "",
+        `Original user request:\n${params.originalRequest}`,
+        "",
+        `Previous child result:\n${params.childSummary}`,
+        "",
+        `Review summary:\n${params.review.summary || "추가 확인이 필요합니다."}`,
+        params.review.reason ? `\nReview reason:\n${params.review.reason}` : "",
+        params.review.remainingItems.length > 0
+            ? `\nRemaining items:\n${params.review.remainingItems.map((item) => `- ${item}`).join("\n")}`
+            : "",
+        "",
+        "Continue autonomously using a different concrete source path or tool path when the previous path was insufficient.",
+        "Do not finalize until the requested values are verified, or until every viable path is exhausted with clear evidence.",
+        "",
+        `Focused follow-up:\n${params.review.followupPrompt ?? params.review.summary}`,
+    ].filter(Boolean).join("\n");
+}
+function buildDelegatedChildReviewDirective(params) {
+    if (params.review.status === "followup" || params.review.remainingItems.length > 0) {
         return {
-            kind: decisionFallbackKind(decision),
-            agentExecutionDecision: decision,
-            decisionResult,
-            executionGraph,
+            kind: "retry_intake",
+            summary: params.review.summary || "하위 실행 결과에 남은 항목이 있어 계속 확인합니다.",
+            reason: params.review.reason || "하위 실행 결과가 원 요청을 완전히 충족하지 않았습니다.",
+            message: buildDelegatedChildCompletionFollowupPrompt(params),
+            remainingItems: params.review.remainingItems,
+            eventLabel: "하위 실행 결과 미완료로 재분석",
         };
     }
-    const selectedExecutorId = decision.selected_executor_id;
-    if (!selectedExecutorId) {
+    if (params.review.status === "ask_user") {
+        const userMessage = params.review.userMessage
+            || params.review.reason
+            || "요청을 완료하려면 추가 확인이 필요합니다.";
         return {
-            kind: "self_solve",
-            agentExecutionDecision: decision,
-            decisionResult,
-            executionGraph,
+            kind: "awaiting_user",
+            preview: userMessage,
+            summary: params.review.summary || "하위 실행 결과 검증에서 사용자 확인이 필요합니다.",
+            reason: params.review.reason,
+            userMessage,
+            remainingItems: params.review.remainingItems,
+            eventLabel: "하위 실행 결과 검증 사용자 확인",
         };
     }
-    return {
-        kind: "delegate",
-        route: {
-            targetId: selectedExecutorId,
-            targetLabel: executorLabel(executionGraph, selectedExecutorId),
-            reason: `execution_decision:${decision.execution_route}`,
-        },
-        agentExecutionDecision: decision,
-        decisionResult,
-        executionGraph,
-    };
+    return null;
 }
 export async function runIntakeBridgePass(params, dependencies, moduleDependencies = defaultModuleDependencies) {
     const intakeSessionId = params.requestGroupId !== params.runId || params.reuseConversationContext
@@ -311,26 +264,32 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
             const preferredTarget = getString(delegatedAction.payload.preferred_target)
                 || getString(delegatedAction.payload.preferredTarget)
                 || intake.intent_envelope.preferred_target;
-            const explicitProviderRoute = resolveExplicitProviderRoute({
-                moduleDependencies,
-                preferredTarget,
-                delegatedTaskProfile,
-                fallbackModel: params.model,
+            const callModel = buildExecutionDecisionModelCaller({
+                providerId: params.providerId,
+                provider: params.provider,
+                model: params.model,
             });
-            const decisionRoute = explicitProviderRoute ? undefined : await resolveDelegatedDecisionRoute({
-                params,
-                moduleDependencies,
-                preferredTarget,
+            const decisionRoute = await decideExecutionRoute({
+                originalRequest: params.originalRequest,
                 delegatedTitle: delegatedAction.title,
                 delegatedTaskProfile,
-                originalRequest: params.originalRequest,
-                executionSemantics: delegatedExecutionSemantics,
+                sessionId: params.sessionId,
+                source: params.source,
+                preferredTarget,
+                fallbackModel: params.model,
+                currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
+                buildExecutionGraphSnapshot: moduleDependencies.buildExecutionGraphSnapshot,
+                runAgentExecutionHarness: moduleDependencies.runAgentExecutionHarness,
+                ...(callModel ? { callModel } : {}),
+                resolveExplicitProviderTarget: (routeInput) => moduleDependencies.resolveRunRoute({
+                    preferredTarget: routeInput.preferredTarget,
+                    taskProfile: routeInput.taskProfile,
+                    fallbackModel: routeInput.fallbackModel,
+                }),
             });
-            if (!explicitProviderRoute && (!decisionRoute || decisionRoute.kind === "self_solve")) {
-                if (decisionRoute) {
-                    recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute);
-                    dependencies.appendRunEvent(params.runId, formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace));
-                }
+            if (decisionRoute.kind === "self_solve") {
+                recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute);
+                dependencies.appendRunEvent(params.runId, formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace));
                 dependencies.appendRunEvent(params.runId, "execution_decision_fallback:self_solve; provider_direct_blocked_without_explicit_target");
                 dependencies.logInfo("delegated follow-up self-solve fallback", {
                     runId: params.runId,
@@ -343,37 +302,30 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 });
                 continue;
             }
-            if (decisionRoute?.kind === "ask_user") {
+            if (decisionRoute.kind === "ask_user" || decisionRoute.kind === "boundary_failure") {
                 recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute);
                 dependencies.appendRunEvent(params.runId, formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace));
                 return {
                     kind: "awaiting_user",
                     preview: decisionRoute.agentExecutionDecision.unresolved_reason
                         ?? decisionRoute.agentExecutionDecision.reason,
-                    summary: "실행 전에 사용자 확인이 필요합니다.",
+                    summary: decisionRoute.kind === "boundary_failure"
+                        ? "현재 실행 경계 안에서 처리할 수 없는 요청입니다."
+                        : "실행 전에 사용자 확인이 필요합니다.",
                     reason: decisionRoute.agentExecutionDecision.reason,
                     userMessage: decisionRoute.agentExecutionDecision.unresolved_reason
                         ?? "요청을 계속 진행하려면 필요한 조건을 확인해 주세요.",
-                    eventLabel: "execution decision 사용자 확인 대기",
+                    eventLabel: decisionRoute.kind === "boundary_failure"
+                        ? "execution decision 경계 실패"
+                        : "execution decision 사용자 확인 대기",
                 };
             }
-            if (decisionRoute?.kind === "return_to_parent") {
-                recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute);
-                dependencies.appendRunEvent(params.runId, formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace));
-                return {
-                    kind: "awaiting_user",
-                    preview: decisionRoute.agentExecutionDecision.unresolved_reason
-                        ?? decisionRoute.agentExecutionDecision.reason,
-                    summary: "현재 채널 요청에는 반환할 상위 실행자가 없어 사용자 확인으로 전환합니다.",
-                    reason: decisionRoute.agentExecutionDecision.reason,
-                    userMessage: decisionRoute.agentExecutionDecision.unresolved_reason
-                        ?? "상위 실행자에게 반환할 수 없는 요청입니다. 계속 진행할 방법을 확인해 주세요.",
-                    eventLabel: "execution decision 상위 반환 불가",
-                };
-            }
-            const route = explicitProviderRoute ?? (decisionRoute?.kind === "delegate" ? decisionRoute.route : undefined);
+            const route = decisionRoute.kind === "explicit_provider_target" || decisionRoute.kind === "delegate_to_child"
+                ? decisionRoute.route
+                : undefined;
             if (!route)
                 continue;
+            const routeWorkerRuntime = route.workerRuntime;
             const followupPrompt = moduleDependencies.buildFollowupPrompt({
                 originalMessage: params.originalRequest,
                 intake: delegatedIntake,
@@ -381,16 +333,16 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 taskProfile: delegatedTaskProfile,
                 ...(route.targetId ? { selectedExecutorId: route.targetId } : {}),
                 ...(route.targetLabel ? { selectedExecutorLabel: route.targetLabel } : {}),
-                ...(decisionRoute?.kind === "delegate"
+                ...(decisionRoute.kind === "delegate_to_child"
                     ? { selectedExecutorReason: decisionRoute.agentExecutionDecision.reason }
                     : {}),
             });
-            if (decisionRoute?.kind === "delegate") {
+            if (decisionRoute.kind === "delegate_to_child") {
                 recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute);
                 dependencies.appendRunEvent(params.runId, formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace));
             }
-            if (explicitProviderRoute) {
-                dependencies.appendRunEvent(params.runId, `execution_decision_fallback:explicit_provider; provider_direct_allowed_with_explicit_target; target=${explicitProviderRoute.targetId ?? preferredTarget ?? "unknown"}`);
+            if (decisionRoute.kind === "explicit_provider_target") {
+                dependencies.appendRunEvent(params.runId, `execution_decision_fallback:explicit_provider; provider_direct_allowed_with_explicit_target; target=${route.targetId ?? preferredTarget ?? "unknown"}`);
             }
             dependencies.appendRunEvent(params.runId, route.targetLabel
                 ? `후속 실행 생성: ${delegatedAction.title} -> ${route.targetLabel} (${delegatedTaskProfile})`
@@ -405,8 +357,8 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 targetLabel: route.targetLabel ?? null,
                 model: route.model ?? params.model ?? null,
                 providerId: route.providerId ?? null,
-                workerRuntime: route.workerRuntime?.kind ?? null,
-                executionGraph: decisionRoute
+                workerRuntime: routeWorkerRuntime?.kind ?? null,
+                executionGraph: decisionRoute.kind === "delegate_to_child"
                     ? {
                         graphId: decisionRoute.executionGraph.graphId,
                         graphSource: decisionRoute.executionGraph.graphSource,
@@ -415,14 +367,15 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                         availableExecutorIds: decisionRoute.executionGraph.availableExecutorIds,
                     }
                     : null,
-                executionDecisionSource: decisionRoute ? "nobie_harness" : null,
+                executionDecisionSource: decisionRoute.kind === "delegate_to_child" ? "nobie_harness" : null,
             });
             dependencies.incrementDelegationTurnCount(params.runId, `${delegatedAction.title} 후속 작업을 시작합니다.`);
-            dependencies.startDelegatedRun({
+            const delegatedRequestGroupId = `${params.runId}:child:${delegatedFollowupCount + 1}`;
+            const delegatedRun = await dependencies.startDelegatedRun({
                 message: followupPrompt,
                 sessionId: params.sessionId,
                 taskProfile: dependencies.normalizeTaskProfile(delegatedTaskProfile),
-                requestGroupId: params.requestGroupId,
+                requestGroupId: delegatedRequestGroupId,
                 parentRunId: params.runId,
                 runScope: "child",
                 handoffSummary: delegatedAction.title,
@@ -434,20 +387,46 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 ...(route.providerId ? { providerId: route.providerId } : {}),
                 ...(route.provider ? { provider: route.provider } : {}),
                 ...(route.providerTrace ? { providerTrace: route.providerTrace } : {}),
-                ...(route.workerRuntime ? { workerRuntime: route.workerRuntime } : {}),
+                ...(routeWorkerRuntime ? { workerRuntime: routeWorkerRuntime } : {}),
                 ...(route.targetId ? { targetId: route.targetId } : {}),
                 ...(route.targetLabel ? { targetLabel: route.targetLabel } : {}),
-                ...(decisionRoute?.kind === "delegate" ? { agentExecutionDecision: decisionRoute.agentExecutionDecision } : {}),
-                ...(decisionRoute?.kind === "delegate"
+                ...(decisionRoute.kind === "delegate_to_child" ? { agentExecutionDecision: decisionRoute.agentExecutionDecision } : {}),
+                ...(decisionRoute.kind === "delegate_to_child"
                     ? { agentExecutionDecisionTrace: decisionRoute.decisionResult.decisionTrace }
                     : {}),
                 workDir: params.workDir,
                 source: params.source,
                 skipIntake: true,
                 contextMode: "handoff",
-                onChunk: params.onChunk,
             });
             delegatedFollowupCount += 1;
+            if (isDelegatedRunStartResult(delegatedRun) && delegatedRun.finished) {
+                dependencies.appendRunEvent(params.runId, `parent_run_awaiting_child_result:intake_followup;child_run=${delegatedRun.runId ?? "unknown"}`);
+                const completedChild = await delegatedRun.finished;
+                dependencies.appendRunEvent(params.runId, `parent_run_child_result_received:intake_followup;child_run=${delegatedRun.runId ?? "unknown"};status=${completedChild?.status ?? "unknown"}`);
+                const childSummary = completedChild?.summary?.trim();
+                if (childSummary) {
+                    const childRunId = delegatedRun.runId ?? "unknown";
+                    const completionReview = await reviewDelegatedChildCompletion({
+                        params,
+                        dependencies,
+                        moduleDependencies,
+                        childRunId,
+                        childSummary,
+                    });
+                    if (completionReview) {
+                        dependencies.appendRunEvent(params.runId, `parent_run_child_result_review:intake_followup;child_run=${childRunId};status=${completionReview.status};remaining=${completionReview.remainingItems.length}`);
+                        const reviewDirective = buildDelegatedChildReviewDirective({
+                            originalRequest: params.originalRequest,
+                            childSummary,
+                            review: completionReview,
+                        });
+                        if (reviewDirective)
+                            return reviewDirective;
+                    }
+                    responseParts.push(childSummary);
+                }
+            }
         }
         if (responseParts.length > 0) {
             return {
@@ -492,5 +471,9 @@ function buildScheduleIntakeRecoveryPrompt(params) {
 }
 function getString(value) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+function isDelegatedRunStartResult(value) {
+    return typeof value === "object" && value !== null &&
+        ("finished" in value || "runId" in value);
 }
 //# sourceMappingURL=intake-bridge-pass.js.map

@@ -134,7 +134,7 @@ describe("task006 executor create and understanding", () => {
     expect(result.topology.nodes[0]?.metadata?.executorGraph).toEqual(expect.objectContaining({
       userConfirmed: true,
       confirmedUnderstandingVersion: EXECUTOR_UNDERSTANDING_VERSION,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
     }))
   })

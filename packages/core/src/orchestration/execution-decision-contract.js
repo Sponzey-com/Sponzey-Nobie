@@ -7,17 +7,22 @@ export const AGENT_EXECUTION_DECISION_V2_ACTIONS = [
     "return_to_parent",
     "fail_with_reason",
 ];
-export const AgentExecutionFallbackReason = Object.freeze({
+export const AgentExecutionFallbackReason = {
     SelfSolve: "self_solve",
     DirectCurrentAgent: "direct_current_agent",
     DelegateToChild: "delegate_to_child",
+    // Direct requester or parent executor, not root Nobie unless that executor requested the work.
     ReturnToParent: "return_to_parent",
     RootNobieDirect: "root_nobie_direct",
     ExplicitProvider: "explicit_provider",
+    ExplicitProviderTarget: "explicit_provider_target",
+    BoundaryFailure: "boundary_failure",
+    // Legacy alias accepted for stored phase022 decisions. New decisions should
+    // use root_nobie_direct when the current executor is root Nobie.
     NobieDirect: "nobie_direct",
     AskParent: "ask_parent",
     AskUser: "ask_user",
-});
+};
 export const AGENT_EXECUTION_FALLBACK_REASONS = Object.freeze(Object.values(AgentExecutionFallbackReason));
 export const AGENT_EXECUTION_ROUTES = [
     "self_solve",
@@ -26,6 +31,8 @@ export const AGENT_EXECUTION_ROUTES = [
     "return_to_parent",
     "root_nobie_direct",
     "explicit_provider",
+    "explicit_provider_target",
+    "boundary_failure",
     "nobie_direct",
     "ask_parent",
     "ask_user",
@@ -219,6 +226,12 @@ export function validateAgentExecutionDecisionV2AgainstContext(input) {
             message: "selected_connection_path must be an array of executor ids.",
         });
     }
+    else if (decision.action === "delegate" && decision.selected_connection_path.length === 0) {
+        issues.push({
+            code: "invalid_selected_connection_path",
+            message: "delegate action requires a non-empty selected_connection_path.",
+        });
+    }
     if (!isRecord(decision.task_profile)) {
         issues.push({
             code: "invalid_task_profile",
@@ -237,11 +250,13 @@ export function validateAgentExecutionDecisionV2AgainstContext(input) {
             message: "risk_boundary must be an object.",
         });
     }
-    else if (typeof decision.risk_boundary.requires_user_approval !== "boolean" || !hasString(decision.risk_boundary.reason)) {
-        issues.push({
-            code: "invalid_risk_boundary",
-            message: "risk_boundary must include requires_user_approval and a reason.",
-        });
+    else {
+        if (typeof decision.risk_boundary.requires_user_approval !== "boolean" || !hasString(decision.risk_boundary.reason)) {
+            issues.push({
+                code: "invalid_risk_boundary",
+                message: "risk_boundary must include requires_user_approval and a reason.",
+            });
+        }
     }
     if (typeof decision.confidence !== "number" || !Number.isFinite(decision.confidence) || decision.confidence < 0 || decision.confidence > 1) {
         issues.push({
@@ -337,7 +352,9 @@ export function convertAgentExecutionDecisionV2ToV1(decision) {
 function routeForV2Action(action) {
     if (action === "delegate")
         return "delegate_to_child";
-    if (action === "ask_user" || action === "fail_with_reason")
+    if (action === "fail_with_reason")
+        return "boundary_failure";
+    if (action === "ask_user")
         return "ask_user";
     if (action === "return_to_parent")
         return "return_to_parent";
@@ -346,9 +363,12 @@ function routeForV2Action(action) {
 function fallbackForV2Action(action) {
     if (action === "delegate")
         return AgentExecutionFallbackReason.SelfSolve;
-    if (action === "ask_user" || action === "fail_with_reason")
+    if (action === "fail_with_reason")
+        return AgentExecutionFallbackReason.BoundaryFailure;
+    if (action === "ask_user")
         return AgentExecutionFallbackReason.AskUser;
     if (action === "return_to_parent")
         return AgentExecutionFallbackReason.ReturnToParent;
     return AgentExecutionFallbackReason.SelfSolve;
 }
+//# sourceMappingURL=execution-decision-contract.js.map

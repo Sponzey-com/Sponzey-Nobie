@@ -3,6 +3,10 @@ import { getTelegramRuntimeStatus } from "./telegram/runtime.js";
 import { TelegramChannelAdapter } from "./telegram/adapter.js";
 import { SlackChannelAdapter } from "./slack/adapter.js";
 import { getSlackRuntimeStatus } from "./slack/runtime.js";
+import { DiscordChannelAdapter } from "./discord/adapter.js";
+import { getDiscordRuntimeStatus } from "./discord/runtime.js";
+import { GoogleChatChannelAdapter } from "./google-chat/adapter.js";
+import { getGoogleChatRuntimeStatus } from "./google-chat/runtime.js";
 import { buildCompatChannelConnectionsFromConfig, persistChannelConnections, } from "./connections.js";
 import { buildChannelRuntimeSummary, recordChannelRuntimeEvent, updateConnectionRuntimeHealth, } from "./runtime.js";
 const log = createLogger("channel:registry");
@@ -29,6 +33,8 @@ export class ChannelRegistry {
             runtime: {
                 telegram: getTelegramRuntimeStatus(),
                 slack: getSlackRuntimeStatus(),
+                discord: getDiscordRuntimeStatus(),
+                googleChat: getGoogleChatRuntimeStatus(),
             },
         });
     }
@@ -212,6 +218,14 @@ export function createBuiltInChannelProviderFactories() {
             provider: "slack",
             create: ({ config, connection }) => createSlackRuntimeAdapter(config, connection),
         },
+        {
+            provider: "discord",
+            create: ({ config, connection }) => createDiscordRuntimeAdapter(config, connection),
+        },
+        {
+            provider: "google_chat",
+            create: ({ config, connection }) => createGoogleChatRuntimeAdapter(config, connection),
+        },
     ];
 }
 export function buildChannelRegistryRuntimeDiagnostics(config) {
@@ -247,6 +261,52 @@ function createSlackRuntimeAdapter(config, connection) {
     });
     return {
         provider: "slack",
+        connectionId: connection.connectionId,
+        start: () => adapter.start(),
+        stop: () => adapter.stop(),
+        getCapabilities: () => adapter.getCapabilities(),
+        healthCheck: async () => {
+            const health = await adapter.healthCheck();
+            const detail = isRecord(health.detail) ? health.detail : undefined;
+            return {
+                status: health.status,
+                checkedAt: health.checkedAt,
+                message: health.message ?? null,
+                ...(detail ? { detail } : {}),
+            };
+        },
+    };
+}
+function createDiscordRuntimeAdapter(config, connection) {
+    const adapter = new DiscordChannelAdapter({
+        config: config.discord,
+        connectionId: connection.connectionId,
+    });
+    return {
+        provider: "discord",
+        connectionId: connection.connectionId,
+        start: () => adapter.start(),
+        stop: () => adapter.stop(),
+        getCapabilities: () => adapter.getCapabilities(),
+        healthCheck: async () => {
+            const health = await adapter.healthCheck();
+            const detail = isRecord(health.detail) ? health.detail : undefined;
+            return {
+                status: health.status,
+                checkedAt: health.checkedAt,
+                message: health.message ?? null,
+                ...(detail ? { detail } : {}),
+            };
+        },
+    };
+}
+function createGoogleChatRuntimeAdapter(config, connection) {
+    const adapter = new GoogleChatChannelAdapter({
+        config: config.googleChat,
+        connectionId: connection.connectionId,
+    });
+    return {
+        provider: "google_chat",
         connectionId: connection.connectionId,
         start: () => adapter.start(),
         stop: () => adapter.stop(),

@@ -6,10 +6,6 @@ for %%I in ("%SCRIPT_DIR%..") do set "ROOT_DIR=%%~fI"
 set "YEONJANG_DIR=%ROOT_DIR%\Yeonjang"
 set "MANIFEST_PATH=%YEONJANG_DIR%\Cargo.toml"
 set "BINARY_NAME=nobie-yeonjang.exe"
-set "PIDS_DIR=%ROOT_DIR%\pids"
-set "LOGS_DIR=%ROOT_DIR%\logs"
-set "PID_FILE=%PIDS_DIR%\yeonjang-windows.pid"
-set "LOG_FILE=%LOGS_DIR%\yeonjang-windows.log"
 set "REPO_TARGET_DIR=%ROOT_DIR%\Yeonjang\target"
 set "CARGO_EXE="
 set "SYSTEM_CARGO=C:\Windows\System32\config\systemprofile\.cargo\bin\cargo.exe"
@@ -41,9 +37,6 @@ if /I not "%OS%"=="Windows_NT" (
   echo This script is Windows-only.
   exit /b 1
 )
-
-if not exist "%PIDS_DIR%" mkdir "%PIDS_DIR%"
-if not exist "%LOGS_DIR%" mkdir "%LOGS_DIR%"
 
 if not "%YEONJANG_CARGO_EXE%"=="" call :try_cargo "%YEONJANG_CARGO_EXE%"
 if "%CARGO_EXE%"=="" call :try_cargo "cargo"
@@ -95,8 +88,6 @@ if not exist "%MANIFEST_PATH%" (
 if /I "%CARGO_EXE%"=="%SYSTEM_CARGO%" call :use_system_profile_env
 if /I "%CARGO_EXE%"=="%SYSTEM_TOOLCHAIN_CARGO%" call :use_system_profile_env
 
-call :stop_existing
-
 echo Building Yeonjang for Windows...
 echo   Cargo  : %CARGO_EXE%
 if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
@@ -130,33 +121,8 @@ if not exist "%BINARY_PATH%" (
 echo Build complete:
 echo   Binary : %BINARY_PATH%
 echo   Target : %TARGET_DIR%
-
-if /I "%YEONJANG_BUILD_ONLY%"=="1" exit /b 0
-
-break > "%LOG_FILE%"
-echo Starting the Yeonjang GUI...
-for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath \"%BINARY_PATH%\" -WindowStyle Hidden -PassThru; $p.Id"') do (
-  set "STARTED_PID=%%P"
-)
-
-if "%STARTED_PID%"=="" (
-  echo Failed to start the Yeonjang GUI.
-  exit /b 1
-)
-
-> "%PID_FILE%" echo %STARTED_PID%
-timeout /t 2 /nobreak >nul
-
-call :process_exists %STARTED_PID%
-if errorlevel 1 (
-  echo The Yeonjang GUI exited during startup.
-  del /f /q "%PID_FILE%" >nul 2>nul
-  exit /b 1
-)
-
-echo Yeonjang GUI started
-echo   PID  : %STARTED_PID%
-echo   Log  : %LOG_FILE%
+echo   Start : scripts\start-yeonjang-windows.bat
+echo   Restart : scripts\start-yeonjang-windows.bat --restart
 echo   Stop : scripts\stop-yeonjang-windows.bat
 exit /b 0
 
@@ -185,43 +151,6 @@ if "%BINARY_PATH%"=="" (
   )
 )
 goto :eof
-
-:stop_existing
-if not exist "%PID_FILE%" goto :eof
-
-set "EXISTING_PID="
-set /p EXISTING_PID=<"%PID_FILE%"
-if "%EXISTING_PID%"=="" (
-  del /f /q "%PID_FILE%" >nul 2>nul
-  goto :eof
-)
-
-call :process_exists %EXISTING_PID%
-if errorlevel 1 (
-  del /f /q "%PID_FILE%" >nul 2>nul
-  goto :eof
-)
-
-echo Stopping the existing Yeonjang GUI. PID=%EXISTING_PID%
-taskkill /PID %EXISTING_PID% >nul 2>nul
-
-for /L %%I in (1,1,20) do (
-  call :process_exists %EXISTING_PID%
-  if errorlevel 1 (
-    del /f /q "%PID_FILE%" >nul 2>nul
-    goto :eof
-  )
-  timeout /t 1 /nobreak >nul
-)
-
-echo The existing Yeonjang GUI is still running, forcing termination.
-taskkill /F /T /PID %EXISTING_PID% >nul 2>nul
-del /f /q "%PID_FILE%" >nul 2>nul
-goto :eof
-
-:process_exists
-powershell -NoProfile -Command "if (Get-Process -Id %1 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>nul
-exit /b %errorlevel%
 
 :use_system_profile_env
 set "USERPROFILE=%SYSTEM_PROFILE%"

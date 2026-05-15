@@ -8,8 +8,7 @@ import { MIGRATIONS } from "../db/migrations.js";
 import { closeDb, getDb } from "../db/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { ensurePromptSourceFiles, exportPromptSourcesToFile, importPromptSourcesFromFile, loadPromptSourceRegistry, } from "../memory/nobie-md.js";
-const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|credential|authorization|auth[_-]?token)/iu;
-const SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|\d{6,}:[A-Za-z0-9_-]{20,})\b/gu;
+import { redactUiValue } from "../ui/redaction.js";
 function backupRoot() {
     return join(PATHS.stateDir, "backups");
 }
@@ -171,26 +170,8 @@ export function importDatabaseFromBackup(input) {
     }
 }
 export function maskSecretsDeep(value) {
-    let maskedCount = 0;
-    const mask = (item, key = "") => {
-        if (typeof item === "string") {
-            if (SECRET_KEY_PATTERN.test(key) || SECRET_VALUE_PATTERN.test(item)) {
-                maskedCount += 1;
-                return item ? "***MASKED***" : item;
-            }
-            return item;
-        }
-        if (Array.isArray(item))
-            return item.map((entry) => mask(entry, key));
-        if (item && typeof item === "object") {
-            return Object.fromEntries(Object.entries(item).map(([entryKey, entryValue]) => [
-                entryKey,
-                mask(entryValue, entryKey),
-            ]));
-        }
-        return item;
-    };
-    return { value: mask(value), maskedCount };
+    const redacted = redactUiValue(value, { audience: "export" });
+    return { value: redacted.value, maskedCount: redacted.maskedCount };
 }
 export function exportMaskedConfig() {
     const configPath = resolve(PATHS.configFile);

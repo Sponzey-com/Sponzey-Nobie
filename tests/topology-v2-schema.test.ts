@@ -195,6 +195,62 @@ describe("ExecutorTopologyV2 schema", () => {
     ]))
   })
 
+  it("rejects self-loop edges, archived node connections, and projection-only metadata", () => {
+    const validation = validateExecutorTopologyV2({
+      ...topology(),
+      metadata: {
+        executorGraph: {
+          workspace: { executors: [] },
+        },
+        aiSuggestionState: { suggestionRunId: "run:1" },
+      },
+      nodes: [
+        {
+          ...topology().nodes[0],
+          metadata: {
+            understanding: { userConfirmed: true },
+            executorGraph: {
+              inferredTools: ["tool:web"],
+            },
+          },
+        },
+        {
+          ...topology().nodes[1],
+          status: "archived",
+        },
+      ],
+      edges: [
+        {
+          id: "edge:self",
+          sourceNodeId: "node:intake",
+          targetNodeId: "node:intake",
+          type: "delegates_to",
+          status: "active",
+        },
+        {
+          id: "edge:archived",
+          sourceNodeId: "node:intake",
+          targetNodeId: "node:worker",
+          type: "delegates_to",
+          status: "active",
+        },
+      ],
+    })
+
+    expect(validation.ok).toBe(false)
+    expect(validation.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "self_loop_edge",
+      "archived_edge_endpoint",
+      "stale_metadata_field",
+    ]))
+    expect(validation.issues.map((issue) => issue.path)).toEqual(expect.arrayContaining([
+      "$.metadata.executorGraph.workspace",
+      "$.metadata.aiSuggestionState",
+      "$.nodes[0].metadata.understanding",
+      "$.nodes[0].metadata.executorGraph.inferredTools",
+    ]))
+  })
+
   it("rejects duplicate ids and invalid node positions", () => {
     const validation = validateExecutorTopologyV2({
       ...topology(),
@@ -212,6 +268,28 @@ describe("ExecutorTopologyV2 schema", () => {
       "duplicate_node_id",
       "invalid_node_position_x",
       "invalid_node_position_y",
+    ]))
+  })
+
+  it("rejects duplicate active executor names", () => {
+    const validation = validateExecutorTopologyV2({
+      ...topology(),
+      nodes: [
+        topology().nodes[0],
+        {
+          ...topology().nodes[1],
+          name: "  요청   정리  ",
+        },
+      ],
+    })
+
+    expect(validation.ok).toBe(false)
+    expect(validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "duplicate_node_name",
+        path: "$.nodes[1].name",
+        nodeId: "node:worker",
+      }),
     ]))
   })
 

@@ -151,7 +151,7 @@ describe("task013 Executor-first release gate", () => {
       }),
     ])
     expect(readExecutorGraphMetadata(compiled.topology)).toEqual(expect.objectContaining({
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
       executorIds: ["node:intake", "node:reviewer"],
     }))

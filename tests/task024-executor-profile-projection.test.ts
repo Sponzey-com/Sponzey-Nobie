@@ -295,10 +295,10 @@ describe("task024 executor profile projection", () => {
       issues: [],
       sourceOfTruth: {
         editableProjection: "executor_graph",
-        runtimeSourceOfTruth: "enterprise_topology",
-        nodeContractBoundary: "node_contract",
-        workOrderBoundary: "work_order",
-        agentConfigRole: "runtime_option",
+        runtimeSourceOfTruth: "executor_topology_v2",
+        nodeContractBoundary: "compatibility_projection",
+        workOrderBoundary: "runtime_adapter",
+        agentConfigRole: "compatibility_import",
         projectionOnly: true,
       },
     }

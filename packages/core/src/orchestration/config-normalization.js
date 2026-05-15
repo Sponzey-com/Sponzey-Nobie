@@ -133,3 +133,4 @@ export function normalizeLegacyTeamConfigRow(value) {
         roleHints,
     };
 }
+//# sourceMappingURL=config-normalization.js.map

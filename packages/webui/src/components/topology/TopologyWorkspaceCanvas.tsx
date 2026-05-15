@@ -35,9 +35,9 @@ import {
 } from "./EnterpriseTopologyCanvas"
 import {
   ExecutorGraphCanvas,
-  buildExecutorGraphCanvasModel,
   type ExecutorFlowEdgeStatus,
 } from "./ExecutorGraphCanvas"
+import { buildExecutorGraphCanvasModel } from "../../lib/executor-graph-viewmodel"
 import { ExecutorInspector } from "./ExecutorInspector"
 import type { ExecutorCardExecutionStatus } from "./ExecutorCardNode"
 import { ExecutorRunResultPanel } from "./ExecutorRunResultPanel"

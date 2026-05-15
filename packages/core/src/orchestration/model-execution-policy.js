@@ -261,7 +261,7 @@ export function buildModelExecutionAuditSummary(input) {
     const outputTokens = Math.max(input.snapshot.estimatedOutputTokens, estimateTokenCount(input.outputText));
     return {
         ...input.snapshot,
-        attemptCount: input.attemptCount,
+        attemptCount: input.modelInvocationCount,
         latencyMs: Math.max(0, input.latencyMs),
         estimatedOutputTokens: outputTokens,
         estimatedCost: estimateModelExecutionCost({

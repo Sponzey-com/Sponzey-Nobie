@@ -113,6 +113,7 @@ export function recordTopologyDispatchFollowupTrace(input) {
     const now = input.now?.() ?? Date.now();
     const topologyRunId = `topology-dispatch:${input.runId}`;
     const selectedOutcomes = input.dispatchResult.outcomes.filter(isTopologyOutcome);
+    const fallbackOutcome = selectedOutcomes[0];
     const fallbackNodeId = input.entryNodeId;
     const fallbackNodeRunId = `node-run:${safeId(topologyRunId)}:${safeId(fallbackNodeId)}`;
     const fallbackWorkOrderId = `work-order:${safeId(topologyRunId)}:${safeId(fallbackNodeId)}`;
@@ -311,3 +312,4 @@ function followupTracePhase(action) {
             return "recovery";
     }
 }
+//# sourceMappingURL=topology-dispatch-fallback.js.map

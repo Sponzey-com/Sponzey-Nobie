@@ -337,6 +337,7 @@ function validateWorkOrderRuntimeEnvelopeInput(input) {
     return issues;
 }
 function buildWorkOrderCommandRequest(input) {
+    const topologyExecutor = topologyExecutorMetadataFromWorkOrder(input.workOrder);
     return {
         identity: input.identity,
         commandRequestId: input.commandRequestId,
@@ -344,6 +345,7 @@ function buildWorkOrderCommandRequest(input) {
         subSessionId: input.subSessionId,
         targetAgentId: input.targetAgentId,
         ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+        ...(topologyExecutor ? { topologyExecutor } : {}),
         taskScope: {
             goal: input.workOrder.objective,
             intentType: "topology_work_order",
@@ -354,10 +356,26 @@ function buildWorkOrderCommandRequest(input) {
                 "topology_work_order",
                 `work_order:${input.workOrder.workOrderId}`,
                 `target:${input.workOrder.to.type}:${input.workOrder.to.id}`,
+                ...(topologyExecutor?.executorId ? [`executor:${topologyExecutor.executorId}`] : []),
+                ...(topologyExecutor?.edgeId ? [`edge:${topologyExecutor.edgeId}`] : []),
             ],
         },
         contextPackageIds: input.contextPackageIds,
         expectedOutputs: input.expectedOutputs,
+    };
+}
+function topologyExecutorMetadataFromWorkOrder(workOrder) {
+    const metadata = workOrder.input.executorGraph;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+        return undefined;
+    const record = metadata;
+    if (typeof record.graphExecutionPlanId !== "string")
+        return undefined;
+    return {
+        graphExecutionPlanId: record.graphExecutionPlanId,
+        ...(typeof record.executorId === "string" ? { executorId: record.executorId } : {}),
+        ...(typeof record.edgeId === "string" ? { edgeId: record.edgeId } : {}),
+        ...(typeof record.systemPreparation === "boolean" ? { systemPreparation: record.systemPreparation } : {}),
     };
 }
 function buildWorkOrderInputDataExchangePackage(input) {

@@ -2,8 +2,17 @@ import { replaceChannelIdentityMappings, upsertChannelCapability, upsertChannelC
 import { namespaceChannelPrincipal, parseNamespacedChannelPrincipal, } from "./identity.js";
 import { buildSlackCapabilityManifest } from "./slack/adapter.js";
 import { buildTelegramCapabilityManifest } from "./telegram/adapter.js";
+import { buildDiscordCapabilityManifest, buildDiscordPermissionDoctor, } from "./discord/adapter.js";
+import { buildGoogleChatCapabilityManifest, buildGoogleChatWorkspaceDoctor, } from "./google-chat/adapter.js";
+import { buildIMessageCapabilityManifest, buildIMessageLocalBridgeDoctor, } from "./imessage/adapter.js";
+import { buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeDoctor, buildKakaoTalkOfficialCapabilityManifest, buildKakaoTalkOfficialDoctor, } from "./kakaotalk/adapter.js";
 const TELEGRAM_CONNECTION_ID = "telegram:primary";
 const SLACK_CONNECTION_ID = "slack:primary";
+const DISCORD_CONNECTION_ID = "discord:primary";
+const GOOGLE_CHAT_CONNECTION_ID = "google_chat:primary";
+const IMESSAGE_LOCAL_CONNECTION_ID = "imessage:local";
+const KAKAOTALK_OFFICIAL_CONNECTION_ID = "kakaotalk:official";
+const KAKAOTALK_LOCAL_CONNECTION_ID = "kakaotalk:local";
 function normalizeProvider(provider) {
     return provider.trim().toLowerCase().replace(/^provider:/, "").replace(/[-\s]+/g, "_");
 }
@@ -69,6 +78,21 @@ function telegramCapabilities() {
 }
 function slackCapabilities() {
     return buildSlackCapabilityManifest();
+}
+function discordCapabilities() {
+    return buildDiscordCapabilityManifest();
+}
+function googleChatCapabilities() {
+    return buildGoogleChatCapabilityManifest();
+}
+function imessageCapabilities(config) {
+    return buildIMessageCapabilityManifest(config.imessage);
+}
+function kakaoTalkOfficialCapabilities() {
+    return buildKakaoTalkOfficialCapabilityManifest();
+}
+function kakaoTalkLocalCapabilities(config) {
+    return buildKakaoTalkLocalBridgeCapabilityManifest(config.kakaoTalk);
 }
 function resolveHealth(input) {
     if (input.runtime?.isRunning)
@@ -144,11 +168,222 @@ function buildSlackConnection(config, runtime, now) {
         schemaVersion: 1,
     };
 }
+function buildDiscordConnection(config, runtime, now) {
+    const discord = config.discord;
+    const enabled = discord?.enabled === true;
+    const hasBotToken = Boolean(discord?.botToken?.trim());
+    const hasApplicationId = Boolean(discord?.applicationId?.trim());
+    const hasPublicKey = Boolean(discord?.publicKey?.trim());
+    const configured = hasBotToken && hasApplicationId;
+    const health = runtime
+        ? resolveHealth({ enabled, configured, runtime })
+        : resolveHealth({ enabled, configured });
+    const provider = "discord";
+    const capabilityManifest = discordCapabilities();
+    const doctor = buildDiscordPermissionDoctor(discord);
+    const doctorErrors = doctor.issues.filter((issue) => issue.severity === "error");
+    return {
+        connectionId: DISCORD_CONNECTION_ID,
+        provider,
+        displayName: "Discord",
+        connectionMode: "socket",
+        enabled,
+        configured,
+        health: {
+            status: doctorErrors.length > 0 && enabled ? "failed" : health.status,
+            message: doctorErrors[0]?.message ?? health.message,
+            checkedAt: now,
+        },
+        capabilityManifest,
+        authSecretRefs: [
+            secretRef(provider, "botToken", hasBotToken),
+            secretRef(provider, "applicationId", hasApplicationId),
+            secretRef(provider, "publicKey", hasPublicKey),
+        ],
+        allowedUsers: buildAllowedPrincipals(provider, "user", discord?.allowedUserIds ?? []),
+        allowedRooms: buildAllowedPrincipals(provider, "room", [
+            ...(discord?.allowedGuildIds ?? []).map((id) => `guild:${id}`),
+            ...(discord?.allowedChannelIds ?? []).map((id) => `channel:${id}`),
+        ]),
+        defaultDeliveryPolicy: defaultDeliveryPolicy(),
+        source: provider,
+        configSource: "compat",
+        createdAt: now,
+        updatedAt: now,
+        schemaVersion: 1,
+    };
+}
+function buildGoogleChatConnection(config, runtime, now) {
+    const googleChat = config.googleChat;
+    const enabled = googleChat?.enabled === true;
+    const hasProjectId = Boolean(googleChat?.projectId?.trim());
+    const hasAppCredential = Boolean(googleChat?.appCredentialJson?.trim());
+    const hasServiceAccountEmail = Boolean(googleChat?.serviceAccountEmail?.trim());
+    const hasVerificationToken = Boolean(googleChat?.verificationToken?.trim());
+    const hasWebhookUrl = Boolean(googleChat?.webhookUrl?.trim());
+    const configured = (hasProjectId || hasAppCredential || hasServiceAccountEmail) && hasVerificationToken;
+    const health = runtime
+        ? resolveHealth({ enabled, configured, runtime })
+        : resolveHealth({ enabled, configured });
+    const provider = "google_chat";
+    const capabilityManifest = googleChatCapabilities();
+    const doctor = buildGoogleChatWorkspaceDoctor(googleChat);
+    const doctorError = doctor.issues.find((issue) => issue.severity === "error");
+    const doctorWarning = doctor.issues.find((issue) => issue.severity === "warning");
+    return {
+        connectionId: GOOGLE_CHAT_CONNECTION_ID,
+        provider,
+        displayName: "Google Chat",
+        connectionMode: "webhook",
+        enabled,
+        configured,
+        health: {
+            status: doctorError && enabled ? "failed" : doctorWarning && enabled && configured ? "degraded" : health.status,
+            message: doctorError?.message ?? doctorWarning?.message ?? health.message,
+            checkedAt: now,
+        },
+        capabilityManifest,
+        authSecretRefs: [
+            secretRef(provider, "projectId", hasProjectId),
+            secretRef(provider, "appCredentialJson", hasAppCredential),
+            secretRef(provider, "serviceAccountEmail", hasServiceAccountEmail),
+            secretRef(provider, "webhookUrl", hasWebhookUrl),
+            secretRef(provider, "verificationToken", hasVerificationToken),
+        ],
+        allowedUsers: buildAllowedPrincipals(provider, "user", googleChat?.allowedUserIds ?? []),
+        allowedRooms: buildAllowedPrincipals(provider, "room", googleChat?.allowedSpaceIds ?? []),
+        defaultDeliveryPolicy: defaultDeliveryPolicy(),
+        source: provider,
+        configSource: "compat",
+        createdAt: now,
+        updatedAt: now,
+        schemaVersion: 1,
+    };
+}
+function buildIMessageConnection(config, now) {
+    const imessage = config.imessage;
+    const enabled = imessage?.enabled === true;
+    const configured = Boolean(imessage?.localBridgeEnabled === true
+        && imessage?.riskAcknowledged === true
+        && imessage?.messagesAppAvailable === true
+        && imessage?.userSessionActive === true
+        && imessage?.automationPermissionGranted === true
+        && (imessage?.allowedRecipientIds.length ?? 0) > 0);
+    const provider = "imessage";
+    const capabilityManifest = imessageCapabilities(config);
+    const doctor = buildIMessageLocalBridgeDoctor(imessage);
+    const doctorError = doctor.issues.find((issue) => issue.severity === "error");
+    const doctorWarning = doctor.issues.find((issue) => issue.severity === "warning");
+    return {
+        connectionId: IMESSAGE_LOCAL_CONNECTION_ID,
+        provider,
+        displayName: "iMessage Local Bridge",
+        connectionMode: "local_bridge",
+        enabled,
+        configured,
+        health: {
+            status: doctorError && enabled ? "failed" : doctorWarning && enabled && configured ? "degraded" : enabled && configured ? "stopped" : "stopped",
+            message: doctorError?.message ?? doctorWarning?.message ?? null,
+            checkedAt: now,
+        },
+        capabilityManifest,
+        authSecretRefs: [],
+        allowedUsers: buildAllowedPrincipals(provider, "user", imessage?.allowedRecipientIds ?? []),
+        allowedRooms: [],
+        defaultDeliveryPolicy: defaultDeliveryPolicy(),
+        source: provider,
+        configSource: "compat",
+        createdAt: now,
+        updatedAt: now,
+        schemaVersion: 1,
+    };
+}
+function buildKakaoTalkOfficialConnection(config, now) {
+    const kakaoTalk = config.kakaoTalk;
+    const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "official";
+    const hasApiKey = Boolean(kakaoTalk?.businessApiKey?.trim());
+    const hasChannelId = Boolean(kakaoTalk?.channelId?.trim());
+    const configured = kakaoTalk?.businessApiEnabled === true && hasApiKey && hasChannelId;
+    const provider = "kakaotalk";
+    const capabilityManifest = kakaoTalkOfficialCapabilities();
+    const doctor = buildKakaoTalkOfficialDoctor(kakaoTalk);
+    const doctorError = doctor.issues.find((issue) => issue.severity === "error");
+    return {
+        connectionId: KAKAOTALK_OFFICIAL_CONNECTION_ID,
+        provider,
+        displayName: "KakaoTalk Business",
+        connectionMode: "webhook",
+        enabled,
+        configured,
+        health: {
+            status: doctorError && enabled ? "failed" : enabled && configured ? "stopped" : "stopped",
+            message: doctorError?.message ?? null,
+            checkedAt: now,
+        },
+        capabilityManifest,
+        authSecretRefs: [
+            secretRef(provider, "businessApiKey", hasApiKey),
+            secretRef(provider, "channelId", hasChannelId),
+        ],
+        allowedUsers: buildAllowedPrincipals(provider, "user", kakaoTalk?.allowedUserIds ?? []),
+        allowedRooms: buildAllowedPrincipals(provider, "room", kakaoTalk?.allowedRoomIds ?? []),
+        defaultDeliveryPolicy: defaultDeliveryPolicy(),
+        source: provider,
+        configSource: "compat",
+        createdAt: now,
+        updatedAt: now,
+        schemaVersion: 1,
+    };
+}
+function buildKakaoTalkLocalConnection(config, now) {
+    const kakaoTalk = config.kakaoTalk;
+    const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "local_bridge";
+    const allowedIds = [...(kakaoTalk?.allowedUserIds ?? []), ...(kakaoTalk?.allowedRoomIds ?? [])];
+    const configured = Boolean(kakaoTalk?.localBridgeEnabled === true
+        && kakaoTalk?.riskAcknowledged === true
+        && kakaoTalk?.kakaoTalkAppAvailable === true
+        && kakaoTalk?.userSessionActive === true
+        && kakaoTalk?.automationPermissionGranted === true
+        && allowedIds.length > 0);
+    const provider = "kakaotalk";
+    const capabilityManifest = kakaoTalkLocalCapabilities(config);
+    const doctor = buildKakaoTalkLocalBridgeDoctor(kakaoTalk);
+    const doctorError = doctor.issues.find((issue) => issue.severity === "error");
+    const doctorWarning = doctor.issues.find((issue) => issue.severity === "warning");
+    return {
+        connectionId: KAKAOTALK_LOCAL_CONNECTION_ID,
+        provider,
+        displayName: "KakaoTalk Local Bridge",
+        connectionMode: "local_bridge",
+        enabled,
+        configured,
+        health: {
+            status: doctorError && enabled ? "failed" : doctorWarning && enabled && configured ? "degraded" : enabled && configured ? "stopped" : "stopped",
+            message: doctorError?.message ?? doctorWarning?.message ?? null,
+            checkedAt: now,
+        },
+        capabilityManifest,
+        authSecretRefs: [],
+        allowedUsers: buildAllowedPrincipals(provider, "user", kakaoTalk?.allowedUserIds ?? []),
+        allowedRooms: buildAllowedPrincipals(provider, "room", kakaoTalk?.allowedRoomIds ?? []),
+        defaultDeliveryPolicy: defaultDeliveryPolicy(),
+        source: provider,
+        configSource: "compat",
+        createdAt: now,
+        updatedAt: now,
+        schemaVersion: 1,
+    };
+}
 export function buildCompatChannelConnectionsFromConfig(config, options = {}) {
     const now = options.now ?? Date.now();
     return [
         buildTelegramConnection(config, options.runtime?.telegram, now),
         buildSlackConnection(config, options.runtime?.slack, now),
+        buildDiscordConnection(config, options.runtime?.discord, now),
+        buildGoogleChatConnection(config, options.runtime?.googleChat, now),
+        buildIMessageConnection(config, now),
+        buildKakaoTalkOfficialConnection(config, now),
+        buildKakaoTalkLocalConnection(config, now),
     ];
 }
 function identityMappingsForConnection(connection) {
@@ -288,6 +523,38 @@ export function applyChannelConnectionSettingsCompatPatch(raw, channelsPatch) {
                 rawSlack.allowedChannelIds = readProviderIdentityIds(connection.allowedRooms, "slack", "room");
             }
             appliedConnectionIds.push(SLACK_CONNECTION_ID);
+            continue;
+        }
+        if (provider === "discord" || connectionId === DISCORD_CONNECTION_ID) {
+            const rawDiscord = ensureRawSection(raw, "discord");
+            if (typeof connection.enabled === "boolean")
+                rawDiscord.enabled = connection.enabled;
+            if (Object.prototype.hasOwnProperty.call(connection, "allowedUsers")) {
+                rawDiscord.allowedUserIds = readProviderIdentityIds(connection.allowedUsers, "discord", "user");
+            }
+            if (Object.prototype.hasOwnProperty.call(connection, "allowedRooms")) {
+                const roomIds = readProviderIdentityIds(connection.allowedRooms, "discord", "room");
+                rawDiscord.allowedGuildIds = roomIds
+                    .filter((id) => id.startsWith("guild:"))
+                    .map((id) => id.slice("guild:".length));
+                rawDiscord.allowedChannelIds = roomIds
+                    .filter((id) => id.startsWith("channel:"))
+                    .map((id) => id.slice("channel:".length));
+            }
+            appliedConnectionIds.push(DISCORD_CONNECTION_ID);
+            continue;
+        }
+        if (provider === "google_chat" || connectionId === GOOGLE_CHAT_CONNECTION_ID) {
+            const rawGoogleChat = ensureRawSection(raw, "googleChat");
+            if (typeof connection.enabled === "boolean")
+                rawGoogleChat.enabled = connection.enabled;
+            if (Object.prototype.hasOwnProperty.call(connection, "allowedUsers")) {
+                rawGoogleChat.allowedUserIds = readProviderIdentityIds(connection.allowedUsers, "google_chat", "user");
+            }
+            if (Object.prototype.hasOwnProperty.call(connection, "allowedRooms")) {
+                rawGoogleChat.allowedSpaceIds = readProviderIdentityIds(connection.allowedRooms, "google_chat", "room");
+            }
+            appliedConnectionIds.push(GOOGLE_CHAT_CONNECTION_ID);
         }
     }
     return { appliedConnectionIds: uniqueStrings(appliedConnectionIds) };

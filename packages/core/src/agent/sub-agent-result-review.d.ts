@@ -55,11 +55,16 @@ export type ParentFacingChildResultStatus = "completed" | "partial" | "failed";
 export interface ParentFacingChildResult {
     subSessionId: string;
     resultReportId?: string;
+    sourceExecutorId?: string;
+    sourceExecutorName?: string;
+    resultStatus?: ResultReport["status"];
     status: ParentFacingChildResultStatus;
     confirmedFacts: string[];
     unverifiedItems: string[];
+    missingItems: string[];
     attemptedMethods: string[];
     remainingAlternatives: string[];
+    evidence: ResultReport["evidence"];
     artifacts: ResultReport["artifacts"];
     riskNotes: string[];
     handoffSummary: string;

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import type { RunRuntimeInspectorProjection } from "../packages/webui/src/contracts/runs.ts"
 import { RunRuntimeInspectorPanel } from "../packages/webui/src/components/runs/RunRuntimeInspectorPanel.tsx"
 import {
+  buildRuntimeInspectorViewModels,
   buildRuntimeInspectorSummaryCards,
   describeRuntimeApprovalState,
   describeRuntimeFinalizerStatus,
@@ -11,6 +12,7 @@ import {
   runtimeTopologyReasonLabel,
   runtimeControlActionLabels,
   runtimeExecutorDisplayName,
+  runtimeExecutorRoleName,
   selectRuntimeSubSession,
   selectRuntimeTopologyActiveState,
 } from "../packages/webui/src/lib/runtime-inspector.js"
@@ -62,6 +64,13 @@ function projection(): RunRuntimeInspectorProjection {
         "workspace:draft:node:reviewer": "Reviewer",
         "node:researcher": "Researcher",
         "node:reviewer": "Reviewer",
+      },
+      executionDecisionExecutorRoleNameById: {
+        "agent:nobie": "마스터 실행자",
+        "workspace:draft:node:researcher": "시장 분석 실행자",
+        "workspace:draft:node:reviewer": "검토 실행자",
+        "node:researcher": "시장 분석 실행자",
+        "node:reviewer": "검토 실행자",
       },
       riskBoundaryRequiresUserApproval: false,
       riskBoundaryReason: "공개 정보 검토",
@@ -272,6 +281,7 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(runtime.topologyRouting.executionDecisionFallbackReason).toBe("self_solve")
     expect(runtimeExecutorDisplayName(runtime.topologyRouting, "workspace:draft:node:researcher")).toBe("Researcher")
     expect(runtimeExecutorDisplayName(runtime.topologyRouting, "agent:nobie")).toBe("노비")
+    expect(runtimeExecutorRoleName(runtime.topologyRouting, "workspace:draft:node:researcher")).toBe("시장 분석 실행자")
     expect(runtime.topologyRouting.riskBoundaryRequiresUserApproval).toBe(false)
     expect(runtime.topologyRouting.executionDecisionCurrentExecutorId).toBe("agent:nobie")
     expect(runtime.topologyRouting.executionDecisionAvailableExecutorIds).toEqual(["workspace:draft:node:researcher"])
@@ -289,7 +299,23 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(activeState.edgeStatuses["relation:researcher-reviewer"]).toBe("running")
   })
 
-  it("renders decision candidates separately without exposing internal reason codes", () => {
+  it("builds a basic inspector view with executor names while moving raw ids to diagnostics", () => {
+    const runtime = projection()
+    const viewModels = buildRuntimeInspectorViewModels(runtime, text)
+
+    expect(viewModels.basic.currentExecutorName).toBe("노비")
+    expect(viewModels.basic.selectedExecutorName).toBe("Researcher")
+    expect(viewModels.basic.selectedExecutorRoleName).toBe("시장 분석 실행자")
+    expect(viewModels.basic.selectedPathNames).toEqual(["노비", "Researcher"])
+    expect(viewModels.basic.delegationStatus).toBe("하위 실행자에게 위임")
+    expect(viewModels.basic.aggregationStatus).toContain("parent finalizer")
+    expect(viewModels.diagnostic.identity.map((item) => item.value)).toContain("group:task024")
+    expect(viewModels.diagnostic.executorIds.find((item) => item.id === "selected")?.values).toEqual([
+      "workspace:draft:node:researcher",
+    ])
+  })
+
+  it("renders decision names in the basic view and keeps internal ids in diagnostics", () => {
     const runtime = projection()
     runtime.topologyRouting.reasonCode = "topology_routing_not_opted_in"
     const html = renderToStaticMarkup(
@@ -302,11 +328,19 @@ describe("task024 webui runtime inspector helpers", () => {
       }),
     )
 
+    const diagnosticStart = html.indexOf("진단 정보")
+    const rawExecutorStart = html.indexOf("workspace:draft:node:researcher")
+    const rawReasonStart = html.indexOf("topology_routing_not_opted_in")
+    const migrationSourceStart = html.indexOf("executor_topology_v2_materialized_read_model")
+
     expect(runtimeTopologyReasonLabel("topology_routing_not_opted_in", text)).toBe("저장된 위임 흐름을 쓰지 않음")
     expect(html).toContain("노비 실행 판단")
-    expect(html).toContain("현재 판단 후보")
-    expect(html).toContain("전체 등록 실행자")
+    expect(html).toContain("실행 흐름")
+    expect(html).toContain("진단 정보")
+    expect(html).toContain("판단 후보 ID")
+    expect(html).toContain("전체 등록 실행자 ID")
     expect(html).toContain("선택된 실행자")
+    expect(html).toContain("시장 분석 실행자")
     expect(html).toContain("Researcher")
     expect(html).toContain("Reviewer")
     expect(html).toContain("노비")
@@ -314,7 +348,10 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(html).toContain("스키마")
     expect(html).toContain("executor_topology_v2_materialized_read_model")
     expect(html).toContain("직접 실행 대안 차단됨")
-    expect(html).not.toContain("topology_routing_not_opted_in")
+    expect(diagnosticStart).toBeGreaterThan(0)
+    expect(rawExecutorStart).toBeGreaterThan(diagnosticStart)
+    expect(rawReasonStart).toBeGreaterThan(diagnosticStart)
+    expect(migrationSourceStart).toBeGreaterThan(diagnosticStart)
     expect(html).not.toContain("provider_direct_blocked_without_explicit_target")
     expect(html).not.toContain("라우터")
   })

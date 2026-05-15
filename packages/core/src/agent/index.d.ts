@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import { type AIProvider } from "../ai/index.js";
 export type AgentChunk = {
     type: "text";
@@ -43,7 +44,7 @@ export interface RunAgentParams {
     provider?: AIProvider | undefined;
     systemPrompt?: string | undefined;
     workDir?: string | undefined;
-    source?: "webui" | "cli" | "telegram" | "slack" | undefined;
+    source?: ChannelSource | undefined;
     signal?: AbortSignal | undefined;
     toolsEnabled?: boolean | undefined;
     contextMode?: AgentContextMode | undefined;

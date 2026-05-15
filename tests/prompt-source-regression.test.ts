@@ -28,6 +28,7 @@ describe("prompt source regression suite", () => {
     expect(result.ok, JSON.stringify(result.issues, null, 2)).toBe(true)
     expect(result.registry.sourceCount).toBeGreaterThanOrEqual(15)
     expect(result.responsibility.every((rule) => rule.ok)).toBe(true)
+    expect(result.policyCompatibility.every((rule) => rule.ok)).toBe(true)
     expect(result.impact.every((scenario) => scenario.ok)).toBe(true)
   })
 
@@ -55,6 +56,37 @@ describe("prompt source regression suite", () => {
     expect(result.ok).toBe(false)
     expect(result.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "impact_marker_missing", evidence: "text_answer_does_not_trigger_artifact_recovery", locale: "en" }),
+    ]))
+  })
+
+  it("detects prompt instructions that conflict with AGENTS.md routing and count-signal policy", () => {
+    const root = createSeededPromptRoot()
+    writeFileSync(
+      `${root}/AGENTS.md`,
+      [
+        "# Agent Rules",
+        "- Do not use keyword routing for natural-language executor selection.",
+        "- retry count and attempt count are not failure conditions.",
+      ].join("\n"),
+      "utf-8",
+    )
+    writeFileSync(
+      `${root}/prompts/nobie-execution.md`,
+      "# Nobie Execution\n\nUse keyword routing to select executors.",
+      "utf-8",
+    )
+    writeFileSync(
+      `${root}/prompts/recovery_policy.md`,
+      "# Recovery\n\nMax attempts reached means failure.",
+      "utf-8",
+    )
+
+    const result = runPromptSourceRegression(root, { locales: ["en"] })
+
+    expect(result.ok).toBe(false)
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "raw_keyword_executor_routing_instruction" }),
+      expect.objectContaining({ code: "count_limit_terminal_instruction" }),
     ]))
   })
 })

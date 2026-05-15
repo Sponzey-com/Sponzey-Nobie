@@ -327,6 +327,8 @@ describe("task004 prompt direct executor projection", () => {
 
     expect(nobieExecution?.content).toContain("direct children")
     expect(nobieExecution?.content).toContain("diagnostic_executors")
+    expect(nobieExecution?.content).toContain("Broad coordination, management, review, or summary ability is weak evidence")
+    expect(nobieExecution?.content).toContain("concrete profile-fit evidence")
     expect(toolPolicy?.content).toContain("explicit provider target")
     expect(topologyPolicy?.content).toContain("first hop must be a direct child")
     expect(runtimeSourceIds).toContain("nobie_execution")

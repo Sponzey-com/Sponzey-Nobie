@@ -23,8 +23,11 @@ import {
   listTopologyRunsForRootRun,
   type TopologyRunTraceProjection,
 } from "../topology-runtime/trace.js"
-import type { EnterpriseTopology } from "../contracts/enterprise-topology.js"
-import { createEnterpriseTopologyRegistry } from "../topology/registry.js"
+import {
+  createLegacyTopologyRegistry,
+  legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
+  type LegacyTopology,
+} from "../topology/legacy-enterprise-topology-adapter.js"
 import { redactUiValue } from "../ui/redaction.js"
 import type { RootRun, RunEvent } from "./types.js"
 
@@ -217,6 +220,19 @@ export interface RunRuntimeInspectorFinalizer {
   idempotencyKey?: string
   summary?: string
   at?: number
+  validation?: RunRuntimeInspectorFinalValidation
+}
+
+export interface RunRuntimeInspectorFinalValidation {
+  status: "ready" | "needs_recovery" | "limited_failure_allowed" | "unknown"
+  finalDeliveryAllowed: boolean
+  reasonCodes: string[]
+  missingValueCount: number
+  conflictCount: number
+  sourceCount: number
+  sourceTimestamps: string[]
+  basisTime?: string
+  at: number
 }
 
 export interface RunRuntimeInspectorTopologyRun {
@@ -256,6 +272,7 @@ export interface RunRuntimeInspectorTopologyRouting {
   executionDecisionValidationIssues?: string[]
   executionDecisionResolvedExecutorId?: string
   executionDecisionExecutorNameById?: Record<string, string>
+  executionDecisionExecutorRoleNameById?: Record<string, string>
   providerFallbackBlocked: boolean
   providerFallbackBlockedReasonCode?: string
   riskBoundaryRequiresUserApproval?: boolean
@@ -909,7 +926,7 @@ interface TopologyAgentAssignment {
 
 interface TopologyRoutingContext {
   routing: RunRuntimeInspectorTopologyRouting
-  topologyById: Map<string, EnterpriseTopology>
+  topologyById: Map<string, LegacyTopology>
   topologyNodeNameByKey: Map<string, string>
 }
 
@@ -977,20 +994,21 @@ function requestIdentityFrom(run: RootRun): RunRuntimeInspectorRequestIdentity {
   }
 }
 
-function loadTopologyById(topologyIds: Iterable<string>): Map<string, EnterpriseTopology> {
-  const registry = createEnterpriseTopologyRegistry()
-  const result = new Map<string, EnterpriseTopology>()
+function loadTopologyById(topologyIds: Iterable<string>): Map<string, LegacyTopology> {
+  const registry = createLegacyTopologyRegistry()
+  const result = new Map<string, LegacyTopology>()
   for (const topologyId of topologyIds) {
     if (!topologyId.trim() || result.has(topologyId)) continue
     const exported = registry.exportTopology(topologyId)
-    const topology = exported?.version.topology
-    if (topology) result.set(topologyId, topology)
+    if (!exported) continue
+    const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported)
+    result.set(topologyId, adapted.envelope.version.topology)
   }
   return result
 }
 
 function topologyNodeNames(
-  topologyById: Map<string, EnterpriseTopology>,
+  topologyById: Map<string, LegacyTopology>,
 ): Map<string, string> {
   const result = new Map<string, string>()
   for (const [topologyId, topology] of topologyById) {
@@ -1002,7 +1020,7 @@ function topologyNodeNames(
 }
 
 function topologyExecutorNameRecord(
-  topologyById: Map<string, EnterpriseTopology>,
+  topologyById: Map<string, LegacyTopology>,
 ): Record<string, string> {
   const result: Record<string, string> = {
     "agent:nobie": "노비",
@@ -1017,8 +1035,41 @@ function topologyExecutorNameRecord(
   return result
 }
 
+function metadataStringValue(metadata: unknown, key: string): string | undefined {
+  return isRecord(metadata) ? stringValue(metadata[key]) : undefined
+}
+
+function topologyNodeRoleName(node: LegacyTopology["nodes"][number]): string | undefined {
+  const metadata = isRecord(node.metadata) ? node.metadata : {}
+  const executorProfile = isRecord(metadata.executorProfile) ? metadata.executorProfile : {}
+  return (
+    stringValue(metadata.roleName) ??
+    stringValue(executorProfile.roleName) ??
+    stringValue(executorProfile.role) ??
+    metadataStringValue(node.template?.metadata, "roleName")
+  )
+}
+
+function topologyExecutorRoleNameRecord(
+  topologyById: Map<string, LegacyTopology>,
+): Record<string, string> {
+  const result: Record<string, string> = {
+    "agent:nobie": "마스터 실행자",
+  }
+  for (const [topologyId, topology] of topologyById) {
+    for (const node of topology.nodes) {
+      const roleName = topologyNodeRoleName(node)
+      if (!roleName) continue
+      const redactedRoleName = redactedText(roleName)
+      result[`${topologyId}:${node.id}`] = redactedRoleName
+      result[node.id] ??= redactedRoleName
+    }
+  }
+  return result
+}
+
 function topologyEdgeIdsFromExecutors(
-  topology: EnterpriseTopology | undefined,
+  topology: LegacyTopology | undefined,
   executorIds: readonly string[],
 ): string[] {
   if (!topology || executorIds.length === 0) return []
@@ -1035,7 +1086,7 @@ function topologyEdgeIdsFromExecutors(
 }
 
 function topologyReachableExecutorIds(
-  topology: EnterpriseTopology | undefined,
+  topology: LegacyTopology | undefined,
   entryNodeId: string | undefined,
 ): string[] {
   if (!topology || !entryNodeId) return []
@@ -1117,6 +1168,7 @@ function buildTopologyRoutingContext(
   const topologyV2MarkerCandidate = topologyForRoute?.metadata?.executorTopologyV2
   const topologyV2Marker = isRecord(topologyV2MarkerCandidate) ? topologyV2MarkerCandidate : {}
   const executionDecisionExecutorNameById = topologyExecutorNameRecord(topologyById)
+  const executionDecisionExecutorRoleNameById = topologyExecutorRoleNameRecord(topologyById)
   const entryNodeName = topologyId && entryNodeId
     ? topologyNodeNameByKey.get(`${topologyId}:${entryNodeId}`)
     : undefined
@@ -1273,6 +1325,7 @@ function buildTopologyRoutingContext(
       ? { executionDecisionResolvedExecutorId: redactedText(executionDecisionResolvedExecutorId) }
       : {}),
     executionDecisionExecutorNameById,
+    executionDecisionExecutorRoleNameById,
     providerFallbackBlocked,
     ...(providerFallbackBlockedReasonCode
       ? { providerFallbackBlockedReasonCode: redactedText(providerFallbackBlockedReasonCode) }
@@ -1501,6 +1554,7 @@ function finalizerFromLedger(
     parentOwnedFinalAnswer: true,
     status: "not_started",
   }
+  const validation = finalValidationFromLedger(ledgerEvents)
 
   for (const event of ledgerEvents) {
     const status: RunRuntimeInspectorFinalizer["status"] | undefined =
@@ -1525,7 +1579,42 @@ function finalizerFromLedger(
     }
   }
 
-  return finalizer
+  return validation ? { ...finalizer, validation } : finalizer
+}
+
+function finalValidationFromLedger(
+  ledgerEvents: readonly DbMessageLedgerEvent[],
+): RunRuntimeInspectorFinalValidation | undefined {
+  const event = [...ledgerEvents]
+    .reverse()
+    .find((item) => item.event_kind === "final_validation_evaluated")
+  if (!event) return undefined
+  const detail = redactedRecord(parseJsonRecord(event.detail_json))
+  const trace = isRecord(detail.trace) ? detail.trace : {}
+  const status = stringValue(detail.status)
+  const normalizedStatus =
+    status === "ready" ||
+    status === "needs_recovery" ||
+    status === "limited_failure_allowed"
+      ? status
+      : "unknown"
+  const missingValues = recordArray(trace.missingValues)
+  const conflicts = recordArray(trace.conflicts)
+  const sourceList = recordArray(trace.sourceList)
+  const sourceTimestamps = stringArray(trace.sourceTimestamps)
+  const basisTime = stringValue(trace.basisTime)
+
+  return {
+    status: normalizedStatus,
+    finalDeliveryAllowed: booleanValue(detail.finalDeliveryAllowed) ?? false,
+    reasonCodes: stringArray(detail.reasonCodes),
+    missingValueCount: missingValues.length,
+    conflictCount: conflicts.length,
+    sourceCount: sourceList.length,
+    sourceTimestamps,
+    ...(basisTime ? { basisTime: redactedText(basisTime) } : {}),
+    at: event.created_at,
+  }
 }
 
 function collectSubSessions(

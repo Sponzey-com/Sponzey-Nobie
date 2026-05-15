@@ -444,6 +444,34 @@ describe("task017 enterprise topology GUI draft operations", () => {
       }))
       expect(restored.json().draft.topology.nodes.map((node: { id: string }) => node.id)).toContain("node:api-created")
 
+      const activatedSave = await app.inject({
+        method: "POST",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+        payload: {
+          topology: restored.json().draft.topology,
+          reset: true,
+          persist: true,
+          activate: true,
+          createdBy: "task017-test",
+          importSource: "task017-gui-save-activate",
+        },
+      })
+      expect(activatedSave.statusCode).toBe(201)
+      expect(activatedSave.json().persisted).toBe(true)
+      expect(activatedSave.json().activation).toEqual(expect.objectContaining({ ok: true }))
+
+      resetTopologyGuiDraftStoreForTest()
+      const restoredActivated = await app.inject({
+        method: "GET",
+        url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft`,
+      })
+      expect(restoredActivated.statusCode).toBe(200)
+      expect(restoredActivated.json()).toEqual(expect.objectContaining({
+        ok: true,
+        source: "registry",
+        version: activatedSave.json().persistedVersion.version,
+      }))
+
       const clientSource = readFileSync(new URL("../packages/webui/src/api/client.ts", import.meta.url), "utf-8")
       expect(clientSource).toContain("enterpriseTopologyGuiDraft:")
       expect(clientSource).toContain("/gui-draft")

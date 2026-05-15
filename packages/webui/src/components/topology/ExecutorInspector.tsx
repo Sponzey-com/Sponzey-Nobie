@@ -170,6 +170,7 @@ export function ExecutorInspector({
   const runtimeLabel = executorFriendlyRuntimeLabel(executor.inferredRuntimeMode)
   const definitionDraft = nodeDefinitionDraftFromExecutor(executor)
   const graphContext = buildNodeDefinitionGraphContext({ graph, executorId: executor.id })
+  const duplicateName = relationInfo?.duplicateName === true
   const applyAiDefinitionDraft = (nextDraft: NodeDefinitionDraft) => {
     onExecutorChange?.(executorFromNodeDefinitionDraft({
       executor,
@@ -239,9 +240,20 @@ export function ExecutorInspector({
           <input
             value={executor.name}
             onChange={(event) => onExecutorChange?.(updateExecutorDraftFromInspector(executor, { name: event.currentTarget.value }))}
-            className="h-9 rounded-md border border-stone-200 px-2.5 text-sm font-semibold text-stone-900"
+            aria-invalid={duplicateName}
+            className={`h-9 rounded-md border px-2.5 text-sm font-semibold text-stone-900 ${
+              duplicateName ? "border-rose-300 bg-rose-50" : "border-stone-200"
+            }`}
             data-testid="executor-inspector-name"
           />
+          {duplicateName ? (
+            <span
+              className="text-[11px] font-semibold leading-4 text-rose-700"
+              data-testid="executor-inspector-duplicate-name"
+            >
+              {text("이미 사용 중인 이름입니다. 다른 이름을 입력해야 저장할 수 있습니다.", "This name is already used. Use a unique name before saving.")}
+            </span>
+          ) : null}
         </label>
         <label className="grid gap-1 text-xs font-semibold text-stone-500">
           <span>{text("역할명", "Role name")}</span>

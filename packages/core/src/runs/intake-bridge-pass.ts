@@ -22,7 +22,6 @@ import {
 } from "../agent/completion-review.js"
 import type { AgentContextMode } from "../agent/index.js"
 import { resolveRunRoute } from "./routing.js"
-import type { ResolvedRunRoute } from "./routing.js"
 import { normalizeDirectArtifactDeliverySemantics } from "./execution-profile.js"
 import {
   buildFollowupPrompt,
@@ -40,17 +39,18 @@ import type {
   AgentExecutionDecisionTraceSnapshot,
 } from "../orchestration/execution-decision-contract.js"
 import {
-  buildAgentExecutionContextFromGraphSnapshot,
-} from "../orchestration/execution-context-builder.js"
+  decideExecutionRoute,
+  type DecideExecutionRouteResult,
+} from "../orchestration/decide-execution-route.js"
 import {
   buildExecutionGraphSnapshot,
   EXECUTION_GRAPH_ROOT_AGENT_ID,
-  type ExecutionGraphSnapshot,
 } from "../orchestration/execution-graph-snapshot.js"
 import {
   formatAgentExecutionDecisionTraceRunEvent,
   runAgentExecutionHarness,
   type AgentExecutionHarnessResult,
+  type AgentExecutionModelCaller,
 } from "../orchestration/execution-harness.js"
 
 export interface DelegatedRunStartParams {
@@ -130,46 +130,13 @@ const defaultModuleDependencies: IntakeBridgePassModuleDependencies = {
   reviewTaskCompletion,
 }
 
-type DelegatedDecisionResolution =
-  | {
-      kind: "delegate"
-      route: ResolvedRunRoute
-      agentExecutionDecision: AgentExecutionDecision
-      decisionResult: AgentExecutionHarnessResult
-      executionGraph: ExecutionGraphSnapshot
-    }
-  | {
-      kind: "self_solve" | "ask_user" | "return_to_parent"
-      agentExecutionDecision: AgentExecutionDecision
-      decisionResult: AgentExecutionHarnessResult
-      executionGraph: ExecutionGraphSnapshot
-    }
-
-function normalizedExplicitTarget(value: string | undefined): string | undefined {
-  const trimmed = value?.trim()
-  if (!trimmed || trimmed === "auto" || trimmed === "embedded" || trimmed === "local_reasoner") return undefined
-  return trimmed
-}
-
-function isExplicitDirectExecutionTarget(value: string | undefined): boolean {
-  const normalized = normalizedExplicitTarget(value)?.toLowerCase()
-  if (!normalized) return false
-  return normalized.startsWith("provider:")
-    || normalized.startsWith("worker:")
-    || normalized.startsWith("model:")
-    || normalized === "openai"
-    || normalized === "anthropic"
-    || normalized === "gemini"
-    || normalized === "ollama"
-    || normalized === "llama"
-    || normalized === "llama_cpp"
-}
+type DecisionRouteWithTrace = Extract<DecideExecutionRouteResult, { decisionResult: AgentExecutionHarnessResult }>
 
 function buildExecutionDecisionModelCaller(input: {
   providerId?: string | undefined
   provider?: AIProvider | undefined
   model?: string | undefined
-}) {
+}): AgentExecutionModelCaller | undefined {
   const providerId = input.providerId?.trim() || detectAvailableProvider()
   let provider = input.provider
   if (!provider && providerId) {
@@ -182,7 +149,7 @@ function buildExecutionDecisionModelCaller(input: {
   if (!provider) return undefined
   const model = input.model?.trim() || getDefaultModel() || provider.supportedModels[0]
   if (!model) return undefined
-  return async (params: { prompt: string; signal: AbortSignal }): Promise<string> => {
+  return async (params): Promise<string> => {
     let output = ""
     for await (const chunk of provider.chat({
       model,
@@ -197,40 +164,10 @@ function buildExecutionDecisionModelCaller(input: {
   }
 }
 
-function executorLabel(graph: ExecutionGraphSnapshot, executorId: string): string {
-  return graph.agentsById[executorId]?.displayName?.trim() || executorId
-}
-
-function isDelegationDecision(decision: AgentExecutionDecision): boolean {
-  return decision.execution_route === "delegate_to_child" && Boolean(decision.selected_executor_id?.trim())
-}
-
-function decisionFallbackKind(decision: AgentExecutionDecision): "self_solve" | "ask_user" | "return_to_parent" {
-  if (decision.execution_route === "ask_user") return "ask_user"
-  if (decision.execution_route === "ask_parent" || decision.execution_route === "return_to_parent") {
-    return "return_to_parent"
-  }
-  return "self_solve"
-}
-
-function resolveExplicitProviderRoute(input: {
-  moduleDependencies: IntakeBridgePassModuleDependencies
-  preferredTarget: string | undefined
-  delegatedTaskProfile: string
-  fallbackModel: string | undefined
-}): ResolvedRunRoute | undefined {
-  if (!isExplicitDirectExecutionTarget(input.preferredTarget)) return undefined
-  return input.moduleDependencies.resolveRunRoute({
-    preferredTarget: input.preferredTarget,
-    taskProfile: input.delegatedTaskProfile,
-    fallbackModel: input.fallbackModel,
-  })
-}
-
 function recordExecutionDecisionTraceForRun(
   dependencies: IntakeBridgePassDependencies,
   runId: string,
-  decisionRoute: DelegatedDecisionResolution,
+  decisionRoute: DecisionRouteWithTrace,
 ): void {
   dependencies.recordExecutionDecisionTrace?.({
     runId,
@@ -322,86 +259,6 @@ function buildDelegatedChildReviewDirective(params: {
   }
 
   return null
-}
-
-async function resolveDelegatedDecisionRoute(input: {
-  params: Parameters<typeof runIntakeBridgePass>[0]
-  moduleDependencies: IntakeBridgePassModuleDependencies
-  preferredTarget: string | undefined
-  delegatedTitle: string
-  delegatedTaskProfile: string
-  originalRequest: string
-  executionSemantics: TaskExecutionSemantics
-}): Promise<DelegatedDecisionResolution | undefined> {
-  if (isExplicitDirectExecutionTarget(input.preferredTarget)) return undefined
-
-  const buildGraph = input.moduleDependencies.buildExecutionGraphSnapshot ?? buildExecutionGraphSnapshot
-  const executionGraph = buildGraph({
-    mode: "active_deployment",
-    currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
-  })
-  const explicitTarget = normalizedExplicitTarget(input.preferredTarget)
-  const context = buildAgentExecutionContextFromGraphSnapshot({
-    graph: executionGraph,
-    request: {
-      kind: "user_message",
-      latest_user_message: input.originalRequest,
-      structured_goal: input.delegatedTitle.trim() || input.originalRequest,
-      required_outputs: [{
-        id: "answer",
-        label: "사용자에게 전달할 최종 결과",
-        acceptance_criteria: ["요청의 핵심 결과와 남은 이슈를 분명히 전달한다."],
-      }],
-      channel_id: input.params.sessionId,
-    },
-    requester: {
-      requester_id: input.params.sessionId,
-      requester_type: "channel",
-      display_name: input.params.source,
-    },
-    directExecutionRequested: false,
-    ...(explicitTarget ? { explicitTargetExecutorId: explicitTarget } : {}),
-  })
-  const runDecisionHarness = input.moduleDependencies.runAgentExecutionHarness ?? runAgentExecutionHarness
-  const callModel = buildExecutionDecisionModelCaller({
-    providerId: input.params.providerId,
-    provider: input.params.provider,
-    model: input.params.model,
-  })
-  const decisionResult = await runDecisionHarness({
-    context,
-    ...(callModel ? { callModel } : {}),
-  })
-  const decision = decisionResult.decision
-  if (!isDelegationDecision(decision)) {
-    return {
-      kind: decisionFallbackKind(decision),
-      agentExecutionDecision: decision,
-      decisionResult,
-      executionGraph,
-    }
-  }
-  const selectedExecutorId = decision.selected_executor_id
-  if (!selectedExecutorId) {
-    return {
-      kind: "self_solve",
-      agentExecutionDecision: decision,
-      decisionResult,
-      executionGraph,
-    }
-  }
-
-  return {
-    kind: "delegate",
-    route: {
-      targetId: selectedExecutorId,
-      targetLabel: executorLabel(executionGraph, selectedExecutorId),
-      reason: `execution_decision:${decision.execution_route}`,
-    },
-    agentExecutionDecision: decision,
-    decisionResult,
-    executionGraph,
-  }
 }
 
 export async function runIntakeBridgePass(
@@ -582,30 +439,37 @@ export async function runIntakeBridgePass(
         getString(delegatedAction.payload.preferred_target)
         || getString(delegatedAction.payload.preferredTarget)
         || intake.intent_envelope.preferred_target
-      const explicitProviderRoute = resolveExplicitProviderRoute({
-        moduleDependencies,
-        preferredTarget,
-        delegatedTaskProfile,
-        fallbackModel: params.model,
+      const callModel = buildExecutionDecisionModelCaller({
+        providerId: params.providerId,
+        provider: params.provider,
+        model: params.model,
       })
-      const decisionRoute = explicitProviderRoute ? undefined : await resolveDelegatedDecisionRoute({
-        params,
-        moduleDependencies,
-        preferredTarget,
+      const decisionRoute = await decideExecutionRoute({
+        originalRequest: params.originalRequest,
         delegatedTitle: delegatedAction.title,
         delegatedTaskProfile,
-        originalRequest: params.originalRequest,
-        executionSemantics: delegatedExecutionSemantics,
+        sessionId: params.sessionId,
+        source: params.source,
+        preferredTarget,
+        fallbackModel: params.model,
+        currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
+        buildExecutionGraphSnapshot: moduleDependencies.buildExecutionGraphSnapshot,
+        runAgentExecutionHarness: moduleDependencies.runAgentExecutionHarness,
+        ...(callModel ? { callModel } : {}),
+        resolveExplicitProviderTarget: (routeInput) =>
+          moduleDependencies.resolveRunRoute({
+            preferredTarget: routeInput.preferredTarget,
+            taskProfile: routeInput.taskProfile,
+            fallbackModel: routeInput.fallbackModel,
+          }),
       })
 
-      if (!explicitProviderRoute && (!decisionRoute || decisionRoute.kind === "self_solve")) {
-        if (decisionRoute) {
-          recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
-          dependencies.appendRunEvent(
-            params.runId,
-            formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace),
-          )
-        }
+      if (decisionRoute.kind === "self_solve") {
+        recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
+        dependencies.appendRunEvent(
+          params.runId,
+          formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace),
+        )
         dependencies.appendRunEvent(
           params.runId,
           "execution_decision_fallback:self_solve; provider_direct_blocked_without_explicit_target",
@@ -622,7 +486,7 @@ export async function runIntakeBridgePass(
         continue
       }
 
-      if (decisionRoute?.kind === "ask_user") {
+      if (decisionRoute.kind === "ask_user" || decisionRoute.kind === "boundary_failure") {
         recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
         dependencies.appendRunEvent(
           params.runId,
@@ -632,34 +496,24 @@ export async function runIntakeBridgePass(
           kind: "awaiting_user",
           preview: decisionRoute.agentExecutionDecision.unresolved_reason
             ?? decisionRoute.agentExecutionDecision.reason,
-          summary: "실행 전에 사용자 확인이 필요합니다.",
+          summary: decisionRoute.kind === "boundary_failure"
+            ? "현재 실행 경계 안에서 처리할 수 없는 요청입니다."
+            : "실행 전에 사용자 확인이 필요합니다.",
           reason: decisionRoute.agentExecutionDecision.reason,
           userMessage: decisionRoute.agentExecutionDecision.unresolved_reason
             ?? "요청을 계속 진행하려면 필요한 조건을 확인해 주세요.",
-          eventLabel: "execution decision 사용자 확인 대기",
+          eventLabel: decisionRoute.kind === "boundary_failure"
+            ? "execution decision 경계 실패"
+            : "execution decision 사용자 확인 대기",
         }
       }
 
-      if (decisionRoute?.kind === "return_to_parent") {
-        recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
-        dependencies.appendRunEvent(
-          params.runId,
-          formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace),
-        )
-        return {
-          kind: "awaiting_user",
-          preview: decisionRoute.agentExecutionDecision.unresolved_reason
-            ?? decisionRoute.agentExecutionDecision.reason,
-          summary: "현재 채널 요청에는 반환할 상위 실행자가 없어 사용자 확인으로 전환합니다.",
-          reason: decisionRoute.agentExecutionDecision.reason,
-          userMessage: decisionRoute.agentExecutionDecision.unresolved_reason
-            ?? "상위 실행자에게 반환할 수 없는 요청입니다. 계속 진행할 방법을 확인해 주세요.",
-          eventLabel: "execution decision 상위 반환 불가",
-        }
-      }
-
-      const route = explicitProviderRoute ?? (decisionRoute?.kind === "delegate" ? decisionRoute.route : undefined)
+      const route =
+        decisionRoute.kind === "explicit_provider_target" || decisionRoute.kind === "delegate_to_child"
+          ? decisionRoute.route
+          : undefined
       if (!route) continue
+      const routeWorkerRuntime = route.workerRuntime as WorkerRuntimeTarget | undefined
       const followupPrompt = moduleDependencies.buildFollowupPrompt({
         originalMessage: params.originalRequest,
         intake: delegatedIntake,
@@ -667,21 +521,21 @@ export async function runIntakeBridgePass(
         taskProfile: delegatedTaskProfile,
         ...(route.targetId ? { selectedExecutorId: route.targetId } : {}),
         ...(route.targetLabel ? { selectedExecutorLabel: route.targetLabel } : {}),
-        ...(decisionRoute?.kind === "delegate"
+        ...(decisionRoute.kind === "delegate_to_child"
           ? { selectedExecutorReason: decisionRoute.agentExecutionDecision.reason }
           : {}),
       })
-      if (decisionRoute?.kind === "delegate") {
+      if (decisionRoute.kind === "delegate_to_child") {
         recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
         dependencies.appendRunEvent(
           params.runId,
           formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace),
         )
       }
-      if (explicitProviderRoute) {
+      if (decisionRoute.kind === "explicit_provider_target") {
         dependencies.appendRunEvent(
           params.runId,
-          `execution_decision_fallback:explicit_provider; provider_direct_allowed_with_explicit_target; target=${explicitProviderRoute.targetId ?? preferredTarget ?? "unknown"}`,
+          `execution_decision_fallback:explicit_provider; provider_direct_allowed_with_explicit_target; target=${route.targetId ?? preferredTarget ?? "unknown"}`,
         )
       }
       dependencies.appendRunEvent(
@@ -700,8 +554,8 @@ export async function runIntakeBridgePass(
         targetLabel: route.targetLabel ?? null,
         model: route.model ?? params.model ?? null,
         providerId: route.providerId ?? null,
-        workerRuntime: route.workerRuntime?.kind ?? null,
-        executionGraph: decisionRoute
+        workerRuntime: routeWorkerRuntime?.kind ?? null,
+        executionGraph: decisionRoute.kind === "delegate_to_child"
           ? {
               graphId: decisionRoute.executionGraph.graphId,
               graphSource: decisionRoute.executionGraph.graphSource,
@@ -710,7 +564,7 @@ export async function runIntakeBridgePass(
               availableExecutorIds: decisionRoute.executionGraph.availableExecutorIds,
             }
           : null,
-        executionDecisionSource: decisionRoute ? "nobie_harness" : null,
+        executionDecisionSource: decisionRoute.kind === "delegate_to_child" ? "nobie_harness" : null,
       })
       dependencies.incrementDelegationTurnCount(params.runId, `${delegatedAction.title} 후속 작업을 시작합니다.`)
 
@@ -731,11 +585,11 @@ export async function runIntakeBridgePass(
         ...(route.providerId ? { providerId: route.providerId } : {}),
         ...(route.provider ? { provider: route.provider } : {}),
         ...(route.providerTrace ? { providerTrace: route.providerTrace } : {}),
-        ...(route.workerRuntime ? { workerRuntime: route.workerRuntime } : {}),
+        ...(routeWorkerRuntime ? { workerRuntime: routeWorkerRuntime } : {}),
         ...(route.targetId ? { targetId: route.targetId } : {}),
         ...(route.targetLabel ? { targetLabel: route.targetLabel } : {}),
-        ...(decisionRoute?.kind === "delegate" ? { agentExecutionDecision: decisionRoute.agentExecutionDecision } : {}),
-        ...(decisionRoute?.kind === "delegate"
+        ...(decisionRoute.kind === "delegate_to_child" ? { agentExecutionDecision: decisionRoute.agentExecutionDecision } : {}),
+        ...(decisionRoute.kind === "delegate_to_child"
           ? { agentExecutionDecisionTrace: decisionRoute.decisionResult.decisionTrace }
           : {}),
         workDir: params.workDir,

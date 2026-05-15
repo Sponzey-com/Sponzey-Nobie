@@ -314,7 +314,7 @@ describe("runAgent streaming policy", () => {
     }])
     dispatchMock.mockResolvedValueOnce({
       success: false,
-      output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+      output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\n이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.\nWindows에서 `build-yeonjang-windows.bat`로 재빌드하고 `start-yeonjang-windows.bat --restart` 후 다시 시도해 주세요.',
       error: 'YEONJANG_SCREEN_CAPTURE_PATH_BUG',
       details: {
         via: 'yeonjang',
@@ -363,7 +363,7 @@ describe("runAgent streaming policy", () => {
         type: 'tool_end',
         toolName: 'screen_capture',
         success: false,
-        output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+        output: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\n이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.\nWindows에서 `build-yeonjang-windows.bat`로 재빌드하고 `start-yeonjang-windows.bat --restart` 후 다시 시도해 주세요.',
         details: {
           via: 'yeonjang',
           stopAfterFailure: true,
@@ -373,7 +373,7 @@ describe("runAgent streaming policy", () => {
       },
       {
         type: 'text',
-        delta: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\nWindows에서 `build-yeonjang-windows.bat`를 실행해 재빌드한 뒤 다시 시도해 주세요.',
+        delta: 'Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.\n이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.\nWindows에서 `build-yeonjang-windows.bat`로 재빌드하고 `start-yeonjang-windows.bat --restart` 후 다시 시도해 주세요.',
       },
       { type: 'done', totalTokens: 2 },
     ])

@@ -1,15 +1,31 @@
 export interface RecoveryStrategyKey {
   targetRoute: string
   targetAgentId?: string
+  executorId?: string
   toolIds: string[]
+  sourceIds?: string[]
   inputShapeHash: string
+  promptContextHash?: string
   normalizedTaskHash: string
+  decompositionHash?: string
   workingDirectory?: string
   fileTargets: string[]
   permissionProfile: string
+  userConfirmationState?: string
   executionOrderHash: string
   verificationMethod: string
 }
+
+export const RECOVERY_STRATEGY_CHANGE_AXES = [
+  "executor",
+  "tool_or_source",
+  "decomposition",
+  "prompt_context",
+  "verification_method",
+  "permission_or_user_confirmation",
+] as const
+
+export type RecoveryStrategyChangeAxis = typeof RECOVERY_STRATEGY_CHANGE_AXES[number]
 
 export interface RecoveryStrategyAttempt {
   attemptId?: string
@@ -30,14 +46,15 @@ export function createRecoveryStrategyLedger(attempts: RecoveryStrategyAttempt[]
 
 export function recoveryStrategyFingerprint(key: RecoveryStrategyKey): string {
   return JSON.stringify({
+    executor: key.executorId ?? key.targetAgentId ?? key.targetRoute,
     targetRoute: key.targetRoute,
     targetAgentId: key.targetAgentId ?? "",
-    toolIds: [...key.toolIds].sort(),
-    inputShapeHash: key.inputShapeHash,
-    normalizedTaskHash: key.normalizedTaskHash,
+    toolOrSourceIds: [...key.toolIds, ...(key.sourceIds ?? [])].sort(),
+    promptContextHash: key.promptContextHash ?? key.inputShapeHash,
+    decompositionHash: key.decompositionHash ?? key.normalizedTaskHash,
     workingDirectory: key.workingDirectory ?? "",
     fileTargets: [...key.fileTargets].sort(),
-    permissionProfile: key.permissionProfile,
+    permissionOrUserConfirmation: `${key.permissionProfile}:${key.userConfirmationState ?? ""}`,
     executionOrderHash: key.executionOrderHash,
     verificationMethod: key.verificationMethod,
   })

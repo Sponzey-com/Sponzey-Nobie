@@ -1,4 +1,5 @@
 import { type ContractSchemaVersion, type ContractValidationResult, type JsonObject, type JsonValue } from "./index.js";
+import type { ChannelSource } from "../channels/contracts.js";
 export declare const SUB_AGENT_CONTRACT_SCHEMA_VERSION: 1;
 export type AgentEntityType = "nobie" | "sub_agent";
 export type RelationshipEntityType = AgentEntityType | "team" | "session" | "sub_session" | "capability" | "data_exchange";
@@ -6,6 +7,7 @@ export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded";
 export type OrchestrationMode = "single_nobie" | "orchestration";
 export type OrchestrationFallbackStrategyMode = "self_solve" | "direct_current_agent" | "return_to_parent" | "ask_parent" | "ask_user" | "fail_with_reason" | "root_nobie_direct" | "explicit_provider" | "single_nobie";
 export type OrchestrationSelectedExecutorSource = "execution_decision";
+export type SessionContractSource = ChannelSource | "scheduler" | "system";
 export type SubSessionStatus = "created" | "queued" | "running" | "waiting_for_input" | "awaiting_approval" | "completed" | "needs_revision" | "failed" | "cancelled";
 export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent";
 export type ResourceLockKind = "file" | "display" | "channel" | "mcp_server" | "secret_scope" | "external_target" | "custom";
@@ -27,7 +29,9 @@ export interface ModelProfile {
     effort?: string;
     temperature?: number;
     maxOutputTokens?: number;
+    /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
     timeoutMs?: number;
+    /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
     retryCount?: number;
     costBudget?: number;
     fallbackModelId?: string;
@@ -39,13 +43,16 @@ export interface ModelExecutionSnapshot {
     fallbackApplied: boolean;
     fallbackFromModelId?: string;
     fallbackReasonCode?: string;
+    /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
     timeoutMs?: number;
+    /** @deprecated Legacy telemetry/config metadata only. Runtime must not use this as a business failure limit. */
     retryCount?: number;
     costBudget?: number;
     maxOutputTokens?: number;
     estimatedInputTokens: number;
     estimatedOutputTokens: number;
     estimatedCost: number;
+    /** Legacy audit field: model invocation telemetry, not a retry or failure limit. */
     attemptCount?: number;
     latencyMs?: number;
     reasonCodes: string[];
@@ -279,7 +286,7 @@ export interface SessionContract {
     identity: RuntimeIdentity;
     sessionId: string;
     mode: OrchestrationMode;
-    source: "webui" | "cli" | "telegram" | "slack" | "scheduler" | "system";
+    source: SessionContractSource;
     owner: OwnerScope;
     parentRequestId: string;
     status: SubSessionStatus;
@@ -412,6 +419,11 @@ export interface OrchestrationFallbackStrategy {
     unresolvedReasonCode?: string;
     unresolvedReason?: string;
     userMessage?: string;
+    /**
+     * Legacy snapshots may still contain `single_nobie`; new planners must not
+     * emit it. The field lets readers surface a non-fatal compatibility warning
+     * without rejecting stored runs.
+     */
     legacyWarning?: string;
 }
 export interface AgentPromptBundle {
@@ -473,6 +485,12 @@ export interface CommandRequest {
     subSessionId: string;
     targetAgentId: string;
     targetNicknameSnapshot?: string;
+    topologyExecutor?: {
+        graphExecutionPlanId: string;
+        executorId?: string;
+        edgeId?: string;
+        systemPreparation?: boolean;
+    };
     taskScope: StructuredTaskScope;
     contextPackageIds: string[];
     expectedOutputs: ExpectedOutputContract[];

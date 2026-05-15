@@ -17,6 +17,23 @@ function buildUiShellDomainState() {
     const cfg = getConfig();
     const activeRuns = listActiveRootRuns();
     const extensions = getMqttExtensionSnapshots();
+    const imessageConfigured = Boolean(cfg.imessage?.localBridgeEnabled
+        && cfg.imessage.riskAcknowledged
+        && cfg.imessage.messagesAppAvailable
+        && cfg.imessage.userSessionActive
+        && cfg.imessage.automationPermissionGranted
+        && cfg.imessage.allowedRecipientIds.length > 0);
+    const kakaoTalkOfficialConfigured = Boolean(cfg.kakaoTalk?.mode === "official"
+        && cfg.kakaoTalk.businessApiEnabled
+        && cfg.kakaoTalk.businessApiKey
+        && cfg.kakaoTalk.channelId);
+    const kakaoTalkLocalConfigured = Boolean(cfg.kakaoTalk?.mode === "local_bridge"
+        && cfg.kakaoTalk.localBridgeEnabled
+        && cfg.kakaoTalk.riskAcknowledged
+        && cfg.kakaoTalk.kakaoTalkAppAvailable
+        && cfg.kakaoTalk.userSessionActive
+        && cfg.kakaoTalk.automationPermissionGranted
+        && (cfg.kakaoTalk.allowedUserIds.length > 0 || cfg.kakaoTalk.allowedRoomIds.length > 0));
     return {
         generatedAt: Date.now(),
         mode: getUiModeState(),
@@ -35,6 +52,14 @@ function buildUiShellDomainState() {
                 telegramEnabled: cfg.telegram?.enabled === true,
                 slackConfigured: Boolean(cfg.slack?.botToken && cfg.slack?.appToken),
                 slackEnabled: cfg.slack?.enabled === true,
+                discordConfigured: Boolean(cfg.discord?.botToken && cfg.discord?.applicationId),
+                discordEnabled: cfg.discord?.enabled === true,
+                googleChatConfigured: Boolean((cfg.googleChat?.projectId || cfg.googleChat?.appCredentialJson || cfg.googleChat?.serviceAccountEmail) && cfg.googleChat?.verificationToken),
+                googleChatEnabled: cfg.googleChat?.enabled === true,
+                imessageConfigured,
+                imessageEnabled: cfg.imessage?.enabled === true,
+                kakaoTalkConfigured: kakaoTalkOfficialConfigured || kakaoTalkLocalConfigured,
+                kakaoTalkEnabled: cfg.kakaoTalk?.enabled === true,
             },
             yeonjang: {
                 mqttEnabled: cfg.mqtt.enabled,

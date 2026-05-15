@@ -24,25 +24,10 @@ import {
   type AgentCapabilityModelSummary,
   resolveAgentCapabilityModelSummary,
 } from "./capability-model.js"
+import { selectAgentPromptBundleSources } from "./prompt-policy-adapter.js"
 import type { ExecutorProfile } from "./registry.js"
 
 export const AGENT_PROMPT_BUNDLE_VERSION = "agent-prompt-bundle-v1"
-
-const LINKED_PROMPT_SOURCE_IDS = new Set([
-  "definitions",
-  "identity",
-  "user",
-  "soul",
-  "planner",
-  "nobie_execution",
-  "memory_policy",
-  "tool_policy",
-  "recovery_policy",
-  "topology_executor_policy",
-  "completion_policy",
-  "output_policy",
-  "channel",
-])
 
 const DEFAULT_SAFETY_RULES = [
   "Agent profile text never overrides safety, approval, memory isolation, or capability isolation.",
@@ -266,9 +251,7 @@ export function buildAgentPromptBundle(
   const now = input.now?.() ?? Date.now()
   const locale = input.locale ?? "en"
   const promptSources = input.promptSources ?? loadSafePromptSources(input.workDir ?? process.cwd())
-  const linkedSources = promptSources
-    .filter((source) => source.locale === locale && LINKED_PROMPT_SOURCE_IDS.has(source.sourceId))
-    .sort((a, b) => a.priority - b.priority || a.sourceId.localeCompare(b.sourceId))
+  const linkedSources = selectAgentPromptBundleSources({ sources: promptSources, locale })
   const capabilityModelSummary = resolveCapabilityModelSummary(input.agent)
 
   const fragments: AgentPromptFragment[] = [

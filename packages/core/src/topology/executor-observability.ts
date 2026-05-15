@@ -43,7 +43,7 @@ export interface ExecutorRunObservabilityEvidence {
   nodeContractRef: {
     topologyId: string
     nodeId: string
-    sourceOfTruth: "enterprise_topology"
+    sourceOfTruth: "executor_topology_v2"
   }
   generatedAt?: EnterpriseTimestamp
 }
@@ -64,7 +64,7 @@ export interface ExecutorFailureObservabilityEvidence {
   nodeContractRef: {
     topologyId?: string
     nodeId: string
-    sourceOfTruth: "enterprise_topology"
+    sourceOfTruth: "executor_topology_v2"
   }
 }
 
@@ -141,7 +141,7 @@ export function buildExecutorRunObservabilityEvidence(input: {
     nodeContractRef: {
       topologyId: input.topology.id,
       nodeId: executor?.sourceNodeId ?? input.entryNodeId,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
     },
     ...(input.generatedAt !== undefined ? { generatedAt: input.generatedAt } : {}),
   }
@@ -200,7 +200,7 @@ export function attachExecutorFailureEvidence(input: {
     ...(runEvidence?.normalizedUnderstanding ? { normalizedUnderstanding: runEvidence.normalizedUnderstanding } : {}),
     nodeContractRef: {
       nodeId: runEvidence?.entryNodeContractId ?? input.failureReport.nodeId,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       ...(runEvidence?.topologyId ? { topologyId: runEvidence.topologyId } : {}),
     },
   }

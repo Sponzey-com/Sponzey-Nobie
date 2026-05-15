@@ -44,9 +44,10 @@ export { eventBus } from "./events/index.js";
 export { exportControlTimeline, getControlTimeline, installControlEventProjection, recordControlEvent, recordControlEventFromLedger, resetControlEventProjectionForTest, } from "./control-plane/timeline.js";
 // Message ledger and delivery finalization
 export { buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildMessageLedgerTextDeliveryKey, buildToolCallIdempotencyKey, finalizeDeliveryForRun, findDuplicateToolCall, getAllowRepeatReason, hashLedgerValue, isDedupeTargetTool, recordMessageLedgerEvent, stableStringify, } from "./runs/message-ledger.js";
+export { ValidateAndFinalize, completeRunWithAssistantMessage, markRunCompleted, validateAndFinalize, } from "./runs/finalization.js";
 export { buildFinalDeliveryAttributions, buildNamedResultDeliveryEvent, buildNobieFinalAnswer, commitFinalDelivery, findCommittedFinalDelivery, listPendingFinalizers, recordApprovalAggregation, recordLateResultNoReply, } from "./runs/channel-finalizer.js";
 export { buildRunRuntimeInspectorProjection } from "./runs/runtime-inspector-projection.js";
-export { buildFinancialInformationBoundaryNotice, buildRetrievalVerificationPlan, chooseNextRetrievalVerificationSource, evaluateRetrievalVerificationPlan, formatCurrentFactVerificationAnswer, sourceCandidateFromEvidence, } from "./runs/current-fact-retrieval.js";
+export { buildCurrentFactFinalValidationInput, buildFinancialInformationBoundaryNotice, buildRetrievalVerificationPlan, chooseNextRetrievalVerificationSource, evaluateRetrievalVerificationPlan, formatCurrentFactVerificationAnswer, sourceCandidateFromEvidence, } from "./runs/current-fact-retrieval.js";
 export { WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION, buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, createDryRunWebRetrievalLiveSmokeExecutor, fixtureFileNameForId, getDefaultWebRetrievalLiveSmokeScenarios, isLiveWebSmokeEnabled, loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, runWebRetrievalLiveSmokeScenarios, validateWebRetrievalLiveSmokeTrace, writeWebRetrievalSmokeArtifact, } from "./runs/web-retrieval-smoke.js";
 export { WEB_RETRIEVAL_POLICY_VERSION } from "./runs/web-retrieval-policy.js";
 export { DEFAULT_QUEUE_BUDGETS, QUEUE_NAMES, QueueBackpressureError, buildBackpressureUserMessage, buildQueueBackpressureSnapshot, enqueueBackpressureTask, recordQueueBackpressureEvent, recordQueueRecoveryAttempt, resetQueueBackpressureState, resetQueueRecoveryAttempt, } from "./runs/queue-backpressure.js";
@@ -78,6 +79,7 @@ export { buildCompiledTopologyCacheKey, createInMemoryTopologyCompilerCache, } f
 export { createEnterpriseTopologyRegistry, } from "./topology/registry.js";
 export { buildAgentTeamTopologyImportPreview, } from "./topology/agent-team-import.js";
 export { EXECUTOR_GRAPH_METADATA_KEY, EXECUTOR_GRAPH_SCHEMA_VERSION, EXECUTOR_GRAPH_SOURCE_OF_TRUTH, attachExecutorGraphMetadata, buildExecutorGraphFromEnterpriseTopology, buildExecutorGraphGuiOperations, buildExecutorGraphRollbackEvidence, buildExecutorGraphTopologyMetadata, compileExecutorGraphToEnterpriseTopology, readExecutorGraphMetadata, } from "./topology/executor-graph.js";
+export { EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION, NOBIE_ROOT_AGENT_ID, buildExecutorRuntimeGraphSnapshotV2, buildExecutorTopologyV2MigrationDryRunReport, buildExecutorTopologyV2RuntimeReadModelFromEnterpriseTopology, enterpriseTopologyFromExecutorTopologyV2, isExecutorTopologyV2, loadExecutorTopologyV2ReadModelFromRegistry, migrateEnterpriseTopologyToExecutorTopologyV2, materializeExecutorTopologyV2ReadModelInRegistry, previewExecutorTopologyV2RegistryMigration, repairExecutorTopologyV2ForPersistence, validateExecutorTopologyV2, } from "./topology/executor-topology-v2.js";
 export { EXECUTOR_UNDERSTANDING_DRAFT_VERSION, EXECUTOR_UNDERSTANDING_VERSION, buildExecutorInferenceEvidence, confirmExecutorUnderstanding, createExecutorDraftFromInference, inferExecutorFromDescription, inferExecutorTaskAnalysis, } from "./topology/executor-inference.js";
 export { EXECUTOR_FAILURE_OBSERVABILITY_METADATA_KEY, EXECUTOR_OBSERVABILITY_METADATA_KEY, EXECUTOR_OBSERVABILITY_SCHEMA_VERSION, attachExecutorFailureEvidence, buildExecutorRunObservabilityEvidence, buildExecutorRunObservabilityMetadata, buildExecutorTraceEventPayload, executorInferenceEvidenceForNode, executorObservabilityFromWorkOrder, } from "./topology/executor-observability.js";
 export { EXECUTOR_CONNECTION_LABELS, applyExecutorConnectionRecommendation, createExecutorConnectionDraft, enterpriseRelationTypeToExecutorConnectionRelation, executorConnectionLabel, executorConnectionRelationToEnterpriseRelationType, executorConnectionToSafeEnterpriseRelationType, recommendExecutorConnectionRelations, } from "./topology/executor-relation-inference.js";
@@ -117,7 +119,7 @@ export { createTopologyFixtureStore, inferTopologyFixtureFormat, loadTopologyFix
 export { DEFAULT_TOPOLOGY_MAX_DELEGATION_DEPTH, isEnterpriseRelationEndpointAllowed, TOPOLOGY_RELATION_ENDPOINT_RULES, TOPOLOGY_VALIDATOR_BLOCKING_SEVERITIES, } from "./topology/schema.js";
 export { planTopologySmartConnect, recommendTopologySmartConnectRelation, recommendTopologySmartConnectRelations, TOPOLOGY_RELATION_TEMPLATE_CATALOG, } from "./topology/relation-templates.js";
 export { buildTopologyFlowTemplateDraft, TOPOLOGY_FLOW_TEMPLATES, TOPOLOGY_TEMPLATE_CATALOG, } from "./topology/templates.js";
-export { assertTopologyValidationExecutable, createTopologyValidatorIssue, isTopologyValidationExecutable, TopologyValidationGateError, TOPOLOGY_VALIDATOR_QUICK_FIX_CODES, validateTopology, } from "./topology/validator.js";
+export { assertTopologyValidationExecutable, createTopologyValidatorIssue, ENTERPRISE_TOPOLOGY_COMPATIBILITY_QUICK_FIX_CODES, isTopologyValidationExecutable, TopologyValidationGateError, TOPOLOGY_VALIDATOR_QUICK_FIX_CODES, validateEnterpriseTopologyCompatibility, validateTopology, } from "./topology/validator.js";
 export { findScheduleCandidatesByContract, parseScheduleContractJson, scheduleContractDestinationEquals, scheduleContractTimeEquals, } from "./schedules/candidates.js";
 export { buildScheduleContractComparisonSystemPrompt, compareScheduleContractsWithAI, parseScheduleContractComparisonResult, } from "./schedules/comparison.js";
 // Candidate Providers
@@ -165,10 +167,10 @@ export { buildInboundMessageKey, createInboundMessageRecord, detectExplicitToolI
 export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers, } from "./runs/flow-contract.js";
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary, } from "./runs/startup-recovery.js";
 export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, buildRetentionCleanupPlan, buildRetryFailureFingerprint, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
-export { FORBIDDEN_TERMINAL_FAILURE_REASONS, NON_TERMINAL_RECOVERY_REASONS, TERMINAL_FAILURE_REASONS, createDefaultExecutionPolicySnapshot, isForbiddenTerminalFailureReason, isTerminalFailureReason, normalizeFailureReason, } from "./runs/execution-policy.js";
+export { COUNT_BASED_FAILURE_SIGNAL_REASONS, NON_TERMINAL_RECOVERY_REASONS, TERMINAL_FAILURE_REASONS, createDefaultExecutionPolicySnapshot, isCountBasedFailureSignalReason, isTerminalFailureReason, normalizeFailureReason, } from "./runs/execution-policy.js";
 export { assertTerminalFailureAllowed, guardTerminalFailure, } from "./runs/terminal-failure-guard.js";
 export { chooseRecoveryAlternative, } from "./runs/recovery-controller.js";
-export { createRecoveryStrategyLedger, hasRecoveryStrategyAttempt, recordRecoveryStrategyAttempt, recoveryStrategyFingerprint, } from "./runs/recovery-strategy-ledger.js";
+export { RECOVERY_STRATEGY_CHANGE_AXES, createRecoveryStrategyLedger, hasRecoveryStrategyAttempt, recordRecoveryStrategyAttempt, recoveryStrategyFingerprint, } from "./runs/recovery-strategy-ledger.js";
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
 // API server

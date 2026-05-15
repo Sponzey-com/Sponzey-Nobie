@@ -4,6 +4,21 @@
 
 - `packages/webui/src`는 실제 React 애플리케이션 구현 루트입니다.
 
+## 아키텍처 정리 기준
+
+- WebUI는 core 내부 runtime 타입을 직접 해석하지 않고 API contract와 view model을 통해 표시한다.
+- 기본 topology 화면은 실행자 노드, 연결선, 선택 노드 정의, 저장, 실행 상태 확인만 단순하게 제공한다.
+- EnterpriseTopology V1, WorkOrder, compile preview, manual run, 내부 route code는 기본 UI에 노출하지 않는다.
+- V1 화면이 남아야 하면 `LegacyEnterpriseTopologyPage`처럼 legacy/diagnostic 이름으로만 노출하고 기본 route에서 import하지 않는다.
+- 실행자 선택, 위험 경계 판단, 자연어 의미 판단은 WebUI가 구현하지 않는다.
+- Runtime Inspector와 실행현황은 사용자 이름/역할명과 최신 요청 순서를 우선 표시하고, raw id는 diagnostic 영역으로 분리한다.
+
+## 검증 게이트
+
+- 기본 topology UI, Runtime Inspector, task monitor, view model 경계 변경은 `pnpm run test:architecture:webui`로 확인한다.
+- WebUI가 core runtime 타입이나 EnterpriseTopology V1/WorkOrder/manual run을 기본 화면으로 다시 끌어오지 않는지는 `pnpm run test:architecture:static`에서도 확인한다.
+- 릴리즈 전에는 `pnpm --filter @nobie/webui build`와 `pnpm run test:architecture`를 함께 통과해야 한다.
+
 ## 중요 단위
 
 - `App.tsx`: 라우트 트리, 인증 초기화, WebSocket 시작

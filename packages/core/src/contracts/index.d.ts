@@ -1,12 +1,13 @@
+import type { ChannelProvider, ChannelSource } from "../channels/contracts.js";
 export declare const CONTRACT_SCHEMA_VERSION: 1;
 export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION;
 export type ContractLocaleHint = "ko" | "en" | "mixed" | "unknown";
-export type ContractSource = "webui" | "telegram" | "slack" | "cli" | "scheduler" | "system";
+export type ContractSource = ChannelSource | "scheduler" | "system";
 export type IntentType = "schedule_request" | "execute_now" | "cancel" | "update" | "question" | "impossible" | "clarification";
 export type ActionType = "create_schedule" | "update_schedule" | "cancel_schedule" | "run_tool" | "send_message" | "answer" | "ask_user" | "none";
 export type ToolTargetKind = "schedule" | "run" | "artifact" | "extension" | "display" | "camera" | "file" | "unknown";
 export type DeliveryMode = "reply" | "direct_artifact" | "channel_message" | "none";
-export type DeliveryChannel = "current_session" | "telegram" | "slack" | "webui" | "local" | "agent" | "none";
+export type DeliveryChannel = "current_session" | ChannelProvider | "webui" | "cli" | "local" | "agent" | "none";
 export type ScheduleKind = "one_time" | "recurring";
 export type ScheduleMissedPolicy = "skip" | "catch_up_once" | "next_only";
 export type SchedulePayloadKind = "literal_message" | "agent_task" | "tool_task" | "artifact_delivery";
@@ -148,5 +149,5 @@ export declare function buildDeliveryDedupeKey(params: {
     payloadHash: string;
 }): string;
 export declare function formatContractValidationFailureForUser(issues: ContractValidationIssue[]): string;
-export {};
+export * from "./enterprise-topology.js";
 //# sourceMappingURL=index.d.ts.map

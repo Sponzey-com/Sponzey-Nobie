@@ -1,3 +1,4 @@
+import { isInternalChannelSurface } from "../channels/contracts.js";
 export const TRUST_TAGS = [
     "trusted",
     "user_input",
@@ -38,9 +39,7 @@ export function isUntrustedTag(tag) {
     return UNTRUSTED_TAGS.has(tag);
 }
 export function sourceToTrustTag(source) {
-    if (source === "cli" || source === "webui")
-        return "user_input";
-    return "channel_input";
+    return isInternalChannelSurface(source) ? "user_input" : "channel_input";
 }
 export function createContextBlock(params) {
     return {

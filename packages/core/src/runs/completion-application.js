@@ -55,7 +55,7 @@ export function decideCompletionApplication(params) {
             return {
                 kind: "stop",
                 summary: "해석/후속 처리를 자동으로 계속할 수 없습니다.",
-                reason: decision.reason || "후속 처리 복구 불가",
+                reason: decision.reason || "새 안전 대안이나 필요한 결정 정보가 부족합니다.",
                 ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
             };
         }
@@ -75,7 +75,7 @@ export function decideCompletionApplication(params) {
             return {
                 kind: "stop",
                 summary: "실행 복구를 자동으로 계속할 수 없습니다.",
-                reason: decision.reason || "실행 복구 불가",
+                reason: decision.reason || "새 안전 대안이나 필요한 결정 정보가 부족합니다.",
                 ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
             };
         }

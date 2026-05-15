@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto"
 import { getConfig, type NobieConfig } from "../config/index.js"
-import type { EnterpriseRelation, EnterpriseTopology, NodeContract } from "../contracts/enterprise-topology.js"
 import { listAgentRelationships } from "../db/index.js"
 import {
-  createEnterpriseTopologyRegistry,
-  type EnterpriseTopologyRegistryRecord,
-  type EnterpriseTopologyRegistryStore,
-  type TopologyExportEnvelope,
-} from "../topology/registry.js"
+  createLegacyTopologyRegistry,
+  legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
+  type LegacyNode,
+  type LegacyRelation,
+  type LegacyTopology,
+  type LegacyTopologyEnvelope,
+  type LegacyTopologyRegistryRecord,
+  type LegacyTopologyRegistryStore,
+} from "../topology/legacy-enterprise-topology-adapter.js"
 import {
   buildExecutorProfileFromNode,
   buildOrchestrationRegistrySnapshot,
@@ -100,7 +103,7 @@ export interface BuildExecutionGraphSnapshotInput {
   currentExecutorId?: string
   rootAgentId?: string
   now?: () => number
-  topologyRegistry?: EnterpriseTopologyRegistryStore
+  topologyRegistry?: LegacyTopologyRegistryStore
   registrySnapshot?: OrchestrationRegistrySnapshot
   loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot
   registryDependencies?: RegistryServiceDependencies
@@ -109,7 +112,7 @@ export interface BuildExecutionGraphSnapshotInput {
 
 interface SelectedTopologyGraph {
   graphSource: "workspace_draft" | "active_topology"
-  envelope: TopologyExportEnvelope
+  envelope: LegacyTopologyEnvelope
   issues: ExecutionGraphValidationIssue[]
 }
 
@@ -143,7 +146,7 @@ function topologyAgentId(topologyId: string, nodeId: string): string {
   return `${topologyId}:${nodeId}`
 }
 
-function nodeDisplayName(node: NodeContract): string {
+function nodeDisplayName(node: LegacyNode): string {
   return node.displayName?.trim() || node.name.trim() || node.id
 }
 
@@ -151,7 +154,7 @@ function metadataString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
-function nodeRole(node: NodeContract): string {
+function nodeRole(node: LegacyNode): string {
   const metadata = node.metadata ?? {}
   return (
     metadataString(metadata.roleName) ??
@@ -161,16 +164,16 @@ function nodeRole(node: NodeContract): string {
   )
 }
 
-function nodeExecutionCandidate(node: NodeContract): boolean {
+function nodeExecutionCandidate(node: LegacyNode): boolean {
   return node.status !== "archived" && node.status !== "inactive"
 }
 
-function relationExecutionCandidate(relation: EnterpriseRelation): boolean {
+function relationExecutionCandidate(relation: LegacyRelation): boolean {
   return relation.status !== "archived" && relation.status !== "inactive"
 }
 
 function relationNodeRefId(
-  relation: EnterpriseRelation,
+  relation: LegacyRelation,
   key: "from" | "to",
 ): string | undefined {
   const ref = (relation as unknown as Partial<Record<"from" | "to", unknown>>)[key]
@@ -181,7 +184,7 @@ function relationNodeRefId(
     : undefined
 }
 
-function activeTopologyRecords(records: EnterpriseTopologyRegistryRecord[]): EnterpriseTopologyRegistryRecord[] {
+function activeTopologyRecords(records: LegacyTopologyRegistryRecord[]): LegacyTopologyRegistryRecord[] {
   return records
     .filter((record) => record.status === "active" && record.activeVersion !== undefined)
     .sort((left, right) => left.topologyId.localeCompare(right.topologyId))
@@ -189,7 +192,7 @@ function activeTopologyRecords(records: EnterpriseTopologyRegistryRecord[]): Ent
 
 function selectTopologyGraph(input: {
   mode: ExecutionGraphBuildMode
-  registry: EnterpriseTopologyRegistryStore
+  registry: LegacyTopologyRegistryStore
 }): SelectedTopologyGraph | undefined {
   if (input.mode === "db_config") return undefined
 
@@ -256,8 +259,8 @@ function selectTopologyGraph(input: {
   return { graphSource: "active_topology", envelope, issues: [] }
 }
 
-function emptyTopologyEnvelope(record: EnterpriseTopologyRegistryRecord): TopologyExportEnvelope {
-  const topology: EnterpriseTopology = {
+function emptyTopologyEnvelope(record: LegacyTopologyRegistryRecord): LegacyTopologyEnvelope {
+  const topology: LegacyTopology = {
     schemaVersion: 1,
     entityType: "topology",
     id: record.topologyId,
@@ -307,7 +310,7 @@ function emptyTopologyEnvelope(record: EnterpriseTopologyRegistryRecord): Topolo
 }
 
 function projectTopologyAgents(input: {
-  envelope: TopologyExportEnvelope
+  envelope: LegacyTopologyEnvelope
   graphSource: "workspace_draft" | "active_topology"
 }): Record<string, ExecutorRuntimeProjection> {
   const topology = input.envelope.version.topology
@@ -408,7 +411,7 @@ function appendValidationIssue(input: {
   })
 }
 
-function relationChildIdsByParent(topology: EnterpriseTopology): Record<string, string[]> {
+function relationChildIdsByParent(topology: LegacyTopology): Record<string, string[]> {
   const result = new Map<string, Set<string>>()
   const nodeIds = new Set(topology.nodes.filter((node) => node.status !== "archived").map((node) => node.id))
   for (const relation of topology.relations) {
@@ -429,7 +432,7 @@ function relationChildIdsByParent(topology: EnterpriseTopology): Record<string, 
 }
 
 function appendChildrenRelationMismatchIssues(input: {
-  topology: EnterpriseTopology
+  topology: LegacyTopology
   topologyVersion: number
   issues: ExecutionGraphValidationIssue[]
 }): void {
@@ -488,7 +491,7 @@ function cycleEdgeIds(edges: ExecutionGraphEdgeProjection[]): Set<string> {
 }
 
 function markCycleEdges(input: {
-  topology: EnterpriseTopology
+  topology: LegacyTopology
   topologyVersion: number
   edges: ExecutionGraphEdgeProjection[]
   issues: ExecutionGraphValidationIssue[]
@@ -510,7 +513,7 @@ function markCycleEdges(input: {
 }
 
 function appendTopologyEdges(input: {
-  envelope: TopologyExportEnvelope
+  envelope: LegacyTopologyEnvelope
   agentsById: Record<string, ExecutorRuntimeProjection>
   rootAgentId: string
   edges: ExecutionGraphEdgeProjection[]
@@ -789,15 +792,24 @@ function buildTopologyExecutionGraphSnapshot(input: {
   currentExecutorId: string
   generatedAt: number
 }): ExecutionGraphSnapshot {
+  const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(input.selected.envelope)
+  const selected: SelectedTopologyGraph = {
+    ...input.selected,
+    envelope: adapted.envelope,
+    issues: [
+      ...input.selected.issues,
+      ...adapted.issues.map((issue): ExecutionGraphValidationIssue => ({ ...issue })),
+    ],
+  }
   const agentsById = projectTopologyAgents({
-    envelope: input.selected.envelope,
-    graphSource: input.selected.graphSource,
+    envelope: selected.envelope,
+    graphSource: selected.graphSource,
   })
   const edges: ExecutionGraphEdgeProjection[] = []
   const directChildren = new Map<string, Set<string>>()
-  const validationIssues = [...input.selected.issues]
+  const validationIssues = [...selected.issues]
   appendTopologyEdges({
-    envelope: input.selected.envelope,
+    envelope: selected.envelope,
     agentsById,
     rootAgentId: input.rootAgentId,
     edges,
@@ -805,12 +817,12 @@ function buildTopologyExecutionGraphSnapshot(input: {
     issues: validationIssues,
   })
   return finalizeSnapshot({
-    graphSource: input.selected.graphSource,
+    graphSource: selected.graphSource,
     generatedAt: input.generatedAt,
     rootAgentId: input.rootAgentId,
     currentExecutorId: input.currentExecutorId,
-    topologyId: input.selected.envelope.version.topologyId,
-    topologyVersion: input.selected.envelope.version.version,
+    topologyId: selected.envelope.version.topologyId,
+    topologyVersion: selected.envelope.version.version,
     agentsById,
     edges,
     directChildren,
@@ -866,7 +878,7 @@ export function buildExecutionGraphSnapshot(
   const rootAgentId = rootAgentIdFromInput(input)
   const currentExecutorId = input.currentExecutorId ?? rootAgentId
   const mode = input.mode ?? "workspace"
-  const topologyRegistry = input.topologyRegistry ?? createEnterpriseTopologyRegistry(
+  const topologyRegistry = input.topologyRegistry ?? createLegacyTopologyRegistry(
     input.now ? { now: input.now } : {},
   )
   const selectedTopology = selectTopologyGraph({ mode, registry: topologyRegistry })

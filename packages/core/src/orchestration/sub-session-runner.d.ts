@@ -1,4 +1,4 @@
-import { type SubAgentResultReview, type SubAgentResultReviewIssue } from "../agent/sub-agent-result-review.js";
+import { type ParentAggregationTrace, type SubAgentResultReview, type SubAgentResultReviewIssue } from "../agent/sub-agent-result-review.js";
 import { type AgentPromptBundle, type CommandRequest, type ErrorReport, type FeedbackRequest, type ModelExecutionSnapshot, type OrchestrationPlan, type ParallelSubSessionGroup, type ProgressEvent, type ResourceLockContract, type ResultReport, type ResultReportImpossibleReason, type SubSessionContract, type SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
 import { type MessageLedgerEventInput } from "../runs/message-ledger.js";
 import { type ModelAvailabilityDoctorSnapshot, type ModelExecutionAuditSummary, type ProviderModelCapability } from "./model-execution-policy.js";
@@ -19,6 +19,7 @@ export interface RunSubSessionInput {
     parentAgent?: SubSessionParentAgentSnapshot;
     parentSessionId: string;
     promptBundle: AgentPromptBundle;
+    /** @deprecated Legacy metadata only. This value must not terminate sub-session execution. */
     timeoutMs?: number;
     parentAbortSignal?: AbortSignal;
     providerModelMatrix?: ProviderModelCapability[];
@@ -39,6 +40,7 @@ export interface SubSessionRunOutcome {
     errorReport?: ErrorReport;
     review?: SubAgentResultReview;
     feedbackRequest?: FeedbackRequest;
+    parentAggregationTrace?: ParentAggregationTrace;
     integrationSuppressed?: boolean;
     suppressionReasonCode?: string;
     modelExecution?: ModelExecutionAuditSummary;
@@ -169,6 +171,12 @@ export interface SubSessionCascadeStopResult {
     affectedSubSessionIds: string[];
     reasonCode: "parent_run_cancelled";
 }
+export type VisibleTopologySubSessionGuardResult = {
+    ok: true;
+} | {
+    ok: false;
+    reasonCode: "topology_executor_id_required" | "system_preparation_user_result_blocked";
+};
 export declare const SUB_SESSION_STATUS_TRANSITIONS: Readonly<Record<SubSessionStatus, readonly SubSessionStatus[]>>;
 export declare class InvalidSubSessionStatusTransitionError extends Error {
     readonly from: SubSessionStatus;
@@ -183,6 +191,7 @@ export declare class InvalidSubSessionStatusTransitionError extends Error {
 export declare function canTransitionSubSessionStatus(from: SubSessionStatus, to: SubSessionStatus): boolean;
 export declare function transitionSubSessionStatus(subSession: SubSessionContract, status: SubSessionStatus, now: number): SubSessionContract;
 export declare function buildSubSessionContract(input: RunSubSessionInput): SubSessionContract;
+export declare function validateVisibleTopologySubSessionCommand(command: CommandRequest): VisibleTopologySubSessionGuardResult;
 export declare class ResourceLockManager {
     private readonly holders;
     canAcquire(locks: ResourceLockContract[]): {

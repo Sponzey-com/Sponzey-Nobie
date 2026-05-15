@@ -1,4 +1,4 @@
-import { type RecoveryBudgetUsage } from "./recovery-budget.js";
+import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { RecoveryRetryApplicationState } from "./retry-application.js";
 export interface FilesystemVerificationResult {
     ok: boolean;

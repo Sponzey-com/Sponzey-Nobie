@@ -56,10 +56,10 @@ export function scheduleDelayedRootRun(params, dependencies) {
                 const explicitProviderTarget = isExplicitProviderRouteTarget(params.preferredTarget);
                 const route = explicitProviderTarget
                     ? resolveRouteImpl({
-                    preferredTarget: params.preferredTarget,
-                    taskProfile: params.taskProfile,
-                    fallbackModel: params.model,
-                })
+                        preferredTarget: params.preferredTarget,
+                        taskProfile: params.taskProfile,
+                        fallbackModel: params.model,
+                    })
                     : { reason: "routing:no-explicit-provider-target" };
                 dependencies.logInfo("delayed run firing", {
                     jobId,

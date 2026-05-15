@@ -4,6 +4,23 @@
 
 - `runs`는 사용자 작업 실행 엔진입니다.
 
+## 현재 정리 기준
+
+- 모든 채널/WebUI/스케줄 진입점은 동일한 실행 결정 계약을 타야 한다.
+- 실행자 선택은 현재 에이전트의 direct child 후보와 execution decision trace를 기준으로 한다.
+- 컴파일된 기본 진입점, first node selection, 일반 요청의 provider direct fallback은 신규 실행 경로에 들어오면 안 된다.
+- child result는 즉시 최종 응답이 아니며 parent aggregation과 final validation을 거쳐야 한다.
+- retry/attempt/count는 실패 한도가 아니라 다른 전략을 찾기 위한 신호이다.
+- 일반 model/sub-session timeout은 업무 실패 조건으로 쓰지 않고, 큐/외부 도구/사용자 승인 timeout은 boundary timeout으로 분리한다.
+- raw user request를 keyword/regex로 읽어 실행자, 도구, 영역을 고르는 코드는 제거 대상이다.
+- 명시 provider target은 `decideExecutionRoute`의 explicit provider branch에서만 처리하며, 일반 root request fallback이나 topology runtime off fallback으로 쓰지 않는다.
+
+## 검증 게이트
+
+- 실행 결정, fallback, provider direct, child result aggregation, final validation 변경은 `pnpm run test:architecture:runtime`을 통과해야 한다.
+- default entry, keyword routing, retry/attempt 업무 실패 한도, provider direct fallback 같은 삭제된 개념은 `pnpm run test:architecture:static`으로 막는다.
+- prompt/source 문구가 실행 정책을 바꾸는 경우 `pnpm run test:architecture:prompts`를 함께 실행한다.
+
 ## 주요 파일
 
 - `start.ts`: root run 생성, request-group 큐 등록, intake/취소/clarification 분배, 승인, 복구, 완료 처리, 후속 오케스트레이션

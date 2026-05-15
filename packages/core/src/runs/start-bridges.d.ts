@@ -3,10 +3,11 @@ import type { LoopDirective } from "./loop-directive.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
 import type { buildScheduleRegistrationCancelledEvent, buildScheduleRegistrationCreatedEvent } from "../scheduler/lifecycle.js";
-import { runIntakeBridgePass, type DelegatedRunStartParams } from "./intake-bridge-pass.js";
+import { runIntakeBridgePass, type DelegatedRunStartParams, type DelegatedRunStartResult } from "./intake-bridge-pass.js";
 import type { ScheduleDelayedRunRequest } from "./action-execution.js";
 import type { TaskProfile } from "./types.js";
 import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
+import type { AIProvider } from "../ai/index.js";
 interface StartBridgeModuleDependencies {
     applyLoopDirective: typeof applyLoopDirective;
     runIntakeBridgePass: typeof runIntakeBridgePass;
@@ -35,13 +36,15 @@ export declare function runStartIntakeBridge(params: {
     sessionId: string;
     requestGroupId: string;
     model: string | undefined;
+    providerId?: string | undefined;
+    provider?: AIProvider | undefined;
     workDir: string;
     source: FinalizationSource;
     runId: string;
     onChunk: RunChunkDeliveryHandler | undefined;
     reuseConversationContext: boolean;
     scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void;
-    startDelegatedRun: (params: DelegatedRunStartParams) => void;
+    startDelegatedRun: (params: DelegatedRunStartParams) => void | DelegatedRunStartResult | Promise<void | DelegatedRunStartResult>;
 }, dependencies: {
     appendRunEvent: (runId: string, message: string) => void;
     updateRunSummary: (runId: string, summary: string) => void;

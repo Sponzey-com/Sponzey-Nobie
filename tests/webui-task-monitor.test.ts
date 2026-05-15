@@ -758,6 +758,69 @@ describe("webui task monitor helper", () => {
     expect(cards.map((card) => card.key)).toEqual(["new-task", "old-restored-task"])
   })
 
+  it("uses updated time only as a tie-breaker when request creation time is identical", () => {
+    const cards = buildTaskMonitorCards([
+      makeTask({
+        id: "same-created-old-update",
+        requestGroupId: "same-created-old-update",
+        anchorRunId: "run-same-created-old-update",
+        latestAttemptId: "run-same-created-old-update",
+        runIds: ["run-same-created-old-update"],
+        title: "먼저 갱신된 요청",
+        createdAt: 100,
+        updatedAt: 120,
+        attempts: [
+          {
+            id: "run-same-created-old-update",
+            taskId: "same-created-old-update",
+            requestGroupId: "same-created-old-update",
+            kind: "primary",
+            title: "먼저 갱신된 요청",
+            prompt: "먼저 갱신된 요청",
+            status: "running",
+            summary: "동일 생성 시각",
+            userVisible: true,
+            createdAt: 100,
+            updatedAt: 120,
+          },
+        ],
+      }),
+      makeTask({
+        id: "same-created-new-update",
+        requestGroupId: "same-created-new-update",
+        anchorRunId: "run-same-created-new-update",
+        latestAttemptId: "run-same-created-new-update",
+        runIds: ["run-same-created-new-update"],
+        title: "나중에 갱신된 요청",
+        createdAt: 100,
+        updatedAt: 180,
+        attempts: [
+          {
+            id: "run-same-created-new-update",
+            taskId: "same-created-new-update",
+            requestGroupId: "same-created-new-update",
+            kind: "primary",
+            title: "나중에 갱신된 요청",
+            prompt: "나중에 갱신된 요청",
+            status: "running",
+            summary: "동일 생성 시각",
+            userVisible: true,
+            createdAt: 100,
+            updatedAt: 180,
+          },
+        ],
+      }),
+    ], [
+      makeRun({ id: "run-same-created-old-update", requestGroupId: "same-created-old-update", prompt: "먼저 갱신된 요청", createdAt: 100, updatedAt: 120 }),
+      makeRun({ id: "run-same-created-new-update", requestGroupId: "same-created-new-update", prompt: "나중에 갱신된 요청", createdAt: 100, updatedAt: 180 }),
+    ], text)
+
+    expect(cards.map((card) => card.key)).toEqual([
+      "same-created-new-update",
+      "same-created-old-update",
+    ])
+  })
+
   it("keeps timeline ordering stable and hides diagnostic-only events in normal mode", () => {
     const cards = buildTaskMonitorCards([
       makeTask({

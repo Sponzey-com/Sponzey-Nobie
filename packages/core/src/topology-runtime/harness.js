@@ -270,30 +270,31 @@ function exportedToRoutingDecision(input) {
             activeTopologyCount: input.activeTopologyCount,
         };
     }
-    if (!input.exported.validationSnapshot.executable) {
+    const exported = input.exported;
+    if (!exported.validationSnapshot.executable) {
         return {
             mode: "fallback",
             reasonCode: "topology_validation_blocked",
             featureFlagMode: input.featureFlagMode,
-            explicitTopologyId: input.exported.topologyRecord.topologyId,
+            explicitTopologyId: exported.topologyRecord.topologyId,
             activeTopologyCount: input.activeTopologyCount,
-            issues: input.exported.validationSnapshot.validation.issues
+            issues: exported.validationSnapshot.validation.issues
                 .filter((issue) => issue.severity === "blocked" || issue.severity === "invalid")
                 .map((issue) => issue.reasonCode),
         };
     }
-    if (input.exported.compiledSnapshot === undefined) {
+    if (exported.compiledSnapshot === undefined) {
         return {
             mode: "fallback",
             reasonCode: "compiled_snapshot_missing",
             featureFlagMode: input.featureFlagMode,
-            explicitTopologyId: input.exported.topologyRecord.topologyId,
+            explicitTopologyId: exported.topologyRecord.topologyId,
             activeTopologyCount: input.activeTopologyCount,
         };
     }
-    const snapshot = input.exported.compiledSnapshot.snapshot;
+    const snapshot = exported.compiledSnapshot.snapshot;
     const entrySelection = selectEntryNodeFromExecutionDecision({
-        topologyId: input.exported.topologyRecord.topologyId,
+        topologyId: exported.topologyRecord.topologyId,
         snapshot,
         ...(input.executionDecision !== undefined ? { executionDecision: input.executionDecision } : {}),
     });
@@ -302,7 +303,7 @@ function exportedToRoutingDecision(input) {
             mode: "fallback",
             reasonCode: entrySelection.reasonCode,
             featureFlagMode: input.featureFlagMode,
-            explicitTopologyId: input.exported.topologyRecord.topologyId,
+            explicitTopologyId: exported.topologyRecord.topologyId,
             activeTopologyCount: input.activeTopologyCount,
             issues: entrySelection.issues,
         };
@@ -311,15 +312,15 @@ function exportedToRoutingDecision(input) {
         mode: "route",
         reasonCode: input.explicit ? "explicit_topology_target" : "execution_decision_selected_executor",
         featureFlagMode: input.featureFlagMode,
-        topologyId: input.exported.topologyRecord.topologyId,
-        topologyName: input.exported.topologyRecord.name,
-        topologyVersion: input.exported.version.version,
-        topologyVersionId: input.exported.version.versionId,
-        compiledTopologySnapshotId: input.exported.compiledSnapshot.snapshotId,
+        topologyId: exported.topologyRecord.topologyId,
+        topologyName: exported.topologyRecord.name,
+        topologyVersion: exported.version.version,
+        topologyVersionId: exported.version.versionId,
+        compiledTopologySnapshotId: exported.compiledSnapshot.snapshotId,
         entryNodeId: entrySelection.entryNodeId,
         entrySelection: entrySelection.selectionKind,
-        availableDirectChildExecutorIds: rootChildEntryNodeIds(input.exported.compiledSnapshot.snapshot)
-            .map((nodeId) => `${input.exported.topologyRecord.topologyId}:${nodeId}`),
+        availableDirectChildExecutorIds: rootChildEntryNodeIds(exported.compiledSnapshot.snapshot)
+            .map((nodeId) => `${exported.topologyRecord.topologyId}:${nodeId}`),
         ...(entrySelection.selectedExecutorId !== undefined
             ? { selectedExecutorId: entrySelection.selectedExecutorId }
             : {}),

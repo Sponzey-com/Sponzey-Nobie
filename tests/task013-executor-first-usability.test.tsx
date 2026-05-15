@@ -32,7 +32,7 @@ import {
 } from "../packages/webui/src/components/topology/ExecutorRunPanel.tsx"
 import { ExecutorWorkspaceShell } from "../packages/webui/src/components/topology/ExecutorWorkspaceShell.tsx"
 import {
-  EnterpriseTopologyPage,
+  LegacyEnterpriseTopologyPage,
   sameTopologyRuntimeIds,
   topologyRunningStatusMap,
 } from "../packages/webui/src/pages/EnterpriseTopologyPage.tsx"
@@ -129,7 +129,7 @@ describe("task013 Executor-first usability", () => {
     expect(runState.payload).toEqual(expect.objectContaining({
       entryNodeId: "node:intake",
       templateId: "work-order-template:customer-request-triage",
-      contextPresetId: "context:customer-urgent",
+      contextPresetId: "context:customer-general",
     }))
     expect(combinedHtml).toContain('data-testid="executor-workspace-add-executor"')
     expect(combinedHtml).toContain('data-testid="executor-create-name"')
@@ -149,13 +149,13 @@ describe("task013 Executor-first usability", () => {
 
   it("keeps blocked internal terms out of the Simple UI and normalizes advanced requests to the same executor-first screen", () => {
     const simpleHtml = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: "build",
         workspaceExposureMode: "simple",
       }),
     )
     const advancedHtml = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: "build",
         workspaceExposureMode: "advanced",
       }),

@@ -1,4 +1,6 @@
 import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, } from "./nobie-md.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 const EXPECTED_PROMPT_SOURCE_IDS = [
     "definitions",
     "identity",
@@ -205,11 +207,102 @@ function validateImpactScenarios(workDir, locales) {
     }
     return results;
 }
+function lineIsNegatedPolicy(line) {
+    const normalized = line.toLowerCase();
+    return [
+        "do not",
+        "don't",
+        "must not",
+        "never",
+        "not keyword",
+        "not a keyword",
+        "not failure",
+        "not terminal",
+        "not as failure",
+        "not a failure",
+        "no keyword",
+        "금지",
+        "하지 않는다",
+        "하지 않는다",
+        "하지 말",
+        "아니다",
+        "않는다",
+        "실패 조건이 아니",
+    ].some((marker) => normalized.includes(marker));
+}
+function lineIsRawKeywordRoutingInstruction(line) {
+    const normalized = line.toLowerCase();
+    if (lineIsNegatedPolicy(line))
+        return false;
+    return (/keyword(?:-based)?\s+(?:executor\s+)?routing/u.test(normalized) ||
+        /route\s+(?:executors?|requests?|domains?)\s+by\s+keyword/u.test(normalized) ||
+        /select\s+(?:executors?|agents?)\s+by\s+keyword/u.test(normalized) ||
+        /keyword\s+matching\s+(?:against|to choose|to select)/u.test(normalized) ||
+        /키워드\s*(?:라우팅|매칭)/u.test(line) ||
+        /문자열\s*(?:검색|매칭).*(?:실행자|에이전트|라우팅)/u.test(line));
+}
+function lineIsCountLimitFailureInstruction(line) {
+    const normalized = line.toLowerCase();
+    if (lineIsNegatedPolicy(line))
+        return false;
+    return (/(?:retry limit|max attempts|attempt limit|retry count|attempt count).{0,60}(?:fail|failure|terminal|stop|abort)/u.test(normalized) ||
+        /(?:fail|failure|terminal|stop|abort).{0,60}(?:retry limit|max attempts|attempt limit|retry count|attempt count)/u.test(normalized) ||
+        /(?:재시도|시도|횟수).{0,30}(?:실패|중단|종료)/u.test(line));
+}
+function validateAgentsPromptCompatibility(workDir, sources) {
+    const agentsPath = join(workDir, "AGENTS.md");
+    const agentsText = existsSync(agentsPath) ? readFileSync(agentsPath, "utf-8") : "";
+    const checks = [];
+    const enforcesNoKeywordRouting = /키워드\s+검색|keyword\s+search|keyword\s+routing|언어별\s+키워드/u.test(agentsText);
+    const enforcesCountSignals = /retry count|attempt count|횟수는|숫자 제한/u.test(agentsText);
+    if (enforcesNoKeywordRouting) {
+        const issues = sources.flatMap((source) => source.content
+            .split(/\n/u)
+            .filter(lineIsRawKeywordRoutingInstruction)
+            .map((line) => makeIssue({
+            severity: "error",
+            code: "raw_keyword_executor_routing_instruction",
+            sourceId: source.sourceId,
+            locale: source.locale,
+            message: "Prompt source conflicts with AGENTS.md by instructing raw keyword executor routing.",
+            evidence: line.trim(),
+        })));
+        checks.push({
+            id: "agents_no_raw_keyword_routing",
+            description: "AGENTS.md forbids natural-language keyword routing, so prompt sources must not reintroduce it.",
+            ok: issues.length === 0,
+            allowedSourceIds: [],
+            issues,
+        });
+    }
+    if (enforcesCountSignals) {
+        const issues = sources.flatMap((source) => source.content
+            .split(/\n/u)
+            .filter(lineIsCountLimitFailureInstruction)
+            .map((line) => makeIssue({
+            severity: "error",
+            code: "count_limit_terminal_instruction",
+            sourceId: source.sourceId,
+            locale: source.locale,
+            message: "Prompt source conflicts with AGENTS.md by treating retry/attempt counts as terminal failure.",
+            evidence: line.trim(),
+        })));
+        checks.push({
+            id: "agents_count_signals_not_terminal",
+            description: "AGENTS.md treats retry/attempt counts as alternative-search signals, not terminal failure.",
+            ok: issues.length === 0,
+            allowedSourceIds: [],
+            issues,
+        });
+    }
+    return checks;
+}
 export function runPromptSourceRegression(workDir = process.cwd(), options = {}) {
     const locales = options.locales?.length ? options.locales : ["en"];
     const sources = loadPromptSourceRegistry(workDir);
     const localeParity = checkPromptSourceLocaleParity(workDir);
     const responsibility = validateResponsibilities(sources);
+    const policyCompatibility = validateAgentsPromptCompatibility(workDir, sources);
     const impact = validateImpactScenarios(workDir, locales);
     const issues = [
         ...validateRegistryCompleteness(sources, locales),
@@ -221,6 +314,7 @@ export function runPromptSourceRegression(workDir = process.cwd(), options = {})
             message: issue.message,
         })),
         ...responsibility.flatMap((result) => result.issues),
+        ...policyCompatibility.flatMap((result) => result.issues),
         ...impact.flatMap((scenario) => scenario.missingMarkers.map((marker) => makeIssue({
             severity: "error",
             code: "impact_marker_missing",
@@ -247,6 +341,7 @@ export function runPromptSourceRegression(workDir = process.cwd(), options = {})
         },
         localeParity,
         responsibility,
+        policyCompatibility,
         impact,
         issues,
     };

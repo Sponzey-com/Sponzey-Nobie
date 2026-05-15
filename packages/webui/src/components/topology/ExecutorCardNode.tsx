@@ -1,12 +1,7 @@
 import * as React from "react"
 import type { ExecutorDraft, ExecutorRuntimeMode } from "../../lib/executor-graph"
+import type { ExecutorCardResourceChip } from "../../lib/executor-graph-viewmodel"
 import { useUiI18n } from "../../lib/ui-i18n"
-
-export interface ExecutorCardResourceChip {
-  id: string
-  label: string
-  kind: "tool" | "system" | "data"
-}
 
 export type ExecutorCardExecutionStatus =
   | "planning"
@@ -57,6 +52,34 @@ export function executorRuntimeStatusCopy(mode: ExecutorRuntimeMode): ExecutorRu
   }
 }
 
+export function selectExecutorCardCapabilities(
+  summary: string,
+  capabilities: readonly string[],
+): string[] {
+  const normalizedSummary = normalizeExecutorCardText(summary)
+  const seen = new Set<string>()
+  const visible: string[] = []
+  for (const capability of capabilities) {
+    const trimmed = capability.trim()
+    const normalized = normalizeExecutorCardText(trimmed)
+    if (!trimmed || !normalized) continue
+    if (normalized === normalizedSummary) continue
+    if (normalized.includes(normalizedSummary) || normalizedSummary.includes(normalized)) {
+      if (normalized.length > 16) continue
+    }
+    if (normalized.length > 36) continue
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    visible.push(trimmed)
+    if (visible.length >= 3) break
+  }
+  return visible
+}
+
+function normalizeExecutorCardText(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
 export function ExecutorCardNode({
   executor,
   resources = [],
@@ -86,7 +109,7 @@ export function ExecutorCardNode({
 }) {
   const { text } = useUiI18n()
   const summary = executor.description.trim() || text("하는 일이 아직 정리되지 않았습니다.", "Work is not described yet.")
-  const capabilities = executor.inferredCapabilities.slice(0, 3)
+  const capabilities = selectExecutorCardCapabilities(summary, executor.inferredCapabilities)
   const roleName = executor.executorProfile?.roleName?.trim()
 
   return (
@@ -177,7 +200,11 @@ export function ExecutorCardNode({
       {capabilities.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노비가 이해한 내용", "What Nobie understood")}>
           {capabilities.map((capability) => (
-            <span key={capability} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800">
+            <span
+              key={capability}
+              className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800"
+              data-testid="executor-card-capability"
+            >
               {capability}
             </span>
           ))}

@@ -78,6 +78,24 @@ describe("task008 simple inspector and advanced isolation", () => {
     expect(html).not.toContain("nobie")
   })
 
+  it("shows duplicate executor names as invalid before saving", () => {
+    const graph = graphFixture()
+    const duplicate = {
+      ...graph.executors[1]!,
+      name: graph.executors[0]!.name,
+    }
+    const html = renderToStaticMarkup(
+      createElement(ExecutorInspector, {
+        executor: duplicate,
+        graph: { ...graph, executors: [graph.executors[0]!, duplicate] },
+      }),
+    )
+
+    expect(html).toContain('data-testid="executor-inspector-duplicate-name"')
+    expect(html).toContain("이미 사용 중인 이름입니다")
+    expect(html).toContain('aria-invalid="true"')
+  })
+
   it("keeps advanced executor mapping controls out of the selected executor card", () => {
     const graph = graphFixture()
     const executor = {

@@ -430,6 +430,70 @@ export function applyEnterpriseTopologyGuiCommands(draft, commands, options = {}
         layoutChanged,
     };
 }
+export function previewEnterpriseTopologyGuiOperation(operation) {
+    if (operation.op === "createNode") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.nodeId,
+            summary: `Create node ${operation.nodeId}`,
+        };
+    }
+    if (operation.op === "updateNode") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.nodeId,
+            summary: `Update node ${operation.nodeId}`,
+        };
+    }
+    if (operation.op === "moveNode") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.nodeId,
+            summary: `Move node ${operation.nodeId}`,
+        };
+    }
+    if (operation.op === "deleteNode") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.nodeId,
+            summary: `Archive node ${operation.nodeId}`,
+        };
+    }
+    if (operation.op === "createRelation") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.relationId,
+            summary: `Create ${operation.relationType} relation ${operation.from.id} -> ${operation.to.id}`,
+        };
+    }
+    if (operation.op === "updateRelation") {
+        return {
+            operationId: operation.operationId,
+            op: operation.op,
+            targetId: operation.relationId,
+            summary: `Update relation ${operation.relationId}`,
+        };
+    }
+    return {
+        operationId: operation.operationId,
+        op: operation.op,
+        targetId: operation.relationId,
+        summary: `Archive relation ${operation.relationId}`,
+    };
+}
+export function buildEnterpriseTopologyQuickFixOperationPlan(input) {
+    return {
+        quickFixId: input.quickFixId,
+        label: input.label,
+        operations: [...input.operations],
+        preview: input.operations.map((operation) => previewEnterpriseTopologyGuiOperation(operation)),
+    };
+}
 export function createGuiDraftOperationId(prefix, at = Date.now()) {
     return `${prefix}:${at}:${Math.random().toString(36).slice(2, 10)}`;
 }

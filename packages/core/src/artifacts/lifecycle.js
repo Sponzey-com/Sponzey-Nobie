@@ -19,11 +19,15 @@ const PREVIEWABLE_MIME_TYPES = new Set([
     "text/markdown",
     "application/json",
 ]);
+export const DEFAULT_CHANNEL_FILE_SIZE_LIMIT_BYTES = 100 * 1024 * 1024;
 export const CHANNEL_FILE_SIZE_LIMIT_BYTES = {
     webui: 100 * 1024 * 1024,
     telegram: 50 * 1024 * 1024,
     slack: 1024 * 1024 * 1024,
 };
+export function getChannelFileSizeLimitBytes(channel) {
+    return CHANNEL_FILE_SIZE_LIMIT_BYTES[channel] ?? DEFAULT_CHANNEL_FILE_SIZE_LIMIT_BYTES;
+}
 export const ARTIFACT_THUMBNAIL_POLICY = {
     webui: "not_generated",
     telegram: "not_generated",

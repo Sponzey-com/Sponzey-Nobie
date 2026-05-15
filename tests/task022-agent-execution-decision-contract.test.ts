@@ -78,6 +78,8 @@ describe("task022 agent execution decision contract", () => {
       "return_to_parent",
       "root_nobie_direct",
       "explicit_provider",
+      "explicit_provider_target",
+      "boundary_failure",
       "nobie_direct",
       "ask_parent",
       "ask_user",

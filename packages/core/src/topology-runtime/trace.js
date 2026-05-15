@@ -2,7 +2,12 @@ import { ENTERPRISE_TOPOLOGY_SCHEMA_VERSION, } from "../contracts/enterprise-top
 import { getDb } from "../db/index.js";
 import { assertMigrationWriteAllowed } from "../db/migration-safety.js";
 import { listObservedTopologyEdges, listTopologyGapFindings, projectTopologyRunMetricsDaily, } from "../topology/metrics.js";
+import { attachExecutorFailureEvidence, buildExecutorTraceEventPayload, } from "../topology/executor-observability.js";
 export function createNodeRuntimeTraceEvent(input) {
+    const payload = buildExecutorTraceEventPayload({
+        workOrder: input.workOrder,
+        ...(input.payload !== undefined ? { payload: input.payload } : {}),
+    });
     return {
         schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
         traceEventId: `trace:${input.workOrder.topologyRunId}:${input.nodeRunId}:${input.sequence}`,
@@ -15,7 +20,7 @@ export function createNodeRuntimeTraceEvent(input) {
         component: input.component ?? "node-runtime",
         at: input.at,
         reasonCode: input.reasonCode ?? `node_runtime_${input.state}`,
-        ...(input.payload !== undefined ? { payload: structuredClone(input.payload) } : {}),
+        ...(payload !== undefined ? { payload: structuredClone(payload) } : {}),
     };
 }
 export function tracePhaseForNodeRuntimeState(state) {
@@ -375,12 +380,18 @@ export function recordTopologyRuntimeExecution(input) {
            report_json = excluded.report_json`).run(report.resultReportId, report.topologyRunId, report.nodeRunId, report.workOrderId, report.nodeId, report.status, jsonString(report), timestampToNumber(report.createdAt, finishedAt));
         }
         if (result.failureReport !== undefined) {
+            const failureWorkOrder = workOrderRecords.find((record) => record.workOrder.workOrderId === result.failureReport?.workOrderId)?.workOrder;
+            const failureReport = attachExecutorFailureEvidence({
+                failureReport: result.failureReport,
+                ...(failureWorkOrder ? { workOrder: failureWorkOrder } : {}),
+                traceEvents: result.traceEvents,
+            });
             db.prepare(`INSERT INTO topology_failure_reports
          (failure_report_id, topology_run_id, node_run_id, work_order_id, node_id, failure_phase, report_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(failure_report_id) DO UPDATE SET
            failure_phase = excluded.failure_phase,
-           report_json = excluded.report_json`).run(result.failureReport.failureReportId, result.failureReport.topologyRunId, result.failureReport.nodeRunId, result.failureReport.workOrderId, result.failureReport.nodeId, failurePhaseFor({ failureReport: result.failureReport, traceEvents: result.traceEvents }), jsonString(result.failureReport), timestampToNumber(result.failureReport.createdAt, finishedAt));
+           report_json = excluded.report_json`).run(failureReport.failureReportId, failureReport.topologyRunId, failureReport.nodeRunId, failureReport.workOrderId, failureReport.nodeId, failurePhaseFor({ failureReport, traceEvents: result.traceEvents }), jsonString(failureReport), timestampToNumber(failureReport.createdAt, finishedAt));
         }
         result.traceEvents.forEach((event, index) => {
             db.prepare(`INSERT INTO topology_trace_events

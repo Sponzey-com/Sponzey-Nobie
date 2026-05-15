@@ -96,6 +96,17 @@ export interface RuntimeManifestReleasePackage {
     releaseVersion: string | null;
     requiredMissingCount: number | null;
 }
+export interface RuntimeManifestAdminUi {
+    enabled: boolean;
+    configEnabled: boolean;
+    runtimeFlagEnabled: boolean;
+    envEnabled: boolean;
+    cliEnabled: boolean;
+    localDevScriptEnabled: boolean;
+    productionMode: boolean;
+    subscriptionCount: number;
+    reason: string;
+}
 export interface RuntimeManifest {
     kind: "nobie.runtime.manifest";
     version: 1;
@@ -125,6 +136,7 @@ export interface RuntimeManifest {
     };
     memory: RuntimeManifestMemory;
     releasePackage: RuntimeManifestReleasePackage;
+    adminUi: RuntimeManifestAdminUi;
     rollout: RolloutSafetySnapshot;
     paths: {
         stateDir: string;

@@ -48,6 +48,7 @@ import {
   chooseRecoveryAlternative,
 } from "../packages/core/src/runs/recovery-controller.ts"
 import {
+  RECOVERY_STRATEGY_CHANGE_AXES,
   createRecoveryStrategyLedger,
   recordRecoveryStrategyAttempt,
   type RecoveryStrategyKey,
@@ -496,6 +497,15 @@ describe("phase021 executor graph runtime contracts", () => {
   })
 
   it("rejects repeating the same recovery strategy key and allows changed strategy keys", () => {
+    expect(RECOVERY_STRATEGY_CHANGE_AXES).toEqual([
+      "executor",
+      "tool_or_source",
+      "decomposition",
+      "prompt_context",
+      "verification_method",
+      "permission_or_user_confirmation",
+    ])
+
     const ledger = createRecoveryStrategyLedger()
     const key = strategyKey({ toolIds: ["tool:shell"], inputShapeHash: "input:a" })
     const first = recordRecoveryStrategyAttempt({

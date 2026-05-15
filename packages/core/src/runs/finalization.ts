@@ -15,6 +15,109 @@ import type { RunStatus, RunStepStatus } from "./types.js"
 
 export type FinalizationSource = ChannelSource
 
+export type FinalValidationMode = "general" | "current_fact"
+export type FinalValidationScope = "parent_finalizer"
+export type FinalValidationValueConfidence =
+  | "verified"
+  | "candidate"
+  | "unverified"
+  | "conflict"
+
+export interface FinalValidationRequiredValue {
+  valueId: string
+  label: string
+  required: boolean
+}
+
+export interface FinalValidationObservedValue {
+  valueId: string
+  label?: string
+  value?: string
+  unit?: string
+  confidence: FinalValidationValueConfidence
+  sourceId?: string
+  sourceLabel?: string
+  sourceUrl?: string
+  sourceDomain?: string
+  sourceTimestamp?: string | null
+  fetchTimestamp?: string | null
+  basisTime?: string | null
+  conflicts?: string[]
+}
+
+export interface FinalValidationMissingValue {
+  valueId: string
+  label: string
+  reasonCode: string
+}
+
+export interface FinalValidationSourceRef {
+  sourceId: string
+  sourceLabel?: string
+  sourceUrl?: string
+  sourceDomain?: string
+  sourceTimestamp?: string | null
+  fetchTimestamp?: string | null
+  reliability?: string
+  role?: string
+  status?: string
+}
+
+export interface FinalValidationConflict {
+  valueId?: string
+  summary: string
+  sourceIds?: string[]
+  selectionBasis?: string
+}
+
+export interface FinalValidationInput {
+  mode: FinalValidationMode
+  validationScope?: FinalValidationScope
+  requiredValues?: FinalValidationRequiredValue[]
+  observedValues?: FinalValidationObservedValue[]
+  missingValues?: FinalValidationMissingValue[]
+  sourceList?: FinalValidationSourceRef[]
+  sourceTimestamps?: string[]
+  conflicts?: FinalValidationConflict[]
+  reasonCodes?: string[]
+  basisTime?: string | null
+  recoveryAvailable?: boolean
+  safeAlternativesExhausted?: boolean
+}
+
+export type FinalValidationStatus =
+  | "ready"
+  | "needs_recovery"
+  | "limited_failure_allowed"
+
+export interface FinalValidationTrace {
+  mode: FinalValidationMode
+  validationScope: FinalValidationScope
+  requiredValues: FinalValidationRequiredValue[]
+  observedValues: FinalValidationObservedValue[]
+  missingValues: FinalValidationMissingValue[]
+  sourceList: FinalValidationSourceRef[]
+  sourceTimestamps: string[]
+  conflicts: FinalValidationConflict[]
+  reasonCodes: string[]
+  basisTime?: string | null
+  recoveryAvailable: boolean
+  safeAlternativesExhausted: boolean
+}
+
+export interface FinalValidationDecision {
+  status: FinalValidationStatus
+  finalDeliveryAllowed: boolean
+  reasonCodes: string[]
+  summary: string
+  trace: FinalValidationTrace
+}
+
+export interface FinalizationOutcome {
+  status: "completed" | "blocked_by_final_validation"
+  finalValidation?: FinalValidationDecision
+}
+
 export interface AwaitingUserParams {
   preview: string
   summary: string
@@ -47,6 +150,178 @@ export interface FinalizationDependencies {
   deliveryDependencies?: NonNullable<
     Parameters<typeof emitAssistantTextDelivery>[0]["dependencies"]
   >
+}
+
+function nonEmpty(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized ? normalized : undefined
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => nonEmpty(value)).filter((value): value is string => Boolean(value)))]
+}
+
+function deriveMissingRequiredValues(input: FinalValidationInput): FinalValidationMissingValue[] {
+  const explicitMissing = input.missingValues ?? []
+  const explicitlyMissingValueIds = new Set(explicitMissing.map((value) => value.valueId))
+  const observedVerified = new Set(
+    (input.observedValues ?? [])
+      .filter((value) => value.confidence === "verified")
+      .map((value) => value.valueId),
+  )
+  const derivedMissing = (input.requiredValues ?? [])
+    .filter((value) =>
+      value.required &&
+      !observedVerified.has(value.valueId) &&
+      !explicitlyMissingValueIds.has(value.valueId)
+    )
+    .map((value) => ({
+      valueId: value.valueId,
+      label: value.label,
+      reasonCode: "required_value_not_observed",
+    }))
+  const byKey = new Map<string, FinalValidationMissingValue>()
+  for (const item of [...explicitMissing, ...derivedMissing]) {
+    byKey.set(`${item.valueId}:${item.reasonCode}`, item)
+  }
+  return [...byKey.values()]
+}
+
+function currentFactSourceIssues(input: FinalValidationInput): string[] {
+  if (input.mode !== "current_fact") return []
+  const issues: string[] = []
+  const sourceIds = new Set((input.sourceList ?? []).map((source) => source.sourceId))
+  for (const value of input.observedValues ?? []) {
+    if (value.confidence !== "verified") continue
+    if (!value.sourceId && !value.sourceUrl && !value.sourceDomain && !value.sourceLabel) {
+      issues.push(`missing_source_reference:${value.valueId}`)
+      continue
+    }
+    if (value.sourceId && sourceIds.size > 0 && !sourceIds.has(value.sourceId)) {
+      issues.push(`source_not_in_trace:${value.valueId}:${value.sourceId}`)
+    }
+    if (!value.sourceTimestamp && !value.fetchTimestamp && !value.basisTime && !input.basisTime) {
+      issues.push(`missing_basis_time:${value.valueId}`)
+    }
+  }
+  if ((input.observedValues ?? []).some((value) => value.confidence === "verified") && (input.sourceList ?? []).length === 0) {
+    issues.push("missing_source_list")
+  }
+  return uniqueStrings(issues)
+}
+
+export function validateAndFinalize(input: FinalValidationInput): FinalValidationDecision {
+  const requiredValues = input.requiredValues ?? []
+  const observedValues = input.observedValues ?? []
+  const missingValues = deriveMissingRequiredValues(input)
+  const sourceList = input.sourceList ?? []
+  const observedSourceTimestamps = observedValues.flatMap((value) => [
+    value.sourceTimestamp ?? undefined,
+    value.fetchTimestamp ?? undefined,
+    value.basisTime ?? undefined,
+  ])
+  const sourceTimestamps = uniqueStrings([
+    ...(input.sourceTimestamps ?? []),
+    ...sourceList.flatMap((source) => [source.sourceTimestamp ?? undefined, source.fetchTimestamp ?? undefined]),
+    ...observedSourceTimestamps,
+    input.basisTime ?? undefined,
+  ])
+  const observedConflicts: FinalValidationConflict[] = observedValues.flatMap((value) =>
+    (value.conflicts ?? []).map((summary) => ({
+      valueId: value.valueId,
+      summary,
+      ...(value.sourceId ? { sourceIds: [value.sourceId] } : {}),
+    })),
+  )
+  const conflicts = [...(input.conflicts ?? []), ...observedConflicts]
+  const sourceIssues = currentFactSourceIssues(input)
+  const safeAlternativesExhausted = input.safeAlternativesExhausted === true
+  const hasValidationIssue =
+    missingValues.length > 0 || conflicts.length > 0 || sourceIssues.length > 0
+  const recoveryAvailable =
+    input.recoveryAvailable === true || (hasValidationIssue && !safeAlternativesExhausted)
+  const baseReasonCodes = uniqueStrings([
+    ...(input.reasonCodes ?? []),
+    ...missingValues.map((value) => value.reasonCode),
+    ...conflicts.map(() => "source_conflict"),
+    ...sourceIssues,
+  ])
+
+  let status: FinalValidationStatus = "ready"
+  let finalDeliveryAllowed = true
+  const needsRecovery =
+    recoveryAvailable &&
+    hasValidationIssue
+  if (needsRecovery) {
+    status = "needs_recovery"
+    finalDeliveryAllowed = false
+  } else if (hasValidationIssue) {
+    status = "limited_failure_allowed"
+  }
+
+  const reasonCodes = uniqueStrings([
+    ...baseReasonCodes,
+    status === "ready" ? "final_validation_ready" : undefined,
+    status === "needs_recovery" ? "final_validation_requires_recovery" : undefined,
+    status === "limited_failure_allowed" ? "safe_alternatives_exhausted" : undefined,
+  ])
+  const trace: FinalValidationTrace = {
+    mode: input.mode,
+    validationScope: input.validationScope ?? "parent_finalizer",
+    requiredValues,
+    observedValues,
+    missingValues,
+    sourceList,
+    sourceTimestamps,
+    conflicts,
+    reasonCodes,
+    ...(input.basisTime ? { basisTime: input.basisTime } : {}),
+    recoveryAvailable,
+    safeAlternativesExhausted,
+  }
+  const summary = finalDeliveryAllowed
+    ? status === "ready"
+      ? "최종 검증을 통과했습니다."
+      : "안전한 대체 경로가 소진되어 제한된 최종 설명을 허용합니다."
+    : "필수 값, 출처, 충돌 검증이 끝나지 않아 최종 전달을 보류합니다."
+
+  return {
+    status,
+    finalDeliveryAllowed,
+    reasonCodes,
+    summary,
+    trace,
+  }
+}
+
+export class ValidateAndFinalize {
+  decide(input: FinalValidationInput): FinalValidationDecision {
+    return validateAndFinalize(input)
+  }
+}
+
+function recordFinalValidationEvaluation(params: {
+  runId: string
+  sessionId: string
+  source: FinalizationSource
+  decision: FinalValidationDecision
+}): void {
+  recordMessageLedgerEvent({
+    runId: params.runId,
+    sessionKey: params.sessionId,
+    channel: params.source,
+    eventKind: "final_validation_evaluated",
+    deliveryKind: "final",
+    idempotencyKey: `final-validation:${params.runId}:${params.decision.status}`,
+    status: params.decision.finalDeliveryAllowed ? "succeeded" : "pending",
+    summary: params.decision.summary,
+    detail: {
+      status: params.decision.status,
+      finalDeliveryAllowed: params.decision.finalDeliveryAllowed,
+      reasonCodes: params.decision.reasonCodes,
+      trace: params.decision.trace,
+    },
+  })
 }
 
 export function markRunCompleted(params: {
@@ -98,8 +373,43 @@ export async function completeRunWithAssistantMessage(params: {
   onChunk: RunChunkDeliveryHandler | undefined
   suppressFinalDelivery?: boolean
   suppressFinalDeliveryReasonCode?: string
+  finalValidation?: FinalValidationInput
   dependencies: FinalizationDependencies
-}): Promise<void> {
+}): Promise<FinalizationOutcome> {
+  if (params.finalValidation) {
+    const finalValidation = validateAndFinalize(params.finalValidation)
+    recordFinalValidationEvaluation({
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      decision: finalValidation,
+    })
+    if (!finalValidation.finalDeliveryAllowed) {
+      params.dependencies.setRunStepStatus(
+        params.runId,
+        "reviewing",
+        "running",
+        finalValidation.summary,
+      )
+      params.dependencies.setRunStepStatus(
+        params.runId,
+        "finalizing",
+        "pending",
+        "최종 전달 전 검증이 보류되었습니다.",
+      )
+      params.dependencies.updateRunStatus(params.runId, "running", finalValidation.summary, true)
+      params.dependencies.appendRunEvent(
+        params.runId,
+        `final_validation_blocked:${finalValidation.reasonCodes.join("+")}`,
+      )
+      return { status: "blocked_by_final_validation", finalValidation }
+    }
+    params.dependencies.appendRunEvent(
+      params.runId,
+      `final_validation_${finalValidation.status}:${finalValidation.reasonCodes.join("+")}`,
+    )
+  }
+
   if (params.text && params.suppressFinalDelivery) {
     const reasonCode =
       params.suppressFinalDeliveryReasonCode ?? "child_result_parent_aggregation_required"
@@ -155,6 +465,7 @@ export async function completeRunWithAssistantMessage(params: {
     reviewingSummary: params.text || "응답을 정리했습니다.",
     dependencies: params.dependencies,
   })
+  return { status: "completed", ...(params.finalValidation ? { finalValidation: validateAndFinalize(params.finalValidation) } : {}) }
 }
 
 export async function emitStandaloneAssistantMessage(params: {

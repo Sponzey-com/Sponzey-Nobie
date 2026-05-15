@@ -1,6 +1,8 @@
 import { authMiddleware } from "../middleware/auth.js";
 import { stopActiveSlackChannel } from "../../channels/slack/runtime.js";
 import { stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
+import { stopDiscordRuntime } from "../../channels/discord/runtime.js";
+import { stopGoogleChatRuntime } from "../../channels/google-chat/runtime.js";
 import { testMcpServerConnection, testSkillPath } from "../../control-plane/setup-extensions.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { resolveAIConnection } from "../../ai/index.js";
@@ -164,6 +166,8 @@ export function registerSetupRoute(app) {
     app.post("/api/setup/reset", { preHandler: authMiddleware }, async () => {
         stopActiveSlackChannel();
         stopActiveTelegramChannel();
+        stopDiscordRuntime();
+        stopGoogleChatRuntime();
         return resetSetupEnvironment();
     });
     app.post("/api/setup/complete", { preHandler: authMiddleware }, async () => {

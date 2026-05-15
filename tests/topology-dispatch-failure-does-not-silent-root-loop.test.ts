@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type { OrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
-import type { DelegatedTaskDispatchResult } from "../packages/core/src/runs/orchestration-dispatch.js"
+import type { AgentRegistryEntry } from "../packages/core/src/orchestration/registry.js"
+import {
+  type DelegatedTaskDispatchResult,
+  validateDispatchToChildExecutorInput,
+} from "../packages/core/src/runs/orchestration-dispatch.ts"
 import { resolveTopologyDispatchFollowupDecision } from "../packages/core/src/runs/topology-dispatch-fallback.ts"
 
 function orchestrationPlan(agentIds = ["workspace:draft:node:finance"]): OrchestrationPlan {
@@ -80,7 +84,58 @@ function failedDispatch(agentId = "workspace:draft:node:finance"): DelegatedTask
   }
 }
 
+function topologyAgent(agentId = "workspace:draft:node:finance"): AgentRegistryEntry {
+  return {
+    agentId,
+    displayName: "행랑아범",
+    status: "enabled",
+    role: "finance worker",
+    specialtyTags: [],
+    avoidTasks: [],
+    teamIds: [],
+    delegationEnabled: true,
+    source: "topology",
+  } as AgentRegistryEntry
+}
+
 describe("topology dispatch failure follow-up", () => {
+  it("blocks topology child dispatch unless a validated executor decision selected the target", () => {
+    const task = orchestrationPlan().delegatedTasks[0]
+    const agent = topologyAgent()
+    const taskWithoutDecision = { ...task }
+    delete taskWithoutDecision.planningTrace
+
+    const withoutDecision = validateDispatchToChildExecutorInput({
+      task: taskWithoutDecision,
+      agent,
+    })
+    expect(withoutDecision).toMatchObject({
+      ok: false,
+      reasonCode: "validated_execution_decision_required",
+    })
+
+    const mismatchedDecision = validateDispatchToChildExecutorInput({
+      task: {
+        ...task,
+        planningTrace: {
+          selectedExecutorId: "workspace:draft:node:research",
+          reasonCodes: ["execution_decision_selected_executor"],
+        },
+      },
+      agent,
+    })
+    expect(mismatchedDecision).toMatchObject({
+      ok: false,
+      reasonCode: "validated_execution_decision_executor_mismatch",
+    })
+
+    const validated = validateDispatchToChildExecutorInput({ task, agent })
+    expect(validated).toMatchObject({
+      ok: true,
+      selectedExecutorId: "workspace:draft:node:finance",
+    })
+  })
+
   it("turns a failed topology dispatch into explicit self solve instead of silent root-loop fallback", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: failedDispatch(),

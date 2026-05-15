@@ -13,10 +13,11 @@ import {
   migrateEnterpriseTopologyToExecutorTopologyV2,
   validateExecutorTopologyV2,
 } from "../packages/core/src/topology/executor-topology-v2.ts"
-import type {
-  EnterpriseTopologyRegistryStore,
-  TopologyExportEnvelope,
-} from "../packages/core/src/topology/registry.ts"
+import {
+  legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
+  type LegacyTopologyEnvelope,
+  type LegacyTopologyRegistryStore,
+} from "../packages/core/src/topology/legacy-enterprise-topology-adapter.ts"
 
 const now = Date.UTC(2026, 4, 8, 14, 0, 0)
 
@@ -130,8 +131,8 @@ function topology(input: {
   }
 }
 
-function registryWithActiveTopology(sourceTopology: EnterpriseTopology): EnterpriseTopologyRegistryStore {
-  const envelope: TopologyExportEnvelope = {
+function registryWithActiveTopology(sourceTopology: EnterpriseTopology): LegacyTopologyRegistryStore {
+  const envelope: LegacyTopologyEnvelope = {
     topologyRecord: {
       topologyId: sourceTopology.id,
       name: sourceTopology.name,
@@ -270,5 +271,59 @@ describe("EnterpriseTopology V1 to ExecutorTopologyV2 migration", () => {
     expect(loaded.topology?.edges.map((edge) => edge.id)).toEqual(["edge:relation:lead-worker"])
     expect(JSON.stringify(loaded.topology)).not.toContain("tool:web-research")
     expect(JSON.stringify(loaded.topology)).not.toContain('"workspace":')
+  })
+
+  it("adapts a V1 envelope into an executor-only compatibility projection for runtime reads", () => {
+    const sourceTopology = topology({
+      relations: [
+        relation({
+          id: "relation:lead-worker",
+          relationType: "delegates_to",
+          from: { entityType: "node", id: "node:lead" },
+          to: { entityType: "node", id: "node:worker" },
+        }),
+      ],
+      parentChildren: ["node:ghost"],
+    })
+    const sourceEnvelope = registryWithActiveTopology(sourceTopology).exportTopology(sourceTopology.id)
+    expect(sourceEnvelope).not.toBeNull()
+
+    const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(sourceEnvelope!)
+    const runtimeTopology = adapted.envelope.version.topology
+    const lead = runtimeTopology.nodes.find((candidate) => candidate.id === "node:lead")
+
+    expect(runtimeTopology).not.toBe(sourceTopology)
+    expect(runtimeTopology.metadata?.executorTopologyV2).toMatchObject({
+      sourceOfTruth: "executor_topology_v2",
+      migrationSource: "legacy_enterprise_topology_adapter",
+      sourceTopologyVersion: 7,
+      sourceVersionId: "workspace:draft@7",
+    })
+    expect(runtimeTopology.teams).toEqual([])
+    expect(runtimeTopology.tools).toEqual([])
+    expect(runtimeTopology.systems).toEqual([])
+    expect(lead?.children).toEqual([])
+    expect(lead?.allowedToolIds).toEqual([])
+    expect(runtimeTopology.relations.map((edge) => ({
+      relationType: edge.relationType,
+      from: edge.from,
+      to: edge.to,
+    }))).toEqual([{
+      relationType: "delegates_to",
+      from: { entityType: "node", id: "node:lead" },
+      to: { entityType: "node", id: "node:worker" },
+    }])
+    expect(adapted.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "children_relation_mismatch",
+        severity: "warning",
+      }),
+      expect.objectContaining({
+        code: "executor_topology_v2_legacy_children_ignored",
+        severity: "info",
+      }),
+    ]))
+    expect(JSON.stringify(runtimeTopology)).not.toContain("tool:web-research")
+    expect(JSON.stringify(runtimeTopology)).not.toContain("team:legacy")
   })
 })

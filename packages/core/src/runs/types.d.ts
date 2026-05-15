@@ -1,4 +1,5 @@
 import type { OrchestrationMode, OrchestrationPlan, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
+import type { ChannelSource } from "../channels/contracts.js";
 export type RunStatus = "queued" | "running" | "awaiting_approval" | "awaiting_user" | "completed" | "failed" | "cancelled" | "interrupted";
 export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type RunContextMode = "full" | "isolated" | "request_group" | "handoff";
@@ -14,7 +15,7 @@ export interface RootRun {
     handoffSummary?: string;
     title: string;
     prompt: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     status: RunStatus;
     taskProfile: TaskProfile;
     targetId?: string;

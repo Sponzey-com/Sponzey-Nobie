@@ -4,7 +4,9 @@ import { validateAgentConfig, validateTeamConfig, } from "../contracts/sub-agent
 import { deleteTeamConfig, disableAgentConfig, getAgentConfig, getDb, getTeamConfig, listAgentConfigs, listAgentRelationships, listAgentTeamMemberships, listTeamConfigs, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
 import { resolveAgentCapabilityModelSummary, } from "./capability-model.js";
 import { normalizeLegacyAgentConfigRow, normalizeLegacyTeamConfigRow, } from "./config-normalization.js";
-import { createEnterpriseTopologyRegistry } from "../topology/registry.js";
+import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
+export const EXECUTOR_PROFILE_SCHEMA_VERSION = 1;
+export const EXECUTOR_PROFILE_METADATA_KEY = "executorProfile";
 const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
 const COLD_REGISTRY_TARGET_P95_MS = 500;
 const HOT_INDEX_TARGET_P95_MS = 100;
@@ -12,8 +14,6 @@ const TEAM_RECALCULATION_KEYS = [
     "task008.skill_mcp_binding_recalculated",
     "task009.model_state_recalculated",
 ];
-export const EXECUTOR_PROFILE_SCHEMA_VERSION = 1;
-export const EXECUTOR_PROFILE_METADATA_KEY = "executorProfile";
 const HOT_CAPABILITY_INDEX_CACHE = new Map();
 function uniqueStrings(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())))];
@@ -208,7 +208,7 @@ function topologyAgentCapabilityTags(node) {
     ]);
 }
 function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
-    const registry = createEnterpriseTopologyRegistry();
+    const registry = createLegacyTopologyRegistry();
     return registry
         .listTopologies()
         .filter((topology) => topology.status !== "archived")
@@ -216,7 +216,8 @@ function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
         const exported = registry.exportTopology(topologyRecord.topologyId);
         if (!exported)
             return [];
-        return exported.version.topology.nodes
+        const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported);
+        return adapted.envelope.version.topology.nodes
             .filter((node) => node.status !== "archived")
             .map((node) => {
             const agentId = topologyAgentId(topologyRecord.topologyId, node.id);
@@ -284,6 +285,81 @@ function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
             };
         });
     });
+}
+function topologyRelationRefId(relation, key) {
+    const ref = relation[key];
+    return ref?.entityType === "node" && typeof ref.id === "string" && ref.id.trim()
+        ? ref.id
+        : undefined;
+}
+function topologyHierarchyProjections() {
+    const registry = createLegacyTopologyRegistry();
+    const diagnostics = [];
+    const edges = [];
+    const seenEdgeIds = new Set();
+    for (const topologyRecord of registry
+        .listTopologies()
+        .filter((topology) => topology.status !== "archived")
+        .sort((a, b) => a.topologyId.localeCompare(b.topologyId))) {
+        const exported = registry.exportTopology(topologyRecord.topologyId);
+        if (!exported)
+            continue;
+        const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported);
+        const topology = adapted.envelope.version.topology;
+        const topologyVersion = adapted.envelope.version.version;
+        for (const issue of adapted.issues) {
+            diagnostics.push({
+                code: issue.code,
+                severity: issue.severity,
+                message: issue.message,
+                ...(issue.agentId ? { agentId: issue.agentId } : {}),
+                ...(issue.parentAgentId ? { parentAgentId: issue.parentAgentId } : {}),
+                ...(issue.childAgentId ? { childAgentId: issue.childAgentId } : {}),
+            });
+        }
+        const nodesById = new Map(topology.nodes
+            .filter((node) => node.status !== "archived")
+            .map((node) => [node.id, node]));
+        for (const relation of topology.relations) {
+            if (relation.status === "archived")
+                continue;
+            if (relation.relationType !== "delegates_to")
+                continue;
+            const fromNodeId = topologyRelationRefId(relation, "from");
+            const toNodeId = topologyRelationRefId(relation, "to");
+            if (!fromNodeId || !toNodeId) {
+                diagnostics.push({
+                    code: "topology_relation_endpoint_missing",
+                    severity: "invalid",
+                    message: `${topologyRecord.topologyId}@${topologyVersion} relation ${relation.id} is missing a node from/to endpoint.`,
+                });
+                continue;
+            }
+            if (!nodesById.has(fromNodeId) || !nodesById.has(toNodeId)) {
+                diagnostics.push({
+                    code: "topology_relation_endpoint_missing",
+                    severity: "invalid",
+                    message: `${topologyRecord.topologyId}@${topologyVersion} relation ${relation.id} references a missing node endpoint.`,
+                    parentAgentId: topologyAgentId(topologyRecord.topologyId, fromNodeId),
+                    childAgentId: topologyAgentId(topologyRecord.topologyId, toNodeId),
+                });
+                continue;
+            }
+            const edgeId = `topology:${topologyRecord.topologyId}:${relation.id}`;
+            if (seenEdgeIds.has(edgeId))
+                continue;
+            seenEdgeIds.add(edgeId);
+            edges.push({
+                parentAgentId: topologyAgentId(topologyRecord.topologyId, fromNodeId),
+                childAgentId: topologyAgentId(topologyRecord.topologyId, toNodeId),
+                edgeId,
+                relationshipStatus: relation.status,
+                source: "topology_relation",
+                sortOrder: edges.length,
+            });
+        }
+    }
+    return { edges, diagnostics };
 }
 function tableFingerprint(tableName) {
     try {
@@ -384,6 +460,16 @@ function relationshipFromRow(row) {
 function activeRelationships() {
     return listAgentRelationships({ status: "active" }).map(relationshipFromRow);
 }
+function agentRelationshipHierarchyProjections() {
+    return activeRelationships().map((relationship) => ({
+        parentAgentId: relationship.parentAgentId,
+        childAgentId: relationship.childAgentId,
+        edgeId: relationship.edgeId,
+        relationshipStatus: relationship.status,
+        source: "agent_relationship",
+        sortOrder: relationship.sortOrder,
+    }));
+}
 function directChildBlockedReasons(agent, rootAgentId, agentsById, active) {
     if (!agent)
         return ["missing_agent"];
@@ -391,8 +477,6 @@ function directChildBlockedReasons(agent, rootAgentId, agentsById, active) {
     if (agent.status !== "enabled")
         reasons.push(`agent_${agent.status}`);
     if (agent.agentId === rootAgentId)
-        return uniqueStrings(reasons);
-    if (agent.source === "topology")
         return uniqueStrings(reasons);
     const parentByChild = new Map(active.map((relationship) => [relationship.childAgentId, relationship]));
     let cursor = agent.agentId;
@@ -419,21 +503,38 @@ function directChildBlockedReasons(agent, rootAgentId, agentsById, active) {
     return uniqueStrings(reasons);
 }
 function buildHierarchySnapshot(input) {
-    const active = activeRelationships();
+    const topologyProjection = topologyHierarchyProjections();
+    const relationshipEdges = [
+        ...agentRelationshipHierarchyProjections(),
+        ...topologyProjection.edges,
+    ];
+    const linkedChildIds = new Set(relationshipEdges.map((relationship) => relationship.childAgentId));
+    const rootFallbackEdges = [...input.agentsById.values()]
+        .filter((agent) => agent.agentId !== input.rootAgentId && !linkedChildIds.has(agent.agentId))
+        .map((agent, index) => ({
+        parentAgentId: input.rootAgentId,
+        childAgentId: agent.agentId,
+        edgeId: `${agent.source}-root:${agent.agentId}`,
+        relationshipStatus: "fallback",
+        source: "unparented_root",
+        sortOrder: index,
+    }));
+    const active = [...relationshipEdges, ...rootFallbackEdges];
     const directChildren = [];
     const directChildrenByParent = new Map();
-    const diagnostics = [];
-    const appendDirectChild = (parentAgentId, childAgentId, edgeId, relationshipStatus) => {
-        const agent = input.agentsById.get(childAgentId);
+    const diagnostics = [...topologyProjection.diagnostics];
+    const appendDirectChild = (edge) => {
+        const agent = input.agentsById.get(edge.childAgentId);
         const reasonCodes = directChildBlockedReasons(agent, input.rootAgentId, input.agentsById, active);
-        const children = directChildrenByParent.get(parentAgentId) ?? [];
-        children.push(childAgentId);
-        directChildrenByParent.set(parentAgentId, children);
+        const children = directChildrenByParent.get(edge.parentAgentId) ?? [];
+        children.push(edge.childAgentId);
+        directChildrenByParent.set(edge.parentAgentId, children);
         directChildren.push({
-            parentAgentId,
-            childAgentId,
-            edgeId,
-            relationshipStatus,
+            parentAgentId: edge.parentAgentId,
+            childAgentId: edge.childAgentId,
+            edgeId: edge.edgeId,
+            relationshipStatus: edge.relationshipStatus,
+            source: edge.source,
             executionCandidate: reasonCodes.length === 0,
             reasonCodes,
         });
@@ -441,23 +542,17 @@ function buildHierarchySnapshot(input) {
             diagnostics.push({
                 code: reasonCode,
                 severity: reasonCode === "missing_agent" || reasonCode === "cycle_detected" ? "invalid" : "warning",
-                message: `${parentAgentId} direct child ${childAgentId} is blocked by ${reasonCode}.`,
-                parentAgentId,
-                childAgentId,
-                agentId: childAgentId,
+                message: `${edge.parentAgentId} direct child ${edge.childAgentId} is blocked by ${reasonCode}.`,
+                parentAgentId: edge.parentAgentId,
+                childAgentId: edge.childAgentId,
+                agentId: edge.childAgentId,
             });
         }
     };
     for (const relationship of active.sort((left, right) => left.parentAgentId.localeCompare(right.parentAgentId) ||
         left.sortOrder - right.sortOrder ||
         left.edgeId.localeCompare(right.edgeId))) {
-        appendDirectChild(relationship.parentAgentId, relationship.childAgentId, relationship.edgeId, relationship.status);
-    }
-    const linkedChildIds = new Set(active.map((relationship) => relationship.childAgentId));
-    for (const agent of [...input.agentsById.values()].sort((a, b) => a.agentId.localeCompare(b.agentId))) {
-        if (agent.source !== "topology" || linkedChildIds.has(agent.agentId))
-            continue;
-        appendDirectChild(input.rootAgentId, agent.agentId, `topology-root:${agent.agentId}`, "fallback");
+        appendDirectChild(relationship);
     }
     const directChildrenRecord = {};
     for (const [parentAgentId, childIds] of directChildrenByParent.entries()) {

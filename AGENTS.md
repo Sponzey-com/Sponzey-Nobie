@@ -219,7 +219,19 @@
 - 실행하지 못한 검증은 이유와 남은 위험을 남겼다.
 - 사용자가 이해할 수 있는 결과, 변경 파일, 검증 결과를 간결하게 보고했다.
 
-## 13. 응답 규칙
+## 13. Architecture Cleanup Gate
+
+아키텍처 정리, prompt/source 문서 정리, 레거시 경로 제거, 토폴로지/위임/복구 정책 변경은 다음 검증 묶음을 기준으로 삼는다.
+
+- `pnpm run test:architecture:static`: source-of-truth 문서, 삭제된 routing 개념, critical-decision audit, direct-child 계약을 확인한다.
+- `pnpm run test:architecture:runtime`: current-agent fallback, child result aggregation, final validation, direct child-channel delivery 금지를 확인한다.
+- `pnpm run test:architecture:webui`: 기본 topology UI가 ExecutorGraph 중심이고 EnterpriseTopology V1/WorkOrder/manual run/compile preview를 노출하지 않는지 확인한다.
+- `pnpm run test:architecture:prompts`: AGENTS.md와 runtime prompt source가 위임, 자체 처리, 복구, 완료 정책에서 충돌하지 않는지 확인한다.
+- `pnpm run test:architecture:generated`: TypeScript 원본과 core source compatibility artifact가 동기화되어 있는지 확인한다.
+
+이 suite가 실패하면 해당 실패는 단순 테스트 실패가 아니라 아키텍처 정책 회귀로 본다. 테스트 기대값이 오래된 경우에도 현재 지향점에 맞는 정책 테스트로 갱신해야 하며, 레거시 동작을 보존하기 위해 기대값을 되돌리지 않는다.
+
+## 14. 응답 규칙
 
 - 한국어 요청에는 한국어로 답한다.
 - 구현을 마쳤으면 핵심 변경과 검증 결과를 먼저 말한다.

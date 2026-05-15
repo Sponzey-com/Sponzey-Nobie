@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import type { DbSchedule } from "../db/index.js";
 type ScheduleLineageSource = Pick<DbSchedule, "id" | "name" | "target_channel" | "target_session_id" | "origin_run_id" | "origin_request_group_id">;
 export interface ScheduleRunLineage {
@@ -17,7 +18,7 @@ export interface ScheduleRegistrationCreatedEvent {
     registrationKind: "one_time" | "recurring";
     title: string;
     task: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     scheduleText: string;
     scheduleId?: string;
     runAtMs?: number;

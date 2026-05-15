@@ -48,3 +48,4 @@ export interface RuntimeBuildStatusInput {
 export declare function getGatewayProcessStartTimeMs(): number;
 export declare function buildRuntimeBuildStatus(input?: RuntimeBuildStatusInput): RuntimeBuildStatus;
 export declare function getRuntimeBuildStatus(now?: Date): RuntimeBuildStatus;
+//# sourceMappingURL=build-status.d.ts.map

@@ -1,9 +1,11 @@
 import type { NobieConfig } from "../config/types.js";
-export type ChannelSmokeChannel = "webui" | "telegram" | "slack";
+import type { ChannelSource } from "./contracts.js";
+export type ChannelSmokeChannel = ChannelSource;
 export type ChannelSmokeRunMode = "dry-run" | "live-run";
 export type ChannelSmokeScenarioKind = "basic_query" | "approval_required_tool" | "artifact_delivery" | "failure_tool";
+export type ChannelSmokeReleaseGateMode = "automated" | "fixture" | "manual";
 export type ChannelSmokeStatus = "passed" | "failed" | "skipped";
-export type ChannelSmokeCorrelationKey = "webui_run_id" | "telegram_chat_thread" | "slack_thread";
+export type ChannelSmokeCorrelationKey = "webui_run_id" | "telegram_chat_thread" | "slack_thread" | "channel_thread";
 export type ChannelSmokeArtifactMode = "native_file" | "download_link" | "inline_preview" | "local_path_markdown";
 export interface ChannelSmokeScenario {
     id: string;
@@ -18,6 +20,8 @@ export interface ChannelSmokeScenario {
     expectsApproval?: boolean;
     expectsArtifact?: boolean;
     expectsFailure?: boolean;
+    expectsUnsupportedCapability?: boolean;
+    releaseGate: ChannelSmokeReleaseGateMode;
 }
 export interface ChannelSmokeReadiness {
     ready: boolean;
@@ -42,6 +46,12 @@ export interface ChannelSmokeApprovalTrace {
     uiVisible?: boolean;
     uiKind?: "button" | "text_fallback" | "inline" | "none";
 }
+export interface ChannelSmokeCapabilityFallbackTrace {
+    capability: string;
+    receiptStatus: "unsupported_capability" | "fallback_used";
+    userVisible: boolean;
+    message?: string;
+}
 export interface ChannelSmokeRequestFlowTrace {
     runId?: string;
     requestGroupId?: string;
@@ -58,6 +68,7 @@ export interface ChannelSmokeTrace {
     toolCalls?: ChannelSmokeToolTrace[];
     approval?: ChannelSmokeApprovalTrace;
     artifacts?: ChannelSmokeArtifactTrace[];
+    capabilityFallbacks?: ChannelSmokeCapabilityFallbackTrace[];
     finalText?: string;
     auditLogId?: string;
     skipped?: boolean;

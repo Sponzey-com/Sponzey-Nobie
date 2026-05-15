@@ -6,6 +6,13 @@ import {
   formatRecoveryBudgetProgress,
   getRecoveryBudgetState,
 } from "../packages/core/src/runs/recovery-budget.ts"
+import {
+  normalizeFailureReason,
+} from "../packages/core/src/runs/execution-policy.ts"
+import {
+  recordQueueRecoveryAttempt,
+  resetQueueBackpressureState,
+} from "../packages/core/src/runs/queue-backpressure.ts"
 
 describe("run recovery budget helpers", () => {
   it("keeps recovery kinds unbounded by fixed retry count", () => {
@@ -60,5 +67,51 @@ describe("run recovery budget helpers", () => {
       kind: "execution",
       maxDelegationTurns: 5,
     })).toBe(true)
+  })
+
+  it("treats legacy count reports as recovery signals unless the user set the limit", () => {
+    expect(normalizeFailureReason({ reason: "max_attempts_reached" })).toEqual({
+      kind: "recovery_signal",
+      reason: "count_signal_observed",
+      originalReason: "max_attempts_reached",
+    })
+    expect(normalizeFailureReason({
+      reason: "max_attempts_reached",
+      explicitUserLimit: true,
+    })).toEqual({
+      kind: "terminal",
+      reason: "explicit_user_limit_reached",
+    })
+  })
+
+  it("keeps boundary timeouts as recovery signals rather than task failure", () => {
+    expect(normalizeFailureReason({ reason: "model_timeout" })).toEqual({
+      kind: "recovery_signal",
+      reason: "model_timeout",
+      originalReason: "model_timeout",
+    })
+    expect(normalizeFailureReason({ reason: "queue_timeout" })).toEqual({
+      kind: "recovery_signal",
+      reason: "boundary_timeout",
+      originalReason: "queue_timeout",
+    })
+  })
+
+  it("records queue recovery attempts as unbounded signals", () => {
+    resetQueueBackpressureState()
+
+    const first = recordQueueRecoveryAttempt({
+      queueName: "tool_execution",
+      recoveryKey: "tool:lookup",
+      reason: "queue_timeout",
+    })
+    const second = recordQueueRecoveryAttempt({
+      queueName: "tool_execution",
+      recoveryKey: "tool:lookup",
+      reason: "queue_timeout",
+    })
+
+    expect(first).toMatchObject({ allowed: true, signalCount: 1 })
+    expect(second).toMatchObject({ allowed: true, signalCount: 2 })
   })
 })

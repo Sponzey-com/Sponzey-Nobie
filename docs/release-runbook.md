@@ -39,15 +39,17 @@ Platform binaries are optional on a single-host local release build, but must be
 5. Run automated tests: `pnpm test`.
 6. Run Phase 022 execution decision regression gate: `pnpm run test:phase022`.
 7. Run Phase 027 topology delegation/runtime cleanup gate: `pnpm run test:phase027`.
-8. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
-9. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
-10. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
-11. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-12. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
-13. Run channel smoke dry-run: `pnpm run smoke:channels`.
-14. Build Yeonjang packages for each target OS.
-15. Generate release manifest and checksum files: `pnpm run release:package`.
-16. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+8. Run architecture cleanup gate: `pnpm run test:architecture`.
+9. Review dead-code cleanup evidence in `.tasks/dead-code-candidates.md` and confirm no immediate-delete candidate remains in production source.
+10. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
+11. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
+12. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
+13. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+14. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
+15. Run channel smoke dry-run: `pnpm run smoke:channels`.
+16. Build Yeonjang packages for each target OS.
+17. Generate release manifest and checksum files: `pnpm run release:package`.
+18. Run at least one live channel smoke and one Yeonjang smoke before public publish.
 
 ## Execution Decision Regression Gate
 
@@ -67,6 +69,41 @@ The phase gate is split into:
 - `pnpm run test:phase027:webui`: runtime inspector and topology trace display.
 
 Release smoke must also confirm that a fresh channel request records no deleted entry-selection route reason, does not use provider direct when a matching direct child exists, and does not produce a model-timeout sub-session failure.
+
+## Architecture Cleanup Gate
+
+Before release, `pnpm run test:architecture` must pass. This gate binds the cleanup plan to executable evidence across source boundaries, runtime behavior, WebUI defaults, prompt bundles, and generated compatibility artifacts.
+
+The architecture gate is split into:
+
+- `pnpm run test:architecture:static`: Clean Architecture boundaries, deleted routing concepts, direct-child execution contracts, and critical-decision audit coverage.
+- `pnpm run test:architecture:runtime`: current-agent fallback, execution trace, child result aggregation, final validation, and no direct child-channel delivery.
+- `pnpm run test:architecture:webui`: default topology UI stays executor-graph first and excludes EnterpriseTopology V1, WorkOrder/manual run, compile preview, and raw internal ids from basic surfaces.
+- `pnpm run test:architecture:prompts`: prompt source registry, prompt bundle assembly, AGENTS/prompt policy alignment, and no raw keyword/count-limit instruction regressions.
+- `pnpm run test:architecture:generated`: TypeScript source and `packages/core/src` compatibility artifacts are synchronized.
+
+Release checklist:
+
+- No compiled default entry, first-node selection, or default-entry route is reintroduced.
+- No ordinary request falls through to provider direct execution without an explicit provider target.
+- No raw keyword or regex executor routing is introduced in code or prompts.
+- Retry, attempt, delegation-turn, queue-retry, and timeout counts are not terminal business failure limits.
+- EnterpriseTopology V1, WorkOrder/manual run, compile preview, and advanced route controls are absent from the default topology UI.
+- Child results return to the parent/requesting agent and are not delivered directly to the user channel.
+- Runtime Inspector and persisted trace agree on selected executor, fallback, aggregation, and finalizer state.
+- Prompt bundles and `AGENTS.md` express the same delegation, self-solve, recovery, and completion policy.
+- DB migration dry-run and backup rehearsal remain release blockers before public publish.
+
+## Dead Code Cleanup Gate
+
+Before release, `.tasks/dead-code-candidates.md` must be current. Immediate-delete items may be removed only when source references, package exports, tests, dynamic/runtime entry points, and generated artifacts have been checked. Public API, DB schema, compatibility adapters, and legacy/admin diagnostic surfaces must be deprecated or migrated in separate tasks instead of being deleted as part of opportunistic cleanup.
+
+The cleanup gate must preserve the current product direction:
+
+- ExecutorGraph/Topology V2 remains the runtime source of truth.
+- Deleted routing concepts such as compiled default entry, keyword executor selection, provider-direct fallback, legacy follow-up auto attach, and attempt-count failure limits must not re-enter runtime behavior.
+- Tests-only production exports should move to test helpers before deletion when they are still needed by regression coverage.
+- Generated artifacts under `packages/core/src` must be synchronized from TypeScript source changes with `pnpm run core:sync-src-artifacts` and verified by `tests/generated-artifact-consistency.test.ts`.
 
 ## Channel Release Gate
 
@@ -162,7 +199,7 @@ Topology rollback checks:
 - Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
 - Removed surface rollback check: open `/advanced/topology?mode=resources`, `/advanced/topology?ux=advanced`, and `/advanced/topology?ux=developer&mode=build`; each must stay on the simple Executor Graph surface without Resources, Compile Preview, JSON/YAML, Developer tools, relation toolbar, Run Target, or advanced inspector settings.
 - Rollback evidence must record which area failed: Simple UX regression, removed advanced surface regression, or runtime routing regression.
-- Rollback evidence must also include `nobie.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=enterprise_topology`.
+- Rollback evidence must also include `nobie.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=executor_topology_v2`.
 
 Executor evidence audit checks:
 
@@ -212,6 +249,33 @@ Before enabling topology execution for a user DB, preserve history and materiali
 6. Do not physically delete old topology versions or run history unless the user explicitly requests DB initialization or physical cleanup.
 7. Run `pnpm run test:phase026:db` and confirm Runtime Inspector shows topology schema `v2` and a materialization source such as `executor_topology_v2_materialized_read_model`.
 8. Restart the local stack and run WebUI save/reload plus channel smoke before live validation.
+
+### Topology V2 Dry-Run Report Contract
+
+`previewExecutorTopologyV2RegistryMigration` is the required dry-run boundary for V1 to V2 cleanup. It must not append, activate, delete, compact, or rewrite registry state. Treat the report as release evidence, not as a migration side effect.
+
+The report must show:
+
+- `writePlanned=false` and `destructiveChangesPlanned=false`.
+- `backupRequired=true`, `rollbackSupported=true`, and `approvalRequiredForDestructiveChanges=true`.
+- Removed fields: legacy enterprise extension fields, stale node caches, non-delegation relation fields, and projection-only metadata that will be omitted from the V2 source read model.
+- Transformed fields: executor nodes and `delegates_to` relations that become V2 nodes and edges.
+- Preserved fields: topology identity, node identity/definition, topology version/history tables, compiled/validation snapshots, root runs, sub-sessions, orchestration events, and topology trace tables.
+- Warnings for invalid V2 validation or unrepairable migration issues.
+
+Removed fields in this report mean “not written into the V2 source model.” They do not mean physical DB deletion. Physical deletion of old versions, trace evidence, run history, or legacy columns requires a separate explicit administrative cleanup task with a verified backup and user confirmation.
+
+### Topology V2 Rollback Boundary
+
+Rollback must prefer version activation over physical restore when the only change is a newly materialized topology version.
+
+1. Stop writers.
+2. Record current active topology id/version, compiled snapshot id, and validation snapshot id.
+3. Restore the previous active version with `rollbackTopologyVersion(topologyId, targetVersion)`.
+4. Confirm the compiled snapshot matches the restored version hash.
+5. Keep old V1 rows and all runtime traces as audit evidence.
+6. Use full backup restore only when registry rollback cannot recover the incident.
+7. After rollback, run WebUI topology reload and a channel smoke request before enabling live traffic.
 
 ## Restore Rehearsal
 

@@ -9,6 +9,19 @@ set "PID_FILE=%PIDS_DIR%\yeonjang-windows.pid"
 set "LOG_FILE=%LOGS_DIR%\yeonjang-windows.log"
 set "BINARY_NAME=nobie-yeonjang.exe"
 set "REPO_TARGET_DIR=%ROOT_DIR%\Yeonjang\target"
+set "RESTART_YEONJANG=0"
+
+:parse_args
+if "%~1"=="" goto args_done
+if /I "%~1"=="--restart" (
+  set "RESTART_YEONJANG=1"
+  shift
+  goto parse_args
+)
+echo Usage: scripts\start-yeonjang-windows.bat [--restart]
+exit /b 1
+
+:args_done
 
 if "%YEONJANG_PROFILE%"=="" (
   set "PROFILE=release"
@@ -50,6 +63,10 @@ if not exist "%BINARY_PATH%" (
   exit /b 1
 )
 
+if "%RESTART_YEONJANG%"=="1" (
+  echo Restarting the Yeonjang GUI...
+)
+
 call :stop_existing
 break > "%LOG_FILE%"
 
@@ -78,6 +95,7 @@ echo   PID  : %STARTED_PID%
 echo   Log  : %LOG_FILE%
 echo   Target : %TARGET_DIR%
 echo   Stop : scripts\stop-yeonjang-windows.bat
+echo   Restart : scripts\start-yeonjang-windows.bat --restart
 exit /b 0
 
 :resolve_binary_path

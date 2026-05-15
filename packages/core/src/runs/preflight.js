@@ -42,8 +42,9 @@ function resolveContextPlanMemoryScopes(input) {
     const scopes = new Set(["short-term", "flash-feedback"]);
     if (input.executionSemantics)
         scopes.add("task");
-    if (input.runScope === "analysis" || input.executionSemantics?.artifactDelivery === "direct")
+    if (input.runScope === "analysis" || input.executionSemantics?.artifactDelivery === "direct") {
         scopes.add("artifact");
+    }
     scopes.add("long-term");
     return [...scopes];
 }

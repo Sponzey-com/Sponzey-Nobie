@@ -4,6 +4,15 @@ This policy defines how the current agent interprets and executes the visible ex
 
 ---
 
+## Runtime Usage
+
+- Owner: topology executor graph interpretation, visible edge delegation, child return, count-signal recovery, and cancellation policy.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly, agent prompt bundles, and execution harness policy blocks.
+- It owns graph meaning and prompt-level delegation guidance. Runtime code validates direct-child scope, edge existence, schema shape, permission boundary, and cancellation state.
+
+---
+
 ## Visible Node Rule
 
 - A visible executor node represents user-facing work that can be planned, delegated, executed, traced, and cancelled.

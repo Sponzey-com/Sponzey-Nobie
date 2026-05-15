@@ -11,7 +11,7 @@ import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusa
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import { resolveTopologyRootRunRouting, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
-import { type AgentExecutionDecision } from "../orchestration/execution-decision-contract.js";
+import type { AgentExecutionDecision } from "../orchestration/execution-decision-contract.js";
 export type StartPlanRequestIsolation = "root" | "continuation";
 export type StartPlanContinuationSource = "new_root" | "explicit_request_group" | "explicit_force_request_group" | "explicit_id" | "explicit_contract_comparison" | "explicit_contract_clarification";
 export interface StartPlan {

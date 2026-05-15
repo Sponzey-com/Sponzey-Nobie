@@ -4,6 +4,15 @@ This file covers only completion decisions.
 
 ---
 
+## Runtime Usage
+
+- Owner: parent aggregation, completion review, final validation, and delivery readiness checks.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly, agent prompt bundles, and execution-finalization policy context.
+- It must not define channel routing, tool selection, or executor selection rules except by referencing their owning policy files.
+
+---
+
 ## Completion Criteria
 
 - Declare completion only when there is an actual result or a clear impossible-reason result.
@@ -37,6 +46,14 @@ This file covers only completion decisions.
 - Final answers that used delegated work must distinguish confirmed facts from unverified items and unresolved issues.
 - Current or externally retrieved facts must include verification method, source reference, and source time when available.
 - If an item remains unverified after safe alternatives are exhausted, say that explicitly as the parent's final synthesis rather than presenting the child report as complete.
+
+## Final Validation Gate
+
+- Before final delivery, build a final validation input containing required values, observed values, missing values, source list, source timestamps, conflicts, basis time, and whether safe alternatives remain.
+- Current/latest/market/legal/schedule facts may be delivered only when every required value is verified from a concrete source, or when all safe alternatives are exhausted and the answer is explicitly framed as limited.
+- Missing required values, source conflicts, or source-less current facts are recovery conditions while safe alternatives remain. They are not final answers.
+- Child result review and parent final validation have different responsibilities. Child review decides whether a child report can be integrated; parent final validation decides whether the user-facing final answer can be delivered.
+- If final validation blocks delivery, continue with an alternative source, another eligible child, self-processing inside the current agent's allowed tools, or user confirmation according to the parent aggregation decision.
 
 ---
 

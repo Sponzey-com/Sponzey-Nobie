@@ -4,6 +4,15 @@ This file covers only tool selection and execution rules. Completion rules follo
 
 ---
 
+## Runtime Usage
+
+- Owner: tool preflight, capability binding, permission boundary, and tool-result handling.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly, agent prompt bundles, and execution harness policy blocks.
+- It must not choose executors by natural-language keywords. Executor suitability belongs to the execution decision prompt and is validated by hierarchy contracts.
+
+---
+
 ## Tool Selection Rules
 
 - For actionable requests, execute with a tool that passes preflight for the requested target, permission boundary, input shape, and delivery channel instead of only explaining.

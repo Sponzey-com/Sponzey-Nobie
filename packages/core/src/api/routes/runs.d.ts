@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
+import type { ChannelSource } from "../../channels/contracts.js";
 import { type FocusResolveSuccess } from "../../orchestration/command-workspace.js";
 export declare function startLocalRun(params: {
     message: string;
     sessionId: string | undefined;
     model: string | undefined;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     focusResolution?: FocusResolveSuccess | undefined;
 }): Promise<{
     focus?: {
@@ -25,7 +26,7 @@ export declare function startLocalRun(params: {
     requestId: string;
     runId: string;
     sessionId: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     status: "started";
     receipt: string;
 }>;

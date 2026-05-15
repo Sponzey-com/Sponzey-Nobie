@@ -14,14 +14,17 @@ import {
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import * as React from "react"
-import type { EnterpriseRelation, EnterpriseTopology } from "../../contracts/enterprise-topology"
 import {
-  buildExecutorGraphFromEnterpriseTopology,
-  type ExecutorConnectionDraft,
   type ExecutorDraft,
   type ExecutorGraphWorkspace,
-  type ExecutorSectionDraft,
 } from "../../lib/executor-graph"
+import {
+  buildExecutorGraphCanvasModel,
+  type ExecutorCardResourceChip,
+  type ExecutorGraphCanvasCard,
+  type ExecutorGraphCanvasInputTopology,
+  type ExecutorGraphCanvasModel,
+} from "../../lib/executor-graph-viewmodel"
 import {
   buildExecutorGraphRelationInfoMap,
   type ExecutorGraphRelationInfo,
@@ -31,25 +34,14 @@ import { useUiI18n } from "../../lib/ui-i18n"
 import {
   ExecutorCardNode,
   type ExecutorCardExecutionStatus,
-  type ExecutorCardResourceChip,
 } from "./ExecutorCardNode"
 
-export interface ExecutorGraphCanvasCard {
-  executor: ExecutorDraft
-  resources: ExecutorCardResourceChip[]
-}
-
-export interface ExecutorGraphCanvasSection {
-  section: ExecutorSectionDraft
-  cards: ExecutorGraphCanvasCard[]
-}
-
-export interface ExecutorGraphCanvasModel {
-  graph: ExecutorGraphWorkspace
-  sections: ExecutorGraphCanvasSection[]
-  unsectionedCards: ExecutorGraphCanvasCard[]
-  connections: ExecutorConnectionDraft[]
-}
+export {
+  buildExecutorGraphCanvasModel,
+  type ExecutorCardResourceChip,
+  type ExecutorGraphCanvasCard,
+  type ExecutorGraphCanvasModel,
+} from "../../lib/executor-graph-viewmodel"
 
 interface ExecutorFlowNodeData extends Record<string, unknown> {
   executor: ExecutorDraft
@@ -61,42 +53,54 @@ interface ExecutorFlowNodeData extends Record<string, unknown> {
 
 export type ExecutorFlowEdgeStatus = "running" | "completed" | "failed" | "cancelled"
 
-export function buildExecutorGraphCanvasModel(input: {
-  topology?: EnterpriseTopology | null
-  graph?: ExecutorGraphWorkspace | null
-}): ExecutorGraphCanvasModel | null {
-  const graph = input.graph ?? (input.topology
-    ? buildExecutorGraphFromEnterpriseTopology(input.topology, { mode: "simple" })
-    : null)
-  if (!graph) return null
+export interface ExecutorFlowPosition {
+  x: number
+  y: number
+}
 
-  const resourceMap = buildExecutorResourceMap(input.topology, graph)
-  const cardByExecutorId = new Map(graph.executors.map((executor) => [
-    executor.id,
-    {
-      executor,
-      resources: resourceMap.get(executor.id) ?? [],
-    },
-  ]))
-  const usedExecutorIds = new Set<string>()
-  const sections = graph.sections.map((section) => {
-    const cards = section.executorIds
-      .map((executorId) => cardByExecutorId.get(executorId))
-      .filter((card): card is ExecutorGraphCanvasCard => Boolean(card))
-    for (const card of cards) usedExecutorIds.add(card.executor.id)
-    return { section, cards }
+export interface ExecutorFlowPositionedNode {
+  id: string
+  position: ExecutorFlowPosition
+}
+
+export function sameExecutorFlowPosition(
+  left: ExecutorFlowPosition | undefined,
+  right: ExecutorFlowPosition | undefined,
+): boolean {
+  if (!left || !right) return false
+  return Math.round(left.x) === Math.round(right.x) && Math.round(left.y) === Math.round(right.y)
+}
+
+export function executorFlowPositionMap<T extends ExecutorFlowPositionedNode>(
+  nodes: T[],
+): Map<string, ExecutorFlowPosition> {
+  return new Map(nodes.map((node) => [node.id, { x: node.position.x, y: node.position.y }]))
+}
+
+export function mergeInteractiveExecutorFlowNodes<T extends ExecutorFlowPositionedNode>({
+  current,
+  next,
+  previousSourcePositions,
+}: {
+  current: T[]
+  next: T[]
+  previousSourcePositions: ReadonlyMap<string, ExecutorFlowPosition>
+}): T[] {
+  const currentById = new Map(current.map((node) => [node.id, node]))
+  return next.map((nextNode) => {
+    const currentNode = currentById.get(nextNode.id)
+    if (!currentNode) return nextNode
+    const previousSourcePosition = previousSourcePositions.get(nextNode.id)
+    if (!previousSourcePosition) return nextNode
+    const sourcePositionChanged = !sameExecutorFlowPosition(nextNode.position, previousSourcePosition)
+    if (sourcePositionChanged || sameExecutorFlowPosition(currentNode.position, previousSourcePosition)) {
+      return nextNode
+    }
+    return {
+      ...nextNode,
+      position: currentNode.position,
+    }
   })
-  const unsectionedCards = graph.executors
-    .filter((executor) => !usedExecutorIds.has(executor.id))
-    .map((executor) => cardByExecutorId.get(executor.id))
-    .filter((card): card is ExecutorGraphCanvasCard => Boolean(card))
-
-  return {
-    graph,
-    sections,
-    unsectionedCards,
-    connections: graph.connections,
-  }
 }
 
 export function ExecutorGraphCanvas({
@@ -112,7 +116,7 @@ export function ExecutorGraphCanvas({
   onConnectExecutors,
   onMoveExecutor,
 }: {
-  topology?: EnterpriseTopology | null
+  topology?: ExecutorGraphCanvasInputTopology | null
   graph?: ExecutorGraphWorkspace | null
   selectedLayer?: TopologyWorkspaceLayer
   selectedExecutorId?: string | null
@@ -133,8 +137,14 @@ export function ExecutorGraphCanvas({
     [activeExecutorIdSet, executorStatuses, model, selectedExecutorId],
   )
   const [interactiveNodes, setInteractiveNodes] = React.useState<Array<Node<ExecutorFlowNodeData>>>(flowNodes)
+  const sourcePositionsRef = React.useRef(executorFlowPositionMap(flowNodes))
   React.useEffect(() => {
-    setInteractiveNodes(flowNodes)
+    setInteractiveNodes((current) => mergeInteractiveExecutorFlowNodes({
+      current,
+      next: flowNodes,
+      previousSourcePositions: sourcePositionsRef.current,
+    }))
+    sourcePositionsRef.current = executorFlowPositionMap(flowNodes)
   }, [flowNodes])
   const flowEdges = React.useMemo(
     () => model ? executorFlowEdges(model, activeEdgeIdSet, edgeStatuses) : [],
@@ -334,87 +344,4 @@ function edgeStyleForStatus(status: ExecutorFlowEdgeStatus | undefined): Edge["s
   if (status === "failed") return { stroke: "#e11d48", strokeWidth: 2.5 }
   if (status === "cancelled") return { stroke: "#78716c", strokeWidth: 2, strokeDasharray: "5 5" }
   return { stroke: "#57534e", strokeWidth: 2 }
-}
-
-
-function buildExecutorResourceMap(
-  topology: EnterpriseTopology | null | undefined,
-  graph: ExecutorGraphWorkspace,
-): Map<string, ExecutorCardResourceChip[]> {
-  const resources = new Map<string, ExecutorCardResourceChip[]>()
-  const toolById = new Map(topology?.tools.map((tool) => [tool.id, tool]) ?? [])
-  const systemById = new Map(topology?.systems.map((system) => [system.id, system]) ?? [])
-
-  for (const executor of graph.executors) {
-    const chips: ExecutorCardResourceChip[] = []
-    for (const resourceId of executor.inferredTools) {
-      if (resourceId.startsWith("system:")) {
-        chips.push({
-          id: resourceId,
-          label: systemById.get(resourceId)?.displayName?.trim() || systemById.get(resourceId)?.name || resourceId,
-          kind: "system",
-        })
-        continue
-      }
-      chips.push({
-        id: resourceId,
-        label: toolById.get(resourceId)?.displayName?.trim() || toolById.get(resourceId)?.name || resourceId,
-        kind: "tool",
-      })
-    }
-    for (const systemId of executor.advancedMapping?.allowedSystemIds ?? []) {
-      chips.push({
-        id: systemId,
-        label: systemById.get(systemId)?.displayName?.trim() || systemById.get(systemId)?.name || systemId,
-        kind: "system",
-      })
-    }
-    if (chips.length > 0) resources.set(executor.id, dedupeResources(chips))
-  }
-
-  for (const relation of topology?.relations ?? []) {
-    const relationResource = resourceChipForRelation(relation, toolById, systemById)
-    if (!relationResource) continue
-    const current = resources.get(relation.from.id) ?? []
-    resources.set(relation.from.id, dedupeResources([...current, relationResource]))
-  }
-
-  return resources
-}
-
-function resourceChipForRelation(
-  relation: EnterpriseRelation,
-  toolById: Map<string, NonNullable<EnterpriseTopology["tools"][number]>>,
-  systemById: Map<string, NonNullable<EnterpriseTopology["systems"][number]>>,
-): ExecutorCardResourceChip | null {
-  if (relation.from.entityType !== "node") return null
-  if (relation.relationType === "uses_tool" && relation.to.entityType === "enterprise_tool") {
-    const tool = toolById.get(relation.to.id)
-    return {
-      id: relation.to.id,
-      label: tool?.displayName?.trim() || tool?.name || relation.to.id,
-      kind: "tool",
-    }
-  }
-  if (relation.relationType === "uses_system" && relation.to.entityType === "enterprise_system") {
-    const system = systemById.get(relation.to.id)
-    return {
-      id: relation.to.id,
-      label: system?.displayName?.trim() || system?.name || relation.to.id,
-      kind: "system",
-    }
-  }
-  return null
-}
-
-function dedupeResources(resources: ExecutorCardResourceChip[]): ExecutorCardResourceChip[] {
-  const seen = new Set<string>()
-  const deduped: ExecutorCardResourceChip[] = []
-  for (const resource of resources) {
-    const key = `${resource.kind}:${resource.id}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    deduped.push(resource)
-  }
-  return deduped
 }

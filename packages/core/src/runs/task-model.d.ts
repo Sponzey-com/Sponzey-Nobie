@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import type { TaskContinuitySnapshot } from "../db/index.js";
 import type { RootRun, RunStatus } from "./types.js";
 export type TaskAttemptKind = "primary" | "followup" | "intake_bridge" | "approval_continuation" | "verification" | "filesystem_retry" | "truncated_recovery" | "scheduled_execution";
@@ -6,6 +7,7 @@ export type TaskRunRelationshipKind = "root_request" | "child_execution" | "foll
 export type TaskRecoveryKind = "filesystem" | "truncated_output" | "generic";
 export type TaskDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed";
 export type TaskFailureKind = "execution" | "recovery" | "delivery";
+export type TaskDeliveryChannel = ChannelSource | "unknown";
 export type TaskChecklistItemKey = "request" | "execution" | "delivery" | "completion";
 export type TaskChecklistItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "not_required";
 export type TaskActivityKind = "attempt.started" | "attempt.awaiting_approval" | "attempt.awaiting_user" | "attempt.completed" | "attempt.failed" | "attempt.cancelled" | "recovery.started" | "recovery.awaiting_approval" | "recovery.awaiting_user" | "recovery.completed" | "recovery.failed" | "recovery.cancelled" | "delivery.pending" | "delivery.delivered" | "delivery.failed";
@@ -43,7 +45,7 @@ export interface TaskDeliveryModel {
     taskId: string;
     status: TaskDeliveryStatus;
     sourceAttemptId?: string;
-    channel?: "telegram" | "webui" | "slack" | "cli" | "unknown";
+    channel?: TaskDeliveryChannel;
     summary?: string;
     artifact?: TaskArtifactModel;
 }

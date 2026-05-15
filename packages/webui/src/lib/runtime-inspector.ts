@@ -20,6 +20,47 @@ export interface RuntimeTopologyActiveState {
   edgeStatuses: Record<string, "running">
 }
 
+export interface RuntimeInspectorKeyValue {
+  id: string
+  label: string
+  value: string
+}
+
+export interface RuntimeInspectorListValue {
+  id: string
+  label: string
+  values: string[]
+}
+
+export interface RuntimeInspectorBasicViewModel {
+  topologyLabel: string
+  routingMode: string
+  routingTone: "route" | "fallback" | "unknown"
+  routingSummary: string
+  routingPills: string[]
+  currentExecutorName: string
+  selectedExecutorName: string
+  selectedExecutorRoleName?: string
+  selectedPathNames: string[]
+  delegationStatus: string
+  aggregationStatus: string
+  validationStatus: string
+  warningLabels: string[]
+}
+
+export interface RuntimeInspectorDiagnosticViewModel {
+  identity: RuntimeInspectorKeyValue[]
+  routing: RuntimeInspectorKeyValue[]
+  executorIds: RuntimeInspectorListValue[]
+  providerFallbackLabel: string
+  issues: string[]
+}
+
+export interface RuntimeInspectorViewModels {
+  basic: RuntimeInspectorBasicViewModel
+  diagnostic: RuntimeInspectorDiagnosticViewModel
+}
+
 export function selectRuntimeSubSession(
   projection: RunRuntimeInspectorProjection | null,
   selectedSubSessionId: string | null,
@@ -187,6 +228,10 @@ export function runtimeTopologyReasonLabel(
       return text("이미 진행 중인 하위 요청", "Already a child request")
     case "execution_decision_validated":
       return text("실행 판단 검증 완료", "Execution decision validated")
+    case "plan_snapshot_reconciled_with_execution_decision_trace":
+      return text("실제 실행 trace 기준으로 표시", "Displayed from the actual execution trace")
+    case "legacy_single_nobie_fallback_mode_deprecated":
+      return text("이전 직접 실행 계획 감지", "Legacy direct-execution plan detected")
     case undefined:
       return text("실행 판단 정보 없음", "No execution decision details")
     default:
@@ -201,6 +246,24 @@ export function runtimeExecutorDisplayName(
   const normalized = executorId?.trim()
   if (!normalized) return ""
   return routing?.executionDecisionExecutorNameById?.[normalized] ?? normalized
+}
+
+export function runtimeExecutorRoleName(
+  routing: RunRuntimeInspectorTopologyRouting | null | undefined,
+  executorId: string | undefined,
+): string {
+  const normalized = executorId?.trim()
+  if (!normalized) return ""
+  return routing?.executionDecisionExecutorRoleNameById?.[normalized] ?? ""
+}
+
+function runtimeExecutorDisplayNames(
+  routing: RunRuntimeInspectorTopologyRouting | null | undefined,
+  executorIds: string[] | undefined,
+): string[] {
+  return [...new Set((executorIds ?? [])
+    .map((executorId) => runtimeExecutorDisplayName(routing, executorId))
+    .filter((value) => value.trim().length > 0))]
 }
 
 export function runtimeDecisionSourceLabel(
@@ -315,6 +378,166 @@ export function selectRuntimeTopologyActiveState(
       statuses[edgeId] = "running"
       return statuses
     }, {}),
+  }
+}
+
+export function buildRuntimeInspectorViewModels(
+  projection: RunRuntimeInspectorProjection | null,
+  text: (ko: string, en: string) => string,
+): RuntimeInspectorViewModels {
+  if (!projection) {
+    return {
+      basic: {
+        topologyLabel: text("불러오는 중", "Loading"),
+        routingMode: "unknown",
+        routingTone: "unknown",
+        routingSummary: text("실행 판단 정보가 아직 없습니다.", "No execution decision information yet."),
+        routingPills: [],
+        currentExecutorName: text("정보 없음", "Unknown"),
+        selectedExecutorName: text("선택 전", "Not selected"),
+        selectedPathNames: [],
+        delegationStatus: text("실행 판단 정보가 아직 없습니다.", "No execution decision information yet."),
+        aggregationStatus: text("parent finalizer 대기", "Parent finalizer pending"),
+        validationStatus: text("검증 정보 없음", "No validation status"),
+        warningLabels: [],
+      },
+      diagnostic: {
+        identity: [],
+        routing: [],
+        executorIds: [],
+        providerFallbackLabel: text("직접 실행 대안 미사용", "Direct execution fallback unused"),
+        issues: [],
+      },
+    }
+  }
+
+  const routing = projection.topologyRouting
+  const selectedExecutorId = routing.executionDecisionSelectedExecutorId ?? routing.entryNodeId
+  const selectedPath =
+    routing.executionDecisionNormalizedConnectionPath?.length
+      ? routing.executionDecisionNormalizedConnectionPath
+      : routing.executionDecisionSelectedConnectionPath?.length
+        ? routing.executionDecisionSelectedConnectionPath
+        : routing.selectedExecutorIds
+  const warningLabels = [
+    ...(projection.plan.fallbackWarnings ?? []),
+    ...routing.issues,
+    ...(routing.executionDecisionValidationIssues ?? []),
+  ].map((issue) => runtimeTopologyReasonLabel(issue, text))
+  const routingPills = [
+    routing.topologyName ?? routing.topologyId,
+    routing.entryNodeName ?? runtimeExecutorDisplayName(routing, routing.entryNodeId),
+    routing.topologySchemaVersion !== undefined
+      ? text(`스키마 v${routing.topologySchemaVersion}`, `Schema v${routing.topologySchemaVersion}`)
+      : undefined,
+    routing.reasonCode ? runtimeTopologyReasonLabel(routing.reasonCode, text) : undefined,
+    routing.executionDecisionSource ? runtimeDecisionSourceLabel(routing.executionDecisionSource, text) : undefined,
+    routing.executionDecisionRoute
+      ? `${text("위임 흐름", "Delegation flow")} ${runtimeExecutionRouteLabel(routing.executionDecisionRoute, text)}`
+      : undefined,
+    routing.executionDecisionFallbackReason
+      ? `${text("대안", "Fallback")} ${runtimeFallbackReasonLabel(routing.executionDecisionFallbackReason, text)}`
+      : undefined,
+    routing.riskBoundaryRequiresUserApproval !== undefined
+      ? routing.riskBoundaryRequiresUserApproval
+        ? text("검토 필요", "Review needed")
+        : text("검토 불필요", "No review")
+      : undefined,
+    routing.riskBoundaryKind ? `${text("위험", "Risk")} ${routing.riskBoundaryKind}` : undefined,
+    routing.providerFallback ? text("직접 실행 대안 사용", "Direct execution fallback used") : undefined,
+    routing.providerFallbackBlocked
+      ? runtimeTopologyReasonLabel(routing.providerFallbackBlockedReasonCode, text)
+      : undefined,
+    routing.selectedExecutorIds.length > 0
+      ? `${text("노드", "Nodes")} ${routing.selectedExecutorIds.length}`
+      : undefined,
+    routing.selectedEdgeIds.length > 0
+      ? `${text("연결선", "Edges")} ${routing.selectedEdgeIds.length}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value?.trim()))
+  const providerFallbackLabel = routing.providerFallbackBlocked
+    ? text("직접 실행 대안 차단됨", "Direct execution fallback blocked")
+    : routing.providerFallback
+      ? text("직접 실행 대안 사용됨", "Direct execution fallback used")
+      : text("직접 실행 대안 미사용", "Direct execution fallback unused")
+
+  return {
+    basic: {
+      topologyLabel: routing.topologyName ?? routing.topologyId ?? text("업무 흐름", "Workflow"),
+      routingMode: routing.mode,
+      routingTone: routing.mode === "route" || routing.mode === "fallback" ? routing.mode : "unknown",
+      routingSummary: describeRuntimeTopologyRouting(routing, text),
+      routingPills,
+      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노비", "Nobie"),
+      selectedExecutorName:
+        runtimeExecutorDisplayName(routing, selectedExecutorId) ||
+        routing.entryNodeName ||
+        text("선택 전", "Not selected"),
+      ...(runtimeExecutorRoleName(routing, selectedExecutorId)
+        ? { selectedExecutorRoleName: runtimeExecutorRoleName(routing, selectedExecutorId) }
+        : {}),
+      selectedPathNames: runtimeExecutorDisplayNames(routing, selectedPath),
+      delegationStatus:
+        routing.mode === "route"
+          ? runtimeExecutionRouteLabel(routing.executionDecisionRoute, text)
+          : describeRuntimeTopologyRouting(routing, text),
+      aggregationStatus: describeRuntimeFinalizerStatus(projection, text),
+      validationStatus: runtimeValidationStatusLabel(routing.executionDecisionValidationStatus, text),
+      warningLabels,
+    },
+    diagnostic: {
+      identity: [
+        { id: "run", label: text("Run", "Run"), value: projection.requestIdentity.runId },
+        { id: "request-group", label: text("요청 그룹", "Request group"), value: projection.requestIdentity.requestGroupId },
+        { id: "root-run", label: text("Root run", "Root run"), value: projection.requestIdentity.rootRunId },
+        ...(projection.requestIdentity.userMessageKey
+          ? [{ id: "user-message", label: text("사용자 메시지", "User message"), value: projection.requestIdentity.userMessageKey }]
+          : []),
+      ],
+      routing: [
+        ...(routing.reasonCode ? [{ id: "reason", label: text("사유 코드", "Reason code"), value: routing.reasonCode }] : []),
+        ...(routing.executionDecisionSource ? [{ id: "source", label: text("판단 출처", "Decision source"), value: routing.executionDecisionSource }] : []),
+        ...(routing.executionDecisionGraphId ? [{ id: "graph", label: text("그래프", "Graph"), value: routing.executionDecisionGraphId }] : []),
+        ...(routing.executionDecisionGraphSource ? [{ id: "graph-source", label: text("그래프 출처", "Graph source"), value: routing.executionDecisionGraphSource }] : []),
+        ...(routing.executionDecisionRoute ? [{ id: "route", label: text("실행 경로", "Execution route"), value: routing.executionDecisionRoute }] : []),
+        ...(routing.executionDecisionFallbackReason ? [{ id: "fallback", label: text("대안", "Fallback"), value: routing.executionDecisionFallbackReason }] : []),
+        ...(routing.topologyId ? [{ id: "topology-id", label: text("토폴로지 ID", "Topology ID"), value: routing.topologyId }] : []),
+        ...(routing.topologyMigrationSource ? [{ id: "migration-source", label: text("토폴로지 출처", "Topology source"), value: routing.topologyMigrationSource }] : []),
+      ],
+      executorIds: [
+        {
+          id: "current",
+          label: text("현재 실행자 ID", "Current executor ID"),
+          values: routing.executionDecisionCurrentExecutorId ? [routing.executionDecisionCurrentExecutorId] : [],
+        },
+        {
+          id: "available",
+          label: text("판단 후보 ID", "Candidate executor IDs"),
+          values: routing.executionDecisionAvailableExecutorIds ?? [],
+        },
+        {
+          id: "registered",
+          label: text("전체 등록 실행자 ID", "All registered executor IDs"),
+          values: routing.executionDecisionAllRegisteredExecutorIds ?? routing.executionDecisionAllExecutorIds ?? [],
+        },
+        {
+          id: "selected",
+          label: text("선택 실행자 ID", "Selected executor ID"),
+          values: routing.executionDecisionSelectedExecutorId ? [routing.executionDecisionSelectedExecutorId] : [],
+        },
+        {
+          id: "path",
+          label: text("선택 경로 ID", "Selected path IDs"),
+          values: selectedPath ?? [],
+        },
+      ],
+      providerFallbackLabel,
+      issues: [
+        ...routing.issues,
+        ...(routing.executionDecisionValidationIssues ?? []),
+        ...(projection.plan.fallbackWarnings ?? []),
+      ],
+    },
   }
 }
 

@@ -10,7 +10,7 @@ import {
   topologyWorkspaceVisibleSections,
 } from "../packages/webui/src/lib/topology-workspace-copy.ts"
 import { resolveLegacyAdvancedRoute } from "../packages/webui/src/lib/ui-mode.js"
-import { EnterpriseTopologyPage } from "../packages/webui/src/pages/EnterpriseTopologyPage.tsx"
+import { LegacyEnterpriseTopologyPage } from "../packages/webui/src/pages/EnterpriseTopologyPage.tsx"
 import {
   TopologyWorkspaceRouteShell,
   resolveTopologyWorkspaceInitialLayer,
@@ -31,13 +31,13 @@ describe("task012 removed advanced topology surfaces", () => {
       ),
     )
     const advancedPage = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: resolveTopologyWorkspaceInitialLayer("?mode=resources", "advanced"),
         workspaceExposureMode: "advanced",
       }),
     )
     const developerPage = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: "build",
         workspaceExposureMode: "developer",
       }),
@@ -72,7 +72,7 @@ describe("task012 removed advanced topology surfaces", () => {
 
   it("removes compile preview, palette, import-export, and debug entry points from topology UI", () => {
     const html = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: "build",
         workspaceExposureMode: "developer",
       }),

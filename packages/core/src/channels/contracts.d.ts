@@ -227,6 +227,7 @@ export interface ChannelCapabilities {
     requiresWebhook: boolean;
     requiresLocalBridge: boolean;
     requiresUserSession: boolean;
+    manualConfirmationRequired?: boolean;
     riskLevel: ChannelRiskLevel;
     deliveryStates: ChannelDeliveryStateCapabilities;
 }

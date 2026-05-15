@@ -1,8 +1,8 @@
 import { type NobieConfig } from "../config/index.js";
 import { type AgentConfig, type AgentRelationship, type CapabilityPolicy, type PermissionProfile, type SubAgentConfig, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
-import type { NodeContract } from "../contracts/enterprise-topology.js";
 import { type AgentConfigPersistenceOptions, type TeamConfigPersistenceOptions } from "../db/index.js";
 import { type AgentCapabilitySummary, type AgentModelSummary } from "./capability-model.js";
+import { type LegacyNode } from "../topology/legacy-enterprise-topology-adapter.js";
 export interface AgentRuntimeLoadSnapshot {
     activeSubSessions: number;
     queuedSubSessions: number;
@@ -91,7 +91,8 @@ export interface RegistryHierarchyDirectChildSnapshot {
     parentAgentId: string;
     childAgentId: string;
     edgeId: string;
-    relationshipStatus: AgentRelationship["status"] | "fallback";
+    relationshipStatus: AgentRelationship["status"] | "draft" | "inactive" | "fallback";
+    source: "topology_relation" | "agent_relationship" | "unparented_root";
     executionCandidate: boolean;
     reasonCodes: string[];
 }
@@ -242,7 +243,7 @@ export declare function normalizeExecutorProfile(value: unknown, fallback: {
     declineCriteria?: string[] | undefined;
     riskBoundary?: string[] | undefined;
 }): ExecutorProfile;
-export declare function buildExecutorProfileFromNode(node: NodeContract, overrides?: {
+export declare function buildExecutorProfileFromNode(node: LegacyNode, overrides?: {
     executorId?: string;
     displayName?: string;
 }): ExecutorProfile;

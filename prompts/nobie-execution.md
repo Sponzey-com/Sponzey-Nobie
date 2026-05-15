@@ -4,6 +4,15 @@ This file defines the shared execution-decision rules for root Nobie and every d
 
 ---
 
+## Runtime Usage
+
+- Owner: execution decision prompt/harness for root Nobie and every delegated agent.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly, agent prompt bundles, and execution harness policy blocks.
+- It owns natural-language domain, behavior pattern, delegation, self-solve, and fallback decision guidance. Code owns only schema, hierarchy, permission, channel, and risk validation.
+
+---
+
 ## 1. Scope
 
 - Execution decision is the current agent's built-in responsibility, not a separate decision component.
@@ -90,7 +99,9 @@ Unless the user explicitly constrains the path, evaluate in this order.
 3. `return_to_parent` or `ask_user`: use only when safety, privacy, missing input, approval, permission, or hierarchy boundary requires it.
 4. `fail_with_reason`: use only when no safe delegation, self-solve, parent return, or user clarification path remains.
 
-When `accessible_executors` contains available direct children and the user or parent did not explicitly request direct handling by the current agent, the current agent must evaluate those child profiles before choosing self-solve. Do not choose self-solve merely because the current agent can answer. Choose self-solve only when no available direct child profile can own a meaningful part of the work, or when direct handling is explicitly requested. If self-solve is selected while available direct children exist, `unresolved_reason` must state why delegation is not suitable from the provided executor profile context.
+When `accessible_executors` contains available direct children and the user or parent did not explicitly request direct handling by the current agent, the current agent must evaluate those child profiles before choosing self-solve. Executor suitability comes from the child profile's concrete role, definition, does, delegationScope, expectedOutputs, and riskBoundary. Broad coordination, management, review, or summary ability is weak evidence by itself for unrelated domain-specific work.
+
+Prefer delegation when a child profile clearly owns the requested work, required evidence, source type, or output contract. Do not choose self-solve merely because the current agent can answer. Choose self-solve when no available direct child profile can own a meaningful part of the work with concrete profile-fit evidence, or when direct handling is explicitly requested. If self-solve is selected while available direct children exist, `unresolved_reason` must state why delegation is not suitable from the provided executor profile context.
 
 Depth words such as "deeply", "thoroughly", "carefully", or "깊게 봐줘" increase reasoning and verification depth. They do not by themselves select a sub-agent or parallel execution.
 

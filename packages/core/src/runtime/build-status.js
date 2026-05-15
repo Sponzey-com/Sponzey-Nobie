@@ -152,7 +152,8 @@ function packageStatus(input, processStart) {
             missingOutputs.push(outputPath);
         }
     }
-    const buildRequired = Boolean(missingOutputs.length > 0 || (sourceNewest && (!distNewest || sourceNewest.mtimeMs > distNewest.mtimeMs + MTIME_TOLERANCE_MS)));
+    const buildRequired = Boolean(missingOutputs.length > 0
+        || (sourceNewest && (!distNewest || sourceNewest.mtimeMs > distNewest.mtimeMs + MTIME_TOLERANCE_MS)));
     const restartRequired = Boolean(distNewest && distNewest.mtimeMs > processStart + MTIME_TOLERANCE_MS);
     return {
         package: input.package,
@@ -198,3 +199,4 @@ export function buildRuntimeBuildStatus(input = {}) {
 export function getRuntimeBuildStatus(now) {
     return now ? buildRuntimeBuildStatus({ now }) : buildRuntimeBuildStatus();
 }
+//# sourceMappingURL=build-status.js.map

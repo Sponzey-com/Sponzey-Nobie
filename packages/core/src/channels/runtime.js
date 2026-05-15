@@ -46,6 +46,7 @@ export function buildChannelRuntimeSummary(input) {
             requiresLocalBridge: capabilities.requiresLocalBridge,
             requiresUserSession: capabilities.requiresUserSession,
             riskLevel: capabilities.riskLevel,
+            manualConfirmationRequired: capabilities.manualConfirmationRequired === true,
             configSource: input.connection.configSource,
         },
     };

@@ -4,6 +4,15 @@ Use this file only during first-run initialization or prompt source registry rep
 
 ---
 
+## Runtime Usage
+
+- Owner: prompt source registry bootstrap and repair path.
+- Usage scope: `first_run`.
+- Normal runtime prompt assembly must exclude this source.
+- Prompt bundle assembly may reference its metadata only for diagnostics, not as active execution policy.
+
+---
+
 ## Purpose
 
 Create the default prompt sources and runtime definitions the agent needs at startup.

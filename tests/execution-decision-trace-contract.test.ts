@@ -215,11 +215,11 @@ describe("execution decision trace contract", () => {
     })
 
     expect(result.ok).toBe(false)
-    expect(result.fallbackReason).toBe("selected_connection_path_invalid")
+    expect(result.fallbackReason).toBe("selected_executor_not_direct_child")
     expect(result.validation?.delegation.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        code: "selected_connection_path_invalid",
-        connection_path: ["node:finance", "node:backend"],
+        code: "selected_executor_not_direct_child",
+        executor_id: "node:backend",
       }),
     ]))
     expect(result.decision.execution_route).toBe("ask_user")
@@ -230,7 +230,7 @@ describe("execution decision trace contract", () => {
     expect(result.decisionTrace.resolved_execution_route).toBe("ask_user")
   })
 
-  it("normalizes an empty path for a direct child but not for an indirect child", () => {
+  it("rejects an empty delegated path for both direct and indirect selections", () => {
     const directChild = validateAgentExecutionDecisionAgainstContext({
       context: context(),
       decision: decision({
@@ -246,7 +246,8 @@ describe("execution decision trace contract", () => {
       }),
     })
 
-    expect(directChild.ok).toBe(true)
+    expect(directChild.ok).toBe(false)
+    expect(directChild.status).toBe("empty_selected_path")
     expect(indirect.ok).toBe(false)
     expect(indirect.status).toBe("selected_executor_not_direct_child")
   })

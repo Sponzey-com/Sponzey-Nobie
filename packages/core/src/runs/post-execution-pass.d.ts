@@ -6,7 +6,7 @@ import { applyExecutionPostPassDecision } from "./execution-postpass-application
 import { decideFilesystemPostPassRecovery, type FilesystemVerificationResult } from "./filesystem-postpass.js";
 import { applyFilesystemPostPassDecision } from "./filesystem-postpass-application.js";
 import { runReviewEntryPass } from "./review-entry-pass.js";
-import { type RecoveryBudgetUsage } from "./recovery-budget.js";
+import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js";
 import type { RecoveryRetryApplicationDependencies } from "./retry-application.js";
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";

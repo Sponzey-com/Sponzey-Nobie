@@ -1,6 +1,6 @@
 import { getConfig } from "../config/index.js";
 import { listAgentConfigs } from "../db/index.js";
-import { createEnterpriseTopologyRegistry } from "../topology/registry.js";
+import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 function requestedModeFromConfig(config) {
     return config.mode ?? "single_nobie";
 }
@@ -45,7 +45,7 @@ function topologyAgentId(topologyId, executorId) {
     return `${topologyId}:${executorId}`;
 }
 function topologyExecutorCandidates() {
-    const registry = createEnterpriseTopologyRegistry();
+    const registry = createLegacyTopologyRegistry();
     const topologies = registry
         .listTopologies()
         .filter((topology) => topology.status !== "archived")
@@ -55,7 +55,8 @@ function topologyExecutorCandidates() {
         const exported = registry.exportTopology(topologyRecord.topologyId);
         if (!exported)
             continue;
-        for (const node of exported.version.topology.nodes) {
+        const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported);
+        for (const node of adapted.envelope.version.topology.nodes) {
             if (node.status === "archived")
                 continue;
             const displayName = node.displayName?.trim() || node.name.trim();

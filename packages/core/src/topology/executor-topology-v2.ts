@@ -37,6 +37,7 @@ export interface ExecutorNodeV2 {
   name: string
   roleName?: string
   description: string
+  definitionQuickChips?: string[]
   instruction?: string
   position: {
     x: number
@@ -78,6 +79,50 @@ export interface ExecutorRuntimeGraphSnapshotV2 {
   rootDirectChildIds: string[]
   directChildrenByNodeId: Record<string, string[]>
 }
+
+export type ExecutorTopologyV2SourceField =
+  | "node.id"
+  | "node.name"
+  | "node.roleName"
+  | "node.description"
+  | "node.definitionQuickChips"
+  | "node.instruction"
+  | "node.position"
+  | "node.status"
+  | "edge.id"
+  | "edge.sourceNodeId"
+  | "edge.targetNodeId"
+  | "edge.type"
+  | "edge.label"
+  | "edge.status"
+
+export type ExecutorTopologyV2ProjectionField =
+  | "node.profile"
+  | "node.metadata"
+  | "topology.metadata"
+
+export const EXECUTOR_TOPOLOGY_V2_SOURCE_FIELDS: readonly ExecutorTopologyV2SourceField[] = [
+  "node.id",
+  "node.name",
+  "node.roleName",
+  "node.description",
+  "node.definitionQuickChips",
+  "node.instruction",
+  "node.position",
+  "node.status",
+  "edge.id",
+  "edge.sourceNodeId",
+  "edge.targetNodeId",
+  "edge.type",
+  "edge.label",
+  "edge.status",
+] as const
+
+export const EXECUTOR_TOPOLOGY_V2_PROJECTION_FIELDS: readonly ExecutorTopologyV2ProjectionField[] = [
+  "node.profile",
+  "node.metadata",
+  "topology.metadata",
+] as const
 
 export type ExecutorTopologyV2MigrationIssueSeverity = "info" | "warning" | "invalid"
 
@@ -128,6 +173,60 @@ export interface ExecutorTopologyV2RegistryMigrationPreview {
   staleIssueCount: number
   invalidIssueCount: number
   historyPreserved: boolean
+  report?: ExecutorTopologyV2MigrationDryRunReport
+}
+
+export type ExecutorTopologyV2MigrationDryRunChangeKind = "removed" | "transformed" | "preserved"
+export type ExecutorTopologyV2MigrationDryRunFieldCategory =
+  | "topology_field"
+  | "node_field"
+  | "relation_field"
+  | "metadata"
+  | "history"
+  | "runtime_trace"
+  | "validation"
+
+export interface ExecutorTopologyV2MigrationDryRunChange {
+  kind: ExecutorTopologyV2MigrationDryRunChangeKind
+  category: ExecutorTopologyV2MigrationDryRunFieldCategory
+  path: string
+  sourceField?: string
+  targetPath?: string
+  targetField?: string
+  sourceValueSummary?: string
+  targetValueSummary?: string
+  reason: string
+  destructive: boolean
+  approvalRequiredForPhysicalDelete: boolean
+}
+
+export interface ExecutorTopologyV2MigrationDryRunReport {
+  reportVersion: 1
+  dryRun: true
+  writePlanned: false
+  destructiveChangesPlanned: false
+  backupRequired: true
+  rollbackSupported: true
+  approvalRequiredForDestructiveChanges: true
+  topologyId?: string
+  sourceVersion?: number
+  sourceVersionId?: string
+  removedFields: ExecutorTopologyV2MigrationDryRunChange[]
+  transformedFields: ExecutorTopologyV2MigrationDryRunChange[]
+  preservedFields: ExecutorTopologyV2MigrationDryRunChange[]
+  warnings: string[]
+  rollbackProcedure: string[]
+  summary: {
+    sourceNodeCount: number
+    sourceDelegateEdgeCount: number
+    runtimeNodeCount: number
+    runtimeEdgeCount: number
+    removedFieldCount: number
+    transformedFieldCount: number
+    preservedFieldCount: number
+    staleIssueCount: number
+    invalidIssueCount: number
+  }
 }
 
 export interface ExecutorTopologyV2RegistryMaterializationResult {
@@ -176,19 +275,30 @@ const STALE_NODE_FIELDS = ["children", "allowedToolIds", "allowedSystemIds"] as 
 const STALE_METADATA_KEYS = new Set([
   "active_default_workflow_candidate",
   "advancedMapping",
+  "aiSuggestionAlternatives",
   "allowedSystemIds",
   "allowedToolIds",
   "children",
   "confirmedUnderstandingVersion",
+  "definitionQuickChips",
+  "diagnostic",
+  "diagnostics",
   "inferenceEvidence",
   "inferredOutputs",
   "inferredRuntimeMode",
   "inferredSuccessCriteria",
   "inferredTools",
   "lastSelectedNodeId",
+  "nodeDefinitionAlternatives",
+  "nobieUnderstanding",
   "recommendedEntry",
+  "runtimeDiagnostic",
+  "runtimeDiagnostics",
   "selectedId",
   "selectedNodeId",
+  "suggestionAlternatives",
+  "understanding",
+  "understoodByNobie",
   "workspace",
 ])
 
@@ -200,12 +310,33 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0
 }
 
+function normalizedExecutorNodeName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(
+    value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : [])),
+  )]
+}
+
 function maybeString(value: unknown): string | undefined {
   return nonEmptyString(value) ? value.trim() : undefined
 }
 
 function recordFromUnknown(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined
+}
+
+function nodeDefinitionQuickChipsFromEnterpriseNode(node: NodeContract): string[] {
+  const metadata = recordFromUnknown(node.metadata)
+  const executorGraph = recordFromUnknown(metadata?.executorGraph)
+  const graph = stringArray(executorGraph?.definitionQuickChips)
+  const direct = stringArray(metadata?.definitionQuickChips)
+  return graph.length > 0 ? graph : direct
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -413,6 +544,38 @@ function validatePosition(
   }
 }
 
+function validateNoStaleMetadataKeys(
+  issues: ExecutorTopologyV2ValidationIssue[],
+  value: unknown,
+  path: string,
+  owner: {
+    nodeId?: string
+    edgeId?: string
+  } = {},
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      validateNoStaleMetadataKeys(issues, item, `${path}[${index}]`, owner)
+    })
+    return
+  }
+  if (!isRecord(value)) return
+  for (const [key, item] of Object.entries(value)) {
+    const childPath = `${path}.${key}`
+    if (STALE_METADATA_KEYS.has(key) || key === "suggestionHistory" || key === "aiSuggestionState") {
+      issue(issues, {
+        code: "stale_metadata_field",
+        path: childPath,
+        message: `${key} is projection-only metadata and cannot be persisted as ExecutorTopologyV2 source data.`,
+        ...(owner.nodeId ? { nodeId: owner.nodeId } : {}),
+        ...(owner.edgeId ? { edgeId: owner.edgeId } : {}),
+      })
+      continue
+    }
+    validateNoStaleMetadataKeys(issues, item, childPath, owner)
+  }
+}
+
 export function migrateEnterpriseTopologyToExecutorTopologyV2(
   topology: EnterpriseTopology,
 ): ExecutorTopologyV2MigrationResult {
@@ -424,6 +587,7 @@ export function migrateEnterpriseTopologyToExecutorTopologyV2(
   )
   const nodes: ExecutorNodeV2[] = topology.nodes.map((node, index) => {
     const profile = buildExecutorProfileFromNode(node)
+    const definitionQuickChips = nodeDefinitionQuickChipsFromEnterpriseNode(node)
     const metadata = sanitizeMetadataForV2(node.metadata, {
       topologyId: topology.id,
       nodeId: node.id,
@@ -445,6 +609,7 @@ export function migrateEnterpriseTopologyToExecutorTopologyV2(
       name: nodeDisplayNameV2(node),
       roleName: profile.roleName,
       description: nodeDescription(node),
+      ...(definitionQuickChips.length > 0 ? { definitionQuickChips } : {}),
       ...(node.instruction?.trim() ? { instruction: node.instruction.trim() } : {}),
       position: nodePosition(node, index),
       status: toExecutorNodeStatus(node.status),
@@ -602,6 +767,7 @@ export function repairExecutorTopologyV2ForPersistence(
   else delete repaired.metadata
 
   const nodeIds = new Set(repaired.nodes.map((node) => node.id))
+  const activeNodeIds = new Set(repaired.nodes.filter((node) => node.status === "active").map((node) => node.id))
   repaired.nodes = repaired.nodes.map((node) => {
     const nodeRecord = node as unknown as Record<string, unknown>
     for (const field of STALE_NODE_FIELDS) {
@@ -622,13 +788,22 @@ export function repairExecutorTopologyV2ForPersistence(
       path: `node(${node.id}).metadata`,
     })
     const nextNode = { ...node }
+    const definitionQuickChips = stringArray(node.definitionQuickChips)
+    if (definitionQuickChips.length > 0) nextNode.definitionQuickChips = definitionQuickChips
+    else delete nextNode.definitionQuickChips
     if (metadata) nextNode.metadata = metadata
     else delete nextNode.metadata
     return nextNode
   })
 
   repaired.edges = repaired.edges.filter((edge) => {
-    const keep = edge.type === "delegates_to" && nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId)
+    const keep =
+      edge.type === "delegates_to" &&
+      edge.sourceNodeId !== edge.targetNodeId &&
+      nodeIds.has(edge.sourceNodeId) &&
+      nodeIds.has(edge.targetNodeId) &&
+      activeNodeIds.has(edge.sourceNodeId) &&
+      activeNodeIds.has(edge.targetNodeId)
     if (!keep) {
       issues.push({
         code: "executor_topology_v2_invalid_edge_removed",
@@ -670,12 +845,13 @@ function enterpriseNodeMetadataFromExecutorNodeV2(node: ExecutorNodeV2): Enterpr
     },
     executorGraph: {
       position: node.position as unknown as EnterpriseMetadataValue,
+      ...(node.definitionQuickChips?.length
+        ? { definitionQuickChips: node.definitionQuickChips as unknown as EnterpriseMetadataValue }
+        : {}),
     },
   }
   const profile = cloneMetadataValue(node.profile)
   if (profile !== undefined) metadata.executorProfile = profile as EnterpriseMetadataValue
-  const understanding = recordFromUnknown(node.metadata?.understanding)
-  if (understanding) metadata.understanding = cloneMetadataValue(understanding) as EnterpriseMetadataValue
   const auditRefs = cloneMetadataValue(node.metadata?.aiSuggestionAuditRefs)
   if (auditRefs !== undefined) metadata.aiSuggestionAuditRefs = auditRefs as EnterpriseMetadataValue
   return metadata
@@ -847,6 +1023,295 @@ export function loadExecutorTopologyV2ReadModelFromRegistry(input: {
   }
 }
 
+function summarizeDryRunValue(value: unknown): string {
+  if (Array.isArray(value)) return `array(${value.length})`
+  if (value === null) return "null"
+  if (isRecord(value)) return `object(${Object.keys(value).length})`
+  if (typeof value === "string") return value.length > 48 ? `${value.slice(0, 45)}...` : value
+  if (value === undefined) return "undefined"
+  return String(value)
+}
+
+function dryRunChange(
+  input: Omit<ExecutorTopologyV2MigrationDryRunChange, "destructive" | "approvalRequiredForPhysicalDelete"> & {
+    destructive?: boolean
+    approvalRequiredForPhysicalDelete?: boolean
+  },
+): ExecutorTopologyV2MigrationDryRunChange {
+  return {
+    ...input,
+    destructive: input.destructive ?? false,
+    approvalRequiredForPhysicalDelete: input.approvalRequiredForPhysicalDelete ?? true,
+  }
+}
+
+function collectStaleMetadataDryRunChanges(input: {
+  value: unknown
+  path: string
+  changes: ExecutorTopologyV2MigrationDryRunChange[]
+}): void {
+  if (Array.isArray(input.value)) {
+    input.value.forEach((item, index) => {
+      collectStaleMetadataDryRunChanges({
+        value: item,
+        path: `${input.path}[${index}]`,
+        changes: input.changes,
+      })
+    })
+    return
+  }
+  if (!isRecord(input.value)) return
+  for (const [key, item] of Object.entries(input.value)) {
+    const childPath = `${input.path}.${key}`
+    if (STALE_METADATA_KEYS.has(key) || key === "suggestionHistory" || key === "aiSuggestionState") {
+      input.changes.push(dryRunChange({
+        kind: "removed",
+        category: "metadata",
+        path: childPath,
+        sourceField: key,
+        sourceValueSummary: summarizeDryRunValue(item),
+        reason: "ExecutorTopologyV2 source model does not persist projection-only metadata.",
+      }))
+      continue
+    }
+    collectStaleMetadataDryRunChanges({ value: item, path: childPath, changes: input.changes })
+  }
+}
+
+function buildExecutorTopologyV2RollbackProcedure(): string[] {
+  return [
+    "Stop Gateway, channel adapters, scheduler, Yeonjang, and every writer before applying rollback.",
+    "Verify the backup snapshot manifest and SQLite integrity before replacing operational files.",
+    "Prefer version rollback through rollbackTopologyVersion(topologyId, targetVersion) when only the active topology changed.",
+    "Restore DB, memory DB, prompt sources, setup state, and prompt registry from the verified backup only after restore rehearsal passes.",
+    "Restart the local stack and run topology save/reload plus one channel smoke before live traffic resumes.",
+    "Do not physically delete legacy rows, run history, or trace evidence without a separate explicit administrative cleanup task.",
+  ]
+}
+
+export function buildExecutorTopologyV2MigrationDryRunReport(input: {
+  sourceTopology?: EnterpriseTopology
+  runtimeReadModel?: ExecutorTopologyV2
+  materializedTopology?: EnterpriseTopology
+  topologyId?: string
+  sourceVersion?: number
+  sourceVersionId?: string
+  issues?: ExecutorTopologyV2MigrationIssue[]
+  validation?: ExecutorTopologyV2ValidationResult
+}): ExecutorTopologyV2MigrationDryRunReport {
+  const sourceTopology = input.sourceTopology
+  const runtimeReadModel = input.runtimeReadModel
+  const removedFields: ExecutorTopologyV2MigrationDryRunChange[] = []
+  const transformedFields: ExecutorTopologyV2MigrationDryRunChange[] = []
+  const preservedFields: ExecutorTopologyV2MigrationDryRunChange[] = []
+  const warnings = new Set<string>()
+
+  if (!sourceTopology) {
+    warnings.add("No source topology was loaded, so field-level migration impact could not be inspected.")
+  } else {
+    const topologyRecord = sourceTopology as unknown as Record<string, unknown>
+    for (const field of STALE_TOPOLOGY_FIELDS) {
+      if (field === "relations") continue
+      if (!Object.prototype.hasOwnProperty.call(topologyRecord, field)) continue
+      const value = topologyRecord[field]
+      if (Array.isArray(value) && value.length === 0) continue
+      if (value === undefined) continue
+      removedFields.push(dryRunChange({
+        kind: "removed",
+        category: "topology_field",
+        path: `$.${field}`,
+        sourceField: field,
+        sourceValueSummary: summarizeDryRunValue(value),
+        reason: "Legacy enterprise topology extension data is omitted from the ExecutorTopologyV2 source read model.",
+      }))
+    }
+
+    collectStaleMetadataDryRunChanges({
+      value: sourceTopology.metadata,
+      path: "$.metadata",
+      changes: removedFields,
+    })
+
+    transformedFields.push(dryRunChange({
+      kind: "transformed",
+      category: "node_field",
+      path: "$.nodes",
+      targetPath: "$.nodes",
+      sourceValueSummary: `nodes(${sourceTopology.nodes.length})`,
+      targetValueSummary: `nodes(${runtimeReadModel?.nodes.length ?? 0})`,
+      reason: "Enterprise nodes become ExecutorTopologyV2 executor nodes with only node identity, role, work, position, status, profile, and sanitized metadata.",
+    }))
+
+    for (const [index, node] of sourceTopology.nodes.entries()) {
+      const nodePath = `$.nodes[${index}]`
+      for (const field of STALE_NODE_FIELDS) {
+        const value = (node as unknown as Record<string, unknown>)[field]
+        if (Array.isArray(value) && value.length === 0) continue
+        if (value === undefined) continue
+        removedFields.push(dryRunChange({
+          kind: "removed",
+          category: "node_field",
+          path: `${nodePath}.${field}`,
+          sourceField: field,
+          sourceValueSummary: summarizeDryRunValue(value),
+          reason: field === "children"
+            ? "Node children are not persisted as V2 source data; delegates_to edges are the source of truth."
+            : "Legacy node resource permission caches are not persisted as V2 source data.",
+        }))
+      }
+      collectStaleMetadataDryRunChanges({
+        value: node.metadata,
+        path: `${nodePath}.metadata`,
+        changes: removedFields,
+      })
+      preservedFields.push(dryRunChange({
+        kind: "preserved",
+        category: "node_field",
+        path: nodePath,
+        sourceField: "id,name,description,status",
+        targetPath: `$.nodes[id=${node.id}]`,
+        targetField: "id,name,description,status",
+        sourceValueSummary: node.id,
+        reason: "Executor identity and user-visible node definition are preserved in the V2 read model.",
+        approvalRequiredForPhysicalDelete: false,
+      }))
+    }
+
+    const hasDelegatesToRelations = sourceTopology.relations.some((relation) => relation.relationType === "delegates_to")
+    for (const [index, relation] of sourceTopology.relations.entries()) {
+      const relationPath = `$.relations[${index}]`
+      if (relation.relationType === "delegates_to") {
+        transformedFields.push(dryRunChange({
+          kind: "transformed",
+          category: "relation_field",
+          path: relationPath,
+          sourceField: "delegates_to",
+          targetPath: `$.edges[id=${relationEdgeId(relation)}]`,
+          targetField: "delegates_to",
+          sourceValueSummary: `${relation.from.entityType}:${relation.from.id}->${relation.to.entityType}:${relation.to.id}`,
+          reason: "delegates_to relations become ExecutorTopologyV2 edges.",
+          approvalRequiredForPhysicalDelete: false,
+        }))
+        continue
+      }
+      removedFields.push(dryRunChange({
+        kind: "removed",
+        category: "relation_field",
+        path: relationPath,
+        sourceField: relation.relationType,
+        sourceValueSummary: `${relation.from.entityType}:${relation.from.id}->${relation.to.entityType}:${relation.to.id}`,
+        reason: "Only executor delegation edges are part of the V2 source model; non-delegation enterprise relations remain in old versions as audit history.",
+      }))
+    }
+
+    if (!hasDelegatesToRelations) {
+      for (const [index, node] of sourceTopology.nodes.entries()) {
+        for (const targetNodeId of [...new Set(node.children ?? [])]) {
+          transformedFields.push(dryRunChange({
+            kind: "transformed",
+            category: "relation_field",
+            path: `$.nodes[${index}].children`,
+            sourceField: "children",
+            targetPath: `$.edges[id=${legacyChildEdgeId(node.id, targetNodeId)}]`,
+            targetField: "delegates_to",
+            sourceValueSummary: `${node.id}->${targetNodeId}`,
+            reason: "Legacy children are used only as compatibility input when no delegates_to relation exists.",
+            approvalRequiredForPhysicalDelete: false,
+          }))
+        }
+      }
+    }
+
+    preservedFields.push(dryRunChange({
+      kind: "preserved",
+      category: "topology_field",
+      path: "$",
+      sourceField: "id,name,status,createdAt,updatedAt",
+      targetPath: "$",
+      targetField: "id,name,status,createdAt,updatedAt",
+      sourceValueSummary: sourceTopology.id,
+      reason: "Topology identity and visible workspace metadata are preserved.",
+      approvalRequiredForPhysicalDelete: false,
+    }))
+  }
+
+  for (const table of [
+    "enterprise_topology_versions",
+    "enterprise_topology_history",
+    "compiled_topology_snapshots",
+    "topology_validation_snapshots",
+  ]) {
+    preservedFields.push(dryRunChange({
+      kind: "preserved",
+      category: "history",
+      path: table,
+      reason: "Dry-run does not write, delete, or compact topology history tables.",
+      approvalRequiredForPhysicalDelete: false,
+    }))
+  }
+  for (const table of [
+    "topology_runs",
+    "topology_node_runs",
+    "topology_trace_events",
+    "root_runs",
+    "run_events",
+    "run_subsessions",
+    "orchestration_events",
+  ]) {
+    preservedFields.push(dryRunChange({
+      kind: "preserved",
+      category: "runtime_trace",
+      path: table,
+      reason: "Runtime history and trace evidence are outside the V2 source-model cleanup boundary.",
+      approvalRequiredForPhysicalDelete: false,
+    }))
+  }
+
+  const validation = input.validation
+  if (validation && !validation.ok) {
+    warnings.add("V2 validation failed; materialization must not run until validation errors are fixed.")
+  }
+  for (const issueItem of input.issues ?? []) {
+    if (issueItem.severity === "invalid") warnings.add(issueItem.message)
+  }
+
+  const sourceDelegateEdgeCount = sourceTopology?.relations.filter((relation) => relation.relationType === "delegates_to").length ?? 0
+  const staleIssueCount = (input.issues ?? []).filter((issueItem) => issueItem.code.includes("stale")).length
+  const invalidIssueCount =
+    (input.issues ?? []).filter((issueItem) => issueItem.severity === "invalid").length +
+    (validation?.issues.filter((issueItem) => issueItem.severity === "error").length ?? 0)
+  const reportTopologyId = input.topologyId ?? sourceTopology?.id
+
+  return {
+    reportVersion: 1,
+    dryRun: true,
+    writePlanned: false,
+    destructiveChangesPlanned: false,
+    backupRequired: true,
+    rollbackSupported: true,
+    approvalRequiredForDestructiveChanges: true,
+    ...(reportTopologyId ? { topologyId: reportTopologyId } : {}),
+    ...(input.sourceVersion !== undefined ? { sourceVersion: input.sourceVersion } : {}),
+    ...(input.sourceVersionId !== undefined ? { sourceVersionId: input.sourceVersionId } : {}),
+    removedFields,
+    transformedFields,
+    preservedFields,
+    warnings: [...warnings],
+    rollbackProcedure: buildExecutorTopologyV2RollbackProcedure(),
+    summary: {
+      sourceNodeCount: sourceTopology?.nodes.length ?? 0,
+      sourceDelegateEdgeCount,
+      runtimeNodeCount: runtimeReadModel?.nodes.length ?? 0,
+      runtimeEdgeCount: runtimeReadModel?.edges.length ?? 0,
+      removedFieldCount: removedFields.length,
+      transformedFieldCount: transformedFields.length,
+      preservedFieldCount: preservedFields.length,
+      staleIssueCount,
+      invalidIssueCount,
+    },
+  }
+}
+
 export function previewExecutorTopologyV2RegistryMigration(input: {
   registry: EnterpriseTopologyRegistryStore
   topologyId?: string
@@ -856,15 +1321,22 @@ export function previewExecutorTopologyV2RegistryMigration(input: {
 }): ExecutorTopologyV2RegistryMigrationPreview {
   const loaded = loadExecutorTopologyV2ReadModelFromRegistry(input)
   if (!loaded.ok || !loaded.topology) {
+    const validation = { ok: false, issues: [] } satisfies ExecutorTopologyV2ValidationResult
+    const report = buildExecutorTopologyV2MigrationDryRunReport({
+      ...(input.topologyId ? { topologyId: input.topologyId } : {}),
+      issues: loaded.issues,
+      validation,
+    })
     return {
       ok: false,
       dryRun: true,
       reasonCode: loaded.reasonCode,
       issues: loaded.issues,
-      validation: { ok: false, issues: [] },
+      validation,
       staleIssueCount: loaded.issues.filter((issue) => issue.code.includes("stale")).length,
       invalidIssueCount: loaded.issues.filter((issue) => issue.severity === "invalid").length,
       historyPreserved: true,
+      report,
     }
   }
 
@@ -881,15 +1353,26 @@ export function previewExecutorTopologyV2RegistryMigration(input: {
         ...(input.materializedAt !== undefined ? { materializedAt: input.materializedAt } : {}),
       })
     : undefined
+  const topologyId = loaded.envelope?.version.topologyId ?? loaded.topology.id
+  const sourceVersion = loaded.envelope?.version.version
+  const sourceVersionId = loaded.envelope?.version.versionId
+  const report = buildExecutorTopologyV2MigrationDryRunReport({
+    runtimeReadModel: loaded.topology,
+    ...(loaded.envelope?.version.topology ? { sourceTopology: loaded.envelope.version.topology } : {}),
+    ...(materializedTopology ? { materializedTopology } : {}),
+    topologyId,
+    ...(sourceVersion !== undefined ? { sourceVersion } : {}),
+    ...(sourceVersionId !== undefined ? { sourceVersionId } : {}),
+    issues: loaded.issues,
+    validation,
+  })
   return {
     ok: validation.ok,
     dryRun: true,
     ...(validation.ok ? {} : { reasonCode: "v2_validation_failed" as const }),
-    ...(loaded.envelope?.version.topologyId ?? loaded.topology.id
-      ? { topologyId: loaded.envelope?.version.topologyId ?? loaded.topology.id }
-      : {}),
-    ...(loaded.envelope?.version.version !== undefined ? { sourceVersion: loaded.envelope.version.version } : {}),
-    ...(loaded.envelope?.version.versionId !== undefined ? { sourceVersionId: loaded.envelope.version.versionId } : {}),
+    topologyId,
+    ...(sourceVersion !== undefined ? { sourceVersion } : {}),
+    ...(sourceVersionId !== undefined ? { sourceVersionId } : {}),
     ...(loaded.envelope?.version.importSource !== undefined
       ? { sourceImportSource: loaded.envelope.version.importSource }
       : {}),
@@ -900,6 +1383,7 @@ export function previewExecutorTopologyV2RegistryMigration(input: {
     staleIssueCount: loaded.issues.filter((issue) => issue.code.includes("stale")).length,
     invalidIssueCount: loaded.issues.filter((issue) => issue.severity === "invalid").length,
     historyPreserved: true,
+    report,
   }
 }
 
@@ -994,6 +1478,7 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
       })
     }
   }
+  validateNoStaleMetadataKeys(issues, input.metadata, "$.metadata")
 
   const nodes = Array.isArray(input.nodes) ? input.nodes : undefined
   const edges = Array.isArray(input.edges) ? input.edges : undefined
@@ -1005,6 +1490,8 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
   }
 
   const nodeIds = new Set<string>()
+  const nodeStatuses = new Map<string, ExecutorNodeV2Status>()
+  const activeNodeNameOwners = new Map<string, string>()
   if (nodes) {
     nodes.forEach((node, index) => {
       const path = `$.nodes[${index}]`
@@ -1025,6 +1512,9 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
       } else {
         nodeIds.add(nodeId)
       }
+      if (nodeId && NODE_STATUSES.has(node.status as ExecutorNodeV2Status)) {
+        nodeStatuses.set(nodeId, node.status as ExecutorNodeV2Status)
+      }
       if (!nonEmptyString(node.name)) {
         issue(issues, {
           code: "invalid_node_name",
@@ -1032,12 +1522,37 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
           message: "Node name is required.",
           ...(nodeId ? { nodeId } : {}),
         })
+      } else if (nodeId && node.status === "active") {
+        const normalizedName = normalizedExecutorNodeName(node.name)
+        const existingNodeId = normalizedName ? activeNodeNameOwners.get(normalizedName) : undefined
+        if (normalizedName && existingNodeId && existingNodeId !== nodeId) {
+          issue(issues, {
+            code: "duplicate_node_name",
+            path: `${path}.name`,
+            message: `Duplicate active node name ${node.name.trim()}. Executor node names must be unique.`,
+            nodeId,
+          })
+        } else if (normalizedName) {
+          activeNodeNameOwners.set(normalizedName, nodeId)
+        }
       }
       if (!nonEmptyString(node.description)) {
         issue(issues, {
           code: "invalid_node_description",
           path: `${path}.description`,
           message: "Node description is required.",
+          ...(nodeId ? { nodeId } : {}),
+        })
+      }
+      if (
+        node.definitionQuickChips !== undefined &&
+        (!Array.isArray(node.definitionQuickChips) ||
+          node.definitionQuickChips.some((item: unknown) => typeof item !== "string" || !item.trim()))
+      ) {
+        issue(issues, {
+          code: "invalid_node_definition_quick_chips",
+          path: `${path}.definitionQuickChips`,
+          message: "definitionQuickChips must be a non-empty string array when provided.",
           ...(nodeId ? { nodeId } : {}),
         })
       }
@@ -1060,6 +1575,8 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
           })
         }
       }
+      validateNoStaleMetadataKeys(issues, node.profile, `${path}.profile`, nodeId ? { nodeId } : {})
+      validateNoStaleMetadataKeys(issues, node.metadata, `${path}.metadata`, nodeId ? { nodeId } : {})
     })
   }
 
@@ -1100,7 +1617,9 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
           ...(edgeId ? { edgeId } : {}),
         })
       }
-      if (!nonEmptyString(edge.sourceNodeId) || !nodeIds.has(edge.sourceNodeId)) {
+      const sourceNodeId = nonEmptyString(edge.sourceNodeId) ? edge.sourceNodeId : undefined
+      const targetNodeId = nonEmptyString(edge.targetNodeId) ? edge.targetNodeId : undefined
+      if (!sourceNodeId || !nodeIds.has(sourceNodeId)) {
         issue(issues, {
           code: "invalid_edge_source",
           path: `${path}.sourceNodeId`,
@@ -1108,11 +1627,35 @@ export function validateExecutorTopologyV2(input: unknown): ExecutorTopologyV2Va
           ...(edgeId ? { edgeId } : {}),
         })
       }
-      if (!nonEmptyString(edge.targetNodeId) || !nodeIds.has(edge.targetNodeId)) {
+      if (!targetNodeId || !nodeIds.has(targetNodeId)) {
         issue(issues, {
           code: "invalid_edge_target",
           path: `${path}.targetNodeId`,
           message: "Edge targetNodeId must reference an existing node.",
+          ...(edgeId ? { edgeId } : {}),
+        })
+      }
+      if (sourceNodeId && targetNodeId && sourceNodeId === targetNodeId) {
+        issue(issues, {
+          code: "self_loop_edge",
+          path,
+          message: "ExecutorEdgeV2 cannot delegate from a node to itself.",
+          ...(edgeId ? { edgeId } : {}),
+        })
+      }
+      if (sourceNodeId && nodeStatuses.get(sourceNodeId) === "archived") {
+        issue(issues, {
+          code: "archived_edge_endpoint",
+          path: `${path}.sourceNodeId`,
+          message: "ExecutorEdgeV2 sourceNodeId cannot reference an archived node.",
+          ...(edgeId ? { edgeId } : {}),
+        })
+      }
+      if (targetNodeId && nodeStatuses.get(targetNodeId) === "archived") {
+        issue(issues, {
+          code: "archived_edge_endpoint",
+          path: `${path}.targetNodeId`,
+          message: "ExecutorEdgeV2 targetNodeId cannot reference an archived node.",
           ...(edgeId ? { edgeId } : {}),
         })
       }

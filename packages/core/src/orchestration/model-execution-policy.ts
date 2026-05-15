@@ -396,7 +396,7 @@ export function resolveFallbackModelExecutionPolicy(input: {
 export function buildModelExecutionAuditSummary(input: {
   snapshot: ModelExecutionSnapshot
   status: ModelExecutionAuditSummary["status"]
-  attemptCount: number
+  modelInvocationCount: number
   latencyMs: number
   outputText?: string
 }): ModelExecutionAuditSummary {
@@ -406,7 +406,7 @@ export function buildModelExecutionAuditSummary(input: {
   )
   return {
     ...input.snapshot,
-    attemptCount: input.attemptCount,
+    attemptCount: input.modelInvocationCount,
     latencyMs: Math.max(0, input.latencyMs),
     estimatedOutputTokens: outputTokens,
     estimatedCost: estimateModelExecutionCost({

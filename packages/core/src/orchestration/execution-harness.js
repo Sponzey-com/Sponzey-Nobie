@@ -1,4 +1,5 @@
-import { AGENT_EXECUTION_DECISION_CONTRACT_VERSION, AGENT_EXECUTION_DECISION_V2_ACTIONS, AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION, AgentExecutionFallbackReason, convertAgentExecutionDecisionV2ToV1, isAgentExecutionDecisionV2, normalizeAgentExecutionConfidence, validateAgentExecutionDecisionShape, validateAgentExecutionDecisionV2AgainstContext, } from "./execution-decision-contract.js";
+import { AGENT_EXECUTION_BEHAVIOR_PATTERNS, AGENT_EXECUTION_DECISION_CONTRACT_VERSION, AGENT_EXECUTION_DECISION_V2_ACTIONS, AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION, AGENT_EXECUTION_ROUTES, AgentExecutionFallbackReason, convertAgentExecutionDecisionV2ToV1, isAgentExecutionDecisionV2, normalizeAgentExecutionConfidence, validateAgentExecutionDecisionShape, validateAgentExecutionDecisionV2AgainstContext, } from "./execution-decision-contract.js";
+import { EXECUTION_HARNESS_POLICY_SOURCE_IDS, loadRuntimePromptPolicySources, renderPromptPolicySourceBlock, } from "./prompt-policy-adapter.js";
 const DEFAULT_EXECUTION_HARNESS_TIMEOUT_MS = 30_000;
 export async function createAgentExecutionDecision(input) {
     const result = await runAgentExecutionHarness(input);
@@ -6,7 +7,11 @@ export async function createAgentExecutionDecision(input) {
 }
 export async function runAgentExecutionHarness(input) {
     const trace = [];
-    const prompt = buildAgentExecutionDecisionPrompt(input.context);
+    const prompt = buildAgentExecutionDecisionPrompt(input.context, {
+        ...(input.promptSources ? { promptSources: input.promptSources } : {}),
+        ...(input.workDir ? { workDir: input.workDir } : {}),
+        ...(input.locale ? { locale: input.locale } : {}),
+    });
     trace.push({ phase: "prompt_built", status: "ok", reasonCode: "accepted" });
     if (!input.callModel) {
         return buildFallbackResult({
@@ -151,24 +156,41 @@ export async function runAgentExecutionHarness(input) {
         rawModelOutput,
     };
 }
-export function buildAgentExecutionDecisionPrompt(context) {
+export function buildAgentExecutionDecisionPrompt(context, options = {}) {
+    const promptSources = options.promptSources ??
+        loadRuntimePromptPolicySources({ ...(options.workDir ? { workDir: options.workDir } : {}), locale: options.locale ?? "en" });
+    const policyBlock = renderPromptPolicySourceBlock({
+        sources: promptSources,
+        locale: options.locale ?? "en",
+        sourceIds: EXECUTION_HARNESS_POLICY_SOURCE_IDS,
+        title: "[Execution Harness Runtime Policy Sources]",
+    });
     return [
+        policyBlock,
+        "",
         "Return only one JSON object matching AgentExecutionDecisionV2.",
         "Use the provided structured context. Do not use local language-specific string rules.",
         "accessible_executors contains only direct children selectable by the current executor.",
+        "Choose only an executor visible from the current executor: accessible_executors are direct children; diagnostic_executors are reference-only.",
         "For a root request, root direct children are the only delegation candidates.",
         "For a child executor request, only that executor's outgoing edge targets are delegation candidates.",
         "diagnostic_executors and all_active_executor_ids are reference-only. They must never be selected as execution candidates.",
         `Use action only from: ${AGENT_EXECUTION_DECISION_V2_ACTIONS.join(", ")}.`,
-        "If action is delegate, selected_executor_ids and every task_split executor_id must be direct children from accessible_executors.",
+        "If action is delegate, selected_executor_ids and selected_connection_path are required. The path must start from the current executor or its direct child and end at the selected direct child.",
+        "If action is delegate, every selected_executor_ids item and every task_split executor_id must be direct children from accessible_executors.",
         "If accessible_executors contains available direct children and the user did not explicitly request direct handling by the current executor, evaluate those child profiles first and delegate any meaningful unit they can own.",
-        "Do not choose self_solve merely because the current executor could answer. Choose self_solve only when no available direct child profile can own a meaningful part of the work, or direct_execution_requested is true.",
+        "Executor suitability must come from the child profile's concrete role, definition, does, delegationScope, expectedOutputs, and riskBoundary. Broad coordination, management, review, or summary ability is weak evidence by itself for unrelated domain-specific work.",
+        "Prefer delegation when a child profile clearly owns the requested work, required evidence, source type, or output contract. When only weak or generic profile fit exists, choose self_solve with unresolved_reason, ask_user, return_to_parent, or fail_with_reason according to the boundary.",
+        "Do not choose self_solve merely because the current executor could answer. Choose self_solve when no available direct child profile can own a meaningful part of the work with concrete profile-fit evidence, or direct_execution_requested is true.",
         "When choosing self_solve while available direct children exist, unresolved_reason is required and must state why delegation is not suitable from the provided executor profile context.",
         "If no direct child can take the work, choose self_solve, ask_user, return_to_parent, or fail_with_reason. Do not invent provider, legacy single-agent, full-agent-list, or default workflow fallback targets.",
         "Low confidence is not a stop condition. It is a reason to choose a better path or self-solve inside the current executor's ability and allowed tools.",
+        "Attempt counts and retry counters are non-terminal signals for changing strategy; fail only when no viable strategy remains inside policy boundaries.",
+        "If the current request or parent handoff indicates explicit user cancellation, stop delegation and recovery, then choose return_to_parent or fail_with_reason with a cancellation reason.",
         JSON.stringify({
             contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
             context,
+            structured_context_blocks: buildAgentExecutionPromptContextBlocks(context),
             required_decision_fields: [
                 "current_executor_id",
                 "parent_executor_id",
@@ -189,8 +211,58 @@ export function buildAgentExecutionDecisionPrompt(context) {
         }),
     ].join("\n");
 }
+function buildAgentExecutionPromptContextBlocks(context) {
+    return {
+        direct_child_candidates: {
+            source: "accessible_executors",
+            selectable: true,
+            values: context.accessible_executors,
+        },
+        previous_failures: extractPreviousFailurePromptBlock(context),
+        risk_boundary: {
+            source: "risk_policy",
+            values: context.risk_policy,
+        },
+        available_tools: {
+            source: "available_tools",
+            values: context.available_tools,
+        },
+    };
+}
+function extractPreviousFailurePromptBlock(context) {
+    const workOrder = context.request.work_order;
+    if (isPlainRecord(workOrder)) {
+        const previousFailures = workOrder["previous_failures"] ?? workOrder["previousFailures"];
+        if (Array.isArray(previousFailures)) {
+            return {
+                source: "request.work_order.previous_failures",
+                values: previousFailures,
+            };
+        }
+        const recoveryState = workOrder["recovery_state"] ?? workOrder["recoveryState"];
+        if (isPlainRecord(recoveryState)) {
+            return {
+                source: "request.work_order.recovery_state",
+                values: recoveryState,
+            };
+        }
+    }
+    return {
+        source: "not_provided",
+        values: [],
+    };
+}
 function normalizeAgentExecutionDecisionModelValue(input) {
-    if (!isAgentExecutionDecisionV2(input.value)) {
+    const v2Candidate = coerceAgentExecutionDecisionV2Like(input);
+    if (!v2Candidate) {
+        const v1Candidate = coerceAgentExecutionDecisionV1Like(input);
+        if (v1Candidate) {
+            return {
+                ok: true,
+                decision: v1Candidate,
+                source: "v1",
+            };
+        }
         return {
             ok: true,
             decision: input.value,
@@ -199,7 +271,7 @@ function normalizeAgentExecutionDecisionModelValue(input) {
     }
     const validation = validateAgentExecutionDecisionV2AgainstContext({
         context: input.context,
-        decision: input.value,
+        decision: v2Candidate,
     });
     if (!validation.ok) {
         return {
@@ -210,9 +282,271 @@ function normalizeAgentExecutionDecisionModelValue(input) {
     }
     return {
         ok: true,
-        decision: convertAgentExecutionDecisionV2ToV1(input.value),
+        decision: convertAgentExecutionDecisionV2ToV1(v2Candidate),
         source: "v2",
     };
+}
+function coerceAgentExecutionDecisionV1Like(input) {
+    const value = input.value;
+    if (!isPlainRecord(value))
+        return undefined;
+    const route = hasText(value["execution_route"]) && isAgentExecutionRoute(value["execution_route"])
+        ? value["execution_route"]
+        : undefined;
+    const selectedExecutorId = hasText(value["selected_executor_id"])
+        ? resolveDirectExecutorReference(input.context, value["selected_executor_id"]) ?? value["selected_executor_id"].trim()
+        : undefined;
+    const looksLikeV1 = route !== undefined ||
+        selectedExecutorId !== undefined ||
+        value["fallback_if_unavailable"] !== undefined;
+    if (!looksLikeV1)
+        return undefined;
+    const fallback = hasText(value["fallback_if_unavailable"]) &&
+        isAgentExecutionFallbackReasonValue(value["fallback_if_unavailable"])
+        ? value["fallback_if_unavailable"]
+        : AgentExecutionFallbackReason.SelfSolve;
+    return {
+        contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+        current_executor_id: hasText(value["current_executor_id"])
+            ? value["current_executor_id"].trim()
+            : input.context.current_executor.executor_id,
+        ...(hasText(value["parent_executor_id"])
+            ? { parent_executor_id: value["parent_executor_id"].trim() }
+            : input.context.parent_executor?.executor_id
+                ? { parent_executor_id: input.context.parent_executor.executor_id }
+                : {}),
+        domain: hasText(value["domain"]) ? value["domain"].trim() : "unresolved",
+        behavior_pattern: coerceBehaviorPattern(value["behavior_pattern"], route === "delegate_to_child" ? "delegate" : undefined),
+        execution_route: route ?? (selectedExecutorId ? "delegate_to_child" : "self_solve"),
+        ...(selectedExecutorId ? { selected_executor_id: selectedExecutorId } : {}),
+        selected_connection_path: toStringArray(value["selected_connection_path"]),
+        task_profile: coerceTaskProfile(input.context, value["task_profile"]),
+        required_outputs: Array.isArray(value["required_outputs"])
+            ? value["required_outputs"]
+            : fallbackRequiredOutputs(input.context),
+        risk_boundary: coerceRiskBoundary(value["risk_boundary"]),
+        confidence: normalizeAgentExecutionConfidence(value["confidence"]),
+        fallback_if_unavailable: fallback,
+        ...(hasText(value["unresolved_reason"]) ? { unresolved_reason: value["unresolved_reason"].trim() } : {}),
+        reason: hasText(value["reason"]) ? value["reason"].trim() : "Execution decision model returned a partial V1 decision.",
+    };
+}
+function coerceAgentExecutionDecisionV2Like(input) {
+    const value = input.value;
+    if (!isPlainRecord(value))
+        return undefined;
+    const rawAction = hasText(value["action"]) ? value["action"].trim() : undefined;
+    const normalizedAction = normalizeDecisionAction(rawAction);
+    const looksLikeV2 = isAgentExecutionDecisionV2(value) ||
+        rawAction !== undefined ||
+        Array.isArray(value["selected_executor_ids"]) ||
+        hasText(value["selected_executor_ids"]) ||
+        value["task_split"] !== undefined;
+    if (!looksLikeV2)
+        return undefined;
+    const action = normalizedAction ?? rawAction;
+    const selectedExecutorIds = toExecutorReferenceArray(value["selected_executor_ids"], input.context);
+    if (selectedExecutorIds.length === 0 && hasText(value["selected_executor_id"])) {
+        selectedExecutorIds.push(resolveDirectExecutorReference(input.context, value["selected_executor_id"]) ?? value["selected_executor_id"].trim());
+    }
+    const taskSplit = normalizeTaskSplit(input.context, value["task_split"]);
+    for (const unit of taskSplit) {
+        if (!selectedExecutorIds.includes(unit.executor_id)) {
+            selectedExecutorIds.push(unit.executor_id);
+        }
+    }
+    const coerced = {
+        contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
+        current_executor_id: hasText(value["current_executor_id"])
+            ? value["current_executor_id"].trim()
+            : input.context.current_executor.executor_id,
+        ...(hasText(value["parent_executor_id"])
+            ? { parent_executor_id: value["parent_executor_id"].trim() }
+            : input.context.parent_executor?.executor_id
+                ? { parent_executor_id: input.context.parent_executor.executor_id }
+                : {}),
+        domain: hasText(value["domain"]) ? value["domain"].trim() : "unresolved",
+        behavior_pattern: coerceBehaviorPattern(value["behavior_pattern"], action),
+        action: isAgentExecutionDecisionV2Action(action) ? action : action,
+        selected_executor_ids: selectedExecutorIds,
+        selected_connection_path: toStringArray(value["selected_connection_path"]),
+        task_profile: coerceTaskProfile(input.context, value["task_profile"]),
+        ...(taskSplit.length > 0 ? { task_split: taskSplit } : {}),
+        required_outputs: Array.isArray(value["required_outputs"])
+            ? value["required_outputs"]
+            : fallbackRequiredOutputs(input.context),
+        risk_boundary: coerceRiskBoundary(value["risk_boundary"]),
+        confidence: normalizeAgentExecutionConfidence(value["confidence"]),
+        ...(hasText(value["unresolved_reason"]) ? { unresolved_reason: value["unresolved_reason"].trim() } : {}),
+        reason: hasText(value["reason"]) ? value["reason"].trim() : "Execution decision model returned a partial V2 decision.",
+    };
+    return coerced;
+}
+function isAgentExecutionDecisionV2Action(value) {
+    return typeof value === "string" &&
+        AGENT_EXECUTION_DECISION_V2_ACTIONS.includes(value);
+}
+function normalizeDecisionAction(value) {
+    if (!hasText(value))
+        return undefined;
+    if (isAgentExecutionDecisionV2Action(value))
+        return value;
+    if (value === "delegate_to_child" || value === "sub_agent")
+        return "delegate";
+    if (value === "self_solve" ||
+        value === "direct_current_agent" ||
+        value === "root_nobie_direct" ||
+        value === "nobie_direct" ||
+        value === "explicit_provider" ||
+        value === "yeonjang") {
+        return "self_solve";
+    }
+    if (value === "ask_parent" || value === "return_to_parent")
+        return "return_to_parent";
+    if (value === "ask_user")
+        return "ask_user";
+    if (value === "boundary_failure")
+        return "fail_with_reason";
+    return undefined;
+}
+function isAgentExecutionRoute(value) {
+    return typeof value === "string" &&
+        AGENT_EXECUTION_ROUTES.includes(value);
+}
+function isAgentExecutionFallbackReasonValue(value) {
+    return typeof value === "string" &&
+        Object.values(AgentExecutionFallbackReason).includes(value);
+}
+function coerceBehaviorPattern(value, action) {
+    if (typeof value === "string" &&
+        AGENT_EXECUTION_BEHAVIOR_PATTERNS.includes(value)) {
+        return value;
+    }
+    if (action === "delegate")
+        return "delegate";
+    if (action === "ask_user")
+        return "clarify";
+    if (action === "return_to_parent" || action === "fail_with_reason")
+        return "recover";
+    return "answer";
+}
+function coerceTaskProfile(context, value) {
+    if (isPlainRecord(value))
+        return value;
+    return {
+        title: context.request.structured_goal ?? "Execution decision",
+        summary: context.request.latest_user_message ?? context.request.structured_goal ?? "Route the current request.",
+        goals: [context.request.structured_goal ?? "Select a viable executor path."],
+        task_units: [],
+        success_criteria: ["The selected route is valid for the current executor graph."],
+    };
+}
+function coerceRiskBoundary(value) {
+    if (isPlainRecord(value) && typeof value["requires_user_approval"] === "boolean" && hasText(value["reason"])) {
+        return value;
+    }
+    return {
+        requires_user_approval: false,
+        reason: "No additional approval boundary was identified by the execution decision model.",
+    };
+}
+function isPlainRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasText(value) {
+    return typeof value === "string" && value.trim().length > 0;
+}
+function toStringArray(value) {
+    if (typeof value === "string" && value.trim().length > 0)
+        return [value.trim()];
+    if (!Array.isArray(value))
+        return [];
+    return value.filter((item) => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim());
+}
+function toExecutorReferenceArray(value, context) {
+    const rawValues = Array.isArray(value) ? value : [value];
+    const resolved = [];
+    for (const raw of rawValues) {
+        const reference = executorReferenceText(raw);
+        if (!reference)
+            continue;
+        const executorId = resolveDirectExecutorReference(context, reference) ?? reference;
+        if (!resolved.includes(executorId))
+            resolved.push(executorId);
+    }
+    return resolved;
+}
+function executorReferenceText(value) {
+    if (hasText(value))
+        return value.trim();
+    if (!isPlainRecord(value))
+        return undefined;
+    for (const key of ["executor_id", "id", "selected_executor_id", "display_name", "name", "role_name"]) {
+        const raw = value[key];
+        if (hasText(raw))
+            return raw.trim();
+    }
+    return undefined;
+}
+function resolveDirectExecutorReference(context, reference) {
+    const normalized = reference.trim();
+    if (!normalized)
+        return undefined;
+    const directChildren = context.accessible_executors;
+    if (directChildren.some((executor) => executor.executor_id === normalized))
+        return normalized;
+    const exactMatches = directChildren.filter((executor) => {
+        return executor.display_name?.trim() === normalized ||
+            executor.role_name?.trim() === normalized;
+    });
+    const exactMatch = exactMatches.length === 1 ? exactMatches[0] : undefined;
+    return exactMatch?.executor_id;
+}
+function normalizeTaskSplit(context, value) {
+    if (!Array.isArray(value))
+        return [];
+    const fallbackObjective = context.request.structured_goal ??
+        context.request.latest_user_message ??
+        "Handle the delegated work.";
+    const fallbackExpectedReturn = context.request.required_outputs?.[0]?.label ??
+        "Return the result needed by the parent executor.";
+    return value.flatMap((unit) => {
+        if (!isPlainRecord(unit))
+            return [];
+        const executorReference = executorReferenceText(unit["executor_id"]) ??
+            executorReferenceText(unit["preferred_executor_id"]) ??
+            executorReferenceText(unit["selected_executor_id"]) ??
+            executorReferenceText(unit["executor"]) ??
+            executorReferenceText(unit["agent"]);
+        if (!executorReference)
+            return [];
+        const executorId = resolveDirectExecutorReference(context, executorReference);
+        if (!executorId)
+            return [];
+        const objective = textFromKeys(unit, ["objective", "goal", "title", "summary", "description"]) ??
+            fallbackObjective;
+        const expectedReturn = textFromKeys(unit, ["expected_return", "expected_output", "return", "output", "label"]) ??
+            fallbackExpectedReturn;
+        return [{
+                executor_id: executorId,
+                objective,
+                expected_return: expectedReturn,
+                ...(Array.isArray(unit["depends_on_executor_ids"])
+                    ? { depends_on_executor_ids: toExecutorReferenceArray(unit["depends_on_executor_ids"], context) }
+                    : {}),
+            }];
+    }).filter((unit, index, all) => {
+        return all.findIndex((other) => other.executor_id === unit.executor_id && other.objective === unit.objective) === index;
+    });
+}
+function textFromKeys(record, keys) {
+    for (const key of keys) {
+        const value = record[key];
+        if (hasText(value))
+            return value.trim();
+    }
+    return undefined;
 }
 export function parseAgentExecutionDecisionModelOutput(output) {
     const trimmed = output.trim();
@@ -314,14 +648,14 @@ export function validateAgentExecutionDecisionAgainstContext(input) {
             });
         }
         if (graphContext &&
+            requiresSelectedExecutor(route) &&
             !directChildIds.has(selectedId) &&
-            !selectedIsStructuralEscape &&
-            input.decision.selected_connection_path.length === 0) {
+            !selectedIsStructuralEscape) {
             issues.push({
                 code: "selected_executor_not_direct_child",
-                message: "Selected executor is not a direct child and no valid connection path was provided.",
+                message: "Selected executor must be a direct child of the current executor for this execution route.",
                 executor_id: selectedId,
-                connection_path: [],
+                connection_path: input.decision.selected_connection_path,
             });
         }
         if (selectedProfile && !selectedProfile.available) {
@@ -340,6 +674,14 @@ export function validateAgentExecutionDecisionAgainstContext(input) {
         }
     }
     if ((requiresSelectedPath(route) || input.decision.selected_connection_path.length > 0) && !explicitAllowed) {
+        if (requiresSelectedPath(route) && input.decision.selected_connection_path.length === 0) {
+            issues.push({
+                code: "empty_selected_path",
+                message: "Selected connection path is required for delegated execution decisions.",
+                ...(selectedId ? { executor_id: selectedId } : {}),
+                connection_path: [],
+            });
+        }
         issues.push(...validateSelectedConnectionPath({
             context: input.context,
             selectedExecutorId: selectedId,
@@ -725,6 +1067,8 @@ function selectedExecutorForFallback(context, route) {
                 (context.requester?.requester_type === "executor" ? context.requester.requester_id : undefined);
         case "ask_user":
         case "explicit_provider":
+        case "explicit_provider_target":
+        case "boundary_failure":
             return undefined;
     }
 }
@@ -774,10 +1118,10 @@ function fallbackRouteIssues(context, decision) {
                 executor_id: context.current_executor.executor_id,
             });
         }
-        if (route === "explicit_provider" && !context.explicit_provider_target_id?.trim()) {
+        if ((route === "explicit_provider" || route === "explicit_provider_target") && !context.explicit_provider_target_id?.trim()) {
             issues.push({
                 code: "provider_target_missing",
-                message: "explicit_provider fallback requires an explicit provider target.",
+                message: "explicit provider fallback requires an explicit provider target.",
             });
         }
         if ((route === "return_to_parent" || route === "ask_parent") &&
@@ -874,9 +1218,6 @@ function fallbackReasonForValidationStatus(context, status) {
     }
     if (status === "provider_target_missing") {
         return AgentExecutionFallbackReason.AskUser;
-    }
-    if (status === "executor_unavailable" && firstDelegableExecutor(context)) {
-        return AgentExecutionFallbackReason.DelegateToChild;
     }
     if (context.current_executor.available)
         return AgentExecutionFallbackReason.SelfSolve;

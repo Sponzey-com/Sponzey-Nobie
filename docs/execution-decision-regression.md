@@ -38,6 +38,12 @@ Full Phase 022 gate:
 pnpm run test:phase022
 ```
 
+Architecture cleanup gate:
+
+```sh
+pnpm run test:architecture
+```
+
 Topology V2 DB and release-readiness gate:
 
 ```sh
@@ -153,7 +159,8 @@ rg "activeSubAgents" packages/core/src/orchestration packages/core/src/runs pack
 
 Allowed legacy locations:
 
-- `resolveRunRoute()` may exist in `runs/routing` and may be called only by `resolveExplicitProviderRoute()` in `runs/intake-bridge-pass`.
+- `resolveRunRoute()` may exist in `runs/routing` and may be called only as the explicit provider target resolver passed from `runs/intake-bridge-pass` into `decideExecutionRoute`.
+- The explicit provider branch belongs in `orchestration/decide-execution-route.ts` and must run before execution graph selection. It must not be used as root request selection fallback.
 - `provider:openai` may appear in route normalization only. It must not be the implicit child run target for a normal channel request.
 - `topology_routing_not_opted_in` and `non_root_request` may remain in `topology-runtime/harness` as diagnostic fallback reason codes only.
 - `single_nobie` may remain in compatibility contracts, config/settings, mode snapshots, release gates, and runtime inspector warnings. It must not appear in planner or execution harness selection logic.
@@ -163,7 +170,7 @@ Operational smoke procedure:
 
 1. Run `./scripts/status-local.sh`.
 2. If `buildRequired=true`, run `pnpm --filter @nobie/core build` and `pnpm --filter @nobie/cli build`.
-3. If `restartRequired=true`, restart local services with `bash scripts/start-local.sh` or the normal restart workflow.
+3. If `restartRequired=true`, restart local services with `bash scripts/start-local.sh --restart`.
 4. Run `./scripts/status-local.sh` again and confirm `buildRequired=false` and `restartRequired=false`.
 5. Run WebUI dry channel smoke:
 

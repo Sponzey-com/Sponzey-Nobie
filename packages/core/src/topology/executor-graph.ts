@@ -51,10 +51,10 @@ export type ExecutorConnectionRelation =
 
 export interface ExecutorGraphSourceOfTruth {
   editableProjection: "executor_graph"
-  runtimeSourceOfTruth: "enterprise_topology"
-  nodeContractBoundary: "node_contract"
-  workOrderBoundary: "work_order"
-  agentConfigRole: "runtime_option"
+  runtimeSourceOfTruth: "executor_topology_v2"
+  nodeContractBoundary: "compatibility_projection"
+  workOrderBoundary: "runtime_adapter"
+  agentConfigRole: "compatibility_import"
   projectionOnly: true
 }
 
@@ -149,6 +149,7 @@ export interface ExecutorGraphIssue {
     | "duplicate_executor_id"
     | "blank_executor_name"
     | "missing_connection_endpoint"
+    | "self_loop_connection"
     | "duplicate_connection_id"
   message: string
   targetId?: string
@@ -177,7 +178,7 @@ export interface ExecutorGraphTopologyMetadata {
   topologyId: string
   mode: ExecutorGraphMode
   source: "executor_graph"
-  sourceOfTruth: "enterprise_topology"
+  sourceOfTruth: "executor_topology_v2"
   projectionOnly: true
   executorIds: string[]
   connectionIds: string[]
@@ -261,10 +262,10 @@ export interface CompileExecutorGraphOptions {
 
 export const EXECUTOR_GRAPH_SOURCE_OF_TRUTH: ExecutorGraphSourceOfTruth = {
   editableProjection: "executor_graph",
-  runtimeSourceOfTruth: "enterprise_topology",
-  nodeContractBoundary: "node_contract",
-  workOrderBoundary: "work_order",
-  agentConfigRole: "runtime_option",
+  runtimeSourceOfTruth: "executor_topology_v2",
+  nodeContractBoundary: "compatibility_projection",
+  workOrderBoundary: "runtime_adapter",
+  agentConfigRole: "compatibility_import",
   projectionOnly: true,
 }
 
@@ -576,16 +577,6 @@ function operationId(prefix: string, id: string, at: EnterpriseTimestamp): strin
   return `executor-graph:${prefix}:${id}:${String(at)}`
 }
 
-function declaredResourceIds(topology: EnterpriseTopology | null | undefined): {
-  toolIds: ReadonlySet<string>
-  systemIds: ReadonlySet<string>
-} {
-  return {
-    toolIds: new Set(topology?.tools.filter((tool) => tool.status !== "archived").map((tool) => tool.id) ?? []),
-    systemIds: new Set(topology?.systems.filter((system) => system.status !== "archived").map((system) => system.id) ?? []),
-  }
-}
-
 export function buildExecutorGraphGuiOperations(
   graph: ExecutorGraphWorkspace,
   baseTopology?: EnterpriseTopology | null,
@@ -595,19 +586,12 @@ export function buildExecutorGraphGuiOperations(
   const existingNodeIds = new Set(baseTopology?.nodes.map((node) => node.id) ?? [])
   const existingRelationIds = new Set(baseTopology?.relations.map((relation) => relation.id) ?? [])
   const executorById = new Map(graph.executors.map((executor) => [executor.id, executor]))
-  const { toolIds, systemIds } = declaredResourceIds(baseTopology)
   const operations: EnterpriseTopologyGuiOperation[] = []
 
   for (const executor of graph.executors) {
     const nodeId = executor.sourceNodeId ?? executor.id
     const nodeType = nodeTypeForRuntimeMode(executor)
     const executorProfile = executorProfileForExecutor(executor)
-    const allowedToolIds = compactStrings([
-      ...(executor.advancedMapping?.allowedToolIds ?? []),
-      ...executor.inferredTools.filter((toolId) => toolId.startsWith("tool:")),
-    ]).filter((toolId) => toolIds.has(toolId))
-    const allowedSystemIds = compactStrings(executor.advancedMapping?.allowedSystemIds ?? [])
-      .filter((systemId) => systemIds.has(systemId))
     const template = {
       templateId: `executor-graph:${executor.id}`,
       source: "user_preset" as const,
@@ -655,8 +639,8 @@ export function buildExecutorGraphGuiOperations(
         nodeType,
         tags: executor.inferredCapabilities,
         template,
-        allowedToolIds,
-        allowedSystemIds,
+        allowedToolIds: [],
+        allowedSystemIds: [],
       },
     })
   }
@@ -750,6 +734,14 @@ function validateExecutorGraphDraft(input: {
         targetId: connection.id,
       })
     }
+    if (connection.fromExecutorId === connection.toExecutorId) {
+      issues.push({
+        severity: "error",
+        code: "self_loop_connection",
+        message: `Connection cannot delegate to itself: ${connection.id}`,
+        targetId: connection.id,
+      })
+    }
   }
 
   return issues
@@ -777,7 +769,7 @@ function executorNodeMetadata(graph: ExecutorGraphWorkspace, executor: ExecutorD
     ...(executor.inferenceEvidence
       ? { inferenceEvidence: executor.inferenceEvidence as unknown as EnterpriseMetadataValue }
       : {}),
-    sourceOfTruth: "enterprise_topology",
+    sourceOfTruth: "executor_topology_v2",
     projectionOnly: true,
   }
 }
@@ -789,7 +781,7 @@ function connectionRelationMetadata(graph: ExecutorGraphWorkspace, connection: E
     inferredRelation: connection.inferredRelation,
     confidence: connection.confidence,
     userConfirmed: connection.userConfirmed,
-    sourceOfTruth: "enterprise_topology",
+    sourceOfTruth: "executor_topology_v2",
     projectionOnly: true,
   }
 }
@@ -835,7 +827,7 @@ export function buildExecutorGraphTopologyMetadata(
     topologyId: graph.topologyId,
     mode: graph.mode,
     source: "executor_graph",
-    sourceOfTruth: "enterprise_topology",
+    sourceOfTruth: "executor_topology_v2",
     projectionOnly: true,
     executorIds: graph.executors.map((executor) => executor.id),
     connectionIds: graph.connections.map((connection) => connection.id),
@@ -903,11 +895,15 @@ export function readExecutorGraphMetadata(topology: EnterpriseTopology): Executo
   if (!record || record.schemaVersion !== EXECUTOR_GRAPH_SCHEMA_VERSION) return null
   if (typeof record.graphId !== "string" || typeof record.topologyId !== "string") return null
   if (record.mode !== "simple" && record.mode !== "advanced") return null
-  if (record.source !== "executor_graph" || record.sourceOfTruth !== "enterprise_topology") return null
+  if (record.source !== "executor_graph") return null
+  if (record.sourceOfTruth !== "executor_topology_v2" && record.sourceOfTruth !== "enterprise_topology") return null
   if (record.projectionOnly !== true) return null
   const workspace = metadataRecord(record.workspace)
   if (!workspace) return null
-  return record as unknown as ExecutorGraphTopologyMetadata
+  return {
+    ...(record as unknown as ExecutorGraphTopologyMetadata),
+    sourceOfTruth: "executor_topology_v2",
+  }
 }
 
 export function compileExecutorGraphToEnterpriseTopology(
@@ -983,9 +979,9 @@ export function buildExecutorGraphRollbackEvidence(input: {
   if (!sameStrings(metadataConnectionIds, projectionConnectionIds)) blockingFailures.push("connection_projection_mismatch")
   if (!sameStrings(expectedConfirmedIds, projectionConfirmedIds)) blockingFailures.push("confirmed_understanding_mismatch")
   if (
-    metadata?.sourceOfTruth !== "enterprise_topology" ||
+    metadata?.sourceOfTruth !== "executor_topology_v2" ||
     metadata?.projectionOnly !== true ||
-    projection.sourceOfTruth.runtimeSourceOfTruth !== "enterprise_topology" ||
+    projection.sourceOfTruth.runtimeSourceOfTruth !== "executor_topology_v2" ||
     projection.sourceOfTruth.projectionOnly !== true
   ) {
     blockingFailures.push("source_of_truth_boundary_mismatch")

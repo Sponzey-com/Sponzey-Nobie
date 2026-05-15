@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto"
 import {
-  aggregateSubSessionResultsForParent,
-  buildParentAggregationRuntimeEvent,
   type ParentAggregationTrace,
   type SubAgentResultReview,
   type SubAgentResultReviewIssue,
@@ -34,6 +32,7 @@ import {
   updateRunSubSession,
 } from "../db/index.js"
 import { recordLatencyMetric } from "../observability/latency.js"
+import { AggregateChildResult } from "../runs/aggregate-child-result.js"
 import { recordLateResultNoReply } from "../runs/channel-finalizer.js"
 import { type MessageLedgerEventInput, recordMessageLedgerEvent } from "../runs/message-ledger.js"
 import { appendRunEvent, getRootRun } from "../runs/store.js"
@@ -72,6 +71,7 @@ export interface RunSubSessionInput {
   parentAgent?: SubSessionParentAgentSnapshot
   parentSessionId: string
   promptBundle: AgentPromptBundle
+  /** @deprecated Legacy metadata only. This value must not terminate sub-session execution. */
   timeoutMs?: number
   parentAbortSignal?: AbortSignal
   providerModelMatrix?: ProviderModelCapability[]
@@ -1119,7 +1119,6 @@ export class SubSessionRunner {
       parentRunId: subSession.parentRunId,
       controller,
     })
-    let timeout: NodeJS.Timeout | undefined
     let lastModelExecution: ModelExecutionAuditSummary | undefined
 
     try {
@@ -1144,9 +1143,6 @@ export class SubSessionRunner {
         handler,
         modelPolicy,
         rootController: controller,
-        setTimer: (timer) => {
-          timeout = timer
-        },
       })
       const result = execution.result
       const modelExecution = execution.audit
@@ -1246,7 +1242,10 @@ export class SubSessionRunner {
           normalizedFailureKey: review.normalizedFailureKey ?? null,
         },
       })
-      const parentAggregationTrace = aggregateSubSessionResultsForParent({
+      const aggregation = await new AggregateChildResult({
+        appendParentEvent: this.dependencies.appendParentEvent,
+        recordOrchestrationEvent: recordOrchestrationEventSafely,
+      }).execute({
         parentRunId: subSession.parentRunId,
         ...(subSession.parentAgentId
           ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
@@ -1261,22 +1260,7 @@ export class SubSessionRunner {
           canUseSameChild: review.canRetry,
         }],
       })
-      const parentAggregationEvent = buildParentAggregationRuntimeEvent(parentAggregationTrace)
-      await this.dependencies.appendParentEvent(
-        subSession.parentRunId,
-        `parent_child_result_aggregated:${subSession.subSessionId}:${parentAggregationTrace.nextAction}`,
-      )
-      recordOrchestrationEventSafely({
-        eventKind: "parent_child_result_aggregated",
-        runId: subSession.parentRunId,
-        subSessionId: subSession.subSessionId,
-        agentId: subSession.agentId,
-        correlationId: subSession.parentRunId,
-        dedupeKey: `orchestration:parent-child-result-aggregated:${subSession.parentRunId}:${subSession.subSessionId}:${result.resultReportId}`,
-        source: "sub-session-runner",
-        summary: parentAggregationEvent.summary,
-        payload: { ...parentAggregationEvent.payload },
-      })
+      const parentAggregationTrace = aggregation.trace
       try {
         this.dependencies.recordReviewEvent({
           parentRunId: subSession.parentRunId,
@@ -1392,7 +1376,6 @@ export class SubSessionRunner {
         replayed: false,
       }
     } finally {
-      if (timeout) clearTimeout(timeout)
       effectiveInput.parentAbortSignal?.removeEventListener("abort", parentAbortHandler)
       this.activeControllers.delete(subSession.subSessionId)
     }
@@ -1614,7 +1597,6 @@ export class SubSessionRunner {
     handler: SubSessionExecutionHandler
     modelPolicy: ResolvedModelExecutionPolicy
     rootController: AbortController
-    setTimer: (timer: NodeJS.Timeout) => void
   }): Promise<{ result: ResultReport; audit: ModelExecutionAuditSummary }> {
     if (!input.modelPolicy.snapshot) {
       throw new Error(input.modelPolicy.userMessage)
@@ -1656,7 +1638,7 @@ export class SubSessionRunner {
       const audit = buildModelExecutionAuditSummary({
         snapshot: initialSnapshot,
         status: "completed",
-        attemptCount: 1,
+        modelInvocationCount: 1,
         latencyMs,
         outputText: JSON.stringify(result.outputs),
       })
@@ -1688,7 +1670,7 @@ export class SubSessionRunner {
       const audit = buildModelExecutionAuditSummary({
         snapshot: initialSnapshot,
         status: "failed",
-        attemptCount: 1,
+        modelInvocationCount: 1,
         latencyMs: Math.max(0, this.now() - startedAt),
       })
       input.subSession.modelExecutionSnapshot = audit

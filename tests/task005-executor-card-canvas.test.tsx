@@ -19,6 +19,7 @@ import {
 import {
   ExecutorCardNode,
   executorRuntimeStatusCopy,
+  selectExecutorCardCapabilities,
 } from "../packages/webui/src/components/topology/ExecutorCardNode.tsx"
 import { buildExecutorGraphRelationInfoMap } from "../packages/webui/src/lib/executor-graph-relations.ts"
 import { TopologyWorkspaceCanvas } from "../packages/webui/src/components/topology/TopologyWorkspaceCanvas.tsx"
@@ -163,6 +164,38 @@ describe("task005 executor card canvas", () => {
     expect(cardHtml).toContain("review-a")
     expect(cardHtml).toContain('data-testid="executor-card-relation"')
     expect(cardHtml).toContain('data-selectable-without-path="false"')
+  })
+
+  it("hides duplicated long capability text from compact executor cards", () => {
+    const description = "재무 관련 조언과 조사 내용을 확인하고, 중요한 판단 사항을 검토·승인하며, 해야 할 일을 나눠 진행합니다."
+    const capabilities = selectExecutorCardCapabilities(description, [
+      "업무 처리",
+      description,
+      "재무 관련 조언과 조사 내용을 확인하고, 중요한 판단 사항을 검토·승인하며, 해야 할 일을 나눠 진행합니다.",
+      "검토",
+    ])
+    const html = renderToStaticMarkup(createElement(ExecutorCardNode, {
+      executor: {
+        id: "node:finance",
+        name: "행랑아범",
+        description,
+        inferredRuntimeMode: "auto",
+        inferredCapabilities: [
+          "업무 처리",
+          description,
+          "검토",
+        ],
+        inferredTools: [],
+        inferredOutputs: [],
+        inferredSuccessCriteria: [],
+        confidence: 0.9,
+      },
+    }))
+
+    expect(capabilities).toEqual(["업무 처리", "검토"])
+    expect(html).toContain("업무 처리")
+    expect(html).toContain("검토")
+    expect(html.match(/data-testid="executor-card-capability"/g)).toHaveLength(2)
   })
 
 	  it("exposes a draggable and connectable node canvas for simple workflow editing", () => {

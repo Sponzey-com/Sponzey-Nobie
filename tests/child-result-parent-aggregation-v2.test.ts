@@ -10,6 +10,7 @@ import {
   buildParentAggregationRuntimeEvent,
   reviewSubAgentResult,
 } from "../packages/core/src/agent/sub-agent-result-review.ts"
+import { AggregateChildResult } from "../packages/core/src/runs/aggregate-child-result.ts"
 
 function identity(entityId: string): RuntimeIdentity {
   return {
@@ -55,6 +56,11 @@ function resultReport(overrides: Partial<ResultReport> = {}): ResultReport {
     resultReportId: "result:finance",
     parentRunId: "run-parent",
     subSessionId: "sub:finance",
+    source: {
+      entityType: "sub_agent",
+      entityId: "agent:finance",
+      nicknameSnapshot: "행랑아범",
+    },
     status: "completed",
     outputs: [
       { outputId: "answer", status: "satisfied", value: "코스피 지수는 2,700선입니다." },
@@ -104,11 +110,18 @@ describe("task008 child result parent aggregation v2", () => {
     expect(child).toMatchObject({
       subSessionId: "sub:finance",
       resultReportId: "result:finance",
+      sourceExecutorId: "agent:finance",
+      sourceExecutorName: "행랑아범",
+      resultStatus: "completed",
       status: "partial",
       confirmedFacts: ["코스피 지수는 2,700선입니다."],
       unverifiedItems: expect.arrayContaining([
         "unsatisfied_output:market_context",
         "market_context:partial",
+        "reported_risk_or_gap",
+      ]),
+      missingItems: expect.arrayContaining([
+        "unsatisfied_output:market_context",
         "reported_risk_or_gap",
       ]),
       attemptedMethods: expect.arrayContaining([
@@ -122,6 +135,7 @@ describe("task008 child result parent aggregation v2", () => {
       reviewVerdict: "needs_revision",
       parentIntegrationStatus: "requires_revision",
     })
+    expect(child?.evidence).toEqual(report.evidence)
     expect(child?.artifacts).toHaveLength(1)
     expect(trace.reasonCodes).toEqual(expect.arrayContaining([
       "child_result_blocked",
@@ -130,6 +144,46 @@ describe("task008 child result parent aggregation v2", () => {
       "next_action:redelegate_direct_child",
       "parent_aggregation_trace_recorded",
     ]))
+  })
+
+  it("records child-result aggregation as one application-service boundary", async () => {
+    const report = resultReport({
+      outputs: [{ outputId: "answer", status: "satisfied", value: "확인 완료" }],
+      risksOrGaps: [],
+    })
+    const review = reviewSubAgentResult({
+      resultReport: report,
+      expectedOutputs: [sourcedAnswer],
+    })
+    const parentEvents: string[] = []
+    const orchestrationEvents: unknown[] = []
+    const output = await new AggregateChildResult({
+      appendParentEvent: (_parentRunId, label) => parentEvents.push(label),
+      recordOrchestrationEvent: (event) => orchestrationEvents.push(event),
+    }).execute({
+      parentRunId: "run-parent",
+      parentAgentId: "agent:nobie",
+      successCriteria: ["answer has source evidence"],
+      childResults: [{ subSessionId: "sub:finance", resultReport: report, review }],
+    })
+
+    expect(output.finalDeliveryAllowed).toBe(true)
+    expect(output.nextAction).toBe("ready_for_finalization")
+    expect(parentEvents).toEqual([
+      "child_result_received:sub:finance:result:finance:completed",
+      "parent_child_result_aggregation_started:sub:finance",
+      "parent_child_result_aggregated:sub:finance:ready_for_finalization",
+      "parent_child_result_ready_for_finalization:sub:finance",
+    ])
+    expect(orchestrationEvents).toEqual([
+      expect.objectContaining({
+        eventKind: "parent_child_result_aggregated",
+        runId: "run-parent",
+        subSessionId: "sub:finance",
+        agentId: "agent:finance",
+        source: "aggregate-child-result",
+      }),
+    ])
   })
 
   it("records parent aggregation before any final channel delivery event can be considered", () => {
@@ -162,5 +216,37 @@ describe("task008 child result parent aggregation v2", () => {
     ).toBeLessThan(
       auditSequence.find((event) => event.kind === "final_answer_delivered")?.order ?? 0,
     )
+  })
+
+  it("keeps input order and marks conflicting child outputs before finalization", () => {
+    const left = resultReport({
+      resultReportId: "result:left",
+      subSessionId: "sub:left",
+      outputs: [{ outputId: "answer", status: "satisfied", value: "값 A" }],
+      risksOrGaps: [],
+    })
+    const right = resultReport({
+      resultReportId: "result:right",
+      subSessionId: "sub:right",
+      outputs: [{ outputId: "answer", status: "satisfied", value: "값 B" }],
+      risksOrGaps: [],
+    })
+    const leftReview = reviewSubAgentResult({ resultReport: left, expectedOutputs: [sourcedAnswer] })
+    const rightReview = reviewSubAgentResult({ resultReport: right, expectedOutputs: [sourcedAnswer] })
+
+    const trace = aggregateSubSessionResultsForParent({
+      parentRunId: "run-parent",
+      childResults: [
+        { subSessionId: "sub:left", resultReport: left, review: leftReview },
+        { subSessionId: "sub:right", resultReport: right, review: rightReview },
+      ],
+    })
+
+    expect(trace.childResults.map((child) => child.subSessionId)).toEqual(["sub:left", "sub:right"])
+    expect(trace.finalDeliveryAllowed).toBe(false)
+    expect(trace.reasonCodes).toEqual(expect.arrayContaining([
+      "multiple_child_results_aggregated",
+      "child_result_conflict_detected",
+    ]))
   })
 })

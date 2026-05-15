@@ -125,17 +125,33 @@ function strategyKeyForAlternative(
     case "target":
     case "fallback_route":
     case "path":
-      return { ...base, targetRoute: `${base.targetRoute}:${alternative.changedDimension}:${suffix}` }
+      return {
+        ...base,
+        targetRoute: `${base.targetRoute}:${alternative.changedDimension}:${suffix}`,
+        executorId: `${base.executorId ?? base.targetAgentId ?? base.targetRoute}:${suffix}`,
+      }
     case "tool":
-      return { ...base, toolIds: [...base.toolIds, suffix] }
+      return { ...base, toolIds: [...base.toolIds, suffix], sourceIds: [...(base.sourceIds ?? []), suffix] }
     case "input_shape":
-      return { ...base, inputShapeHash: `${base.inputShapeHash}:${suffix}` }
+      return {
+        ...base,
+        inputShapeHash: `${base.inputShapeHash}:${suffix}`,
+        promptContextHash: `${base.promptContextHash ?? base.inputShapeHash}:${suffix}`,
+      }
     case "permission":
-      return { ...base, permissionProfile: `${base.permissionProfile}:${suffix}` }
+      return {
+        ...base,
+        permissionProfile: `${base.permissionProfile}:${suffix}`,
+        userConfirmationState: `${base.userConfirmationState ?? "none"}:${suffix}`,
+      }
     case "execution_order":
       return { ...base, executionOrderHash: `${base.executionOrderHash}:${suffix}` }
     case "task_split":
-      return { ...base, normalizedTaskHash: `${base.normalizedTaskHash}:${suffix}` }
+      return {
+        ...base,
+        normalizedTaskHash: `${base.normalizedTaskHash}:${suffix}`,
+        decompositionHash: `${base.decompositionHash ?? base.normalizedTaskHash}:${suffix}`,
+      }
     case "verification":
       return { ...base, verificationMethod: `${base.verificationMethod}:${suffix}` }
   }

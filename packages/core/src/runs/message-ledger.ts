@@ -25,6 +25,7 @@ export type MessageLedgerEventKind =
   | "final_answer_generated"
   | "final_answer_delivered"
   | "final_answer_suppressed"
+  | "final_validation_evaluated"
   | "text_delivered"
   | "text_delivery_failed"
   | "text_delivery_suppressed"

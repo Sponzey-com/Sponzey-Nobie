@@ -453,15 +453,25 @@ function hasUserResultShape(workOrder: WorkOrder): boolean {
 }
 
 function recoveryStrategyKeyForNodePlan(node: NodeExecutionPlan): RecoveryStrategyKey {
+  const taskUnitTitles = node.taskAnalysis.taskUnits.map((taskUnit) => taskUnit.title)
+  const taskUnitIds = node.taskAnalysis.taskUnits.map((taskUnit) => taskUnit.taskUnitId)
+  const inputNeedsHash = node.taskAnalysis.inputNeeds.join("|") || "input:none"
+  const decompositionHash = taskUnitTitles.join("|") || node.executorId
+  const userConfirmationState = node.taskAnalysis.needsUserConfirmation ? "required" : "not_required"
   return {
     targetRoute: node.delegationResolution.selectedRoute,
     targetAgentId: node.delegationResolution.selectedTargetId,
+    executorId: node.delegationResolution.selectedTargetId ?? node.executorId,
     toolIds: node.taskAnalysis.requiredTools,
-    inputShapeHash: node.taskAnalysis.inputNeeds.join("|") || "input:none",
-    normalizedTaskHash: node.taskAnalysis.taskUnits.map((taskUnit) => taskUnit.title).join("|") || node.executorId,
+    sourceIds: node.taskAnalysis.requiredTools,
+    inputShapeHash: inputNeedsHash,
+    promptContextHash: inputNeedsHash,
+    normalizedTaskHash: decompositionHash,
+    decompositionHash,
     fileTargets: [],
     permissionProfile: node.taskAnalysis.needsUserConfirmation ? "confirmation_required" : "default",
-    executionOrderHash: node.taskAnalysis.taskUnits.map((taskUnit) => taskUnit.taskUnitId).join(">") || "single",
+    userConfirmationState,
+    executionOrderHash: taskUnitIds.join(">") || "single",
     verificationMethod: node.taskAnalysis.completionCondition,
   }
 }

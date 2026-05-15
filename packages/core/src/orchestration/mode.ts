@@ -1,7 +1,10 @@
 import { getConfig, type OrchestrationConfig } from "../config/index.js"
 import { listAgentConfigs, type DbAgentConfig } from "../db/index.js"
 import type { OrchestrationMode, SubAgentConfig } from "../contracts/sub-agent-orchestration.js"
-import { createEnterpriseTopologyRegistry } from "../topology/registry.js"
+import {
+  createLegacyTopologyRegistry,
+  legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
+} from "../topology/legacy-enterprise-topology-adapter.js"
 
 export type OrchestrationRuntimeStatus = "ready" | "disabled" | "degraded"
 
@@ -109,7 +112,7 @@ function topologyAgentId(topologyId: string, executorId: string): string {
 }
 
 function topologyExecutorCandidates(): RegistryCandidate[] {
-  const registry = createEnterpriseTopologyRegistry()
+  const registry = createLegacyTopologyRegistry()
   const topologies = registry
     .listTopologies()
     .filter((topology) => topology.status !== "archived")
@@ -119,7 +122,8 @@ function topologyExecutorCandidates(): RegistryCandidate[] {
   for (const topologyRecord of topologies) {
     const exported = registry.exportTopology(topologyRecord.topologyId)
     if (!exported) continue
-    for (const node of exported.version.topology.nodes) {
+    const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported)
+    for (const node of adapted.envelope.version.topology.nodes) {
       if (node.status === "archived") continue
       const displayName = node.displayName?.trim() || node.name.trim()
       if (!displayName) continue

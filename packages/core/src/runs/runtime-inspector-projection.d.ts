@@ -163,6 +163,18 @@ export interface RunRuntimeInspectorFinalizer {
     idempotencyKey?: string;
     summary?: string;
     at?: number;
+    validation?: RunRuntimeInspectorFinalValidation;
+}
+export interface RunRuntimeInspectorFinalValidation {
+    status: "ready" | "needs_recovery" | "limited_failure_allowed" | "unknown";
+    finalDeliveryAllowed: boolean;
+    reasonCodes: string[];
+    missingValueCount: number;
+    conflictCount: number;
+    sourceCount: number;
+    sourceTimestamps: string[];
+    basisTime?: string;
+    at: number;
 }
 export interface RunRuntimeInspectorTopologyRun {
     topologyRunId: string;
@@ -199,6 +211,8 @@ export interface RunRuntimeInspectorTopologyRouting {
     executionDecisionValidationStatus?: string;
     executionDecisionValidationIssues?: string[];
     executionDecisionResolvedExecutorId?: string;
+    executionDecisionExecutorNameById?: Record<string, string>;
+    executionDecisionExecutorRoleNameById?: Record<string, string>;
     providerFallbackBlocked: boolean;
     providerFallbackBlockedReasonCode?: string;
     riskBoundaryRequiresUserApproval?: boolean;

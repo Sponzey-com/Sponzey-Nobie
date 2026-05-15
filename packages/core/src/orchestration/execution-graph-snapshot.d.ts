@@ -1,5 +1,5 @@
 import { type NobieConfig } from "../config/index.js";
-import { type EnterpriseTopologyRegistryStore } from "../topology/registry.js";
+import { type LegacyTopologyRegistryStore } from "../topology/legacy-enterprise-topology-adapter.js";
 import { type ExecutorProfile, type OrchestrationRegistrySnapshot, type RegistryServiceDependencies } from "./registry.js";
 export declare const EXECUTION_GRAPH_ROOT_AGENT_ID: "agent:nobie";
 export declare const WORKSPACE_DRAFT_TOPOLOGY_ID: "workspace:draft";
@@ -76,7 +76,7 @@ export interface BuildExecutionGraphSnapshotInput {
     currentExecutorId?: string;
     rootAgentId?: string;
     now?: () => number;
-    topologyRegistry?: EnterpriseTopologyRegistryStore;
+    topologyRegistry?: LegacyTopologyRegistryStore;
     registrySnapshot?: OrchestrationRegistrySnapshot;
     loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot;
     registryDependencies?: RegistryServiceDependencies;

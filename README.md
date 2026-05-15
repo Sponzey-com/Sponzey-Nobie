@@ -117,17 +117,32 @@ Sub-agent support is being built around explicit contracts rather than hidden ex
 - `pnpm`
 - Rust / Cargo if running Yeonjang from source
 
-### Install and Build
+### Install
 
 ```bash
+git clone <repository-url>
+cd Sponzey\ Nobie
 pnpm install
+```
+
+### First Build
+
+```bash
 pnpm build
 ```
 
-### Run Locally
+### Start Local Services
+
+Start the local Gateway and WebUI on macOS, Linux, or a bash-compatible environment:
 
 ```bash
 bash scripts/start-local.sh
+```
+
+If services are already running and you want a clean restart:
+
+```bash
+bash scripts/start-local.sh --restart
 ```
 
 Default local addresses:
@@ -135,15 +150,44 @@ Default local addresses:
 - Gateway: `http://127.0.0.1:18888`
 - WebUI: `http://127.0.0.1:4220`
 
-Useful local scripts:
+Check current status:
 
 ```bash
 bash scripts/status-local.sh
-bash scripts/restart-local.sh
+```
+
+Stop local services:
+
+```bash
 bash scripts/stop-local.sh
 ```
 
+Notes:
+
+- `start-local.sh` builds the Gateway runtime packages it needs before launch.
+- If Gateway or WebUI is already running, `start-local.sh` can stop and start them again.
+- Use `--restart` when you want the restart step to be explicit in logs and workflow.
+- Windows-native batch entry points are currently provided for Yeonjang. The local Gateway/WebUI control flow uses shell scripts.
+
 ### Run Yeonjang
+
+Compile Yeonjang for macOS:
+
+```bash
+bash scripts/build-yeonjang-macos.sh
+```
+
+This produces the macOS app bundle and helper binaries under `Yeonjang/target/...`.
+The script expects Rust / Cargo and Xcode command line tools for `xcrun swiftc`.
+
+Compile Yeonjang for Windows:
+
+```bat
+scripts\build-yeonjang-windows.bat
+```
+
+This produces the Windows executable under `Yeonjang\target\...` or `%LOCALAPPDATA%\Yeonjang\target`.
+The script expects Rust / Cargo and will use LLVM `clang` automatically if it is installed.
 
 For normal macOS local control:
 
@@ -151,11 +195,47 @@ For normal macOS local control:
 bash scripts/start-yeonjang-macos.sh
 ```
 
+For a clean macOS restart:
+
+```bash
+bash scripts/start-yeonjang-macos.sh --restart
+```
+
+To stop the macOS Yeonjang GUI without restarting:
+
+```bash
+bash scripts/stop-yeonjang-macos.sh
+```
+
+For Windows local control:
+
+```bat
+scripts\start-yeonjang-windows.bat
+scripts\start-yeonjang-windows.bat --restart
+scripts\stop-yeonjang-windows.bat
+```
+
+For Linux local control:
+
+```bash
+bash scripts/start-yeonjang-linux.sh
+bash scripts/start-yeonjang-linux.sh --restart
+bash scripts/stop-yeonjang-linux.sh
+```
+
 For source-based development:
 
 ```bash
 cargo run --manifest-path Yeonjang/Cargo.toml
 ```
+
+Notes:
+
+- `start-yeonjang-macos.sh` checks and rebuilds the macOS app bundle before launch.
+- `start-yeonjang-windows.bat` owns the Windows start and restart flow, and uses the build script only to prepare a missing binary.
+- `start-yeonjang-linux.sh` checks and rebuilds the Linux binary before launch.
+- `build-yeonjang-windows.bat` and `build-yeonjang-linux.sh` stay focused on build output preparation.
+- Use the stop script only when you want Yeonjang to remain stopped after cleanup.
 
 In Yeonjang, the default MQTT connection is:
 

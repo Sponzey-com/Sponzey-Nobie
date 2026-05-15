@@ -3,9 +3,7 @@ export function isArtifactDeliveryResultDetails(value) {
         return false;
     const candidate = value;
     return (candidate.kind === "artifact_delivery" &&
-        (candidate.channel === "telegram" ||
-            candidate.channel === "webui" ||
-            candidate.channel === "slack") &&
+        typeof candidate.channel === "string" &&
         typeof candidate.filePath === "string" &&
         typeof candidate.size === "number" &&
         typeof candidate.source === "string");

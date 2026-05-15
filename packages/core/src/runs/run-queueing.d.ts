@@ -1,4 +1,5 @@
 import type { AgentContextMode } from "../agent/index.js";
+import type { ChannelSource } from "../channels/contracts.js";
 import type { TaskExecutionSemantics, TaskIntentEnvelope, TaskStructuredRequest } from "../agent/intake.js";
 import type { AIProvider } from "../ai/index.js";
 import { resolveRunRoute } from "./routing.js";
@@ -24,7 +25,7 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
         targetLabel?: string | undefined;
         workerRuntime?: WorkerRuntimeTarget | undefined;
         workDir?: string | undefined;
-        source: "webui" | "cli" | "telegram" | "slack";
+        source: ChannelSource;
         skipIntake: true;
         toolsEnabled?: boolean | undefined;
         contextMode?: AgentContextMode | undefined;
@@ -54,7 +55,7 @@ export declare function scheduleDelayedRootRun(params: {
     structuredRequest?: TaskStructuredRequest;
     intentEnvelope?: TaskIntentEnvelope;
     workDir?: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     immediateCompletionText?: string;
     preferredTarget?: string;

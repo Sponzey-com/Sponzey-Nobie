@@ -28,6 +28,12 @@ import {
   validateAgentExecutionDecisionShape,
   validateAgentExecutionDecisionV2AgainstContext,
 } from "./execution-decision-contract.js"
+import type { LoadedPromptSource } from "../memory/nobie-md.js"
+import {
+  EXECUTION_HARNESS_POLICY_SOURCE_IDS,
+  loadRuntimePromptPolicySources,
+  renderPromptPolicySourceBlock,
+} from "./prompt-policy-adapter.js"
 
 export type AgentExecutionHarnessReasonCode =
   | "accepted"
@@ -89,6 +95,9 @@ export interface RunAgentExecutionHarnessInput {
   callModel?: AgentExecutionModelCaller
   timeoutMs?: number
   allowExplicitTarget?: boolean
+  workDir?: string
+  locale?: "ko" | "en"
+  promptSources?: LoadedPromptSource[]
   now?: () => number
   idProvider?: () => string
 }
@@ -106,7 +115,11 @@ export async function runAgentExecutionHarness(
   input: RunAgentExecutionHarnessInput,
 ): Promise<AgentExecutionHarnessResult> {
   const trace: AgentExecutionHarnessTraceEvent[] = []
-  const prompt = buildAgentExecutionDecisionPrompt(input.context)
+  const prompt = buildAgentExecutionDecisionPrompt(input.context, {
+    ...(input.promptSources ? { promptSources: input.promptSources } : {}),
+    ...(input.workDir ? { workDir: input.workDir } : {}),
+    ...(input.locale ? { locale: input.locale } : {}),
+  })
   trace.push({ phase: "prompt_built", status: "ok", reasonCode: "accepted" })
 
   if (!input.callModel) {
@@ -260,8 +273,27 @@ export async function runAgentExecutionHarness(
   }
 }
 
-export function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext): string {
+export interface AgentExecutionDecisionPromptOptions {
+  promptSources?: LoadedPromptSource[]
+  workDir?: string
+  locale?: "ko" | "en"
+}
+
+export function buildAgentExecutionDecisionPrompt(
+  context: AgentExecutionContext,
+  options: AgentExecutionDecisionPromptOptions = {},
+): string {
+  const promptSources = options.promptSources ??
+    loadRuntimePromptPolicySources({ ...(options.workDir ? { workDir: options.workDir } : {}), locale: options.locale ?? "en" })
+  const policyBlock = renderPromptPolicySourceBlock({
+    sources: promptSources,
+    locale: options.locale ?? "en",
+    sourceIds: EXECUTION_HARNESS_POLICY_SOURCE_IDS,
+    title: "[Execution Harness Runtime Policy Sources]",
+  })
   return [
+    policyBlock,
+    "",
     "Return only one JSON object matching AgentExecutionDecisionV2.",
     "Use the provided structured context. Do not use local language-specific string rules.",
     "accessible_executors contains only direct children selectable by the current executor.",
@@ -270,9 +302,12 @@ export function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext
     "For a child executor request, only that executor's outgoing edge targets are delegation candidates.",
     "diagnostic_executors and all_active_executor_ids are reference-only. They must never be selected as execution candidates.",
     `Use action only from: ${AGENT_EXECUTION_DECISION_V2_ACTIONS.join(", ")}.`,
-    "If action is delegate, selected_executor_ids and every task_split executor_id must be direct children from accessible_executors.",
+    "If action is delegate, selected_executor_ids and selected_connection_path are required. The path must start from the current executor or its direct child and end at the selected direct child.",
+    "If action is delegate, every selected_executor_ids item and every task_split executor_id must be direct children from accessible_executors.",
     "If accessible_executors contains available direct children and the user did not explicitly request direct handling by the current executor, evaluate those child profiles first and delegate any meaningful unit they can own.",
-    "Do not choose self_solve merely because the current executor could answer. Choose self_solve only when no available direct child profile can own a meaningful part of the work, or direct_execution_requested is true.",
+    "Executor suitability must come from the child profile's concrete role, definition, does, delegationScope, expectedOutputs, and riskBoundary. Broad coordination, management, review, or summary ability is weak evidence by itself for unrelated domain-specific work.",
+    "Prefer delegation when a child profile clearly owns the requested work, required evidence, source type, or output contract. When only weak or generic profile fit exists, choose self_solve with unresolved_reason, ask_user, return_to_parent, or fail_with_reason according to the boundary.",
+    "Do not choose self_solve merely because the current executor could answer. Choose self_solve when no available direct child profile can own a meaningful part of the work with concrete profile-fit evidence, or direct_execution_requested is true.",
     "When choosing self_solve while available direct children exist, unresolved_reason is required and must state why delegation is not suitable from the provided executor profile context.",
     "If no direct child can take the work, choose self_solve, ask_user, return_to_parent, or fail_with_reason. Do not invent provider, legacy single-agent, full-agent-list, or default workflow fallback targets.",
     "Low confidence is not a stop condition. It is a reason to choose a better path or self-solve inside the current executor's ability and allowed tools.",
@@ -281,6 +316,7 @@ export function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext
     JSON.stringify({
       contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
       context,
+      structured_context_blocks: buildAgentExecutionPromptContextBlocks(context),
       required_decision_fields: [
         "current_executor_id",
         "parent_executor_id",
@@ -300,6 +336,49 @@ export function buildAgentExecutionDecisionPrompt(context: AgentExecutionContext
       allowed_actions: AGENT_EXECUTION_DECISION_V2_ACTIONS,
     }),
   ].join("\n")
+}
+
+function buildAgentExecutionPromptContextBlocks(context: AgentExecutionContext): Record<string, unknown> {
+  return {
+    direct_child_candidates: {
+      source: "accessible_executors",
+      selectable: true,
+      values: context.accessible_executors,
+    },
+    previous_failures: extractPreviousFailurePromptBlock(context),
+    risk_boundary: {
+      source: "risk_policy",
+      values: context.risk_policy,
+    },
+    available_tools: {
+      source: "available_tools",
+      values: context.available_tools,
+    },
+  }
+}
+
+function extractPreviousFailurePromptBlock(context: AgentExecutionContext): Record<string, unknown> {
+  const workOrder = context.request.work_order
+  if (isPlainRecord(workOrder)) {
+    const previousFailures = workOrder["previous_failures"] ?? workOrder["previousFailures"]
+    if (Array.isArray(previousFailures)) {
+      return {
+        source: "request.work_order.previous_failures",
+        values: previousFailures,
+      }
+    }
+    const recoveryState = workOrder["recovery_state"] ?? workOrder["recoveryState"]
+    if (isPlainRecord(recoveryState)) {
+      return {
+        source: "request.work_order.recovery_state",
+        values: recoveryState,
+      }
+    }
+  }
+  return {
+    source: "not_provided",
+    values: [],
+  }
 }
 
 function normalizeAgentExecutionDecisionModelValue(input: {
@@ -471,6 +550,7 @@ function normalizeDecisionAction(value: unknown): AgentExecutionDecisionV2Action
   }
   if (value === "ask_parent" || value === "return_to_parent") return "return_to_parent"
   if (value === "ask_user") return "ask_user"
+  if (value === "boundary_failure") return "fail_with_reason"
   return undefined
 }
 
@@ -735,15 +815,15 @@ export function validateAgentExecutionDecisionAgainstContext(input: {
     }
     if (
       graphContext &&
+      requiresSelectedExecutor(route) &&
       !directChildIds.has(selectedId) &&
-      !selectedIsStructuralEscape &&
-      input.decision.selected_connection_path.length === 0
+      !selectedIsStructuralEscape
     ) {
       issues.push({
         code: "selected_executor_not_direct_child",
-        message: "Selected executor is not a direct child and no valid connection path was provided.",
+        message: "Selected executor must be a direct child of the current executor for this execution route.",
         executor_id: selectedId,
-        connection_path: [],
+        connection_path: input.decision.selected_connection_path,
       })
     }
     if (selectedProfile && !selectedProfile.available) {
@@ -763,6 +843,14 @@ export function validateAgentExecutionDecisionAgainstContext(input: {
   }
 
   if ((requiresSelectedPath(route) || input.decision.selected_connection_path.length > 0) && !explicitAllowed) {
+    if (requiresSelectedPath(route) && input.decision.selected_connection_path.length === 0) {
+      issues.push({
+        code: "empty_selected_path",
+        message: "Selected connection path is required for delegated execution decisions.",
+        ...(selectedId ? { executor_id: selectedId } : {}),
+        connection_path: [],
+      })
+    }
     issues.push(...validateSelectedConnectionPath({
       context: input.context,
       selectedExecutorId: selectedId,
@@ -1231,6 +1319,8 @@ function selectedExecutorForFallback(
         (context.requester?.requester_type === "executor" ? context.requester.requester_id : undefined)
     case "ask_user":
     case "explicit_provider":
+    case "explicit_provider_target":
+    case "boundary_failure":
       return undefined
   }
 }
@@ -1293,10 +1383,10 @@ function fallbackRouteIssues(
         executor_id: context.current_executor.executor_id,
       })
     }
-    if (route === "explicit_provider" && !context.explicit_provider_target_id?.trim()) {
+    if ((route === "explicit_provider" || route === "explicit_provider_target") && !context.explicit_provider_target_id?.trim()) {
       issues.push({
         code: "provider_target_missing",
-        message: "explicit_provider fallback requires an explicit provider target.",
+        message: "explicit provider fallback requires an explicit provider target.",
       })
     }
     if (

@@ -41,6 +41,9 @@ function createReleaseFixture(): string {
   writeFile(rootDir, "Yeonjang/manifests/permissions.json", "{}\n")
   writeFile(rootDir, "scripts/build-yeonjang-macos.sh", "#!/usr/bin/env bash\n")
   writeFile(rootDir, "scripts/start-yeonjang-macos.sh", "#!/usr/bin/env bash\n")
+  writeFile(rootDir, "scripts/build-yeonjang-linux.sh", "#!/usr/bin/env bash\n")
+  writeFile(rootDir, "scripts/start-yeonjang-linux.sh", "#!/usr/bin/env bash\n")
+  writeFile(rootDir, "scripts/stop-yeonjang-linux.sh", "#!/usr/bin/env bash\n")
   writeFile(rootDir, "scripts/build-yeonjang-windows.bat", "@echo off\n")
   writeFile(rootDir, "scripts/start-yeonjang-windows.bat", "@echo off\n")
   writeFile(rootDir, "scripts/stop-yeonjang-windows.bat", "@echo off\n")
@@ -201,6 +204,7 @@ describe("task012 release package", () => {
       "performance-release-gate",
       "sub-agent-benchmark-release-gate",
       "sub-agent-release-readiness-gate",
+      "enterprise-topology-release-gate",
       "web-retrieval-fixture-regression",
       "ui-mode-release-gate",
       "backup-rehearsal",

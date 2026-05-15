@@ -1,4 +1,4 @@
-import type { EnterpriseEntityRef, EnterpriseRelationType, EnterpriseTimestamp, EnterpriseTopology, EnterpriseEntityStatus, NodeType } from "../contracts/enterprise-topology.js";
+import type { EnterpriseEntityRef, EnterpriseRelationType, EnterpriseTimestamp, EnterpriseTopology, EnterpriseEntityStatus, FailurePolicy, NodeTemplateRef, NodeType, RecoveryPolicy } from "../contracts/enterprise-topology.js";
 import { type TopologyValidationResult } from "./validator.js";
 export declare const ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION: 1;
 export type EnterpriseTopologyGuiDraftSchemaVersion = typeof ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION;
@@ -44,9 +44,12 @@ export interface EnterpriseTopologyGuiUpdateNodePatch {
     status?: EnterpriseEntityStatus;
     tags?: string[];
     children?: string[];
+    template?: NodeTemplateRef;
     allowedToolIds?: string[];
     allowedSystemIds?: string[];
     owner?: EnterpriseEntityRef<"position" | "org_unit" | "person" | "enterprise_system">;
+    failurePolicy?: FailurePolicy;
+    recoveryPolicy?: RecoveryPolicy;
 }
 export interface EnterpriseTopologyGuiUpdateNodeOperation extends EnterpriseTopologyGuiOperationBase {
     op: "updateNode";
@@ -105,6 +108,19 @@ export interface EnterpriseTopologyGuiRedoCommand {
     actor?: string;
 }
 export type EnterpriseTopologyGuiCommand = EnterpriseTopologyGuiOperation | EnterpriseTopologyGuiUndoCommand | EnterpriseTopologyGuiRedoCommand;
+export type EnterpriseTopologyQuickFixId = "set_start_node" | "add_child_task" | "add_approval_step" | "connect_selected_nodes" | "add_tool_permission" | "add_fallback_path" | "set_output_preset";
+export interface EnterpriseTopologyQuickFixOperationPreview {
+    operationId: string;
+    op: EnterpriseTopologyGuiOperationKind;
+    targetId: string;
+    summary: string;
+}
+export interface EnterpriseTopologyQuickFixOperationPlan {
+    quickFixId: EnterpriseTopologyQuickFixId;
+    label: string;
+    operations: EnterpriseTopologyGuiOperation[];
+    preview: EnterpriseTopologyQuickFixOperationPreview[];
+}
 export interface EnterpriseTopologyGuiPendingDeletes {
     nodeIds: string[];
     relationIds: string[];
@@ -154,6 +170,12 @@ export declare function createEnterpriseTopologyGuiDraft(input: CreateEnterprise
 export declare function applyEnterpriseTopologyGuiCommands(draft: EnterpriseTopologyGuiDraft, commands: EnterpriseTopologyGuiCommand[], options?: {
     now?: EnterpriseTimestamp;
 }): ApplyEnterpriseTopologyGuiCommandsResult;
+export declare function previewEnterpriseTopologyGuiOperation(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQuickFixOperationPreview;
+export declare function buildEnterpriseTopologyQuickFixOperationPlan(input: {
+    quickFixId: EnterpriseTopologyQuickFixId;
+    label: string;
+    operations: EnterpriseTopologyGuiOperation[];
+}): EnterpriseTopologyQuickFixOperationPlan;
 export declare function createGuiDraftOperationId(prefix: string, at?: EnterpriseTimestamp): string;
 export declare function isEnterpriseTopologyGuiOperationKind(value: string): value is EnterpriseTopologyGuiOperationKind;
 export declare function isEnterpriseTopologyGuiCommandKind(value: string): value is EnterpriseTopologyGuiCommandKind;

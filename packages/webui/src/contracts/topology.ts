@@ -210,6 +210,104 @@ export interface AgentTopologyResponse extends AgentTopologyProjection {
   ok: boolean
 }
 
+export const EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION = 2 as const
+
+export type ExecutorTopologyV2SchemaVersion = typeof EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION
+export type ExecutorTopologyV2Status = "draft" | "active" | "archived"
+export type ExecutorNodeV2Status = "active" | "archived"
+export type ExecutorEdgeV2Status = "active" | "archived"
+export type ExecutorTopologyV2Timestamp = number | string
+export type ExecutorTopologyV2MetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ExecutorTopologyV2MetadataValue[]
+  | { [key: string]: ExecutorTopologyV2MetadataValue | undefined }
+export type ExecutorTopologyV2Metadata = { [key: string]: ExecutorTopologyV2MetadataValue | undefined }
+
+export interface ExecutorNodeV2 {
+  id: string
+  name: string
+  roleName?: string
+  description: string
+  definitionQuickChips?: string[]
+  instruction?: string
+  position: {
+    x: number
+    y: number
+  }
+  status: ExecutorNodeV2Status
+  profile?: ExecutorTopologyV2Metadata
+  metadata?: ExecutorTopologyV2Metadata
+}
+
+export interface ExecutorEdgeV2 {
+  id: string
+  sourceNodeId: string
+  targetNodeId: string
+  type: "delegates_to"
+  label?: string
+  status: ExecutorEdgeV2Status
+}
+
+export interface ExecutorTopologyV2 {
+  schemaVersion: ExecutorTopologyV2SchemaVersion
+  id: string
+  name: string
+  status: ExecutorTopologyV2Status
+  activeVersion?: number
+  nodes: ExecutorNodeV2[]
+  edges: ExecutorEdgeV2[]
+  metadata?: ExecutorTopologyV2Metadata
+  createdAt: ExecutorTopologyV2Timestamp
+  updatedAt: ExecutorTopologyV2Timestamp
+}
+
+export interface ExecutorRuntimeGraphSnapshotV2 {
+  topologyId: string
+  schemaVersion: ExecutorTopologyV2SchemaVersion
+  rootAgentId: "agent:nobie"
+  nodes: ExecutorNodeV2[]
+  edges: ExecutorEdgeV2[]
+  rootDirectChildIds: string[]
+  directChildrenByNodeId: Record<string, string[]>
+}
+
+export interface ExecutorTopologyV2ValidationIssue {
+  code: string
+  severity: "error" | "warning"
+  path: string
+  message: string
+  nodeId?: string
+  edgeId?: string
+}
+
+export interface ExecutorTopologyV2ValidationResult {
+  ok: boolean
+  issues: ExecutorTopologyV2ValidationIssue[]
+}
+
+export interface ExecutorTopologyV2MigrationIssue {
+  code: string
+  severity: "info" | "warning" | "invalid"
+  message: string
+  topologyId: string
+  nodeId?: string
+  edgeId?: string
+  relationId?: string
+}
+
+export interface ExecutorTopologyV2MigrationResult {
+  topology: ExecutorTopologyV2
+  issues: ExecutorTopologyV2MigrationIssue[]
+}
+
+export interface ExecutorTopologyV2PersistenceRepairResult {
+  topology: ExecutorTopologyV2
+  issues: ExecutorTopologyV2MigrationIssue[]
+}
+
 export interface AgentTopologyEdgeValidationInput {
   kind: AgentTopologyEdgeKind
   sourceAgentId?: string

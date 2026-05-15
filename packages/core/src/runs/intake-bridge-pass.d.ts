@@ -1,7 +1,8 @@
-import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
+import { type AIProvider, type ProviderAuditTrace } from "../ai/index.js";
 import type { ChannelSource } from "../channels/contracts.js";
 import { buildScheduleRegistrationCancelledEvent, buildScheduleRegistrationCreatedEvent } from "../scheduler/lifecycle.js";
 import { analyzeTaskIntake, type TaskExecutionSemantics, type TaskIntentEnvelope, type TaskStructuredRequest } from "../agent/intake.js";
+import { reviewTaskCompletion } from "../agent/completion-review.js";
 import type { AgentContextMode } from "../agent/index.js";
 import { resolveRunRoute } from "./routing.js";
 import { buildFollowupPrompt, createDefaultScheduleActionDependencies, executeScheduleActions, inferDelegatedTaskProfile, type ScheduleDelayedRunRequest } from "./action-execution.js";
@@ -40,6 +41,13 @@ export interface DelegatedRunStartParams {
     contextMode?: AgentContextMode | undefined;
     onChunk?: RunChunkDeliveryHandler;
 }
+export interface DelegatedRunStartResult {
+    runId?: string | undefined;
+    finished?: Promise<{
+        status?: string;
+        summary?: string;
+    } | undefined>;
+}
 interface IntakeBridgePassDependencies {
     appendRunEvent: (runId: string, message: string) => void;
     updateRunSummary: (runId: string, summary: string) => void;
@@ -47,7 +55,7 @@ interface IntakeBridgePassDependencies {
     emitScheduleCreated: (payload: ReturnType<typeof buildScheduleRegistrationCreatedEvent>) => void;
     emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void;
     scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void;
-    startDelegatedRun: (params: DelegatedRunStartParams) => void;
+    startDelegatedRun: (params: DelegatedRunStartParams) => void | DelegatedRunStartResult | Promise<void | DelegatedRunStartResult>;
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile;
     logInfo: (message: string, payload: Record<string, unknown>) => void;
     recordExecutionDecisionTrace?: (params: {
@@ -65,6 +73,7 @@ interface IntakeBridgePassModuleDependencies {
     buildFollowupPrompt: typeof buildFollowupPrompt;
     buildExecutionGraphSnapshot?: typeof buildExecutionGraphSnapshot;
     runAgentExecutionHarness?: typeof runAgentExecutionHarness;
+    reviewTaskCompletion?: typeof reviewTaskCompletion;
 }
 export declare function runIntakeBridgePass(params: {
     message: string;
@@ -72,6 +81,8 @@ export declare function runIntakeBridgePass(params: {
     sessionId: string;
     requestGroupId: string;
     model: string | undefined;
+    providerId?: string | undefined;
+    provider?: AIProvider | undefined;
     workDir: string;
     source: ChannelSource;
     runId: string;

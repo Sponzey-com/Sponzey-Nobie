@@ -10,6 +10,7 @@ export type TerminalFailureReason =
 
 export type NonTerminalRecoveryReason =
   | "model_timeout"
+  | "boundary_timeout"
   | "tool_failed"
   | "path_not_found"
   | "target_busy"
@@ -21,7 +22,7 @@ export type NonTerminalRecoveryReason =
   | "missing_input"
   | "verification_failed"
 
-export type ForbiddenTerminalFailureReason =
+export type CountBasedFailureSignalReason =
   | "retry_exhausted"
   | "max_attempts_reached"
   | "retry_budget_exhausted"
@@ -41,6 +42,7 @@ export const TERMINAL_FAILURE_REASONS: readonly TerminalFailureReason[] = [
 
 export const NON_TERMINAL_RECOVERY_REASONS: readonly NonTerminalRecoveryReason[] = [
   "model_timeout",
+  "boundary_timeout",
   "tool_failed",
   "path_not_found",
   "target_busy",
@@ -53,7 +55,7 @@ export const NON_TERMINAL_RECOVERY_REASONS: readonly NonTerminalRecoveryReason[]
   "verification_failed",
 ] as const
 
-export const FORBIDDEN_TERMINAL_FAILURE_REASONS: readonly ForbiddenTerminalFailureReason[] = [
+export const COUNT_BASED_FAILURE_SIGNAL_REASONS: readonly CountBasedFailureSignalReason[] = [
   "retry_exhausted",
   "max_attempts_reached",
   "retry_budget_exhausted",
@@ -101,7 +103,15 @@ export type FailureReasonNormalizationResult =
     }
 
 const terminalReasonSet = new Set<string>(TERMINAL_FAILURE_REASONS)
-const forbiddenTerminalReasonSet = new Set<string>(FORBIDDEN_TERMINAL_FAILURE_REASONS)
+const nonTerminalReasonSet = new Set<string>(NON_TERMINAL_RECOVERY_REASONS)
+const countBasedFailureSignalReasonSet = new Set<string>(COUNT_BASED_FAILURE_SIGNAL_REASONS)
+const boundaryTimeoutReasonSet = new Set<string>([
+  "boundary_timeout",
+  "queue_timeout",
+  "external_tool_timeout",
+  "approval_timeout",
+  "network_timeout",
+])
 
 export function createDefaultExecutionPolicySnapshot(): ExecutionPolicySnapshot {
   return {
@@ -127,19 +137,35 @@ export function isTerminalFailureReason(reason: string): reason is TerminalFailu
   return terminalReasonSet.has(reason)
 }
 
-export function isForbiddenTerminalFailureReason(reason: string): reason is ForbiddenTerminalFailureReason {
-  return forbiddenTerminalReasonSet.has(reason)
+export function isCountBasedFailureSignalReason(
+  reason: string,
+): reason is CountBasedFailureSignalReason {
+  return countBasedFailureSignalReasonSet.has(reason)
 }
 
 export function normalizeFailureReason(input: FailureReasonNormalizationInput): FailureReasonNormalizationResult {
   const reason = input.reason.trim()
-  if (isForbiddenTerminalFailureReason(reason)) {
+  if (isCountBasedFailureSignalReason(reason)) {
     if (input.explicitUserLimit === true) {
       return { kind: "terminal", reason: "explicit_user_limit_reached" }
     }
     return {
       kind: "recovery_signal",
       reason: "count_signal_observed",
+      originalReason: reason,
+    }
+  }
+  if (boundaryTimeoutReasonSet.has(reason)) {
+    return {
+      kind: "recovery_signal",
+      reason: "boundary_timeout",
+      originalReason: reason,
+    }
+  }
+  if (nonTerminalReasonSet.has(reason)) {
+    return {
+      kind: "recovery_signal",
+      reason: reason as NonTerminalRecoveryReason,
       originalReason: reason,
     }
   }

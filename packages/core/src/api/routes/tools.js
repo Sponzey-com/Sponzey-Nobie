@@ -1,10 +1,11 @@
+import { normalizeChannelSource } from "../../channels/contracts.js";
 import { toolDispatcher } from "../../tools/index.js";
 import { authMiddleware } from "../middleware/auth.js";
 export function registerToolsRoute(app) {
     app.get("/api/tools", { preHandler: authMiddleware }, async (request) => {
         const requestedSource = typeof request.query === "object" && request.query !== null && "source" in request.query
             && typeof request.query.source === "string"
-            ? request.query.source
+            ? normalizeChannelSource(request.query.source)
             : null;
         const tools = toolDispatcher
             .getAll()

@@ -19,6 +19,18 @@ describe("default topology screen excludes enterprise advanced UI", () => {
     expect(source).not.toContain("Context")
   })
 
+  it("keeps the V1 page behind a legacy name and out of the route tree", () => {
+    const appSource = readFileSync("packages/webui/src/App.tsx", "utf8")
+    const legacyPageSource = readFileSync("packages/webui/src/pages/EnterpriseTopologyPage.tsx", "utf8")
+
+    expect(appSource).not.toContain("EnterpriseTopologyPage")
+    expect(appSource).toContain("TopologyWorkspacePage")
+    expect(appSource).toContain('path="/advanced/enterprise-topology"')
+    expect(appSource).toContain('<Navigate to="/advanced/topology?mode=build" replace />')
+    expect(legacyPageSource).toContain("export function LegacyEnterpriseTopologyPage")
+    expect(legacyPageSource).not.toContain("export const EnterpriseTopologyPage")
+  })
+
   it("renders only executor graph controls on the default topology page", () => {
     const html = renderToStaticMarkup(
       createElement(

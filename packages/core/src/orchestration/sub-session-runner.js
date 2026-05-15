@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { aggregateSubSessionResultsForParent, buildParentAggregationRuntimeEvent, reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
+import { reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
 import { recordControlEvent } from "../control-plane/timeline.js";
 import { getRunSubSessionByIdempotencyKey, insertRunSubSession, updateRunSubSession, } from "../db/index.js";
 import { recordLatencyMetric } from "../observability/latency.js";
+import { AggregateChildResult } from "../runs/aggregate-child-result.js";
 import { recordLateResultNoReply } from "../runs/channel-finalizer.js";
 import { recordMessageLedgerEvent } from "../runs/message-ledger.js";
 import { appendRunEvent, getRootRun } from "../runs/store.js";
@@ -262,6 +263,21 @@ export function buildSubSessionContract(input) {
         promptBundleSnapshot: input.promptBundle,
         ...(input.modelExecutionPolicy ? { modelExecutionSnapshot: input.modelExecutionPolicy } : {}),
     };
+}
+export function validateVisibleTopologySubSessionCommand(command) {
+    const metadata = command.topologyExecutor;
+    if (!metadata)
+        return { ok: true };
+    if (metadata.systemPreparation === true) {
+        if (command.expectedOutputs.some((output) => output.required)) {
+            return { ok: false, reasonCode: "system_preparation_user_result_blocked" };
+        }
+        return { ok: true };
+    }
+    if (!metadata.executorId?.trim()) {
+        return { ok: false, reasonCode: "topology_executor_id_required" };
+    }
+    return { ok: true };
 }
 export class ResourceLockManager {
     holders = new Map();
@@ -588,6 +604,19 @@ export class SubSessionRunner {
             await this.dependencies.appendParentEvent(subSession.parentRunId, `sub_session_blocked_by_nested_policy:${subSession.subSessionId}:${nestedValidation.reasonCodes.join("+")}`);
             return { subSession, status: "failed", errorReport, replayed: false };
         }
+        const topologyVisibility = validateVisibleTopologySubSessionCommand(effectiveInput.command);
+        if (!topologyVisibility.ok) {
+            subSession.status = "failed";
+            const errorReport = buildErrorReport({
+                idProvider: this.idProvider,
+                command: effectiveInput.command,
+                reasonCode: topologyVisibility.reasonCode,
+                safeMessage: `Topology executor sub-session is blocked: ${topologyVisibility.reasonCode}`,
+                retryable: false,
+            });
+            await this.dependencies.appendParentEvent(subSession.parentRunId, `sub_session_blocked_by_topology_visibility:${subSession.subSessionId}:${topologyVisibility.reasonCode}`);
+            return { subSession, status: "failed", errorReport, replayed: false };
+        }
         if (modelPolicy.status === "blocked") {
             subSession.status = "failed";
             const errorReport = buildErrorReport({
@@ -646,7 +675,6 @@ export class SubSessionRunner {
             parentRunId: subSession.parentRunId,
             controller,
         });
-        let timeout;
         let lastModelExecution;
         try {
             recordLatencyMetric({
@@ -667,9 +695,6 @@ export class SubSessionRunner {
                 handler,
                 modelPolicy,
                 rootController: controller,
-                setTimer: (timer) => {
-                    timeout = timer;
-                },
             });
             const result = execution.result;
             const modelExecution = execution.audit;
@@ -750,7 +775,10 @@ export class SubSessionRunner {
                     normalizedFailureKey: review.normalizedFailureKey ?? null,
                 },
             });
-            const parentAggregationTrace = aggregateSubSessionResultsForParent({
+            const aggregation = await new AggregateChildResult({
+                appendParentEvent: this.dependencies.appendParentEvent,
+                recordOrchestrationEvent: recordOrchestrationEventSafely,
+            }).execute({
                 parentRunId: subSession.parentRunId,
                 ...(subSession.parentAgentId
                     ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
@@ -763,19 +791,7 @@ export class SubSessionRunner {
                         canUseSameChild: review.canRetry,
                     }],
             });
-            const parentAggregationEvent = buildParentAggregationRuntimeEvent(parentAggregationTrace);
-            await this.dependencies.appendParentEvent(subSession.parentRunId, `parent_child_result_aggregated:${subSession.subSessionId}:${parentAggregationTrace.nextAction}`);
-            recordOrchestrationEventSafely({
-                eventKind: "parent_child_result_aggregated",
-                runId: subSession.parentRunId,
-                subSessionId: subSession.subSessionId,
-                agentId: subSession.agentId,
-                correlationId: subSession.parentRunId,
-                dedupeKey: `orchestration:parent-child-result-aggregated:${subSession.parentRunId}:${subSession.subSessionId}:${result.resultReportId}`,
-                source: "sub-session-runner",
-                summary: parentAggregationEvent.summary,
-                payload: { ...parentAggregationEvent.payload },
-            });
+            const parentAggregationTrace = aggregation.trace;
             try {
                 this.dependencies.recordReviewEvent({
                     parentRunId: subSession.parentRunId,
@@ -808,6 +824,7 @@ export class SubSessionRunner {
                 status: subSession.status,
                 resultReport: result,
                 review,
+                parentAggregationTrace,
                 modelExecution,
                 ...(review.feedbackRequest ? { feedbackRequest: review.feedbackRequest } : {}),
                 replayed: false,
@@ -857,8 +874,6 @@ export class SubSessionRunner {
             };
         }
         finally {
-            if (timeout)
-                clearTimeout(timeout);
             effectiveInput.parentAbortSignal?.removeEventListener("abort", parentAbortHandler);
             this.activeControllers.delete(subSession.subSessionId);
         }
@@ -1044,7 +1059,7 @@ export class SubSessionRunner {
             const audit = buildModelExecutionAuditSummary({
                 snapshot: initialSnapshot,
                 status: "completed",
-                attemptCount: 1,
+                modelInvocationCount: 1,
                 latencyMs,
                 outputText: JSON.stringify(result.outputs),
             });
@@ -1072,7 +1087,7 @@ export class SubSessionRunner {
             const audit = buildModelExecutionAuditSummary({
                 snapshot: initialSnapshot,
                 status: "failed",
-                attemptCount: 1,
+                modelInvocationCount: 1,
                 latencyMs: Math.max(0, this.now() - startedAt),
             });
             input.subSession.modelExecutionSnapshot = audit;

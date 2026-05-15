@@ -137,8 +137,10 @@ Each response is emitted as a single JSON object per line.
 - When `device_id` is omitted on Windows, Yeonjang falls back to the built-in Windows camera UI.
 - Windows mouse and keyboard actions currently use PowerShell with `user32.dll` calls.
 - Windows system control supports local lock, sleep, hibernate, sign-out, restart, and shutdown requests.
+- Windows runtime management is split between `scripts/build-yeonjang-windows.bat` for build output preparation and `scripts/start-yeonjang-windows.bat` / `scripts/stop-yeonjang-windows.bat` for process control.
 - Linux camera list uses `v4l2-ctl --list-devices` when available and also scans `/dev/video*`.
 - Linux camera capture requires either `ffmpeg` or `fswebcam` in `PATH`.
 - Linux screen capture requires one of `grim`, `gnome-screenshot`, `scrot`, or ImageMagick `import` in `PATH`; display index selection is not implemented yet on Linux.
 - Linux mouse and keyboard automation require `xdotool` in `PATH`.
 - Linux system control supports local lock, sleep, hibernate, logout, restart, and shutdown through `loginctl`, `systemctl`, `xdg-screensaver`, `gnome-session-quit`, or `shutdown` depending on the installed desktop/systemd tooling.
+- Linux runtime management uses `scripts/build-yeonjang-linux.sh`, `scripts/start-yeonjang-linux.sh`, and `scripts/stop-yeonjang-linux.sh`, with `start-* --restart` as the restart entry point.

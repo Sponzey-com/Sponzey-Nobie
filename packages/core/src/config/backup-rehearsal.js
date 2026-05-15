@@ -11,6 +11,8 @@ const SECRET_REENTRY_REQUIRED = [
     { scope: "config.ai.connection.auth", reason: "API keys and OAuth tokens are not copied into portable snapshot files." },
     { scope: "config.telegram.botToken", reason: "Telegram bot tokens must be re-entered after restore." },
     { scope: "config.slack.botToken/appToken/signingSecret", reason: "Slack tokens and signing secrets must be re-entered after restore." },
+    { scope: "config.discord.botToken/publicKey", reason: "Discord bot tokens and interaction verification settings must be re-entered after restore." },
+    { scope: "config.googleChat.appCredentialJson/verificationToken", reason: "Google Chat app credentials and request verification tokens must be re-entered after restore." },
     { scope: "config.mqtt.password", reason: "MQTT passwords must be re-entered after restore." },
 ];
 export const MIGRATION_ROLLBACK_RUNBOOK = {

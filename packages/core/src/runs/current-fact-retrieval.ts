@@ -9,6 +9,12 @@ import type {
   RetrievalTargetContract,
 } from "./web-retrieval-session.js"
 import type { RetrievalVerificationVerdict } from "./web-retrieval-verification.js"
+import type {
+  FinalValidationConflict,
+  FinalValidationInput,
+  FinalValidationObservedValue,
+  FinalValidationSourceRef,
+} from "./finalization.js"
 
 export type CurrentFactSourceRole = "search_candidate" | "verification_source"
 export type CurrentFactSourceState =
@@ -375,6 +381,152 @@ export function formatCurrentFactVerificationAnswer(input: {
     unverified,
     sources,
     issues,
+  }
+}
+
+function latestTimestamp(values: Array<string | null | undefined>): string | undefined {
+  const timestamps = values
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .sort()
+  return timestamps.at(-1)
+}
+
+function targetLabel(target: RetrievalTargetContract): string {
+  return target.canonicalName ?? target.rawQuery ?? target.targetId
+}
+
+function sourceRefFor(
+  source: CurrentFactSourceCandidate | undefined,
+  result?: CurrentFactVerificationResult,
+): FinalValidationSourceRef | null {
+  if (!source && !result?.evidence) return null
+  const evidence = result?.evidence
+  const reliability = source?.reliability ?? evidence?.reliability
+  const sourceLabel = source?.sourceLabel ?? evidence?.sourceLabel ?? undefined
+  const sourceUrl = source?.sourceUrl ?? evidence?.sourceUrl ?? undefined
+  const sourceDomain = source?.sourceDomain ?? evidence?.sourceDomain ?? undefined
+  return {
+    sourceId: source?.sourceId ?? result?.sourceId ?? "source:unknown",
+    ...(sourceLabel ? { sourceLabel } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+    ...(sourceDomain ? { sourceDomain } : {}),
+    sourceTimestamp: evidence?.sourceTimestamp ?? null,
+    fetchTimestamp: evidence?.fetchTimestamp ?? result?.attemptedAt ?? null,
+    ...(reliability ? { reliability } : {}),
+    ...(source?.role ? { role: source.role } : {}),
+    ...(result?.status ? { status: result.status } : {}),
+  }
+}
+
+function observedValueFor(
+  plan: RetrievalVerificationPlan,
+  source: CurrentFactSourceCandidate | undefined,
+  result: CurrentFactVerificationResult,
+): FinalValidationObservedValue {
+  const verdict = result.verdict
+  const evidence = result.evidence
+  const sourceLabel = source?.sourceLabel ?? evidence?.sourceLabel ?? undefined
+  const sourceUrl = source?.sourceUrl ?? evidence?.sourceUrl ?? undefined
+  const sourceDomain = source?.sourceDomain ?? evidence?.sourceDomain ?? undefined
+  return {
+    valueId: plan.target.targetId,
+    label: targetLabel(plan.target),
+    ...(verdict?.acceptedValue ? { value: verdict.acceptedValue } : {}),
+    ...(verdict?.acceptedUnit ? { unit: verdict.acceptedUnit } : {}),
+    confidence: result.status === "verified" && verdict?.canAnswer === true ? "verified" : result.status === "conflict" ? "conflict" : "unverified",
+    ...(source?.sourceId ?? result.sourceId ? { sourceId: source?.sourceId ?? result.sourceId } : {}),
+    ...(sourceLabel ? { sourceLabel } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+    ...(sourceDomain ? { sourceDomain } : {}),
+    sourceTimestamp: evidence?.sourceTimestamp ?? null,
+    fetchTimestamp: evidence?.fetchTimestamp ?? result.attemptedAt ?? null,
+    basisTime: evidence?.sourceTimestamp ?? evidence?.fetchTimestamp ?? result.attemptedAt ?? plan.createdAt,
+    conflicts: verdict?.conflicts ?? [],
+  }
+}
+
+export function buildCurrentFactFinalValidationInput(input: {
+  plan: RetrievalVerificationPlan
+  decision: CurrentFactVerificationDecision
+}): FinalValidationInput {
+  const sourceById = new Map(input.plan.sources.map((source) => [source.sourceId, source]))
+  const allResults = [
+    ...input.decision.confirmedResults,
+    ...input.decision.unverifiedResults,
+    ...input.decision.conflictResults,
+  ]
+  const sourceList = input.plan.sources
+    .map((source) => {
+      const result = allResults.find((item) => item.sourceId === source.sourceId)
+      return sourceRefFor(source, result)
+    })
+    .filter((source): source is FinalValidationSourceRef => Boolean(source))
+  const observedValues = input.decision.confirmedResults.map((result) =>
+    observedValueFor(input.plan, sourceById.get(result.sourceId), result),
+  )
+  const missingValues = input.decision.confirmedResults.length === 0
+    ? [{
+        valueId: input.plan.target.targetId,
+        label: targetLabel(input.plan.target),
+        reasonCode:
+          input.decision.kind === "continue_verification"
+            ? "required_value_needs_alternative_source"
+            : "required_value_not_confirmed",
+      }]
+    : []
+  const conflicts: FinalValidationConflict[] = input.decision.conflictResults.flatMap((result) => {
+    const source = sourceById.get(result.sourceId)
+    const sourceIds = source?.sourceId ? [source.sourceId] : [result.sourceId]
+    const verdictConflicts = result.verdict?.conflicts ?? []
+    if (verdictConflicts.length > 0) {
+      return verdictConflicts.map((summary) => ({
+        valueId: input.plan.target.targetId,
+        summary,
+        sourceIds,
+        selectionBasis: input.decision.exhausted
+          ? "all_verification_sources_exhausted"
+          : "additional_verification_source_required",
+      }))
+    }
+    return [{
+      valueId: input.plan.target.targetId,
+      summary: result.failureReason ?? "verified_sources_conflict",
+      sourceIds,
+      selectionBasis: input.decision.exhausted
+        ? "all_verification_sources_exhausted"
+        : "additional_verification_source_required",
+    }]
+  })
+  const basisTime = latestTimestamp([
+    input.plan.createdAt,
+    ...allResults.flatMap((result) => [
+      result.attemptedAt,
+      result.evidence?.sourceTimestamp,
+      result.evidence?.fetchTimestamp,
+    ]),
+  ])
+
+  return {
+    mode: "current_fact",
+    validationScope: "parent_finalizer",
+    requiredValues: [{
+      valueId: input.plan.target.targetId,
+      label: targetLabel(input.plan.target),
+      required: true,
+    }],
+    observedValues,
+    missingValues,
+    sourceList,
+    sourceTimestamps: sourceList.flatMap((source) => [
+      source.sourceTimestamp ?? undefined,
+      source.fetchTimestamp ?? undefined,
+    ]).filter((value): value is string => Boolean(value)),
+    conflicts,
+    reasonCodes: input.decision.reasonCodes,
+    ...(basisTime ? { basisTime } : {}),
+    recoveryAvailable: input.decision.kind === "continue_verification",
+    safeAlternativesExhausted: input.decision.exhausted,
   }
 }
 

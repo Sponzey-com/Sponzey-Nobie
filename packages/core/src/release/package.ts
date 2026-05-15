@@ -508,7 +508,7 @@ export function buildReleaseArtifactDefinitions(input: {
         rootDir,
         "scripts/build-yeonjang-windows.bat",
         "scripts/build-yeonjang-windows.bat",
-        "Windows Yeonjang build/start package script.",
+        "Windows Yeonjang build script.",
         "windows",
       ),
     )
@@ -545,6 +545,39 @@ export function buildReleaseArtifactDefinitions(input: {
         "Yeonjang/target/release/nobie-yeonjang",
         "yeonjang/linux/nobie-yeonjang",
         "Linux Yeonjang executable.",
+        "linux",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:linux:build-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/build-yeonjang-linux.sh",
+        "scripts/build-yeonjang-linux.sh",
+        "Linux Yeonjang build script.",
+        "linux",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:linux:start-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/start-yeonjang-linux.sh",
+        "scripts/start-yeonjang-linux.sh",
+        "Linux Yeonjang start script.",
+        "linux",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:linux:stop-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/stop-yeonjang-linux.sh",
+        "scripts/stop-yeonjang-linux.sh",
+        "Linux Yeonjang stop script.",
         "linux",
       ),
     )
@@ -762,10 +795,10 @@ export function buildReleasePipelinePlan(
       step(
         "yeonjang-linux",
         "Yeonjang Linux package",
-        ["cargo", "build", "--manifest-path", "Yeonjang/Cargo.toml", "--release"],
+        ["bash", "scripts/build-yeonjang-linux.sh"],
         false,
         true,
-        "Build Linux Yeonjang binary on a Linux build host.",
+        "Build Linux Yeonjang binary via the Linux build script on a Linux build host.",
       ),
     )
   steps.push(

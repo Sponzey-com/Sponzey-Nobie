@@ -233,10 +233,10 @@ function executorGraphFixture(): ExecutorGraphWorkspace {
     issues: [],
     sourceOfTruth: {
       editableProjection: "executor_graph",
-      runtimeSourceOfTruth: "enterprise_topology",
-      nodeContractBoundary: "node_contract",
-      workOrderBoundary: "work_order",
-      agentConfigRole: "runtime_option",
+      runtimeSourceOfTruth: "executor_topology_v2",
+      nodeContractBoundary: "compatibility_projection",
+      workOrderBoundary: "runtime_adapter",
+      agentConfigRole: "compatibility_import",
       projectionOnly: true,
     },
   }
@@ -256,8 +256,8 @@ describe("task003 executor graph viewmodel", () => {
     }))
     expect(graph.sourceOfTruth).toEqual(expect.objectContaining({
       editableProjection: "executor_graph",
-      runtimeSourceOfTruth: "enterprise_topology",
-      agentConfigRole: "runtime_option",
+      runtimeSourceOfTruth: "executor_topology_v2",
+      agentConfigRole: "compatibility_import",
       projectionOnly: true,
     }))
     expect(graph.executors.map((executor) => executor.name)).toEqual([
@@ -332,7 +332,7 @@ describe("task003 executor graph viewmodel", () => {
     ])
     expect(result.metadata).toEqual(expect.objectContaining({
       graphId: graph.graphId,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
       executorIds: ["node:intake", "node:ops"],
       confirmedExecutorIds: ["node:intake"],
@@ -342,12 +342,12 @@ describe("task003 executor graph viewmodel", () => {
       executorId: "node:intake",
       graphId: graph.graphId,
       userConfirmed: true,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
     }))
   })
 
-  it("keeps inferred tool hints out of persisted node permissions unless the tool exists in the topology", () => {
+  it("keeps inferred and advanced tool hints out of persisted node permissions even when the tool exists", () => {
     const graph = executorGraphFixture()
     const inferredOnly = compileExecutorGraphToEnterpriseTopology(graph, { now })
     const validToolBase = topologyFixture()
@@ -364,9 +364,7 @@ describe("task003 executor graph viewmodel", () => {
     expect(withDeclaredTool.ok).toBe(true)
     if (!withDeclaredTool.ok) return
     expect(withDeclaredTool.topology.tools.map((tool) => tool.id)).toContain("tool:crm-search")
-    expect(withDeclaredTool.topology.nodes.find((candidate) => candidate.id === "node:intake")?.allowedToolIds).toEqual([
-      "tool:crm-search",
-    ])
+    expect(withDeclaredTool.topology.nodes.find((candidate) => candidate.id === "node:intake")?.allowedToolIds).toEqual([])
   })
 
   it("preserves existing EnterpriseTopology resources and updates existing nodes through GUI operations", () => {
@@ -536,14 +534,14 @@ describe("task003 executor graph viewmodel", () => {
       schemaVersion: 1,
       graphId: graph.graphId,
       topologyId: topology.id,
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
       executorIds: graph.executors.map((executor) => executor.id),
       connectionIds: graph.connections.map((connection) => connection.id),
       sectionIds: graph.sections.map((section) => section.id),
     }))
     expect(JSON.stringify(restored)).not.toContain("sourceOfTruth\":\"agent")
-    expect(JSON.stringify(withMetadata.metadata?.[EXECUTOR_GRAPH_METADATA_KEY])).toContain("enterprise_topology")
+    expect(JSON.stringify(withMetadata.metadata?.[EXECUTOR_GRAPH_METADATA_KEY])).toContain("executor_topology_v2")
     expect(topology.metadata).toBeUndefined()
   })
 

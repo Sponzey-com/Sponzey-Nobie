@@ -99,7 +99,7 @@ export const ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH = [
     },
     {
         id: "run_strip",
-        label: "Run from the one-line WorkOrder Template and Context strip.",
+        label: "Run from the Simple input strip while WorkOrder template and context remain internally inferred.",
         noTypingRequired: true,
     },
     {
@@ -108,6 +108,95 @@ export const ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH = [
         noTypingRequired: true,
     },
 ];
+export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS = [
+    "executor_name",
+    "executor_work",
+    "run_input",
+];
+export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH = [
+    {
+        id: "add_first_executor",
+        label: "Click + 실행자 추가 from the default Executor Graph surface.",
+        actionKind: "button",
+    },
+    {
+        id: "enter_executor_name",
+        label: "Type the executor name.",
+        actionKind: "text_input",
+        inputKind: "executor_name",
+    },
+    {
+        id: "enter_executor_work",
+        label: "Type only what the executor does; Nobie infers runtime mode, tools, outputs, and success criteria.",
+        actionKind: "text_input",
+        inputKind: "executor_work",
+    },
+    {
+        id: "review_understanding",
+        label: "Review 노비가 이해한 내용 and confirm or revise it before execution.",
+        actionKind: "review",
+    },
+    {
+        id: "add_second_executor",
+        label: "Add a second executor using the same name and work fields.",
+        actionKind: "button",
+    },
+    {
+        id: "connect_executors",
+        label: "Connect executors through Smart Connect recommendation chips instead of typing relation labels.",
+        actionKind: "chip_or_button",
+    },
+    {
+        id: "enter_run_input",
+        label: "Type the request to run.",
+        actionKind: "text_input",
+        inputKind: "run_input",
+    },
+    {
+        id: "run",
+        label: "Click 실행 after start executor, WorkOrder template, and context are inferred internally.",
+        actionKind: "button",
+    },
+    {
+        id: "review_history",
+        label: "Review 기록, 실패 위치, and 고칠 점 without raw trace or JSON inspection.",
+        actionKind: "review",
+    },
+];
+export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS = [
+    "Task",
+    "Decision",
+    "Approval",
+    "Tool",
+    "Data",
+    "Group",
+    "WorkOrder Template",
+    "Context",
+    "AgentConfig",
+    "SubSession",
+    "CompiledSnapshot",
+    "Node Contract",
+    "Runtime Resource Topology",
+    "JSON/YAML",
+];
+export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_REQUIRED_SURFACES = [
+    "executor-workspace-add-executor",
+    "executor-create-name",
+    "executor-create-description",
+    "executor-understanding-panel",
+    "executor-connection-menu",
+    "topology-run-simple-input",
+    "topology-run-history",
+    "topology-improve-panel",
+];
+export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_INTERNAL_STABILITY = {
+    executorGraphCompilesToEnterpriseTopology: true,
+    executorGraphMetadataProjectionOnly: true,
+    ruleBasedInferenceFallback: true,
+    featureFlagOffSingleNobieFallback: true,
+    advancedTopologySurfaceRemoved: true,
+    rollbackProjectionRestoreVerified: true,
+};
 export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE = [
     {
         id: "contracts_validator_only",
@@ -152,12 +241,12 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE = [
             requirement("enterprise_topology_validator", ["enforced"], "Invalid topologies must be blocked before gated runtime tests."),
             requirement("enterprise_topology_compiler", ["dual_write", "enforced"], "Compiled snapshots must exist before runtime selection."),
             requirement("topology_runtime_mvp", ["shadow", "dual_write"], "MVP runtime smoke may run, but root routing is still disabled."),
-            requirement("enterprise_topology_builder_ui", ["shadow", "dual_write"], "Unified workspace may expose drafts, validation, run strip, trace, improve, and resources without public routing."),
+            requirement("enterprise_topology_builder_ui", ["shadow", "dual_write"], "Unified workspace may expose simple drafts, validation, run strip, trace, and improve without public routing."),
             requirement("topology_runtime_enabled", ["off", "rollback"], "Root-run routing is not public in gated mode."),
         ],
         promotionCriteria: [
             "Operator can activate, inspect, and rollback a topology version without deleting data.",
-            "Unified workspace route compatibility, layer coverage, and no-typing happy path evidence pass.",
+            "Unified workspace route compatibility, layer coverage, and Executor-first usability evidence pass.",
             "Topology runtime smoke proves final answers still flow through Nobie finalization.",
         ],
         rollbackAction: "Set topology_runtime_mvp and enterprise_topology_builder_ui to off, then rollback active topology if operator beta changed it.",
@@ -176,7 +265,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE = [
         ],
         promotionCriteria: [
             "Feature flag off path and single Nobie fallback are verified in the same release gate.",
-            "Run Strip, Trace, Improve, and Resources layers are verified before opt-in routing is exposed.",
+            "Run Strip, Trace, and Improve layers are verified before opt-in routing is exposed.",
             "Sub-agent and channel finalizer regression suites pass with topology routing enabled.",
             "Rollback smoke restores the previous active topology and compiled snapshot without data deletion.",
         ],
@@ -225,7 +314,10 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS = [
         command: [
             "pnpm",
             "test",
+            "tests/task013-executor-first-usability.test.tsx",
+            "tests/task013-executor-first-release-gate.test.ts",
             "tests/task012-topology-workspace-release-gate.test.ts",
+            "tests/task012-advanced-escape-hatch.test.tsx",
             "tests/task001-topology-workspace-ux-foundation.test.tsx",
             "tests/task002-topology-workspace-routing.test.tsx",
             "tests/task008-topology-workspace-run-strip.test.tsx",
@@ -233,7 +325,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS = [
         ],
         required: true,
         smoke: false,
-        description: "Verify unified route compatibility, workspace layer coverage, and no-typing build-run-trace happy path.",
+        description: "Verify unified route compatibility, visible workspace layer coverage, Executor-first usability, and removal of the old Advanced/Developer topology surfaces.",
     },
     {
         id: "topology_runtime_smoke",
@@ -341,26 +433,78 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
         ...input.routeCompatibility,
     };
     const noTypingHappyPath = input.noTypingHappyPath ?? ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH;
+    const executorFirstHappyPath = input.executorFirstHappyPath ?? ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH;
+    const allowedTypingInputs = input.allowedTypingInputs ?? ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS;
+    const defaultHiddenConcepts = input.defaultHiddenConcepts ??
+        ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS;
+    const defaultRequiredSurfaces = input.defaultRequiredSurfaces ??
+        ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_REQUIRED_SURFACES;
+    const internalStability = {
+        ...ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_INTERNAL_STABILITY,
+        ...(input.internalStability ?? {}),
+    };
     const featureFlagOffFallbacks = input.featureFlagOffFallbacks ?? [
         "/advanced/topology is hidden by enterprise_topology_builder_ui when disabled.",
         "/advanced/enterprise-topology redirects to /advanced/topology?mode=build and then follows the same feature gate.",
         "topology_runtime_enabled=off preserves single Nobie root-run routing.",
     ];
     const layerSet = new Set(requiredLayers);
-    const requiredStepSet = new Set(ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH.map((step) => step.id));
-    const suppliedStepSet = new Set(noTypingHappyPath.map((step) => step.id));
+    const requiredStepSet = new Set(ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.map((step) => step.id));
+    const allowedInputSet = new Set(allowedTypingInputs);
+    const suppliedExecutorFirstStepSet = new Set(executorFirstHappyPath.map((step) => step.id));
     const blockingFailures = [];
     for (const layer of ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS) {
         if (!layerSet.has(layer))
             blockingFailures.push(`missing_workspace_layer:${layer}`);
     }
     for (const step of requiredStepSet) {
-        if (!suppliedStepSet.has(step))
-            blockingFailures.push(`missing_no_typing_step:${step}`);
+        if (!suppliedExecutorFirstStepSet.has(step))
+            blockingFailures.push(`missing_executor_first_step:${step}`);
     }
-    for (const step of noTypingHappyPath) {
-        if (!step.noTypingRequired)
-            blockingFailures.push(`typing_required:${step.id}`);
+    for (const step of executorFirstHappyPath) {
+        if (step.actionKind !== "text_input" && step.inputKind) {
+            blockingFailures.push(`non_text_step_has_input:${step.id}`);
+        }
+        if (step.actionKind === "text_input" && (!step.inputKind || !allowedInputSet.has(step.inputKind))) {
+            blockingFailures.push(`unexpected_typing_step:${step.id}`);
+        }
+    }
+    for (const inputKind of ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS) {
+        if (!allowedInputSet.has(inputKind))
+            blockingFailures.push(`missing_allowed_typing_input:${inputKind}`);
+    }
+    for (const inputKind of allowedTypingInputs) {
+        if (!ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS.includes(inputKind)) {
+            blockingFailures.push(`unexpected_typing_input:${inputKind}`);
+        }
+    }
+    for (const concept of ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS) {
+        if (!defaultHiddenConcepts.includes(concept)) {
+            blockingFailures.push(`missing_hidden_default_concept:${slugForGate(concept)}`);
+        }
+    }
+    for (const surface of ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_REQUIRED_SURFACES) {
+        if (!defaultRequiredSurfaces.includes(surface)) {
+            blockingFailures.push(`missing_default_surface:${surface}`);
+        }
+    }
+    if (!internalStability.executorGraphCompilesToEnterpriseTopology) {
+        blockingFailures.push("executor_graph_compile_gate_missing");
+    }
+    if (!internalStability.executorGraphMetadataProjectionOnly) {
+        blockingFailures.push("executor_graph_source_of_truth_boundary_missing");
+    }
+    if (!internalStability.ruleBasedInferenceFallback) {
+        blockingFailures.push("rule_based_inference_fallback_missing");
+    }
+    if (!internalStability.featureFlagOffSingleNobieFallback) {
+        blockingFailures.push("feature_flag_off_single_nobie_fallback_missing");
+    }
+    if (!internalStability.advancedTopologySurfaceRemoved) {
+        blockingFailures.push("advanced_topology_surface_still_exposed");
+    }
+    if (!internalStability.rollbackProjectionRestoreVerified) {
+        blockingFailures.push("executor_graph_rollback_projection_restore_missing");
     }
     if (routeCompatibility.canonicalRoute !== "/advanced/topology") {
         blockingFailures.push("workspace_route_not_canonical");
@@ -389,6 +533,11 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
         requiredLayers,
         routeCompatibility,
         noTypingHappyPath,
+        executorFirstHappyPath,
+        allowedTypingInputs,
+        defaultHiddenConcepts,
+        defaultRequiredSurfaces,
+        internalStability,
         featureFlagOffFallbacks,
         status: statusFromFailures(blockingFailures),
         blockingFailures,
@@ -594,12 +743,19 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
             },
         }),
         gate({
-            id: "topology_workspace_no_typing_usability",
-            title: "Topology Workspace no-typing usability",
+            id: "topology_workspace_executor_first_usability",
+            title: "Topology Workspace Executor-first usability",
             releaseModes: ["gated_mode", "opt_in_routing"],
-            pass: ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH.every((step) => workspaceUsability.noTypingHappyPath.some((candidate) => candidate.id === step.id)) &&
-                workspaceUsability.noTypingHappyPath.every((step) => step.noTypingRequired),
-            summary: "The happy path uses template selection, palette, Smart Connect, quick fixes, Run Strip, and Trace without free-form setup.",
+            pass: ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.every((step) => workspaceUsability.executorFirstHappyPath.some((candidate) => candidate.id === step.id)) &&
+                workspaceUsability.allowedTypingInputs.length === ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS.length &&
+                ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS.every((inputKind) => workspaceUsability.allowedTypingInputs.includes(inputKind)) &&
+                workspaceUsability.internalStability.executorGraphCompilesToEnterpriseTopology &&
+                workspaceUsability.internalStability.executorGraphMetadataProjectionOnly &&
+                workspaceUsability.internalStability.ruleBasedInferenceFallback &&
+                workspaceUsability.internalStability.featureFlagOffSingleNobieFallback &&
+                workspaceUsability.internalStability.advancedTopologySurfaceRemoved &&
+                workspaceUsability.internalStability.rollbackProjectionRestoreVerified,
+            summary: "The default happy path only asks for executor name, executor work, and run input while internal topology safety remains gated.",
             evidence: workspaceUsability,
         }),
         commandGate("topology_workspace_usability_gate", regressionCommands),
@@ -697,6 +853,13 @@ function statusFromFailures(blockingFailures, warnings = []) {
     if (warnings.length > 0)
         return "warning";
     return "passed";
+}
+function slugForGate(value) {
+    return value
+        .trim()
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
 }
 function releaseModeFor(id) {
     const mode = ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE.find((item) => item.id === id);

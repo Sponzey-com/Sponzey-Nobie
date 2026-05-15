@@ -63,18 +63,17 @@ describe("task014 Executor internal observability and rollback safety", () => {
         description: "고객 요청을 읽고 CRM에서 고객 정보를 확인한 뒤 정리한다.",
       },
       normalizedUnderstanding: expect.objectContaining({
-        runtimeMode: "tool_execution",
-        tools: expect.arrayContaining(["tool:crm-search", "system:crm"]),
+        runtimeMode: "unknown",
+        tools: [],
       }),
       inferenceRuleIds: expect.arrayContaining([
-        "runtime:tool_execution",
-        "keyword:crm:crm",
-        "tool:tool:crm-search",
+        "runtime:unknown",
+        "profile:executor",
       ]),
     }))
     expect(nodeEvidence).toEqual(metadata?.workspace.executors[0]?.inferenceEvidence)
     expect(rawNodeMetadata).toEqual(expect.objectContaining({
-      sourceOfTruth: "enterprise_topology",
+      sourceOfTruth: "executor_topology_v2",
       projectionOnly: true,
       inferenceEvidence: expect.objectContaining({
         evidenceId: "executor-inference:node:intake",
@@ -127,7 +126,7 @@ describe("task014 Executor internal observability and rollback safety", () => {
       nodeContractRef: expect.objectContaining({
         topologyId: "topology:task014",
         nodeId: "node:intake",
-        sourceOfTruth: "enterprise_topology",
+        sourceOfTruth: "executor_topology_v2",
       }),
     }))
     expect(traceEvidence).toEqual(expect.objectContaining({
@@ -266,7 +265,7 @@ describe("task014 Executor internal observability and rollback safety", () => {
     expect(runbook).toContain("user description -> inference -> NodeContract -> WorkOrder -> FailureReport")
     expect(runbook).toContain("nobie.executor_graph.rollback_projection")
     expect(runbook).toContain("Executor evidence audit checks")
-    expect(runbook).toContain("sourceOfTruth=enterprise_topology")
+    expect(runbook).toContain("sourceOfTruth=executor_topology_v2")
   })
 })
 

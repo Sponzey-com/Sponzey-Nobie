@@ -17,6 +17,7 @@ GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
 WEBUI_HOST="${NOBIE_WEBUI_HOST:-127.0.0.1}"
 WEBUI_PORT="${NOBIE_WEBUI_PORT:-4220}"
 ADMIN_UI="${NOBIE_ADMIN_UI:-0}"
+RESTART_LOCAL="0"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
@@ -27,9 +28,13 @@ while [[ $# -gt 0 ]]; do
       ADMIN_UI="1"
       shift
       ;;
+    --restart)
+      RESTART_LOCAL="1"
+      shift
+      ;;
     *)
       echo "알 수 없는 옵션: $1"
-      echo "사용법: bash scripts/start-local.sh [--admin-ui]"
+      echo "사용법: bash scripts/start-local.sh [--admin-ui] [--restart]"
       exit 1
       ;;
   esac
@@ -122,6 +127,29 @@ pids_for_port() {
   if command -v lsof >/dev/null 2>&1; then
     lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true
   fi
+}
+
+wait_port_release() {
+  local name="$1"
+  local port="$2"
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for _ in $(seq 1 20); do
+    if [[ -z "$(pids_for_port "$port")" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  echo "$name 포트가 아직 점유 중입니다: port=$port"
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    describe_pid "$pid"
+  done <<< "$(pids_for_port "$port")"
+  return 1
 }
 
 describe_pid() {
@@ -372,9 +400,16 @@ start_webui() {
 cleanup_stale_pid "Gateway" "$GATEWAY_PID_FILE"
 cleanup_stale_pid "WebUI" "$WEBUI_PID_FILE"
 
-if is_running "Gateway" "$GATEWAY_PID_FILE" || is_running "WebUI" "$WEBUI_PID_FILE"; then
+if [[ "$RESTART_LOCAL" == "1" ]]; then
+  echo "스폰지 노비 · Sponzey Nobie 로컬 서비스를 재시작합니다."
+  bash "$ROOT_DIR/scripts/stop-local.sh"
+  wait_port_release "Gateway" "$GATEWAY_PORT"
+  wait_port_release "WebUI" "$WEBUI_PORT"
+elif is_running "Gateway" "$GATEWAY_PID_FILE" || is_running "WebUI" "$WEBUI_PID_FILE"; then
   echo "기존 스폰지 노비 · Sponzey Nobie 프로세스를 정리하고 다시 시작합니다..."
   bash "$ROOT_DIR/scripts/stop-local.sh"
+  wait_port_release "Gateway" "$GATEWAY_PORT"
+  wait_port_release "WebUI" "$WEBUI_PORT"
 fi
 
 assert_port_available "Gateway" "$GATEWAY_PORT"
@@ -392,4 +427,5 @@ echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"
 echo "  State   : $STATE_DIR"
 echo "  Logs    : $GATEWAY_LOG_FILE / $WEBUI_LOG_FILE"
 echo "  Status  : bash scripts/status-local.sh"
+echo "  Restart : bash scripts/start-local.sh --restart"
 echo "  Stop    : bash scripts/stop-local.sh"

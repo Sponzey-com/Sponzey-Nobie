@@ -291,6 +291,37 @@ print_channel_config_hint() {
   fi
 }
 
+print_migration_safety_hint() {
+  echo "Migration safety"
+  local db_file="$STATE_DIR/data.db"
+  if [[ ! -f "$db_file" ]]; then
+    echo "  db: missing ($db_file)"
+    echo "  topologyV2DryRun: run previewExecutorTopologyV2RegistryMigration before materialization"
+    return
+  fi
+  echo "  db: $db_file"
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "  migrationLock: sqlite3-not-found"
+    echo "  topologyV2DryRun: run previewExecutorTopologyV2RegistryMigration before materialization"
+    return
+  fi
+  local lock_table
+  lock_table="$(sqlite3 "$db_file" "SELECT name FROM sqlite_master WHERE type='table' AND name='migration_locks';" 2>/dev/null || true)"
+  if [[ -z "$lock_table" ]]; then
+    echo "  migrationLock: table-missing"
+  else
+    local active_lock
+    active_lock="$(sqlite3 "$db_file" "SELECT id || ':' || phase || ':' || updated_at FROM migration_locks WHERE status='active' ORDER BY updated_at DESC LIMIT 1;" 2>/dev/null || true)"
+    if [[ -z "$active_lock" ]]; then
+      echo "  migrationLock: clear"
+    else
+      echo "  migrationLock: active $active_lock"
+    fi
+  fi
+  echo "  topologyV2DryRun: required before materializeExecutorTopologyV2ReadModelInRegistry"
+  echo "  destructiveCleanup: separate explicit admin task only"
+}
+
 echo "Sponzey Nobie local status"
 echo "  repo: $ROOT_DIR"
 echo "  stateDir: $STATE_DIR"
@@ -304,3 +335,5 @@ echo
 print_gateway_health
 echo
 print_channel_config_hint
+echo
+print_migration_safety_hint

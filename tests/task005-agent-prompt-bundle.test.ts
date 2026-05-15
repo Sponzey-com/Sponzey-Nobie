@@ -292,6 +292,8 @@ describe("task005 agent prompt bundle", () => {
     expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en")).toBe(false)
     expect(result.bundle.fragments?.filter((fragment) => fragment.sourceId.startsWith("prompt:")).every((fragment) => fragment.status === "active")).toBe(true)
     expect(result.bundle.renderedPrompt).toContain("# nobie_execution")
+    expect(result.bundle.renderedPrompt).toContain("# recovery_policy")
+    expect(result.bundle.renderedPrompt).toContain("# topology_executor_policy")
     expect(result.bundle.renderedPrompt).toContain("# completion_policy")
     expect(result.bundle.renderedPrompt).toContain("# output_policy")
     expect(result.bundle.renderedPrompt).toContain("# channel")

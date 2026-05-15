@@ -4,6 +4,11 @@ import { describe, expect, it } from "vitest"
 
 const ROOTS = [
   "packages/core/src/orchestration",
+  "packages/core/src/runs/execution-policy.ts",
+  "packages/core/src/runs/recovery-budget.ts",
+  "packages/core/src/runs/recovery-controller.ts",
+  "packages/core/src/runs/recovery-strategy-ledger.ts",
+  "packages/core/src/runs/queue-backpressure.ts",
   "packages/core/src/contracts",
   "packages/core/src/index.ts",
   "packages/core/src/index.js",
@@ -18,6 +23,9 @@ const FORBIDDEN = [
   "sub_session_timeout",
   "attempts < maxAttempts",
   "retryCount + 1",
+  "ForbiddenTerminalFailureReason",
+  "FORBIDDEN_TERMINAL_FAILURE_REASONS",
+  "isForbiddenTerminalFailureReason",
 ] as const
 
 function filesUnder(path: string): string[] {

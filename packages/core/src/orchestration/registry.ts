@@ -13,7 +13,7 @@ import {
   validateAgentConfig,
   validateTeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
-import type { EnterpriseMetadataValue, EnterpriseRelation, NodeContract } from "../contracts/enterprise-topology.js"
+import type { EnterpriseMetadataValue } from "../contracts/enterprise-topology.js"
 import {
   type AgentConfigPersistenceOptions,
   type DbAgentConfig,
@@ -40,7 +40,12 @@ import {
   normalizeLegacyAgentConfigRow,
   normalizeLegacyTeamConfigRow,
 } from "./config-normalization.js"
-import { createEnterpriseTopologyRegistry } from "../topology/registry.js"
+import {
+  createLegacyTopologyRegistry,
+  legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
+  type LegacyNode,
+  type LegacyRelation,
+} from "../topology/legacy-enterprise-topology-adapter.js"
 
 export interface AgentRuntimeLoadSnapshot {
   activeSubSessions: number
@@ -468,11 +473,11 @@ export function normalizeExecutorProfile(
   }
 }
 
-function executorGraphMetadataRecord(node: NodeContract): Record<string, unknown> | undefined {
+function executorGraphMetadataRecord(node: LegacyNode): Record<string, unknown> | undefined {
   return metadataRecord(node.metadata?.executorGraph)
 }
 
-function executorProfileMetadataValue(node: NodeContract): EnterpriseMetadataValue | undefined {
+function executorProfileMetadataValue(node: LegacyNode): EnterpriseMetadataValue | undefined {
   const graphMetadata = executorGraphMetadataRecord(node)
   return (
     node.metadata?.[EXECUTOR_PROFILE_METADATA_KEY] ??
@@ -482,7 +487,7 @@ function executorProfileMetadataValue(node: NodeContract): EnterpriseMetadataVal
 }
 
 export function buildExecutorProfileFromNode(
-  node: NodeContract,
+  node: LegacyNode,
   overrides: { executorId?: string; displayName?: string } = {},
 ): ExecutorProfile {
   const displayName = overrides.displayName ?? node.displayName?.trim() ?? node.name.trim() ?? node.id
@@ -520,11 +525,11 @@ export function buildExecutorProfileFromNode(
   })
 }
 
-function topologyAgentRole(node: NodeContract): string {
+function topologyAgentRole(node: LegacyNode): string {
   return buildExecutorProfileFromNode(node).roleName
 }
 
-function topologyAgentCapabilityTags(node: NodeContract): string[] {
+function topologyAgentCapabilityTags(node: LegacyNode): string[] {
   const profile = buildExecutorProfileFromNode(node)
   return sortedUniqueStrings([
     ...profile.delegationScope,
@@ -543,14 +548,15 @@ function topologySubAgentConfigs(
   runtimeModelProfile: ModelProfile | undefined,
   rootAgentId: string,
 ): SubAgentConfig[] {
-  const registry = createEnterpriseTopologyRegistry()
+  const registry = createLegacyTopologyRegistry()
   return registry
     .listTopologies()
     .filter((topology) => topology.status !== "archived")
     .flatMap((topologyRecord) => {
       const exported = registry.exportTopology(topologyRecord.topologyId)
       if (!exported) return []
-      return exported.version.topology.nodes
+      const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported)
+      return adapted.envelope.version.topology.nodes
         .filter((node) => node.status !== "archived")
         .map((node): SubAgentConfig => {
           const agentId = topologyAgentId(topologyRecord.topologyId, node.id)
@@ -635,45 +641,17 @@ interface TopologyHierarchyProjection {
 }
 
 function topologyRelationRefId(
-  relation: EnterpriseRelation,
+  relation: LegacyRelation,
   key: "from" | "to",
 ): string | undefined {
-  const ref = (relation as Partial<EnterpriseRelation>)[key]
+  const ref = (relation as Partial<LegacyRelation>)[key]
   return ref?.entityType === "node" && typeof ref.id === "string" && ref.id.trim()
     ? ref.id
     : undefined
 }
 
-function sameStringSet(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false
-  return left.every((value, index) => value === right[index])
-}
-
-function appendTopologyChildrenMismatchDiagnostics(input: {
-  topologyId: string
-  topologyVersion: number
-  nodesById: Map<string, NodeContract>
-  relationChildIdsByParent: Map<string, string[]>
-  diagnostics: OrchestrationRegistryDiagnostic[]
-}): void {
-  for (const node of input.nodesById.values()) {
-    const declaredChildren = sortedUniqueStrings(
-      node.children.filter((childId) => input.nodesById.has(childId)),
-    )
-    const relationChildren = sortedUniqueStrings(input.relationChildIdsByParent.get(node.id) ?? [])
-    if (sameStringSet(declaredChildren, relationChildren)) continue
-    input.diagnostics.push({
-      code: "topology_children_relation_mismatch",
-      severity: "warning",
-      message:
-        `${input.topologyId}@${input.topologyVersion} node ${node.id} children metadata differs from delegates_to relations; relations are used as source of truth.`,
-      agentId: topologyAgentId(input.topologyId, node.id),
-    })
-  }
-}
-
 function topologyHierarchyProjections(): TopologyHierarchyProjection {
-  const registry = createEnterpriseTopologyRegistry()
+  const registry = createLegacyTopologyRegistry()
   const diagnostics: OrchestrationRegistryDiagnostic[] = []
   const edges: RegistryHierarchyEdgeProjection[] = []
   const seenEdgeIds = new Set<string>()
@@ -684,14 +662,24 @@ function topologyHierarchyProjections(): TopologyHierarchyProjection {
     .sort((a, b) => a.topologyId.localeCompare(b.topologyId))) {
     const exported = registry.exportTopology(topologyRecord.topologyId)
     if (!exported) continue
-    const topology = exported.version.topology
-    const topologyVersion = exported.version.version
+    const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported)
+    const topology = adapted.envelope.version.topology
+    const topologyVersion = adapted.envelope.version.version
+    for (const issue of adapted.issues) {
+      diagnostics.push({
+        code: issue.code,
+        severity: issue.severity,
+        message: issue.message,
+        ...(issue.agentId ? { agentId: issue.agentId } : {}),
+        ...(issue.parentAgentId ? { parentAgentId: issue.parentAgentId } : {}),
+        ...(issue.childAgentId ? { childAgentId: issue.childAgentId } : {}),
+      })
+    }
     const nodesById = new Map(
       topology.nodes
         .filter((node) => node.status !== "archived")
         .map((node) => [node.id, node]),
     )
-    const relationChildIdsByParent = new Map<string, string[]>()
 
     for (const relation of topology.relations) {
       if (relation.status === "archived") continue
@@ -718,9 +706,6 @@ function topologyHierarchyProjections(): TopologyHierarchyProjection {
         })
         continue
       }
-      const childIds = relationChildIdsByParent.get(fromNodeId) ?? []
-      childIds.push(toNodeId)
-      relationChildIdsByParent.set(fromNodeId, childIds)
       const edgeId = `topology:${topologyRecord.topologyId}:${relation.id}`
       if (seenEdgeIds.has(edgeId)) continue
       seenEdgeIds.add(edgeId)
@@ -733,14 +718,6 @@ function topologyHierarchyProjections(): TopologyHierarchyProjection {
         sortOrder: edges.length,
       })
     }
-
-    appendTopologyChildrenMismatchDiagnostics({
-      topologyId: topologyRecord.topologyId,
-      topologyVersion,
-      nodesById,
-      relationChildIdsByParent,
-      diagnostics,
-    })
   }
 
   return { edges, diagnostics }

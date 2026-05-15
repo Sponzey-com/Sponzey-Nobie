@@ -42,6 +42,7 @@ export interface PromptSourceRegressionResult {
     };
     localeParity: PromptSourceLocaleParityResult;
     responsibility: PromptResponsibilityRuleResult[];
+    policyCompatibility: PromptResponsibilityRuleResult[];
     impact: PromptImpactScenarioResult[];
     issues: PromptRegressionIssue[];
 }

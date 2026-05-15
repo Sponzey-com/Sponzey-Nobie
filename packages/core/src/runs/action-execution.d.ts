@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import type { TaskExecutionSemantics, TaskIntakeActionItem, TaskIntakeResult, TaskIntentEnvelope, TaskStructuredRequest } from "../agent/intake.js";
 import { type ScheduleExecutionDriver } from "../scheduler/system-cron.js";
 import type { AgentContextMode } from "../agent/index.js";
@@ -17,7 +18,7 @@ export type ScheduleActionReceipt = {
     task: string;
     runAtMs: number;
     scheduleText: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     destination: string;
     taskProfile: TaskProfile;
     directDelivery: boolean;
@@ -31,7 +32,7 @@ export type ScheduleActionReceipt = {
     cron: string;
     scheduleText: string;
     timezone?: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     targetSessionId?: string;
     originRunId: string;
     originRequestGroupId: string;
@@ -54,7 +55,7 @@ export interface ScheduleDelayedRunRequest {
     structuredRequest?: TaskStructuredRequest;
     intentEnvelope?: TaskIntentEnvelope;
     workDir?: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     immediateCompletionText?: string;
     preferredTarget?: string;
@@ -70,7 +71,7 @@ export interface ScheduleActionExecutionParams {
     requestGroupId: string;
     model: string | undefined;
     workDir?: string | undefined;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     onChunk: RunChunkDeliveryHandler | undefined;
 }
 export interface ScheduleActionDependencies {
@@ -80,7 +81,7 @@ export interface ScheduleActionDependencies {
         task: string;
         cron: string;
         timezone?: string;
-        source: "webui" | "cli" | "telegram" | "slack";
+        source: ChannelSource;
         sessionId: string;
         originRunId: string;
         originRequestGroupId: string;

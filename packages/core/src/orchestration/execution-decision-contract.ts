@@ -19,6 +19,8 @@ export const AgentExecutionFallbackReason = {
   ReturnToParent: "return_to_parent",
   RootNobieDirect: "root_nobie_direct",
   ExplicitProvider: "explicit_provider",
+  ExplicitProviderTarget: "explicit_provider_target",
+  BoundaryFailure: "boundary_failure",
   // Legacy alias accepted for stored phase022 decisions. New decisions should
   // use root_nobie_direct when the current executor is root Nobie.
   NobieDirect: "nobie_direct",
@@ -40,6 +42,8 @@ export const AGENT_EXECUTION_ROUTES = [
   "return_to_parent",
   "root_nobie_direct",
   "explicit_provider",
+  "explicit_provider_target",
+  "boundary_failure",
   "nobie_direct",
   "ask_parent",
   "ask_user",
@@ -575,6 +579,11 @@ export function validateAgentExecutionDecisionV2AgainstContext(input: {
       code: "invalid_selected_connection_path",
       message: "selected_connection_path must be an array of executor ids.",
     })
+  } else if (decision.action === "delegate" && decision.selected_connection_path.length === 0) {
+    issues.push({
+      code: "invalid_selected_connection_path",
+      message: "delegate action requires a non-empty selected_connection_path.",
+    })
   }
   if (!isRecord(decision.task_profile)) {
     issues.push({
@@ -699,14 +708,16 @@ export function convertAgentExecutionDecisionV2ToV1(
 
 function routeForV2Action(action: AgentExecutionDecisionV2Action): AgentExecutionRoute {
   if (action === "delegate") return "delegate_to_child"
-  if (action === "ask_user" || action === "fail_with_reason") return "ask_user"
+  if (action === "fail_with_reason") return "boundary_failure"
+  if (action === "ask_user") return "ask_user"
   if (action === "return_to_parent") return "return_to_parent"
   return "self_solve"
 }
 
 function fallbackForV2Action(action: AgentExecutionDecisionV2Action): AgentExecutionFallbackReason {
   if (action === "delegate") return AgentExecutionFallbackReason.SelfSolve
-  if (action === "ask_user" || action === "fail_with_reason") return AgentExecutionFallbackReason.AskUser
+  if (action === "fail_with_reason") return AgentExecutionFallbackReason.BoundaryFailure
+  if (action === "ask_user") return AgentExecutionFallbackReason.AskUser
   if (action === "return_to_parent") return AgentExecutionFallbackReason.ReturnToParent
   return AgentExecutionFallbackReason.SelfSolve
 }

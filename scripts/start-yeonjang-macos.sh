@@ -10,6 +10,20 @@ PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
 BINARY_NAME="nobie-yeonjang"
 APP_NAME="Yeonjang"
+RESTART_YEONJANG="0"
+
+while (($# > 0)); do
+  case "$1" in
+    --restart)
+      RESTART_YEONJANG="1"
+      ;;
+    *)
+      echo "사용법: bash scripts/start-yeonjang-macos.sh [--restart]"
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "이 스크립트는 macOS 전용입니다."
@@ -83,6 +97,10 @@ if [[ ! -x "$BINARY_PATH" ]]; then
   exit 1
 fi
 
+if [[ "$RESTART_YEONJANG" == "1" ]]; then
+  echo "Yeonjang macOS GUI를 재시작합니다..."
+fi
+
 stop_existing
 : > "$LOG_FILE"
 
@@ -108,3 +126,4 @@ echo "Yeonjang GUI 실행 완료"
 echo "  PID  : $(cat "$PID_FILE")"
 echo "  Log  : $LOG_FILE"
 echo "  Stop : bash scripts/stop-yeonjang-macos.sh"
+echo "  Restart : bash scripts/start-yeonjang-macos.sh --restart"

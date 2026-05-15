@@ -55,7 +55,12 @@ export function buildNormalizedUiState(input) {
         needsAttention: !input.runtimeHealth.ai.configured,
         metrics: {},
     });
-    const externalChannelEnabled = input.runtimeHealth.channels.telegramEnabled || input.runtimeHealth.channels.slackEnabled;
+    const externalChannelEnabled = input.runtimeHealth.channels.telegramEnabled
+        || input.runtimeHealth.channels.slackEnabled
+        || input.runtimeHealth.channels.discordEnabled
+        || input.runtimeHealth.channels.googleChatEnabled
+        || input.runtimeHealth.channels.imessageEnabled
+        || input.runtimeHealth.channels.kakaoTalkEnabled;
     push({
         key: "channels",
         component: uiMessage("component.channels"),

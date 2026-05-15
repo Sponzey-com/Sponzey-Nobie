@@ -4,6 +4,26 @@
 
 - `packages/core/src`는 백엔드 런타임의 실제 구현 루트입니다.
 
+## 아키텍처 정리 기준
+
+- 장기 구조는 `domain -> application -> ports -> adapters` 방향을 따른다.
+- 현재는 `runs`, `topology`, `orchestration`에 도메인 규칙과 adapter wiring이 섞여 있으므로, 새 코드는 먼저 논리 경계를 지키고 후속 task에서 물리 이동한다.
+- 자연어 의미 판단은 코드의 키워드/regex가 아니라 prompt/harness 계약이 담당한다.
+- 코드는 direct child 후보 구성, 권한/위험 경계 검증, DB 저장, trace persistence, projection을 담당한다.
+- retry/attempt/count는 일반 업무 실패 조건이 아니라 전략 변경 신호 또는 telemetry로만 다룬다.
+- EnterpriseTopology V1은 기본 runtime source-of-truth가 아니라 compatibility/diagnostic 경로로 낮춘다.
+- TypeScript 원본(`*.ts`)이 구현 source-of-truth이며, package public contract와 장기 release 기준은 `dist`이다.
+- `packages/core/src/**/*.js`, `*.d.ts`, `*.map`은 삭제 전 compatibility sidecar이다. 직접 수정하지 않고 `pnpm run core:sync-src-artifacts`로 TS 원본에서 다시 생성한다.
+- 현재 `scripts/release-package.mjs`는 `packages/core/src/release/package.js` sidecar를 compatibility entry로 사용한다. 이 경로는 generated consistency gate로 보호하고, 후속 정리에서 `dist` 기반으로 이동한다.
+- JS-only compatibility sidecar는 명시 allowlist로만 남기고, 신규 JS-only source는 만들지 않는다.
+
+## 검증 게이트
+
+- core source 경계 변경은 `pnpm run test:architecture:static`과 `pnpm run test:architecture:runtime`으로 확인한다.
+- prompt/source 정책과 충돌할 수 있는 변경은 `pnpm run test:architecture:prompts`를 함께 실행한다.
+- `packages/core/src/**/*.ts`를 수정하거나 삭제하면 `pnpm run core:sync-src-artifacts`와 `pnpm run test:architecture:generated`로 compatibility artifact를 동기화한다.
+- 릴리즈 전 전체 확인은 `pnpm run test:architecture`를 기준으로 한다.
+
 ## 중요 단위
 
 - `agent`: 프롬프트 구성, intake, 완료 판정, 도구 기반 AI 루프

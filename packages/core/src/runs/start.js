@@ -132,13 +132,14 @@ export function startRootRun(params) {
             appendRunEvent(runId, latencyEvent);
         const { entrySemantics, reconnectTarget, reconnectNeedsClarification, requestGroupId, isRootRequest, effectiveTaskProfile, effectiveContextMode, workerSessionId, topologyRouting, } = startPlan;
         const suppressFinalDelivery = params.runScope === "child" || Boolean(params.parentRunId);
+        const effectiveOnChunk = suppressFinalDelivery ? undefined : params.onChunk;
         const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun;
         const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
             runId,
             sessionId,
             requestGroupId,
             source: params.source,
-            onChunk: params.onChunk,
+            onChunk: effectiveOnChunk,
             message: params.message,
             model: params.model,
             ...(params.providerId ? { providerId: params.providerId } : {}),
@@ -159,7 +160,7 @@ export function startRootRun(params) {
             ...(params.model ? { model: params.model } : {}),
             ...(params.providerId ? { providerId: params.providerId } : {}),
             ...(params.provider ? { provider: params.provider } : {}),
-            ...(params.onChunk ? { onChunk: params.onChunk } : {}),
+            ...(effectiveOnChunk ? { onChunk: effectiveOnChunk } : {}),
             ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
             ...(topologyRouting.mode === "route" && !params.immediateCompletionText
                 ? { immediateCompletionText: "topology-runtime" }
@@ -180,7 +181,7 @@ export function startRootRun(params) {
                 runId,
                 sessionId,
                 source: params.source,
-                onChunk: params.onChunk,
+                onChunk: effectiveOnChunk,
                 logWarn: (message) => log.warn(message),
             });
         }
@@ -204,6 +205,9 @@ export function startRootRun(params) {
                         startPlan.orchestrationMode === "orchestration" &&
                         startPlan.orchestrationPlanSnapshot.delegatedTasks.length > 0) {
                         try {
+                            setRunStepStatus(runId, "executing", "running", "서브 에이전트에게 작업을 위임했고 결과를 기다리고 있습니다.");
+                            updateRunStatus(runId, "running", "서브 에이전트에게 작업을 위임했고 결과를 기다리고 있습니다.", false);
+                            appendRunEvent(runId, "parent_run_awaiting_child_result:sub_agent_dispatch");
                             const dispatchResult = await dispatchDelegatedSubAgentTasks({
                                 plan: startPlan.orchestrationPlanSnapshot,
                                 parentRunId: runId,
@@ -297,7 +301,7 @@ export function startRootRun(params) {
                         sessionId,
                         requestGroupId,
                         source: params.source,
-                        onChunk: params.onChunk,
+                        onChunk: effectiveOnChunk,
                         controller,
                         message: executionMessage,
                         ...(params.originalRequest || executionMessage !== params.message

@@ -8,6 +8,8 @@ import { authMiddleware } from "../middleware/auth.js";
 import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js";
 import { CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY, buildChannelRegistryRuntimeDiagnostics, resolveChannelRegistryRuntimeMode, startChannels, } from "../../channels/index.js";
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js";
+import { getDiscordRuntimeStatus, setDiscordRuntimeError, stopDiscordRuntime } from "../../channels/discord/runtime.js";
+import { getGoogleChatRuntimeStatus, setGoogleChatRuntimeError, stopGoogleChatRuntime } from "../../channels/google-chat/runtime.js";
 import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js";
 import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js";
 import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
@@ -25,6 +27,8 @@ function buildLegacySettingsSnapshot() {
     const slackChannel = getActiveSlackChannel();
     const telegramRuntime = getTelegramRuntimeStatus();
     const slackRuntime = getSlackRuntimeStatus();
+    const discordRuntime = getDiscordRuntimeStatus();
+    const googleChatRuntime = getGoogleChatRuntimeStatus();
     const connection = cfg.ai.connection;
     const providerCapability = getProviderCapabilityMatrix({ connection, memory: cfg.memory });
     const channelRuntimeFeatureFlag = getFeatureFlag(CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY);
@@ -33,6 +37,8 @@ function buildLegacySettingsSnapshot() {
         runtime: {
             telegram: telegramRuntime,
             slack: slackRuntime,
+            discord: discordRuntime,
+            googleChat: googleChatRuntime,
         },
     });
     return {
@@ -88,6 +94,78 @@ function buildLegacySettingsSnapshot() {
             allowedChannelIds: cfg.slack?.allowedChannelIds ?? [],
             isRunning: slackChannel !== null,
             runtime: slackRuntime,
+        },
+        discord: {
+            enabled: cfg.discord?.enabled ?? false,
+            hasBotToken: Boolean(cfg.discord?.botToken),
+            applicationId: cfg.discord?.applicationId ?? "",
+            hasPublicKey: Boolean(cfg.discord?.publicKey),
+            allowedUserIds: cfg.discord?.allowedUserIds ?? [],
+            allowedGuildIds: cfg.discord?.allowedGuildIds ?? [],
+            allowedChannelIds: cfg.discord?.allowedChannelIds ?? [],
+            isRunning: discordRuntime.isRunning,
+            runtime: discordRuntime,
+        },
+        googleChat: {
+            enabled: cfg.googleChat?.enabled ?? false,
+            projectId: cfg.googleChat?.projectId ?? "",
+            hasAppCredentialJson: Boolean(cfg.googleChat?.appCredentialJson),
+            serviceAccountEmail: cfg.googleChat?.serviceAccountEmail ?? "",
+            webhookUrl: cfg.googleChat?.webhookUrl ?? "",
+            hasVerificationToken: Boolean(cfg.googleChat?.verificationToken),
+            allowedUserIds: cfg.googleChat?.allowedUserIds ?? [],
+            allowedSpaceIds: cfg.googleChat?.allowedSpaceIds ?? [],
+            deployedSpaceIds: cfg.googleChat?.deployedSpaceIds ?? [],
+            grantedScopes: cfg.googleChat?.grantedScopes ?? [],
+            appPublished: cfg.googleChat?.appPublished === true,
+            domainWideDelegation: cfg.googleChat?.domainWideDelegation === true,
+            isRunning: googleChatRuntime.isRunning,
+            runtime: googleChatRuntime,
+        },
+        imessage: {
+            enabled: cfg.imessage?.enabled ?? false,
+            mode: cfg.imessage?.mode ?? "manual_confirm",
+            localBridgeEnabled: cfg.imessage?.localBridgeEnabled === true,
+            yeonjangBridgeEnabled: cfg.imessage?.yeonjangBridgeEnabled === true,
+            riskAcknowledged: cfg.imessage?.riskAcknowledged === true,
+            messagesAppAvailable: cfg.imessage?.messagesAppAvailable === true,
+            userSessionActive: cfg.imessage?.userSessionActive === true,
+            automationPermissionGranted: cfg.imessage?.automationPermissionGranted === true,
+            allowedRecipientIds: cfg.imessage?.allowedRecipientIds ?? [],
+            manualConfirmationRequired: cfg.imessage?.manualConfirmationRequired !== false,
+            isRunning: false,
+            runtime: {
+                isRunning: false,
+                lastStartedAt: null,
+                lastStoppedAt: null,
+                lastError: null,
+                lastErrorAt: null,
+            },
+        },
+        kakaoTalk: {
+            enabled: cfg.kakaoTalk?.enabled ?? false,
+            mode: cfg.kakaoTalk?.mode ?? "local_bridge",
+            businessApiEnabled: cfg.kakaoTalk?.businessApiEnabled === true,
+            hasBusinessApiKey: Boolean(cfg.kakaoTalk?.businessApiKey),
+            channelId: cfg.kakaoTalk?.channelId ?? "",
+            localBridgeEnabled: cfg.kakaoTalk?.localBridgeEnabled === true,
+            yeonjangBridgeEnabled: cfg.kakaoTalk?.yeonjangBridgeEnabled === true,
+            riskAcknowledged: cfg.kakaoTalk?.riskAcknowledged === true,
+            kakaoTalkAppAvailable: cfg.kakaoTalk?.kakaoTalkAppAvailable === true,
+            userSessionActive: cfg.kakaoTalk?.userSessionActive === true,
+            automationPermissionGranted: cfg.kakaoTalk?.automationPermissionGranted === true,
+            allowedUserIds: cfg.kakaoTalk?.allowedUserIds ?? [],
+            allowedRoomIds: cfg.kakaoTalk?.allowedRoomIds ?? [],
+            manualConfirmationRequired: cfg.kakaoTalk?.manualConfirmationRequired !== false,
+            rateLimitPerMinute: cfg.kakaoTalk?.rateLimitPerMinute ?? 6,
+            isRunning: false,
+            runtime: {
+                isRunning: false,
+                lastStartedAt: null,
+                lastStoppedAt: null,
+                lastError: null,
+                lastErrorAt: null,
+            },
         },
         channels: {
             connections: channelConnections,
@@ -294,6 +372,150 @@ export function registerSettingsRoute(app) {
             if (Array.isArray(slack.allowedChannelIds))
                 rawSlack.allowedChannelIds = slack.allowedChannelIds;
         }
+        if (body.discord && typeof body.discord === "object") {
+            const discord = body.discord;
+            if (!raw.discord)
+                raw.discord = {};
+            const rawDiscord = raw.discord;
+            if (typeof discord.enabled === "boolean")
+                rawDiscord.enabled = discord.enabled;
+            if (typeof discord.botToken === "string" && discord.botToken && discord.botToken !== "***") {
+                rawDiscord.botToken = discord.botToken;
+            }
+            else if (!rawDiscord.botToken) {
+                const inMemToken = getConfig().discord?.botToken;
+                if (inMemToken)
+                    rawDiscord.botToken = inMemToken;
+            }
+            if (typeof discord.applicationId === "string")
+                rawDiscord.applicationId = discord.applicationId.trim();
+            if (typeof discord.publicKey === "string" && discord.publicKey && discord.publicKey !== "***") {
+                rawDiscord.publicKey = discord.publicKey.trim();
+            }
+            else if (!rawDiscord.publicKey) {
+                const inMemPublicKey = getConfig().discord?.publicKey;
+                if (inMemPublicKey)
+                    rawDiscord.publicKey = inMemPublicKey;
+            }
+            if (Array.isArray(discord.allowedUserIds))
+                rawDiscord.allowedUserIds = discord.allowedUserIds;
+            if (Array.isArray(discord.allowedGuildIds))
+                rawDiscord.allowedGuildIds = discord.allowedGuildIds;
+            if (Array.isArray(discord.allowedChannelIds))
+                rawDiscord.allowedChannelIds = discord.allowedChannelIds;
+            if (Array.isArray(discord.grantedIntents))
+                rawDiscord.grantedIntents = discord.grantedIntents;
+            if (Array.isArray(discord.botPermissions))
+                rawDiscord.botPermissions = discord.botPermissions;
+            if (Array.isArray(discord.installedGuildIds))
+                rawDiscord.installedGuildIds = discord.installedGuildIds;
+            if (typeof discord.largeGuildMode === "boolean")
+                rawDiscord.largeGuildMode = discord.largeGuildMode;
+        }
+        if (body.googleChat && typeof body.googleChat === "object") {
+            const googleChat = body.googleChat;
+            if (!raw.googleChat)
+                raw.googleChat = {};
+            const rawGoogleChat = raw.googleChat;
+            if (typeof googleChat.enabled === "boolean")
+                rawGoogleChat.enabled = googleChat.enabled;
+            if (typeof googleChat.projectId === "string")
+                rawGoogleChat.projectId = googleChat.projectId.trim();
+            if (typeof googleChat.appCredentialJson === "string" && googleChat.appCredentialJson && googleChat.appCredentialJson !== "***") {
+                rawGoogleChat.appCredentialJson = googleChat.appCredentialJson;
+            }
+            else if (!rawGoogleChat.appCredentialJson) {
+                const inMemCredential = getConfig().googleChat?.appCredentialJson;
+                if (inMemCredential)
+                    rawGoogleChat.appCredentialJson = inMemCredential;
+            }
+            if (typeof googleChat.serviceAccountEmail === "string")
+                rawGoogleChat.serviceAccountEmail = googleChat.serviceAccountEmail.trim();
+            if (typeof googleChat.webhookUrl === "string")
+                rawGoogleChat.webhookUrl = googleChat.webhookUrl.trim();
+            if (typeof googleChat.verificationToken === "string" && googleChat.verificationToken && googleChat.verificationToken !== "***") {
+                rawGoogleChat.verificationToken = googleChat.verificationToken;
+            }
+            else if (!rawGoogleChat.verificationToken) {
+                const inMemToken = getConfig().googleChat?.verificationToken;
+                if (inMemToken)
+                    rawGoogleChat.verificationToken = inMemToken;
+            }
+            if (Array.isArray(googleChat.allowedUserIds))
+                rawGoogleChat.allowedUserIds = googleChat.allowedUserIds;
+            if (Array.isArray(googleChat.allowedSpaceIds))
+                rawGoogleChat.allowedSpaceIds = googleChat.allowedSpaceIds;
+            if (Array.isArray(googleChat.deployedSpaceIds))
+                rawGoogleChat.deployedSpaceIds = googleChat.deployedSpaceIds;
+            if (Array.isArray(googleChat.grantedScopes))
+                rawGoogleChat.grantedScopes = googleChat.grantedScopes;
+            if (typeof googleChat.appPublished === "boolean")
+                rawGoogleChat.appPublished = googleChat.appPublished;
+            if (typeof googleChat.domainWideDelegation === "boolean")
+                rawGoogleChat.domainWideDelegation = googleChat.domainWideDelegation;
+        }
+        if (body.imessage && typeof body.imessage === "object") {
+            const imessage = body.imessage;
+            if (!raw.imessage)
+                raw.imessage = {};
+            const rawIMessage = raw.imessage;
+            if (typeof imessage.enabled === "boolean")
+                rawIMessage.enabled = imessage.enabled;
+            if (imessage.mode === "outgoing_only" || imessage.mode === "manual_confirm")
+                rawIMessage.mode = imessage.mode;
+            if (typeof imessage.localBridgeEnabled === "boolean")
+                rawIMessage.localBridgeEnabled = imessage.localBridgeEnabled;
+            if (typeof imessage.yeonjangBridgeEnabled === "boolean")
+                rawIMessage.yeonjangBridgeEnabled = imessage.yeonjangBridgeEnabled;
+            if (typeof imessage.riskAcknowledged === "boolean")
+                rawIMessage.riskAcknowledged = imessage.riskAcknowledged;
+            if (typeof imessage.messagesAppAvailable === "boolean")
+                rawIMessage.messagesAppAvailable = imessage.messagesAppAvailable;
+            if (typeof imessage.userSessionActive === "boolean")
+                rawIMessage.userSessionActive = imessage.userSessionActive;
+            if (typeof imessage.automationPermissionGranted === "boolean")
+                rawIMessage.automationPermissionGranted = imessage.automationPermissionGranted;
+            if (Array.isArray(imessage.allowedRecipientIds))
+                rawIMessage.allowedRecipientIds = imessage.allowedRecipientIds;
+            if (typeof imessage.manualConfirmationRequired === "boolean")
+                rawIMessage.manualConfirmationRequired = imessage.manualConfirmationRequired;
+        }
+        if (body.kakaoTalk && typeof body.kakaoTalk === "object") {
+            const kakaoTalk = body.kakaoTalk;
+            if (!raw.kakaoTalk)
+                raw.kakaoTalk = {};
+            const rawKakaoTalk = raw.kakaoTalk;
+            if (typeof kakaoTalk.enabled === "boolean")
+                rawKakaoTalk.enabled = kakaoTalk.enabled;
+            if (kakaoTalk.mode === "official" || kakaoTalk.mode === "local_bridge")
+                rawKakaoTalk.mode = kakaoTalk.mode;
+            if (typeof kakaoTalk.businessApiEnabled === "boolean")
+                rawKakaoTalk.businessApiEnabled = kakaoTalk.businessApiEnabled;
+            if (typeof kakaoTalk.businessApiKey === "string" && kakaoTalk.businessApiKey && kakaoTalk.businessApiKey !== "***")
+                rawKakaoTalk.businessApiKey = kakaoTalk.businessApiKey;
+            if (typeof kakaoTalk.channelId === "string")
+                rawKakaoTalk.channelId = kakaoTalk.channelId.trim();
+            if (typeof kakaoTalk.localBridgeEnabled === "boolean")
+                rawKakaoTalk.localBridgeEnabled = kakaoTalk.localBridgeEnabled;
+            if (typeof kakaoTalk.yeonjangBridgeEnabled === "boolean")
+                rawKakaoTalk.yeonjangBridgeEnabled = kakaoTalk.yeonjangBridgeEnabled;
+            if (typeof kakaoTalk.riskAcknowledged === "boolean")
+                rawKakaoTalk.riskAcknowledged = kakaoTalk.riskAcknowledged;
+            if (typeof kakaoTalk.kakaoTalkAppAvailable === "boolean")
+                rawKakaoTalk.kakaoTalkAppAvailable = kakaoTalk.kakaoTalkAppAvailable;
+            if (typeof kakaoTalk.userSessionActive === "boolean")
+                rawKakaoTalk.userSessionActive = kakaoTalk.userSessionActive;
+            if (typeof kakaoTalk.automationPermissionGranted === "boolean")
+                rawKakaoTalk.automationPermissionGranted = kakaoTalk.automationPermissionGranted;
+            if (Array.isArray(kakaoTalk.allowedUserIds))
+                rawKakaoTalk.allowedUserIds = kakaoTalk.allowedUserIds;
+            if (Array.isArray(kakaoTalk.allowedRoomIds))
+                rawKakaoTalk.allowedRoomIds = kakaoTalk.allowedRoomIds;
+            if (typeof kakaoTalk.manualConfirmationRequired === "boolean")
+                rawKakaoTalk.manualConfirmationRequired = kakaoTalk.manualConfirmationRequired;
+            if (typeof kakaoTalk.rateLimitPerMinute === "number")
+                rawKakaoTalk.rateLimitPerMinute = Math.max(1, Math.floor(kakaoTalk.rateLimitPerMinute));
+        }
         applyChannelConnectionSettingsCompatPatch(raw, "channels" in body ? body.channels : body.channelConnections);
         if (body.mqtt && typeof body.mqtt === "object") {
             const mqtt = body.mqtt;
@@ -328,6 +550,8 @@ export function registerSettingsRoute(app) {
     app.post("/api/settings/reset", { preHandler: authMiddleware }, async () => {
         stopActiveSlackChannel();
         stopActiveTelegramChannel();
+        stopDiscordRuntime();
+        stopGoogleChatRuntime();
         const snapshot = resetSetupEnvironment();
         try {
             await restartMqttBrokerFromConfig();
@@ -383,11 +607,25 @@ export function registerSettingsRoute(app) {
         try {
             stopActiveSlackChannel();
             stopActiveTelegramChannel();
+            stopDiscordRuntime();
+            stopGoogleChatRuntime();
             setSlackRuntimeError(null);
             setTelegramRuntimeError(null);
+            setDiscordRuntimeError(null);
+            setGoogleChatRuntimeError(null);
             const hasTelegramConfig = Boolean(cfg.telegram?.botToken);
             const hasSlackConfig = Boolean(cfg.slack?.botToken && cfg.slack?.appToken);
-            if ((cfg.telegram?.enabled && !hasTelegramConfig) || (cfg.slack?.enabled && !hasSlackConfig)) {
+            const hasDiscordConfig = Boolean(cfg.discord?.botToken && cfg.discord?.applicationId);
+            const hasGoogleChatCredential = Boolean(cfg.googleChat?.projectId || cfg.googleChat?.appCredentialJson || cfg.googleChat?.serviceAccountEmail);
+            const hasGoogleChatConfig = Boolean(hasGoogleChatCredential && cfg.googleChat?.verificationToken);
+            if ((cfg.telegram?.enabled && !hasTelegramConfig)
+                || (cfg.slack?.enabled && !hasSlackConfig)
+                || (cfg.discord?.enabled && !hasDiscordConfig)
+                || (cfg.googleChat?.enabled && !hasGoogleChatConfig)) {
+                if (cfg.discord?.enabled && !hasDiscordConfig)
+                    setDiscordRuntimeError("Discord bot token or application id is missing.");
+                if (cfg.googleChat?.enabled && !hasGoogleChatConfig)
+                    setGoogleChatRuntimeError("Google Chat app credential/project id and verification token are missing.");
                 return reply.status(400).send({
                     ok: false,
                     error: "활성화된 채널의 필수 토큰이 비어 있습니다.",
@@ -400,6 +638,8 @@ export function registerSettingsRoute(app) {
             const message = err instanceof Error ? err.message : String(err);
             setSlackRuntimeError(message);
             setTelegramRuntimeError(message);
+            setDiscordRuntimeError(message);
+            setGoogleChatRuntimeError(message);
             return reply.status(500).send({ ok: false, error: message });
         }
     });

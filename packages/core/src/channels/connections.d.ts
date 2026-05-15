@@ -62,7 +62,7 @@ export interface ChannelRuntimeSnapshot {
 }
 export interface BuildChannelConnectionSnapshotInput {
     config: NobieConfig;
-    runtime?: Partial<Record<"telegram" | "slack", ChannelRuntimeSnapshot>>;
+    runtime?: Partial<Record<"telegram" | "slack" | "discord" | "googleChat", ChannelRuntimeSnapshot>>;
     persist?: boolean;
     now?: number;
 }

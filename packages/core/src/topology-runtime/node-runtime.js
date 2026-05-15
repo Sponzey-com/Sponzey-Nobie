@@ -541,18 +541,6 @@ function buildDefaultChildRuntimeRunner(input) {
         };
     };
 }
-function childDelegationOptionsForRecursiveChild(options) {
-    return {
-        enabled: true,
-        childNodeContractsById: options.childNodeContractsById,
-        ...(options.maxDelegationDepth !== undefined ? { maxDelegationDepth: options.maxDelegationDepth } : {}),
-        ...(options.recursive !== undefined ? { recursive: options.recursive } : {}),
-        ...(options.childObjectiveByNodeId !== undefined ? { childObjectiveByNodeId: options.childObjectiveByNodeId } : {}),
-        ...(options.childInputByNodeId !== undefined ? { childInputByNodeId: options.childInputByNodeId } : {}),
-        ...(options.childWorkOrderIdByNodeId !== undefined ? { childWorkOrderIdByNodeId: options.childWorkOrderIdByNodeId } : {}),
-        ...(options.authorityPreflightByNodeId !== undefined ? { authorityPreflightByNodeId: options.authorityPreflightByNodeId } : {}),
-    };
-}
 function buildWorkOrderTraceContext(input) {
     const rootRunId = metadataString(input.workOrder.input.rootRunId);
     const fallbackReason = metadataString(input.workOrder.input.fallbackReason)
@@ -569,6 +557,18 @@ function buildWorkOrderTraceContext(input) {
 }
 function metadataString(value) {
     return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+function childDelegationOptionsForRecursiveChild(options) {
+    return {
+        enabled: true,
+        childNodeContractsById: options.childNodeContractsById,
+        ...(options.maxDelegationDepth !== undefined ? { maxDelegationDepth: options.maxDelegationDepth } : {}),
+        ...(options.recursive !== undefined ? { recursive: options.recursive } : {}),
+        ...(options.childObjectiveByNodeId !== undefined ? { childObjectiveByNodeId: options.childObjectiveByNodeId } : {}),
+        ...(options.childInputByNodeId !== undefined ? { childInputByNodeId: options.childInputByNodeId } : {}),
+        ...(options.childWorkOrderIdByNodeId !== undefined ? { childWorkOrderIdByNodeId: options.childWorkOrderIdByNodeId } : {}),
+        ...(options.authorityPreflightByNodeId !== undefined ? { authorityPreflightByNodeId: options.authorityPreflightByNodeId } : {}),
+    };
 }
 function childDelegationRiskCodes(summary) {
     if (summary === undefined)

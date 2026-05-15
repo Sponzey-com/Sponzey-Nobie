@@ -4,6 +4,15 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 ---
 
+## Runtime Usage
+
+- Owner: shared vocabulary used by runtime prompts, WebUI labels, and diagnostics.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly and agent prompt bundles.
+- It defines terms only; it must not introduce executable routing, tool, channel, or completion behavior.
+
+---
+
 ## Core Terms
 
 - Agent: the actor that interprets and executes user requests.

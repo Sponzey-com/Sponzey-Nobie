@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { decideCompletionApplication } from "../packages/core/src/runs/completion-application.ts"
 
 describe("run completion application", () => {
-  it("returns stop when empty-result recovery budget is exhausted", () => {
+  it("returns stop only when no safe execution recovery alternative remains", () => {
     const decision = decideCompletionApplication({
       decision: {
         kind: "recover_empty_result",
@@ -29,7 +29,7 @@ describe("run completion application", () => {
     }
   })
 
-  it("continues empty-result recovery when only the old turn count is exhausted", () => {
+  it("continues empty-result recovery when only the old turn count has passed", () => {
     const decision = decideCompletionApplication({
       decision: {
         kind: "recover_empty_result",

@@ -1,3 +1,4 @@
+import { type ChannelSource } from "../channels/contracts.js";
 export declare const TRUST_TAGS: readonly ["trusted", "user_input", "channel_input", "web_content", "file_content", "tool_result", "mcp_result", "capability_result", "yeonjang_result", "diagnostic"];
 export type TrustTag = typeof TRUST_TAGS[number];
 export interface TrustedContextBlock {
@@ -9,7 +10,7 @@ export interface TrustedContextBlock {
     sourceRef?: string;
 }
 export declare function isUntrustedTag(tag: TrustTag): boolean;
-export declare function sourceToTrustTag(source: "webui" | "cli" | "telegram" | "slack"): TrustTag;
+export declare function sourceToTrustTag(source: ChannelSource): TrustTag;
 export declare function createContextBlock(params: {
     id: string;
     tag: TrustTag;

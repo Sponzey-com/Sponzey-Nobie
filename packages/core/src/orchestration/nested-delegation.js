@@ -4,7 +4,9 @@ const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_MAX_CHILDREN_PER_AGENT = 10;
 function normalizedPositiveInteger(value, fallback) {
-    if (value === undefined || !Number.isFinite(value) || value <= 0)
+    if (value === 0)
+        return Number.MAX_SAFE_INTEGER;
+    if (value === undefined || !Number.isFinite(value) || value < 0)
         return fallback;
     return Math.floor(value);
 }

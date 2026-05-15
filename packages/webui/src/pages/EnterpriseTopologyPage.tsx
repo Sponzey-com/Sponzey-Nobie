@@ -907,8 +907,6 @@ export function LegacyEnterpriseTopologyPage({
   )
 }
 
-export const EnterpriseTopologyPage = LegacyEnterpriseTopologyPage
-
 function nextExecutorNodeId(topology: EnterpriseTopology): string {
   const used = new Set(topology.nodes.map((node) => node.id))
   let index = topology.nodes.length + 1

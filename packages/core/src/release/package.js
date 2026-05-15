@@ -179,12 +179,15 @@ export function buildReleaseArtifactDefinitions(input) {
     }
     if (targetPlatforms.has("windows")) {
         definitions.push(optionalArtifact("yeonjang:windows:exe", "yeonjang_windows_exe", rootDir, "Yeonjang/target/release/nobie-yeonjang.exe", "yeonjang/windows/nobie-yeonjang.exe", "Windows tray executable.", "windows"));
-        definitions.push(requiredArtifact("yeonjang:windows:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-windows.bat", "scripts/build-yeonjang-windows.bat", "Windows Yeonjang build/start package script.", "windows"));
+        definitions.push(requiredArtifact("yeonjang:windows:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-windows.bat", "scripts/build-yeonjang-windows.bat", "Windows Yeonjang build script.", "windows"));
         definitions.push(requiredArtifact("yeonjang:windows:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-windows.bat", "scripts/start-yeonjang-windows.bat", "Windows Yeonjang start script.", "windows"));
         definitions.push(requiredArtifact("yeonjang:windows:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-windows.bat", "scripts/stop-yeonjang-windows.bat", "Windows Yeonjang stop script.", "windows"));
     }
     if (targetPlatforms.has("linux")) {
         definitions.push(optionalArtifact("yeonjang:linux:binary", "yeonjang_linux_binary", rootDir, "Yeonjang/target/release/nobie-yeonjang", "yeonjang/linux/nobie-yeonjang", "Linux Yeonjang executable.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-linux.sh", "scripts/build-yeonjang-linux.sh", "Linux Yeonjang build script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux.sh", "scripts/start-yeonjang-linux.sh", "Linux Yeonjang start script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-linux.sh", "scripts/stop-yeonjang-linux.sh", "Linux Yeonjang stop script.", "linux"));
     }
     return definitions;
 }
@@ -221,8 +224,10 @@ export function buildReleasePipelinePlan(input = {}) {
             "pnpm",
             "test",
             "tests/task025-enterprise-topology-release-gate.test.ts",
+            "tests/task013-executor-first-release-gate.test.ts",
+            "tests/task013-executor-first-usability.test.tsx",
             "tests/task012-topology-workspace-release-gate.test.ts",
-        ], true, false, "Verify topology feature flag matrix, workspace route/layer/no-typing usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke."),
+        ], true, false, "Verify topology feature flag matrix, workspace route/layer/Executor-first usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke."),
         step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
         step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
         step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
@@ -245,7 +250,7 @@ export function buildReleasePipelinePlan(input = {}) {
     if (targetPlatforms.has("windows"))
         steps.push(step("yeonjang-windows", "Yeonjang Windows package", ["scripts\\build-yeonjang-windows.bat"], false, true, "Build Windows tray executable on Windows or a Windows build host."));
     if (targetPlatforms.has("linux"))
-        steps.push(step("yeonjang-linux", "Yeonjang Linux package", ["cargo", "build", "--manifest-path", "Yeonjang/Cargo.toml", "--release"], false, true, "Build Linux Yeonjang binary on a Linux build host."));
+        steps.push(step("yeonjang-linux", "Yeonjang Linux package", ["bash", "scripts/build-yeonjang-linux.sh"], false, true, "Build Linux Yeonjang binary via the Linux build script on a Linux build host."));
     steps.push(step("package-manifest", "Package manifest and checksums", ["node", "scripts/release-package.mjs"], true, false, "Copy release payload entries and generate manifest.json plus SHA256SUMS."));
     steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."));
     steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."));

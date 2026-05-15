@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { FeatureGate } from "../packages/webui/src/components/FeatureGate.tsx"
 import { ExecutorWorkspaceShell } from "../packages/webui/src/components/topology/ExecutorWorkspaceShell.tsx"
 import { TopologyWorkspaceFirstStartPanel } from "../packages/webui/src/components/topology/TopologyWorkspaceFirstStart.tsx"
-import { EnterpriseTopologyPage, shouldRestoreServerTopology } from "../packages/webui/src/pages/EnterpriseTopologyPage.tsx"
+import { LegacyEnterpriseTopologyPage, shouldRestoreServerTopology } from "../packages/webui/src/pages/EnterpriseTopologyPage.tsx"
 import { TopologyWorkspaceRouteShell } from "../packages/webui/src/pages/TopologyWorkspacePage.tsx"
 import { TOPOLOGY_WORKSPACE_STARTER_TEMPLATES } from "../packages/webui/src/lib/topology-workspace-templates.ts"
 import { resolveLegacyAdvancedRoute } from "../packages/webui/src/lib/ui-mode.js"
@@ -148,7 +148,7 @@ describe("task004 simple workspace shell", () => {
 
   it("uses the simple shell for the default enterprise topology workspace surface", () => {
     const html = renderToStaticMarkup(
-      createElement(EnterpriseTopologyPage, {
+      createElement(LegacyEnterpriseTopologyPage, {
         workspaceLayer: "build",
         workspaceExposureMode: "simple",
       }),

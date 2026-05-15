@@ -1,13 +1,18 @@
 import { createElement } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { describe, expect, it } from "vitest"
-import { TopologyV2FlowStatusCard } from "../packages/webui/src/pages/TopologyWorkspacePage.tsx"
+import {
+  TopologyV2FlowStatusCard,
+  selectLatestTaskRootRunIdForTopologyTrace,
+} from "../packages/webui/src/pages/TopologyWorkspacePage.tsx"
+import type { TaskModel } from "../packages/webui/src/contracts/tasks.ts"
 import type {
   TopologyExecutionTraceEventViewModel,
   TopologyExecutionTraceViewModel,
 } from "../packages/webui/src/lib/topology-execution-trace.ts"
 
 const text = (ko: string, _en: string) => ko
+const now = Date.UTC(2026, 4, 8, 15, 0, 0)
 
 describe("topology V2 trace status card", () => {
   it("renders topology execution trace events and failed executor details", () => {
@@ -81,7 +86,54 @@ describe("topology V2 trace status card", () => {
     expect(html).toContain('data-self-solve-mode="self_solve_after_delegation_failure"')
     expect(html).toContain("위임 실패 후 자체 처리")
   })
+
+  it("uses the latest activity-monitor request as the trace anchor", () => {
+    const rootRunId = selectLatestTaskRootRunIdForTopologyTrace([
+      taskForTrace({ createdAt: now - 1_000, updatedAt: now + 8_000, rootRunId: "run:older" }),
+      taskForTrace({ createdAt: now, updatedAt: now, rootRunId: "run:latest" }),
+    ])
+
+    expect(rootRunId).toBe("run:latest")
+  })
+
+  it("explains when the latest activity request has no topology trace", () => {
+    const html = normalized(renderToStaticMarkup(
+      createElement(TopologyV2FlowStatusCard, {
+        loadStatus: "ready",
+        saveStatus: "idle",
+        errorMessage: null,
+        selectedExecutor: null,
+        executorCount: 2,
+        connectionCount: 1,
+        traceLoadStatus: "ready",
+        traceEmptyReason: "no_topology_run_for_latest_task",
+        traceErrorMessage: null,
+        traceView: traceView({
+          status: "idle",
+          events: [],
+          failedExecutors: [],
+        }),
+        text,
+      }),
+    ))
+
+    expect(html).toContain("실행 현황의 최근 요청에 연결된 토폴로지 실행 기록이 없습니다.")
+  })
 })
+
+function taskForTrace(input: {
+  createdAt: number
+  updatedAt: number
+  rootRunId?: string
+  anchorRunId?: string
+}): Pick<TaskModel, "createdAt" | "updatedAt" | "rootRunId" | "anchorRunId" | "requestIdentity"> {
+  return {
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    ...(input.rootRunId ? { rootRunId: input.rootRunId } : {}),
+    anchorRunId: input.anchorRunId ?? input.rootRunId ?? "run:anchor",
+  }
+}
 
 function traceView(input: {
   status: TopologyExecutionTraceViewModel["status"]

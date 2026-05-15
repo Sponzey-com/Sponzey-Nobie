@@ -2,7 +2,7 @@ import type { FeatureFlagMode } from "../runtime/rollout-safety.js";
 export type EnterpriseTopologyReleaseModeId = "contracts_validator_only" | "dry_run_shadow" | "gated_mode" | "opt_in_routing";
 export type EnterpriseTopologyReleaseGateStatus = "passed" | "warning" | "failed";
 export type EnterpriseTopologyReleaseFeatureFlagKey = "enterprise_topology_registry" | "enterprise_topology_validator" | "enterprise_topology_compiler" | "topology_runtime_mvp" | "topology_runtime_recursive_delegation" | "topology_tool_runtime" | "topology_exhaustion_failure" | "declared_observed_topology_analysis" | "enterprise_topology_builder_ui" | "topology_runtime_enabled";
-export type EnterpriseTopologyReleaseGateCheckId = "feature_flag_matrix" | "contracts_validator_only_stage" | "dry_run_shadow_stage" | "gated_mode_stage" | "opt_in_routing_stage" | "feature_flag_off_path" | "single_nobie_fallback" | "sub_agent_regression_suite" | "channel_finalizer_regression_suite" | "webui_build_gate" | "topology_workspace_route_compatibility" | "topology_workspace_layer_gate" | "topology_workspace_no_typing_usability" | "topology_workspace_usability_gate" | "topology_runtime_smoke" | "topology_rollback_smoke" | "active_topology_snapshot_restore";
+export type EnterpriseTopologyReleaseGateCheckId = "feature_flag_matrix" | "contracts_validator_only_stage" | "dry_run_shadow_stage" | "gated_mode_stage" | "opt_in_routing_stage" | "feature_flag_off_path" | "single_nobie_fallback" | "sub_agent_regression_suite" | "channel_finalizer_regression_suite" | "webui_build_gate" | "topology_workspace_route_compatibility" | "topology_workspace_layer_gate" | "topology_workspace_executor_first_usability" | "topology_workspace_usability_gate" | "topology_runtime_smoke" | "topology_rollback_smoke" | "active_topology_snapshot_restore";
 export type EnterpriseTopologyWorkspaceLayerId = "build" | "run" | "trace" | "improve";
 export interface EnterpriseTopologyReleaseFeatureFlagDefinition {
     featureKey: EnterpriseTopologyReleaseFeatureFlagKey;
@@ -80,6 +80,21 @@ export interface EnterpriseTopologyWorkspaceUsabilityStep {
     label: string;
     noTypingRequired: boolean;
 }
+export type EnterpriseTopologyExecutorFirstInputKind = "executor_name" | "executor_work" | "run_input";
+export interface EnterpriseTopologyExecutorFirstUsabilityStep {
+    id: "add_first_executor" | "enter_executor_name" | "enter_executor_work" | "review_understanding" | "add_second_executor" | "connect_executors" | "enter_run_input" | "run" | "review_history";
+    label: string;
+    actionKind: "button" | "text_input" | "chip_or_button" | "auto_inference" | "review";
+    inputKind?: EnterpriseTopologyExecutorFirstInputKind;
+}
+export interface EnterpriseTopologyWorkspaceInternalStability {
+    executorGraphCompilesToEnterpriseTopology: boolean;
+    executorGraphMetadataProjectionOnly: boolean;
+    ruleBasedInferenceFallback: boolean;
+    featureFlagOffSingleNobieFallback: boolean;
+    advancedTopologySurfaceRemoved: boolean;
+    rollbackProjectionRestoreVerified: boolean;
+}
 export interface EnterpriseTopologyWorkspaceRouteCompatibility {
     canonicalRoute: "/advanced/topology";
     enterpriseBuilderAlias: "/advanced/enterprise-topology";
@@ -95,6 +110,11 @@ export interface EnterpriseTopologyWorkspaceUsabilityGate {
     requiredLayers: EnterpriseTopologyWorkspaceLayerId[];
     routeCompatibility: EnterpriseTopologyWorkspaceRouteCompatibility;
     noTypingHappyPath: EnterpriseTopologyWorkspaceUsabilityStep[];
+    executorFirstHappyPath: EnterpriseTopologyExecutorFirstUsabilityStep[];
+    allowedTypingInputs: EnterpriseTopologyExecutorFirstInputKind[];
+    defaultHiddenConcepts: string[];
+    defaultRequiredSurfaces: string[];
+    internalStability: EnterpriseTopologyWorkspaceInternalStability;
     featureFlagOffFallbacks: string[];
     status: EnterpriseTopologyReleaseGateStatus;
     blockingFailures: string[];
@@ -150,6 +170,11 @@ export interface EnterpriseTopologyReleaseReadinessOptions {
 export declare const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS: EnterpriseTopologyReleaseFeatureFlagDefinition[];
 export declare const ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS: EnterpriseTopologyWorkspaceLayerId[];
 export declare const ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH: EnterpriseTopologyWorkspaceUsabilityStep[];
+export declare const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS: EnterpriseTopologyExecutorFirstInputKind[];
+export declare const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH: EnterpriseTopologyExecutorFirstUsabilityStep[];
+export declare const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS: string[];
+export declare const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_REQUIRED_SURFACES: string[];
+export declare const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_INTERNAL_STABILITY: EnterpriseTopologyWorkspaceInternalStability;
 export declare const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE: EnterpriseTopologyReleaseModeDefinition[];
 export declare const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS: EnterpriseTopologyRegressionCommand[];
 export declare function buildEnterpriseTopologyRuntimeSmoke(input?: {
@@ -167,6 +192,11 @@ export declare function buildEnterpriseTopologyWorkspaceUsabilityGate(input?: {
     requiredLayers?: EnterpriseTopologyWorkspaceLayerId[];
     routeCompatibility?: Partial<EnterpriseTopologyWorkspaceRouteCompatibility>;
     noTypingHappyPath?: EnterpriseTopologyWorkspaceUsabilityStep[];
+    executorFirstHappyPath?: EnterpriseTopologyExecutorFirstUsabilityStep[];
+    allowedTypingInputs?: EnterpriseTopologyExecutorFirstInputKind[];
+    defaultHiddenConcepts?: string[];
+    defaultRequiredSurfaces?: string[];
+    internalStability?: Partial<EnterpriseTopologyWorkspaceInternalStability>;
     featureFlagOffFallbacks?: string[];
 }): EnterpriseTopologyWorkspaceUsabilityGate;
 export declare function buildEnterpriseTopologyRollbackRunbook(): EnterpriseTopologyRollbackRunbook;

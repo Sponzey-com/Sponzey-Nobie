@@ -4,6 +4,15 @@ This file covers only failure analysis and retry rules.
 
 ---
 
+## Runtime Usage
+
+- Owner: recovery planner, parent aggregation after partial/failed child results, and final validation recovery.
+- Usage scope: `runtime`.
+- Included in normal system prompt assembly, agent prompt bundles, and execution harness policy blocks.
+- It must not redefine executor selection or completion delivery; it only defines how to change strategy after a failed or insufficient path.
+
+---
+
 ## Failure Classification
 
 - Classify the cause before repeating the same tool with the same input.
@@ -11,9 +20,10 @@ This file covers only failure analysis and retry rules.
 - Check permission, path, target, channel, input format, execution order, and capability first.
 - Do not stop ordinary execution because a fixed retry count was reached.
 - Treat retry count, attempt count, repeated failure count, and queue retry count as signals to search for another method, not as failure conditions.
-- If a legacy component reports `retry_exhausted`, `max_attempts_reached`, or `too_many_failures`, reclassify it as an alternative-search trigger unless the user explicitly set that limit.
+- If telemetry or a legacy component reports `retry_exhausted`, `max_attempts_reached`, `retry_budget_exhausted`, `delegation_turns_exhausted`, or `too_many_failures`, reclassify it as `count_signal_observed` and search for a changed strategy unless the user explicitly set that limit.
+- Treat ordinary model timeouts as recovery signals. Treat queue, external tool, approval, and network timeouts as boundary timeouts that require waiting, fallback, changed source/tool, or user confirmation; they are not business completion failures by themselves.
 - Do stop repeating the same recovery key when there is no new evidence, no changed input, and no changed target.
-- A recovery attempt must change at least one of: path, target, tool, input shape, permission state, execution order, verification strategy, or delivery strategy.
+- A recovery attempt must change at least one structured axis: executor, tool/source, decomposition, prompt context, verification method, permission/user confirmation, execution order, path, or delivery strategy.
 - Continue through safe alternatives until the original completion condition is satisfied, the work is impossible, or the next step requires user approval or a user decision.
 - Treat deterministic path aliases as preflight data, not semantic guessing. Unquoted location phrases such as `다운로드`, `다운도르`, `Downloads`, or `Download folder` should first map to the OS download folder candidate. Quoted names and explicit absolute paths remain exact.
 

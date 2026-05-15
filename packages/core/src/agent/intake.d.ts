@@ -1,4 +1,5 @@
 import type { IntakeNormalizedRequest } from "./request-normalizer.js";
+import type { ChannelSource } from "../channels/contracts.js";
 export type TaskApprovalToolName = "screen_capture" | "yeonjang_camera_capture" | "mouse_click" | "keyboard_type" | "file_write" | "app_launch" | "external_action";
 export interface TaskExecutionSemantics {
     filesystemEffect: "none" | "mutate";
@@ -92,7 +93,7 @@ export declare function analyzeTaskIntake(params: {
     requestGroupId?: string;
     model?: string;
     workDir?: string;
-    source?: "webui" | "cli" | "telegram" | "slack";
+    source?: ChannelSource;
 }): Promise<TaskIntakeResult | null>;
 export declare function detectRelativeScheduleRequest(userMessage: string, now?: number, maxDelegationTurns?: number, environment?: StructuredRequestEnvironment, originalUserMessage?: string, normalized?: IntakeNormalizedRequest): TaskIntakeResult | null;
 export {};

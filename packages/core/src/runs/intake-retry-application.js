@@ -13,7 +13,7 @@ export async function applyIntakeRetryDirective(params, dependencies, moduleDepe
         source: params.source,
         summary: params.directive.summary,
         detail: params.directive.reason,
-        title: "schedule_intake_recovery",
+        title: "intake_recovery",
     });
     dependencies.incrementDelegationTurnCount(params.runId, params.directive.summary);
     const interpretationBudgetAfterUse = consumeRecoveryBudget({

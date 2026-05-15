@@ -114,7 +114,7 @@ export function buildStartRootRunDriverDependencies(params) {
                     logError: params.logError,
                 }),
                 startDelegatedRun: (startParams) => {
-                    params.startNestedRootRun({
+                    return params.startNestedRootRun({
                         ...startParams,
                         model: startParams.model,
                     });

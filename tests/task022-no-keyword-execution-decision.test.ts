@@ -113,6 +113,11 @@ const allowedNonExecutionStringHandling: AllowedNonExecutionStringHandling[] = [
     reason: "filesystem verification parses paths and blocks unsafe filesystem output; it must not select executors.",
   },
   {
+    file: "packages/core/src/runs/request-isolation.ts",
+    category: "parser-or-normalizer",
+    reason: "request isolation checks only structured IntentContract target/action/delivery fields; raw message text is intentionally ignored.",
+  },
+  {
     file: "packages/core/src/runs/web-retrieval-planner.ts",
     category: "parser-or-normalizer",
     reason: "web retrieval planner validates structured methods and generated value shapes after a route is chosen.",

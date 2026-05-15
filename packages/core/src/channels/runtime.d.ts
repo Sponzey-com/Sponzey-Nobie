@@ -43,6 +43,7 @@ export interface ChannelRuntimeSummary {
         requiresLocalBridge: boolean;
         requiresUserSession: boolean;
         riskLevel: ChannelCapabilities["riskLevel"];
+        manualConfirmationRequired: boolean;
         configSource: ChannelConnectionRecord["configSource"];
     };
 }

@@ -1,4 +1,5 @@
 import type { AgentEntityType, CapabilityPolicy, DepthScopedToolPolicy, PermissionProfile, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
+import type { ChannelSource } from "../channels/contracts.js";
 export type RiskLevel = "safe" | "moderate" | "dangerous";
 export interface ToolContext {
     sessionId: string;
@@ -6,7 +7,7 @@ export interface ToolContext {
     requestGroupId?: string;
     workDir: string;
     userMessage: string;
-    source: "webui" | "cli" | "telegram" | "slack";
+    source: ChannelSource;
     allowWebAccess: boolean;
     onProgress: (message: string) => void;
     signal: AbortSignal;
@@ -29,7 +30,7 @@ export interface ToolContext {
 }
 export interface ArtifactDeliveryResultDetails {
     kind: "artifact_delivery";
-    channel: "telegram" | "webui" | "slack";
+    channel: ChannelSource;
     filePath: string;
     caption?: string;
     mimeType?: string;

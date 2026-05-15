@@ -1,3 +1,4 @@
+import type { ChannelSource } from "../channels/contracts.js";
 import { type ArtifactMetadataInput, type DbArtifactMetadata } from "../db/index.js";
 export type ArtifactRetentionPolicy = "ephemeral" | "standard" | "permanent";
 export interface ArtifactAccessDescriptor {
@@ -62,8 +63,10 @@ export type ExternalArtifactImportValidation = {
     sizeBytes?: number;
 };
 export declare const ARTIFACT_RETENTION_MS: Record<ArtifactRetentionPolicy, number | null>;
-export declare const CHANNEL_FILE_SIZE_LIMIT_BYTES: Record<"webui" | "telegram" | "slack", number>;
-export declare const ARTIFACT_THUMBNAIL_POLICY: Record<"webui" | "telegram" | "slack", "not_generated">;
+export declare const DEFAULT_CHANNEL_FILE_SIZE_LIMIT_BYTES: number;
+export declare const CHANNEL_FILE_SIZE_LIMIT_BYTES: Partial<Record<ChannelSource, number>>;
+export declare function getChannelFileSizeLimitBytes(channel: ChannelSource): number;
+export declare const ARTIFACT_THUMBNAIL_POLICY: Partial<Record<ChannelSource, "not_generated">>;
 export declare const DEFAULT_ARTIFACT_CLEANUP_INTERVAL_MS: number;
 export declare const DEFAULT_ARTIFACT_STORAGE_QUOTA_BYTES: number;
 export declare const DEFAULT_ARTIFACT_STORAGE_QUOTA_COUNT = 50000;

@@ -144,6 +144,7 @@ vite.config.ts.timestamp-*
 .design/
 .tasks/
 .claude/
+packages/core/.artifact-consistency-*/
 .DS_Store
 .env
 .docs
