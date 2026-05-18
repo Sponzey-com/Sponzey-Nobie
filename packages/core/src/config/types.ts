@@ -162,6 +162,11 @@ export interface MemoryConfig {
     apiKey?: string
     baseUrl?: string
   }
+  compaction?: {
+    modelId?: string
+    fallbackModelId?: string
+    minContextTokens?: number
+  }
   searchMode?: "fts" | "vector" | "hybrid"
   sessionRetentionDays: number
   indexedPaths?: string[]
@@ -350,6 +355,9 @@ export const DEFAULT_CONFIG: NobieConfig = {
     },
   },
   memory: {
+    compaction: {
+      minContextTokens: 3000,
+    },
     sessionRetentionDays: 30,
   },
   orchestration: {

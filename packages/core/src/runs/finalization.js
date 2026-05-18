@@ -279,6 +279,17 @@ export async function moveRunToAwaitingUser(params) {
     params.dependencies.setRunStepStatus(params.runId, "reviewing", "completed", summary);
     params.dependencies.setRunStepStatus(params.runId, "awaiting_user", "running", summary);
     params.dependencies.updateRunStatus(params.runId, "awaiting_user", summary, true);
+    params.dependencies.rememberRunAwaitingUser?.({
+        runId: params.runId,
+        sessionId: params.sessionId,
+        source: params.source,
+        summary,
+        ...(params.awaitingUser.reason ? { reason: params.awaitingUser.reason } : {}),
+        ...(params.awaitingUser.userMessage ? { userMessage: params.awaitingUser.userMessage } : {}),
+        ...(params.awaitingUser.remainingItems
+            ? { remainingItems: params.awaitingUser.remainingItems }
+            : {}),
+    });
     params.dependencies.appendRunEvent(params.runId, "사용자 추가 입력 대기");
 }
 export async function moveRunToCancelledAfterStop(params) {

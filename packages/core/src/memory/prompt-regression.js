@@ -1,4 +1,4 @@
-import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, } from "./nobie-md.js";
+import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, promptSourceFileExists, } from "./nobie-md.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 const EXPECTED_PROMPT_SOURCE_IDS = [
@@ -140,11 +140,24 @@ function firstMatchingLine(content, pattern) {
         .split(/\n/u)
         .find((line) => pattern.test(line))?.trim() ?? "";
 }
-function validateRegistryCompleteness(sources, locales) {
+function validateRegistryCompleteness(workDir, sources, locales) {
     const existing = new Set(sources.map((source) => sourceKey(source.sourceId, source.locale)));
     const issues = [];
     for (const sourceId of EXPECTED_PROMPT_SOURCE_IDS) {
+        if (!existing.has(sourceKey(sourceId, "en"))) {
+            issues.push(makeIssue({
+                severity: "error",
+                code: "prompt_source_missing",
+                sourceId,
+                locale: "en",
+                message: `${sourceId}:en prompt source is missing or unsafe.`,
+            }));
+        }
         for (const locale of locales) {
+            if (locale === "en")
+                continue;
+            if (!promptSourceFileExists(workDir, sourceId, locale))
+                continue;
             if (existing.has(sourceKey(sourceId, locale)))
                 continue;
             issues.push(makeIssue({
@@ -186,9 +199,11 @@ function validateResponsibilities(sources) {
         };
     });
 }
-function validateImpactScenarios(workDir, locales) {
+function validateImpactScenarios(workDir, sources, locales) {
     const results = [];
     for (const locale of locales) {
+        if (!sources.some((source) => source.locale === locale))
+            continue;
         const assembly = dryRunPromptSourceAssembly(workDir, locale).assembly;
         const text = assembly?.text ?? "";
         for (const scenario of IMPACT_SCENARIOS) {
@@ -303,9 +318,9 @@ export function runPromptSourceRegression(workDir = process.cwd(), options = {})
     const localeParity = checkPromptSourceLocaleParity(workDir);
     const responsibility = validateResponsibilities(sources);
     const policyCompatibility = validateAgentsPromptCompatibility(workDir, sources);
-    const impact = validateImpactScenarios(workDir, locales);
+    const impact = validateImpactScenarios(workDir, sources, locales);
     const issues = [
-        ...validateRegistryCompleteness(sources, locales),
+        ...validateRegistryCompleteness(workDir, sources, locales),
         ...localeParity.issues.map((issue) => makeIssue({
             severity: "error",
             code: `locale_${issue.code}`,

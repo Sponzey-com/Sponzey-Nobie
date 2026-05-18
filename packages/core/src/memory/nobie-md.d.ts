@@ -135,6 +135,7 @@ export declare function loadFirstRunPromptSourceAssembly(workDir: string, locale
  * Bootstrap prompts are intentionally excluded from the default runtime assembly.
  */
 export declare function loadSystemPromptSources(workDir: string): string | null;
+export declare function promptSourceFileExists(workDir: string, sourceId: string, locale: "ko" | "en"): boolean;
 export declare function buildPromptSourceContentDiff(beforeContent: string, afterContent: string): PromptSourceDiffResult;
 export declare function createPromptSourceBackup(workDir: string, sourceId: string, locale: "ko" | "en"): PromptSourceBackupResult;
 export declare function exportPromptSourcesToFile(input: {

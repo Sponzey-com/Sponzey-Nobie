@@ -118,6 +118,10 @@ export interface RuntimeManifestMemory {
   embeddingRows: number | null
   embeddingProvider: string | null
   embeddingModel: string | null
+  recallEventRows?: number | null
+  capsuleRollupRows?: number | null
+  latestRecallAt?: number | null
+  latestRollupAt?: number | null
 }
 
 export interface RuntimeManifestReleasePackage {
@@ -268,6 +272,12 @@ function readCount(db: BetterSqlite3.Database, tableName: string): number | null
   return row?.count ?? null
 }
 
+function readLatestTimestamp(db: BetterSqlite3.Database, tableName: string, column = "created_at"): number | null {
+  if (!tableExists(db, tableName)) return null
+  const row = db.prepare<[], { value: number | null }>(`SELECT MAX(${column}) AS value FROM ${tableName}`).get()
+  return row?.value ?? null
+}
+
 function readMemoryState(): RuntimeManifestMemory {
   const cfg = getConfig()
   const base: RuntimeManifestMemory = {
@@ -292,6 +302,10 @@ function readMemoryState(): RuntimeManifestMemory {
         ftsAvailable,
         vectorTableAvailable,
         embeddingRows: vectorTableAvailable ? readCount(db, "memory_embeddings") : null,
+        recallEventRows: readCount(db, "memory_recall_events"),
+        capsuleRollupRows: readCount(db, "memory_capsule_rollups"),
+        latestRecallAt: readLatestTimestamp(db, "memory_recall_events"),
+        latestRollupAt: readLatestTimestamp(db, "memory_capsule_rollups"),
       }
     } finally {
       db.close()

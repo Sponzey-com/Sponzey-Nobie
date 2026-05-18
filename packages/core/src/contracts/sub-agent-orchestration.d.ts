@@ -311,9 +311,65 @@ export interface SubSessionContract {
     status: SubSessionStatus;
     promptBundleId: string;
     promptBundleSnapshot?: AgentPromptBundle;
+    memoryBootstrap?: SubSessionMemoryBootstrap;
     modelExecutionSnapshot?: ModelExecutionSnapshot;
     startedAt?: number;
     finishedAt?: number;
+}
+export interface SubSessionMemoryOwnerScope {
+    ownerType: "main_agent" | "sub_agent";
+    ownerId: string;
+    sessionId: string;
+    requestGroupId?: string;
+    lineageId?: string;
+    channelKey?: string;
+    threadKey?: string;
+}
+export interface SubSessionHandoffCapsulePayload {
+    [key: string]: JsonValue | undefined;
+    kind: "sub_session_handoff_capsule";
+    currentGoal: string;
+    completionCriteria: string[];
+    constraints: string[];
+    artifactRefs: string[];
+    targetContext: {
+        targetAgentId: string;
+        commandRequestId: string;
+        subSessionId: string;
+        parentRunId: string;
+        parentSessionId: string;
+    };
+    latestSafeContextSummary: string;
+    doNotRepeat: string[];
+    contextPackageIds: string[];
+}
+export interface SubSessionFeedbackCapsulePayload {
+    [key: string]: JsonValue | undefined;
+    kind: "sub_session_feedback_capsule";
+    keep: string[];
+    remove: string[];
+    revise: string[];
+    addConstraints: string[];
+    doNotRepeat: string[];
+    expectedOutputRevision: string[];
+    preservedArtifactRefs: string[];
+    unresolvedConflicts: string[];
+    rejectedAssumptions: string[];
+    sourceResultReportIds: string[];
+}
+export interface SubSessionMemoryBootstrap {
+    ownerScope: SubSessionMemoryOwnerScope;
+    nicknameSnapshot?: string;
+    seedMode: "child_own_state";
+    rawTranscriptIncluded: false;
+    latestCapsuleId?: string;
+    handoffExchangeId?: string;
+    feedbackExchangeId?: string;
+    latestSafeContextSummary?: string;
+    initialPinnedItems: string[];
+    sourceProvenanceRefs: string[];
+    additionalContextRefs: string[];
+    createdAt: number;
 }
 export interface ResourceLockContract {
     lockId: string;

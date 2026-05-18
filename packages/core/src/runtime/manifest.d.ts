@@ -101,6 +101,10 @@ export interface RuntimeManifestMemory {
     embeddingRows: number | null;
     embeddingProvider: string | null;
     embeddingModel: string | null;
+    recallEventRows?: number | null;
+    capsuleRollupRows?: number | null;
+    latestRecallAt?: number | null;
+    latestRollupAt?: number | null;
 }
 export interface RuntimeManifestReleasePackage {
     manifestId: string | null;

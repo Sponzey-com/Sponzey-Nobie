@@ -18,6 +18,7 @@ export declare function buildStartFinalizationDependencies(params: {
     updateRunStatus: FinalizationDependencies["updateRunStatus"];
     rememberRunSuccess: FinalizationDependencies["rememberRunSuccess"];
     rememberRunFailure: FinalizationDependencies["rememberRunFailure"];
+    rememberRunAwaitingUser?: FinalizationDependencies["rememberRunAwaitingUser"];
     onDeliveryError?: FinalizationDependencies["onDeliveryError"];
 }): FinalizationDependencies;
 export declare function executeStartLoopDirective(params: {

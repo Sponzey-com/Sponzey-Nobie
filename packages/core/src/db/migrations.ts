@@ -2976,6 +2976,215 @@ export const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    version: 46,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_capsules (
+          capsule_id TEXT PRIMARY KEY,
+          capsule_version INTEGER NOT NULL,
+          parent_capsule_id TEXT,
+          owner_type TEXT NOT NULL CHECK(owner_type IN ('main_agent', 'sub_agent', 'session', 'task')),
+          owner_id TEXT NOT NULL,
+          session_id TEXT,
+          request_group_id TEXT,
+          lineage_id TEXT,
+          channel_key TEXT,
+          thread_key TEXT,
+          nickname_snapshot TEXT,
+          capsule_kind TEXT NOT NULL CHECK(capsule_kind IN ('session_compaction', 'task_compaction', 'lineage_compaction', 'handoff_compaction')),
+          summary TEXT NOT NULL,
+          active_objectives_json TEXT NOT NULL,
+          confirmed_facts_json TEXT NOT NULL,
+          decisions_json TEXT NOT NULL,
+          constraints_json TEXT NOT NULL,
+          pending_items_json TEXT NOT NULL,
+          artifact_refs_json TEXT NOT NULL,
+          recovery_hints_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          compacted_message_ids_json TEXT NOT NULL,
+          source_token_estimate INTEGER NOT NULL DEFAULT 0,
+          result_token_estimate INTEGER NOT NULL DEFAULT 0,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_capsules_owner
+          ON memory_capsules(owner_type, owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_capsules_session
+          ON memory_capsules(session_id, created_at DESC)
+          WHERE session_id IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_memory_capsules_lineage
+          ON memory_capsules(lineage_id, created_at DESC)
+          WHERE lineage_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS memory_capsule_sources (
+          id TEXT PRIMARY KEY,
+          capsule_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL CHECK(source_kind IN ('message', 'run_event', 'result_report', 'exchange_package', 'session_snapshot', 'task_continuity', 'manual')),
+          source_id TEXT NOT NULL,
+          owner_type TEXT,
+          owner_id TEXT,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (capsule_id) REFERENCES memory_capsules(capsule_id) ON DELETE CASCADE,
+          UNIQUE(capsule_id, source_kind, source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_capsule_sources_capsule
+          ON memory_capsule_sources(capsule_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_compaction_runs (
+          id TEXT PRIMARY KEY,
+          capsule_id TEXT,
+          owner_type TEXT NOT NULL CHECK(owner_type IN ('main_agent', 'sub_agent', 'session', 'task')),
+          owner_id TEXT NOT NULL,
+          session_id TEXT,
+          request_group_id TEXT,
+          lineage_id TEXT,
+          channel_key TEXT,
+          thread_key TEXT,
+          trigger_reason_codes_json TEXT NOT NULL,
+          source_token_estimate INTEGER NOT NULL DEFAULT 0,
+          result_token_estimate INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL CHECK(status IN ('started', 'completed', 'failed')),
+          model_provider TEXT,
+          model_id TEXT,
+          validation_summary TEXT,
+          failure_reason TEXT,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (capsule_id) REFERENCES memory_capsules(capsule_id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_compaction_runs_owner
+          ON memory_compaction_runs(owner_type, owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_compaction_runs_capsule
+          ON memory_compaction_runs(capsule_id, created_at DESC)
+          WHERE capsule_id IS NOT NULL;
+      `)
+    },
+  },
+  {
+    version: 47,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_memory_state (
+          state_id TEXT PRIMARY KEY,
+          owner_scope_key TEXT NOT NULL UNIQUE,
+          agent_type TEXT NOT NULL CHECK(agent_type IN ('main_agent', 'sub_agent')),
+          agent_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          request_group_id TEXT,
+          lineage_id TEXT,
+          channel_key TEXT,
+          thread_key TEXT,
+          nickname_snapshot TEXT,
+          latest_capsule_id TEXT,
+          current_raw_token_estimate INTEGER NOT NULL DEFAULT 0,
+          current_raw_message_count INTEGER NOT NULL DEFAULT 0,
+          last_compaction_at INTEGER,
+          compaction_block_reason TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (latest_capsule_id) REFERENCES memory_capsules(capsule_id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_state_agent
+          ON agent_memory_state(agent_type, agent_id, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_state_session
+          ON agent_memory_state(session_id, channel_key, thread_key, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_state_lineage
+          ON agent_memory_state(lineage_id, updated_at DESC)
+          WHERE lineage_id IS NOT NULL;
+      `)
+    },
+  },
+  {
+    version: 48,
+    up(db) {
+      db.exec(`
+        ALTER TABLE task_continuity ADD COLUMN latest_instruction_summary TEXT;
+        ALTER TABLE task_continuity ADD COLUMN latest_successful_summary TEXT;
+        ALTER TABLE task_continuity ADD COLUMN latest_target_context TEXT;
+        ALTER TABLE task_continuity ADD COLUMN failure_recovery_hints TEXT;
+        ALTER TABLE task_continuity ADD COLUMN continuity_exchange_refs TEXT;
+      `)
+    },
+  },
+  {
+    version: 49,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_recall_events (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          session_id TEXT,
+          request_group_id TEXT,
+          owner_type TEXT NOT NULL CHECK(owner_type IN ('main_agent', 'sub_agent', 'session', 'task')),
+          owner_id TEXT NOT NULL,
+          session_scope_id TEXT,
+          request_scope_id TEXT,
+          lineage_scope_id TEXT,
+          channel_key TEXT,
+          thread_key TEXT,
+          source_type TEXT NOT NULL CHECK(source_type IN ('maintenance_restore', 'prompt_time_recall', 'recent_capsule', 'rollup_capsule')),
+          capsule_id TEXT,
+          chunk_id TEXT,
+          reason_code TEXT NOT NULL,
+          can_use_for_final_answer INTEGER NOT NULL DEFAULT 0 CHECK(can_use_for_final_answer IN (0, 1)),
+          same_session INTEGER NOT NULL DEFAULT 0 CHECK(same_session IN (0, 1)),
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (capsule_id) REFERENCES memory_capsules(capsule_id) ON DELETE SET NULL,
+          FOREIGN KEY (chunk_id) REFERENCES memory_chunks(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_recall_events_run
+          ON memory_recall_events(run_id, created_at DESC)
+          WHERE run_id IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_memory_recall_events_owner
+          ON memory_recall_events(owner_type, owner_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_recall_events_session
+          ON memory_recall_events(session_id, request_group_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_capsule_rollups (
+          id TEXT PRIMARY KEY,
+          owner_type TEXT NOT NULL CHECK(owner_type IN ('main_agent', 'sub_agent', 'session', 'task')),
+          owner_id TEXT NOT NULL,
+          session_id TEXT,
+          request_group_id TEXT,
+          lineage_id TEXT,
+          channel_key TEXT,
+          thread_key TEXT,
+          source_capsule_ids_json TEXT NOT NULL,
+          source_capsule_count INTEGER NOT NULL DEFAULT 0,
+          source_token_estimate INTEGER NOT NULL DEFAULT 0,
+          result_rollup_capsule_id TEXT NOT NULL,
+          recent_capsule_ids_json TEXT NOT NULL,
+          preserved_pending_items_json TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (result_rollup_capsule_id) REFERENCES memory_capsules(capsule_id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_capsule_rollups_result
+          ON memory_capsule_rollups(result_rollup_capsule_id);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_capsule_rollups_owner
+          ON memory_capsule_rollups(owner_type, owner_id, created_at DESC);
+      `)
+    },
+  },
 ]
 
 function schemaMigrationsTableExists(db: Database.Database): boolean {

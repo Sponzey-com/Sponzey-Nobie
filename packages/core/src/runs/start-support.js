@@ -1,10 +1,11 @@
-import { enqueueMemoryWritebackCandidate, getDb, getSession, insertSession, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js";
+import { enqueueMemoryWritebackCandidate, getDb, getSession, getTaskContinuity, insertSession, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js";
 import { createLogger } from "../logger/index.js";
 import { buildActiveQueueCancellationMessage, } from "./entry-semantics.js";
 import { buildFilesystemVerificationPrompt, verifyFilesystemTargets, } from "./filesystem-verification.js";
 import { runFilesystemVerificationSubtask as runAnalysisOnlyFilesystemVerificationSubtask, } from "./analysis-subrun.js";
 import { buildRunFailureJournalRecord, buildRunInstructionJournalRecord, buildRunSuccessJournalRecord, safeInsertRunJournalRecord, } from "./journaling.js";
 import { condenseMemoryText } from "../memory/journal.js";
+import { buildTaskContinuityTargetContext, resolveLatestInstructionPrecedence, } from "../memory/flow-capsules.js";
 import { recordFlashFeedback } from "../memory/flash-feedback.js";
 import { buildRunWritebackCandidates, isFlashFeedback, prepareMemoryWritebackQueueInput } from "../memory/writeback.js";
 import { appendRunEvent, cancelRootRun, createRootRun, getRootRun, listActiveSessionRequestGroups, setRunStepStatus, updateRunStatus, } from "./store.js";
@@ -26,6 +27,14 @@ function mapTaskProfileToWorkerRole(taskProfile) {
         default:
             return "general";
     }
+}
+function taskContinuityTargetContextForRun(run, source) {
+    return buildTaskContinuityTargetContext({
+        ...(run?.targetId ? { targetId: run.targetId } : {}),
+        ...(run?.targetLabel ? { targetLabel: run.targetLabel } : {}),
+        ...(run?.workerRuntimeKind ? { workerRuntimeKind: run.workerRuntimeKind } : {}),
+        source,
+    });
 }
 export function normalizeTaskProfile(taskProfile) {
     switch (taskProfile) {
@@ -118,6 +127,9 @@ export function ensureSessionExists(sessionId, source, now) {
         .run(now, sessionId);
 }
 export function rememberRunInstruction(params) {
+    const run = getRootRun(params.runId);
+    const latestInstructionSummary = condenseMemoryText(params.message, 280);
+    const latestTargetContext = taskContinuityTargetContextForRun(run, params.source);
     safeInsertRunJournalRecord(buildRunInstructionJournalRecord(params), {
         onError: (message) => log.warn(message),
     });
@@ -144,13 +156,16 @@ export function rememberRunInstruction(params) {
     safeUpsertTaskContinuity({
         lineageRootRunId: params.requestGroupId,
         ...(params.runId !== params.requestGroupId ? { parentRunId: params.runId } : {}),
-        handoffSummary: condenseMemoryText(params.message, 280),
+        handoffSummary: latestInstructionSummary,
         lastGoodState: "instruction_received",
+        latestInstructionSummary,
+        ...(latestTargetContext ? { latestTargetContext } : {}),
     });
 }
 export function rememberRunSuccess(params) {
     const run = getRootRun(params.runId);
     const requestGroupId = run?.requestGroupId;
+    const continuity = requestGroupId ? getTaskContinuity(requestGroupId) : undefined;
     safeInsertRunJournalRecord(buildRunSuccessJournalRecord({
         ...params,
         ...(requestGroupId ? { requestGroupId } : {}),
@@ -158,6 +173,7 @@ export function rememberRunSuccess(params) {
         onError: (message) => log.warn(message),
     });
     const summary = condenseMemoryText(params.summary || params.text, 360);
+    const latestTargetContext = taskContinuityTargetContextForRun(run, params.source);
     if (summary) {
         safeEnqueueWritebackCandidates({
             runId: params.runId,
@@ -182,8 +198,13 @@ export function rememberRunSuccess(params) {
             safeUpsertTaskContinuity({
                 lineageRootRunId: requestGroupId,
                 ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
-                ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+                ...((continuity?.handoffSummary ?? run?.handoffSummary)
+                    ? { handoffSummary: continuity?.handoffSummary ?? run?.handoffSummary }
+                    : {}),
                 lastGoodState: summary,
+                latestSuccessfulSummary: summary,
+                status: "completed",
+                ...(latestTargetContext ? { latestTargetContext } : {}),
             });
         }
     }
@@ -233,6 +254,7 @@ export function rememberToolResultWriteback(params) {
 export function rememberRunFailure(params) {
     const run = getRootRun(params.runId);
     const requestGroupId = run?.requestGroupId;
+    const continuity = requestGroupId ? getTaskContinuity(requestGroupId) : undefined;
     safeInsertRunJournalRecord(buildRunFailureJournalRecord({
         ...params,
         ...(requestGroupId ? { requestGroupId } : {}),
@@ -240,6 +262,7 @@ export function rememberRunFailure(params) {
         onError: (message) => log.warn(message),
     });
     const detail = condenseMemoryText(params.detail || params.summary, 480);
+    const latestTargetContext = taskContinuityTargetContextForRun(run, params.source);
     if (detail) {
         safeEnqueueWritebackCandidates({
             runId: params.runId,
@@ -259,11 +282,56 @@ export function rememberRunFailure(params) {
             safeUpsertTaskContinuity({
                 lineageRootRunId: requestGroupId,
                 ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
-                ...(run?.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+                ...((continuity?.handoffSummary ?? run?.handoffSummary)
+                    ? { handoffSummary: continuity?.handoffSummary ?? run?.handoffSummary }
+                    : {}),
                 lastGoodState: `failure: ${detail}`,
+                failureRecoveryHints: [detail, params.title, params.summary].filter((value) => Boolean(value?.trim())),
+                status: "failed",
+                ...(latestTargetContext ? { latestTargetContext } : {}),
             });
         }
     }
+}
+export function rememberRunAwaitingUser(params) {
+    void params.sessionId;
+    const run = getRootRun(params.runId);
+    const requestGroupId = run?.requestGroupId;
+    if (!requestGroupId)
+        return;
+    const continuity = getTaskContinuity(requestGroupId);
+    const latestTargetContext = taskContinuityTargetContextForRun(run, params.source);
+    const latestInstruction = resolveLatestInstructionPrecedence({
+        ...(continuity?.latestInstructionSummary
+            ? { latestInstructionSummary: continuity.latestInstructionSummary }
+            : run?.prompt
+                ? { latestInstructionSummary: run.prompt }
+                : {}),
+        continuityLastGoodState: params.summary,
+        ...(continuity?.handoffSummary
+            ? { continuityHandoffSummary: continuity.handoffSummary }
+            : run?.handoffSummary
+                ? { continuityHandoffSummary: run.handoffSummary }
+                : {}),
+    });
+    safeUpsertTaskContinuity({
+        lineageRootRunId: requestGroupId,
+        ...(run?.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        ...((continuity?.handoffSummary ?? run?.handoffSummary)
+            ? { handoffSummary: continuity?.handoffSummary ?? run?.handoffSummary }
+            : {}),
+        ...(latestInstruction.selectedSummary
+            ? { latestInstructionSummary: latestInstruction.selectedSummary }
+            : {}),
+        lastGoodState: params.summary,
+        failureRecoveryHints: [
+            params.reason,
+            params.userMessage,
+            ...(params.remainingItems ?? []),
+        ].filter((value) => Boolean(value?.trim())),
+        status: "awaiting_user",
+        ...(latestTargetContext ? { latestTargetContext } : {}),
+    });
 }
 function safeRecordFlashFeedback(input) {
     try {

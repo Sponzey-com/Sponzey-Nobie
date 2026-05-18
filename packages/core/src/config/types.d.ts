@@ -139,6 +139,11 @@ export interface MemoryConfig {
         apiKey?: string;
         baseUrl?: string;
     };
+    compaction?: {
+        modelId?: string;
+        fallbackModelId?: string;
+        minContextTokens?: number;
+    };
     searchMode?: "fts" | "vector" | "hybrid";
     sessionRetentionDays: number;
     indexedPaths?: string[];

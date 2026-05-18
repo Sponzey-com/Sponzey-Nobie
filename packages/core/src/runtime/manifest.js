@@ -94,6 +94,12 @@ function readCount(db, tableName) {
     const row = db.prepare(`SELECT count(*) AS count FROM ${tableName}`).get();
     return row?.count ?? null;
 }
+function readLatestTimestamp(db, tableName, column = "created_at") {
+    if (!tableExists(db, tableName))
+        return null;
+    const row = db.prepare(`SELECT MAX(${column}) AS value FROM ${tableName}`).get();
+    return row?.value ?? null;
+}
 function readMemoryState() {
     const cfg = getConfig();
     const base = {
@@ -118,6 +124,10 @@ function readMemoryState() {
                 ftsAvailable,
                 vectorTableAvailable,
                 embeddingRows: vectorTableAvailable ? readCount(db, "memory_embeddings") : null,
+                recallEventRows: readCount(db, "memory_recall_events"),
+                capsuleRollupRows: readCount(db, "memory_capsule_rollups"),
+                latestRecallAt: readLatestTimestamp(db, "memory_recall_events"),
+                latestRollupAt: readLatestTimestamp(db, "memory_capsule_rollups"),
             };
         }
         finally {

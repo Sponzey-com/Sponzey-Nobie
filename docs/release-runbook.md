@@ -42,15 +42,25 @@ Platform binaries are optional on a single-host local release build, but must be
 8. Run architecture cleanup gate: `pnpm run test:architecture`.
 9. Review dead-code cleanup evidence in `.tasks/dead-code-candidates.md` and confirm no immediate-delete candidate remains in production source.
 10. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
-11. Run Yeonjang multi-instance release gate: `pnpm exec vitest run tests/task010-yeonjang-multi-instance-e2e.test.ts tests/task010-yeonjang-release-gate.test.ts`.
-12. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
-13. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
-14. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-15. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
-16. Run channel smoke dry-run: `pnpm run smoke:channels`.
-17. Build Yeonjang packages for each target OS.
-18. Generate release manifest and checksum files: `pnpm run release:package`.
-19. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+11. Run memory compaction release gate: `pnpm exec vitest run tests/task006-memory-release-gate.test.ts`.
+12. Run Yeonjang multi-instance release gate: `pnpm exec vitest run tests/task010-yeonjang-multi-instance-e2e.test.ts tests/task010-yeonjang-release-gate.test.ts`.
+13. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
+14. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
+15. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+16. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
+17. Run channel smoke dry-run: `pnpm run smoke:channels`.
+18. Build Yeonjang packages for each target OS.
+19. Generate release manifest and checksum files: `pnpm run release:package`.
+20. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## Memory Compaction Manual Smoke
+
+Run these checks in `advanced` or `admin` UI mode before public publish.
+
+- Open `/advanced/memory` and confirm `Memory inspector` cards show raw token estimate, raw message count, latest capsule age, chain depth, rollup age, compaction reason, pending preservation count, recall hit count, and drift state.
+- Confirm beginner UI does not expose memory internals, compact preview, or admin-only manual controls.
+- In admin UI mode, run `dry-run compact`, `latest capsule`, `rollup 보기`, and `safe restore`, then confirm they return preview-only data without mutating append-only history.
+- Confirm `memoryCompactionEvidence` appears in the release manifest and that `Memory compaction release gate` status is reviewed before publish.
 
 ## Yeonjang Multi-instance Manual Smoke
 

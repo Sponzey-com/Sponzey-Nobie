@@ -1,3 +1,4 @@
+import React from "react"
 import type { MqttRuntimeResponse } from "../../api/client"
 import { useUiI18n } from "../../lib/ui-i18n"
 
@@ -94,73 +95,86 @@ export function MqttRuntimePanel({
 
         {extensions.length > 0 ? (
           <div className="mt-4 space-y-3">
-            {extensions.map((extension) => (
-              <div key={extension.extensionId} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm font-semibold text-stone-900">
-                        {extension.displayName?.trim() || extension.extensionId}
-                      </div>
-                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassForState(extension.state)}`}>
-                        {extension.state ?? text("알 수 없음", "Unknown")}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-stone-500">
-                      ID: <span className="font-mono">{extension.extensionId}</span>
-                    </div>
-                    {extension.clientId ? (
-                      <div className="mt-1 text-xs text-stone-500">
-                        Client: <span className="font-mono">{extension.clientId}</span>
-                      </div>
-                    ) : null}
-                    {extension.version ? (
-                      <div className="mt-1 text-xs text-stone-500">
-                        Version: <span className="font-mono">{extension.version}</span>
-                      </div>
-                    ) : null}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500">
-                      {extension.protocolVersion ? <span>Protocol: <span className="font-mono">{extension.protocolVersion}</span></span> : null}
-                      {extension.platform || extension.os || extension.arch ? <span>OS: <span className="font-mono">{[extension.platform, extension.os, extension.arch].filter(Boolean).join("/")}</span></span> : null}
-                      {extension.capabilityHash ? <span>Capability: <span className="font-mono">{extension.capabilityHash.slice(0, 12)}</span></span> : null}
-                    </div>
-                    {extension.message ? (
-                      <div className="mt-2 text-sm text-stone-700">{displayText(extension.message)}</div>
-                    ) : null}
-                    <div className="mt-2 text-xs text-stone-500">
-                      {text("마지막 수신", "Last seen")}: {formatTimestamp(extension.lastSeenAt)}
-                      {extension.lastCapabilityRefreshAt ? ` · ${text("기능 갱신", "Capabilities")}: ${formatTimestamp(extension.lastCapabilityRefreshAt)}` : ""}
-                    </div>
-                    {(() => {
-                      const counts = countSupportedCapabilities(extension.capabilityMatrix)
-                      return counts ? (
-                        <div className="mt-2 text-xs text-stone-500">
-                          {text("지원 기능", "Supported capabilities")}: {counts.supported}/{counts.total}
+            {extensions.map((extension) => {
+              const methods = Array.isArray(extension.methods) ? extension.methods : []
+              const methodCount = methods.length > 0
+                ? methods.length
+                : typeof (extension as { methodCount?: unknown }).methodCount === "number"
+                  ? (extension as { methodCount: number }).methodCount
+                  : 0
+              return (
+                <div key={extension.extensionId} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-semibold text-stone-900">
+                          {extension.displayName?.trim() || extension.extensionId}
                         </div>
-                      ) : null
-                    })()}
-                    {extension.methods.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {extension.methods.slice(0, 8).map((method) => (
-                          <span key={method} className="rounded-full bg-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700">
-                            {method}
-                          </span>
-                        ))}
+                        <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassForState(extension.state)}`}>
+                          {extension.state ?? text("알 수 없음", "Unknown")}
+                        </span>
                       </div>
-                    ) : null}
+                      <div className="mt-1 text-xs text-stone-500">
+                        ID: <span className="font-mono">{extension.extensionId}</span>
+                      </div>
+                      {extension.clientId ? (
+                        <div className="mt-1 text-xs text-stone-500">
+                          Client: <span className="font-mono">{extension.clientId}</span>
+                        </div>
+                      ) : null}
+                      {extension.version ? (
+                        <div className="mt-1 text-xs text-stone-500">
+                          Version: <span className="font-mono">{extension.version}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-1 text-xs text-stone-500">
+                        {extension.protocolVersion ? <span>Protocol: <span className="font-mono">{extension.protocolVersion}</span></span> : null}
+                        {extension.platform || extension.os || extension.arch ? <span>OS: <span className="font-mono">{[extension.platform, extension.os, extension.arch].filter(Boolean).join("/")}</span></span> : null}
+                        {extension.capabilityHash ? <span>Capability: <span className="font-mono">{extension.capabilityHash.slice(0, 12)}</span></span> : null}
+                      </div>
+                      {extension.message ? (
+                        <div className="mt-2 text-sm text-stone-700">{displayText(extension.message)}</div>
+                      ) : null}
+                      <div className="mt-2 text-xs text-stone-500">
+                        {text("마지막 수신", "Last seen")}: {formatTimestamp(extension.lastSeenAt)}
+                        {extension.lastCapabilityRefreshAt ? ` · ${text("기능 갱신", "Capabilities")}: ${formatTimestamp(extension.lastCapabilityRefreshAt)}` : ""}
+                      </div>
+                      {(() => {
+                        const counts = countSupportedCapabilities(extension.capabilityMatrix)
+                        return counts ? (
+                          <div className="mt-2 text-xs text-stone-500">
+                            {text("지원 기능", "Supported capabilities")}: {counts.supported}/{counts.total}
+                          </div>
+                        ) : null
+                      })()}
+                      {methodCount > 0 ? (
+                        <div className="mt-2 text-xs text-stone-500">
+                          {text("메서드 수", "Method count")}: {methodCount}
+                        </div>
+                      ) : null}
+                      {methods.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {methods.slice(0, 8).map((method) => (
+                            <span key={method} className="rounded-full bg-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700">
+                              {method}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      onClick={() => onDisconnect(extension.extensionId)}
+                      disabled={disconnectingExtensionId === extension.extensionId}
+                      className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {disconnectingExtensionId === extension.extensionId
+                        ? text("해지 중...", "Disconnecting...")
+                        : text("연동 해지", "Disconnect")}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => onDisconnect(extension.extensionId)}
-                    disabled={disconnectingExtensionId === extension.extensionId}
-                    className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {disconnectingExtensionId === extension.extensionId
-                      ? text("해지 중...", "Disconnecting...")
-                      : text("연동 해지", "Disconnect")}
-                  </button>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : null}
       </section>

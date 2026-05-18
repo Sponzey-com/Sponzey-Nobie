@@ -2,6 +2,8 @@ import BetterSqlite3 from "better-sqlite3";
 import { type ScheduleContract } from "../contracts/index.js";
 import { type AgentConfig, type AgentEntityType, type AgentRelationship, type AgentStatus, type CapabilityDelegationRequest, type CapabilityPolicy, type CapabilityRiskLevel, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type PermissionProfile, type RestoreEvent, type SubSessionContract, type TeamConfig, type TeamConflictPolicyMode, type TeamExecutionPlan, type TeamResultPolicyMode } from "../contracts/sub-agent-orchestration.js";
 import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
+import { type AgentMemoryState } from "../memory/agent-state.js";
+import { type MemoryCapsule, type MemoryCapsuleKind, type MemoryCapsuleOwnerType } from "../memory/capsule.js";
 export declare function getDb(): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
@@ -752,6 +754,11 @@ export interface DbTaskContinuity {
     parent_run_id: string | null;
     handoff_summary: string | null;
     last_good_state: string | null;
+    latest_instruction_summary: string | null;
+    latest_successful_summary: string | null;
+    latest_target_context: string | null;
+    failure_recovery_hints: string | null;
+    continuity_exchange_refs: string | null;
     pending_approvals: string | null;
     pending_delivery: string | null;
     last_tool_receipt: string | null;
@@ -767,6 +774,11 @@ export interface TaskContinuitySnapshot {
     parentRunId?: string;
     handoffSummary?: string;
     lastGoodState?: string;
+    latestInstructionSummary?: string;
+    latestSuccessfulSummary?: string;
+    latestTargetContext?: string;
+    failureRecoveryHints: string[];
+    continuityExchangeRefs: string[];
     pendingApprovals: string[];
     pendingDelivery: string[];
     lastToolReceipt?: string;
@@ -958,6 +970,169 @@ export interface DbMemoryWritebackCandidate {
     retry_count: number;
     last_error: string | null;
     run_id: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbMemoryCapsule {
+    capsule_id: string;
+    capsule_version: number;
+    parent_capsule_id: string | null;
+    owner_type: MemoryCapsuleOwnerType;
+    owner_id: string;
+    session_id: string | null;
+    request_group_id: string | null;
+    lineage_id: string | null;
+    channel_key: string | null;
+    thread_key: string | null;
+    nickname_snapshot: string | null;
+    capsule_kind: MemoryCapsuleKind;
+    summary: string;
+    active_objectives_json: string;
+    confirmed_facts_json: string;
+    decisions_json: string;
+    constraints_json: string;
+    pending_items_json: string;
+    artifact_refs_json: string;
+    recovery_hints_json: string;
+    source_refs_json: string;
+    compacted_message_ids_json: string;
+    source_token_estimate: number;
+    result_token_estimate: number;
+    metadata_json: string | null;
+    created_at: number;
+}
+export interface DbMemoryCapsuleSource {
+    id: string;
+    capsule_id: string;
+    source_kind: string;
+    source_id: string;
+    owner_type: string | null;
+    owner_id: string | null;
+    metadata_json: string | null;
+    created_at: number;
+}
+export interface DbMemoryCompactionRun {
+    id: string;
+    capsule_id: string | null;
+    owner_type: MemoryCapsuleOwnerType;
+    owner_id: string;
+    session_id: string | null;
+    request_group_id: string | null;
+    lineage_id: string | null;
+    channel_key: string | null;
+    thread_key: string | null;
+    trigger_reason_codes_json: string;
+    source_token_estimate: number;
+    result_token_estimate: number;
+    status: "started" | "completed" | "failed";
+    model_provider: string | null;
+    model_id: string | null;
+    validation_summary: string | null;
+    failure_reason: string | null;
+    metadata_json: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface MemoryCompactionRunSnapshot {
+    id: string;
+    capsuleId?: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    triggerReasonCodes: string[];
+    sourceTokenEstimate: number;
+    resultTokenEstimate: number;
+    status: DbMemoryCompactionRun["status"];
+    modelProvider?: string;
+    modelId?: string;
+    validationSummary?: string;
+    failureReason?: string;
+    metadata?: Record<string, unknown>;
+    createdAt: number;
+    updatedAt: number;
+}
+export interface DbMemoryRecallEvent {
+    id: string;
+    run_id: string | null;
+    session_id: string | null;
+    request_group_id: string | null;
+    owner_type: MemoryCapsuleOwnerType;
+    owner_id: string;
+    session_scope_id: string | null;
+    request_scope_id: string | null;
+    lineage_scope_id: string | null;
+    channel_key: string | null;
+    thread_key: string | null;
+    source_type: "maintenance_restore" | "prompt_time_recall" | "recent_capsule" | "rollup_capsule";
+    capsule_id: string | null;
+    chunk_id: string | null;
+    reason_code: string;
+    can_use_for_final_answer: 0 | 1;
+    same_session: 0 | 1;
+    metadata_json: string | null;
+    created_at: number;
+}
+export interface MemoryRecallEventSnapshot {
+    id: string;
+    runId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    sourceType: DbMemoryRecallEvent["source_type"];
+    capsuleId?: string;
+    chunkId?: string;
+    reasonCode: string;
+    canUseForFinalAnswer: boolean;
+    sameSession: boolean;
+    metadata?: Record<string, unknown>;
+    createdAt: number;
+}
+export interface DbMemoryCapsuleRollup {
+    id: string;
+    owner_type: MemoryCapsuleOwnerType;
+    owner_id: string;
+    session_id: string | null;
+    request_group_id: string | null;
+    lineage_id: string | null;
+    channel_key: string | null;
+    thread_key: string | null;
+    source_capsule_ids_json: string;
+    source_capsule_count: number;
+    source_token_estimate: number;
+    result_rollup_capsule_id: string;
+    recent_capsule_ids_json: string;
+    preserved_pending_items_json: string;
+    reason_code: string;
+    metadata_json: string | null;
+    created_at: number;
+}
+export interface MemoryCapsuleRollupSnapshot {
+    id: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    sourceCapsuleIds: string[];
+    sourceCapsuleCount: number;
+    sourceTokenEstimate: number;
+    resultRollupCapsuleId: string;
+    recentCapsuleIds: string[];
+    preservedPendingItems: string[];
+    reasonCode: string;
+    metadata?: Record<string, unknown>;
+    createdAt: number;
+}
+export interface DbAgentMemoryState {
+    state_id: string;
+    owner_scope_key: string;
+    agent_type: "main_agent" | "sub_agent";
+    agent_id: string;
+    session_id: string;
+    request_group_id: string | null;
+    lineage_id: string | null;
+    channel_key: string | null;
+    thread_key: string | null;
+    nickname_snapshot: string | null;
+    latest_capsule_id: string | null;
+    current_raw_token_estimate: number;
+    current_raw_message_count: number;
+    last_compaction_at: number | null;
+    compaction_block_reason: string | null;
     created_at: number;
     updated_at: number;
 }
@@ -1252,6 +1427,11 @@ export declare function upsertTaskContinuity(input: {
     parentRunId?: string;
     handoffSummary?: string;
     lastGoodState?: string;
+    latestInstructionSummary?: string;
+    latestSuccessfulSummary?: string;
+    latestTargetContext?: string;
+    failureRecoveryHints?: string[];
+    continuityExchangeRefs?: string[];
     pendingApprovals?: string[];
     pendingDelivery?: string[];
     lastToolReceipt?: string;
@@ -1261,6 +1441,125 @@ export declare function upsertTaskContinuity(input: {
     recoveryBudget?: string;
     status?: string;
 }): void;
+export declare function insertMemoryCapsule(input: MemoryCapsule, options?: {
+    expectedOwnerScope?: Partial<MemoryCapsule["ownerScope"]>;
+}): string;
+export declare function getMemoryCapsule(capsuleId: string): MemoryCapsule | undefined;
+export declare function listMemoryCapsulesForOwner(input: {
+    ownerType: MemoryCapsuleOwnerType;
+    ownerId: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    lineageId?: string;
+    channelKey?: string;
+    threadKey?: string;
+    limit?: number;
+}): MemoryCapsule[];
+export declare function upsertAgentMemoryState(input: AgentMemoryState): string;
+export declare function getAgentMemoryStateByScopeKey(ownerScopeKey: string): AgentMemoryState | undefined;
+export declare function clearAgentMemoryStateLatestCapsule(input: {
+    ownerScopeKey: string;
+    compactionBlockReason?: string;
+    updatedAt?: number;
+}): AgentMemoryState | undefined;
+export declare function listAgentMemoryStatesForAgent(input: {
+    ownerType: AgentMemoryState["ownerScope"]["ownerType"];
+    ownerId: string;
+    sessionId?: string;
+    channelKey?: string;
+    threadKey?: string;
+    limit?: number;
+}): AgentMemoryState[];
+export declare function listRecentAgentMemoryStates(input?: {
+    sessionId?: string;
+    requestGroupId?: string;
+    lineageId?: string;
+    channelKey?: string;
+    threadKey?: string;
+    limit?: number;
+}): AgentMemoryState[];
+export declare function insertMemoryCapsuleSource(input: {
+    id?: string;
+    capsuleId: string;
+    sourceKind: "message" | "run_event" | "result_report" | "exchange_package" | "session_snapshot" | "task_continuity" | "manual";
+    sourceId: string;
+    ownerType?: string;
+    ownerId?: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+}): string;
+export declare function insertMemoryCompactionRun(input: {
+    id?: string;
+    capsuleId?: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    triggerReasonCodes: string[];
+    sourceTokenEstimate: number;
+    resultTokenEstimate: number;
+    status: "started" | "completed" | "failed";
+    modelProvider?: string;
+    modelId?: string;
+    validationSummary?: string;
+    failureReason?: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+    updatedAt?: number;
+}): string;
+export declare function listMemoryCompactionRuns(input?: {
+    ownerType?: MemoryCapsuleOwnerType;
+    ownerId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    lineageId?: string;
+    limit?: number;
+}): MemoryCompactionRunSnapshot[];
+export declare function insertMemoryRecallEvent(input: {
+    id?: string;
+    runId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    sourceType: DbMemoryRecallEvent["source_type"];
+    capsuleId?: string;
+    chunkId?: string;
+    reasonCode: string;
+    canUseForFinalAnswer: boolean;
+    sameSession: boolean;
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+}): string;
+export declare function listMemoryRecallEvents(input?: {
+    runId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    ownerType?: MemoryCapsuleOwnerType;
+    ownerId?: string;
+    limit?: number;
+}): MemoryRecallEventSnapshot[];
+export declare function insertMemoryCapsuleRollup(input: {
+    id?: string;
+    ownerScope: MemoryCapsule["ownerScope"];
+    sourceCapsuleIds: string[];
+    sourceCapsuleCount: number;
+    sourceTokenEstimate: number;
+    resultRollupCapsuleId: string;
+    recentCapsuleIds: string[];
+    preservedPendingItems: string[];
+    reasonCode: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: number;
+}): string;
+export declare function listMemoryCapsuleRollups(input?: {
+    ownerType?: MemoryCapsuleOwnerType;
+    ownerId?: string;
+    sessionId?: string;
+    requestGroupId?: string;
+    lineageId?: string;
+    limit?: number;
+}): MemoryCapsuleRollupSnapshot[];
+export declare function projectMemoryCapsuleToCompatibilityStores(input: MemoryCapsule): {
+    sessionSnapshotId?: string;
+    taskContinuityUpdated: boolean;
+};
 export declare function getTaskContinuity(lineageRootRunId: string): TaskContinuitySnapshot | undefined;
 export declare function listTaskContinuityForLineages(lineageRootRunIds: string[]): TaskContinuitySnapshot[];
 export declare function insertMemoryItem(item: {

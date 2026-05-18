@@ -32,6 +32,17 @@ describe("prompt source regression suite", () => {
     expect(result.impact.every((scenario) => scenario.ok)).toBe(true)
   })
 
+  it("does not fail regression when Korean prompt files were never seeded", () => {
+    const root = createSeededPromptRoot()
+
+    const result = runPromptSourceRegression(root, { locales: ["ko", "en"] })
+
+    expect(result.issues.filter((issue) => issue.locale === "ko"), JSON.stringify(result.issues, null, 2)).toEqual([])
+    expect(result.issues).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "prompt_source_missing", locale: "ko" }),
+    ]))
+  })
+
   it("detects duplicated identity definitions outside identity", () => {
     const root = createSeededPromptRoot()
     const soulPath = join(root, "prompts", "soul.md")
@@ -56,6 +67,22 @@ describe("prompt source regression suite", () => {
     expect(result.ok).toBe(false)
     expect(result.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "impact_marker_missing", evidence: "text_answer_does_not_trigger_artifact_recovery", locale: "en" }),
+    ]))
+  })
+
+  it("fails regression when a Korean prompt file exists but is unsafe to load", () => {
+    const root = createSeededPromptRoot()
+    writeFileSync(
+      join(root, "prompts", "identity.ko.md"),
+      "# 정체성\n\napi_key = sk-abcdefghijklmnopqrstuvwxyz123456\n",
+      "utf-8",
+    )
+
+    const result = runPromptSourceRegression(root, { locales: ["ko", "en"] })
+
+    expect(result.ok).toBe(false)
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "prompt_source_missing", sourceId: "identity", locale: "ko" }),
     ]))
   })
 

@@ -296,6 +296,13 @@ describe("task017 feedback request and redelegation loop", () => {
       sourceResultReportIds: ["result:feedback"],
       previousSubSessionIds: ["sub:feedback"],
       missingItems: ["missing_evidence:answer:source"],
+      feedbackCapsule: {
+        kind: "sub_session_feedback_capsule",
+        keep: ["answer:satisfied", "draft:partial"],
+        revise: ["Attach explicit evidence kind source for answer."],
+        addConstraints: ["Add one cited source."],
+        doNotRepeat: [pkg.feedbackRequest.reasonCode],
+      },
     })
     expect(pkg.synthesizedContext.payload).not.toHaveProperty("resultReport")
     expect(pkg.directive.followupPrompt).toContain("Missing items")
@@ -443,6 +450,13 @@ describe("task017 feedback request and redelegation loop", () => {
         agentId: "agent:alternate",
       })
       expect(redelegated.promptBundleSnapshot?.completionCriteria?.[0]?.outputId).toBe("answer")
+      expect(redelegated.memoryBootstrap).toMatchObject({
+        rawTranscriptIncluded: false,
+        feedbackExchangeId: "exchange:feedback:api-redelegate",
+      })
+      expect(redelegated.memoryBootstrap?.additionalContextRefs).toContain(
+        "exchange:feedback:api-redelegate",
+      )
       expect(listRunSubSessionsForParentRun("run:task017")).toHaveLength(2)
     })
   })

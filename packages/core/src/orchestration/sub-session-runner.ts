@@ -14,6 +14,7 @@ import {
   type FeedbackRequest,
   type ModelExecutionSnapshot,
   type NicknameSnapshot,
+  type OwnerScope,
   type OrchestrationPlan,
   type ParallelSubSessionGroup,
   type ProgressEvent,
@@ -22,15 +23,28 @@ import {
   type ResultReportImpossibleReason,
   type RuntimeIdentity,
   type SubSessionContract,
+  type SubSessionMemoryBootstrap,
   type SubSessionStatus,
   normalizeNicknameSnapshot,
 } from "../contracts/sub-agent-orchestration.js"
 import { recordControlEvent } from "../control-plane/timeline.js"
 import {
+  getSession,
   getRunSubSessionByIdempotencyKey,
   insertRunSubSession,
+  listMemoryCapsulesForOwner,
+  upsertAgentMemoryState,
   updateRunSubSession,
 } from "../db/index.js"
+import {
+  buildAgentMemoryStateFromBootstrap,
+  buildChildOwnMemoryBootstrap,
+} from "../memory/agent-state.js"
+import {
+  buildSubSessionHandoffCapsulePayload,
+  buildSubSessionHandoffPinnedItems,
+} from "../memory/flow-capsules.js"
+import { createDataExchangePackage, persistDataExchangePackage } from "../memory/isolation.js"
 import { recordLatencyMetric } from "../observability/latency.js"
 import { AggregateChildResult } from "../runs/aggregate-child-result.js"
 import { recordLateResultNoReply } from "../runs/channel-finalizer.js"
@@ -71,6 +85,9 @@ export interface RunSubSessionInput {
   parentAgent?: SubSessionParentAgentSnapshot
   parentSessionId: string
   promptBundle: AgentPromptBundle
+  memoryBootstrap?: SubSessionMemoryBootstrap
+  channelKey?: string
+  threadKey?: string
   /** @deprecated Legacy metadata only. This value must not terminate sub-session execution. */
   timeoutMs?: number
   parentAbortSignal?: AbortSignal
@@ -499,6 +516,116 @@ function promptBundlePreflightIssueCodes(input: RunSubSessionInput): string[] {
   return [...issueCodes].sort()
 }
 
+function resolveMemoryBootstrapChannelBoundary(input: RunSubSessionInput): {
+  channelKey?: string
+  threadKey?: string
+} {
+  const session = getSession(input.parentSessionId)
+  const channelKey = input.channelKey?.trim() || session?.source?.trim() || undefined
+  const threadKey = input.threadKey?.trim() || session?.source_id?.trim() || input.parentSessionId
+  return {
+    ...(channelKey ? { channelKey } : {}),
+    ...(threadKey ? { threadKey } : {}),
+  }
+}
+
+function buildPreparedSubSessionMemoryBootstrap(
+  input: RunSubSessionInput,
+  now: number,
+): SubSessionMemoryBootstrap {
+  if (input.memoryBootstrap) return input.memoryBootstrap
+  const boundary = resolveMemoryBootstrapChannelBoundary(input)
+  const latestCapsule = listMemoryCapsulesForOwner({
+    ownerType: "sub_agent",
+    ownerId: input.agent.agentId,
+    sessionId: input.parentSessionId,
+    ...(boundary.channelKey ? { channelKey: boundary.channelKey } : {}),
+    ...(boundary.threadKey ? { threadKey: boundary.threadKey } : {}),
+    limit: 1,
+  })[0]
+  const handoffPayload = buildSubSessionHandoffCapsulePayload({
+    command: input.command,
+    parentSessionId: input.parentSessionId,
+    ...(latestCapsule ? { latestCapsule } : {}),
+  })
+  const handoffExchange = createAndPersistSubSessionHandoffExchange({
+    input,
+    payload: handoffPayload,
+    now,
+  })
+  return buildChildOwnMemoryBootstrap({
+    agentId: input.agent.agentId,
+    ...(input.agent.nickname ?? input.command.targetNicknameSnapshot
+      ? { nicknameSnapshot: input.agent.nickname ?? input.command.targetNicknameSnapshot }
+      : {}),
+    sessionId: input.parentSessionId,
+    requestGroupId: input.command.commandRequestId,
+    lineageId: input.command.subSessionId,
+    taskScope: input.command.taskScope,
+    additionalContextRefs: uniqueValues([
+      ...input.command.contextPackageIds,
+      handoffExchange.exchangeId,
+    ]),
+    sourceProvenanceRefs: uniqueValues([
+      ...input.command.contextPackageIds,
+      handoffExchange.exchangeId,
+    ]),
+    ...(latestCapsule ? { latestCapsuleId: latestCapsule.capsuleId } : {}),
+    handoffExchangeId: handoffExchange.exchangeId,
+    latestSafeContextSummary: handoffPayload.latestSafeContextSummary,
+    additionalPinnedItems: buildSubSessionHandoffPinnedItems(handoffPayload),
+    ...(boundary.channelKey ? { channelKey: boundary.channelKey } : {}),
+    ...(boundary.threadKey ? { threadKey: boundary.threadKey } : {}),
+    now,
+  })
+}
+
+function ownerScopeForSubSessionAgent(agentId: string): OwnerScope {
+  return agentId === "agent:nobie"
+    ? { ownerType: "nobie", ownerId: agentId }
+    : { ownerType: "sub_agent", ownerId: agentId }
+}
+
+function createAndPersistSubSessionHandoffExchange(input: {
+  input: RunSubSessionInput
+  payload: ReturnType<typeof buildSubSessionHandoffCapsulePayload>
+  now: number
+}) {
+  const sourceOwner = ownerScopeForSubSessionAgent(input.input.parentAgent?.agentId ?? "agent:nobie")
+  const recipientOwner = ownerScopeForSubSessionAgent(input.input.agent.agentId)
+  const exchange = createDataExchangePackage({
+    sourceOwner,
+    recipientOwner,
+    ...(input.input.parentAgent?.nickname
+      ? { sourceNicknameSnapshot: input.input.parentAgent.nickname }
+      : input.input.parentAgent?.displayName
+        ? { sourceNicknameSnapshot: input.input.parentAgent.displayName }
+        : {}),
+    ...(input.input.agent.nickname
+      ? { recipientNicknameSnapshot: input.input.agent.nickname }
+      : { recipientNicknameSnapshot: input.input.agent.displayName }),
+    purpose: "Structured handoff capsule for child sub-session start.",
+    allowedUse: "temporary_context",
+    retentionPolicy: "session_only",
+    redactionState: "not_sensitive",
+    provenanceRefs: uniqueValues([
+      `command_request:${input.input.command.commandRequestId}`,
+      ...input.input.command.contextPackageIds,
+      ...(input.payload.artifactRefs ?? []),
+    ]),
+    payload: input.payload,
+    parentRunId: input.input.command.parentRunId,
+    parentSessionId: input.input.parentSessionId,
+    parentSubSessionId: input.input.command.subSessionId,
+    parentRequestId: input.input.command.commandRequestId,
+    exchangeId: `exchange:handoff:${input.input.command.commandRequestId}`,
+    idempotencyKey: `sub-session-handoff:${input.input.command.parentRunId}:${input.input.command.commandRequestId}`,
+    now: () => input.now,
+  })
+  persistDataExchangePackage(exchange, { now: input.now })
+  return exchange
+}
+
 export function buildSubSessionContract(input: RunSubSessionInput): SubSessionContract {
   const agentNickname = normalizeTargetNicknameSnapshot(input)
   const parentAgentId = parentAgentIdSnapshot(input)
@@ -536,6 +663,7 @@ export function buildSubSessionContract(input: RunSubSessionInput): SubSessionCo
     status: "created",
     promptBundleId: input.promptBundle.bundleId,
     promptBundleSnapshot: input.promptBundle,
+    ...(input.memoryBootstrap ? { memoryBootstrap: input.memoryBootstrap } : {}),
     ...(input.modelExecutionPolicy ? { modelExecutionSnapshot: input.modelExecutionPolicy } : {}),
   }
 }
@@ -978,7 +1106,12 @@ export class SubSessionRunner {
       ...(modelPolicy.snapshot ? { modelExecutionPolicy: modelPolicy.snapshot } : {}),
     }
     const queuedAt = this.now()
-    const subSession = buildSubSessionContract(effectiveInput)
+    const memoryBootstrap = buildPreparedSubSessionMemoryBootstrap(effectiveInput, queuedAt)
+    upsertAgentMemoryState(buildAgentMemoryStateFromBootstrap({ bootstrap: memoryBootstrap }))
+    const subSession = buildSubSessionContract({
+      ...effectiveInput,
+      memoryBootstrap,
+    })
     const nestedValidation = validateNestedCommandRequest({
       command: effectiveInput.command,
       ...(effectiveInput.parentAgent?.agentId

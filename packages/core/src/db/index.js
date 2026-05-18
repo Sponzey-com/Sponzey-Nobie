@@ -4,6 +4,8 @@ import BetterSqlite3 from "better-sqlite3";
 import { PATHS } from "../config/index.js";
 import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
 import { SUB_AGENT_CONTRACT_SCHEMA_VERSION, normalizeNickname, normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
+import { normalizeAgentMemoryState, } from "../memory/agent-state.js";
+import { buildSessionSnapshotProjectionFromMemoryCapsule, buildTaskContinuityProjectionFromMemoryCapsule, normalizeMemoryCapsule, validateMemoryCapsule, } from "../memory/capsule.js";
 import { assertMigrationWriteAllowed } from "./migration-safety.js";
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
 let _db = null;
@@ -745,6 +747,37 @@ function parseJsonStringArray(value) {
     catch {
         return [];
     }
+}
+function parseJsonRecordArray(value) {
+    if (!value)
+        return [];
+    try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed))
+            return [];
+        return parsed.filter((item) => isRecord(item));
+    }
+    catch {
+        return [];
+    }
+}
+function parseMemoryCapsuleArtifactRefs(value) {
+    return parseJsonRecordArray(value)
+        .map((item) => {
+        const note = asString(item["note"]) ?? "";
+        const parsed = { note };
+        const artifactId = asString(item["artifactId"]);
+        const path = asString(item["path"]);
+        const receiptId = asString(item["receiptId"]);
+        if (artifactId)
+            parsed.artifactId = artifactId;
+        if (path)
+            parsed.path = path;
+        if (receiptId)
+            parsed.receiptId = receiptId;
+        return parsed;
+    })
+        .filter((item) => item.note.trim().length > 0);
 }
 function jsonStringOrNull(value) {
     if (value === undefined || value === null)
@@ -2144,13 +2177,19 @@ export function upsertTaskContinuity(input) {
     const hasField = (key) => Object.prototype.hasOwnProperty.call(input, key);
     getDb()
         .prepare(`INSERT INTO task_continuity
-       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state, pending_approvals, pending_delivery,
-        last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state,
+        latest_instruction_summary, latest_successful_summary, latest_target_context, failure_recovery_hints, continuity_exchange_refs,
+        pending_approvals, pending_delivery, last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(lineage_root_run_id) DO UPDATE SET
          parent_run_id = COALESCE(excluded.parent_run_id, task_continuity.parent_run_id),
          handoff_summary = COALESCE(excluded.handoff_summary, task_continuity.handoff_summary),
          last_good_state = COALESCE(excluded.last_good_state, task_continuity.last_good_state),
+         latest_instruction_summary = COALESCE(excluded.latest_instruction_summary, task_continuity.latest_instruction_summary),
+         latest_successful_summary = COALESCE(excluded.latest_successful_summary, task_continuity.latest_successful_summary),
+         latest_target_context = COALESCE(excluded.latest_target_context, task_continuity.latest_target_context),
+         failure_recovery_hints = COALESCE(excluded.failure_recovery_hints, task_continuity.failure_recovery_hints),
+         continuity_exchange_refs = COALESCE(excluded.continuity_exchange_refs, task_continuity.continuity_exchange_refs),
          pending_approvals = COALESCE(excluded.pending_approvals, task_continuity.pending_approvals),
          pending_delivery = COALESCE(excluded.pending_delivery, task_continuity.pending_delivery),
          last_tool_receipt = COALESCE(excluded.last_tool_receipt, task_continuity.last_tool_receipt),
@@ -2160,7 +2199,532 @@ export function upsertTaskContinuity(input) {
          recovery_budget = COALESCE(excluded.recovery_budget, task_continuity.recovery_budget),
          continuity_status = COALESCE(excluded.continuity_status, task_continuity.continuity_status),
          updated_at = excluded.updated_at`)
-        .run(input.lineageRootRunId, input.parentRunId ?? null, input.handoffSummary ?? null, input.lastGoodState ?? null, hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null, hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null, input.lastToolReceipt ?? null, input.lastDeliveryReceipt ?? null, input.failedRecoveryKey ?? null, input.failureKind ?? null, input.recoveryBudget ?? null, input.status ?? null, Date.now());
+        .run(input.lineageRootRunId, input.parentRunId ?? null, input.handoffSummary ?? null, input.lastGoodState ?? null, input.latestInstructionSummary ?? null, input.latestSuccessfulSummary ?? null, input.latestTargetContext ?? null, hasField("failureRecoveryHints") ? JSON.stringify(input.failureRecoveryHints ?? []) : null, hasField("continuityExchangeRefs") ? JSON.stringify(input.continuityExchangeRefs ?? []) : null, hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null, hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null, input.lastToolReceipt ?? null, input.lastDeliveryReceipt ?? null, input.failedRecoveryKey ?? null, input.failureKind ?? null, input.recoveryBudget ?? null, input.status ?? null, Date.now());
+}
+function dbMemoryCapsuleToContract(row) {
+    return normalizeMemoryCapsule({
+        capsuleId: row.capsule_id,
+        capsuleVersion: row.capsule_version,
+        ...(row.parent_capsule_id ? { parentCapsuleId: row.parent_capsule_id } : {}),
+        ownerScope: {
+            ownerType: row.owner_type,
+            ownerId: row.owner_id,
+            ...(row.session_id ? { sessionId: row.session_id } : {}),
+            ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+            ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+            ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+            ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+        },
+        ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+        capsuleKind: row.capsule_kind,
+        summary: row.summary,
+        activeObjectives: parseJsonStringArray(row.active_objectives_json),
+        confirmedFacts: parseJsonStringArray(row.confirmed_facts_json),
+        decisions: parseJsonStringArray(row.decisions_json),
+        constraints: parseJsonStringArray(row.constraints_json),
+        pendingItems: parseJsonStringArray(row.pending_items_json),
+        artifactRefs: parseMemoryCapsuleArtifactRefs(row.artifact_refs_json),
+        recoveryHints: parseJsonStringArray(row.recovery_hints_json),
+        sourceRefs: parseJsonStringArray(row.source_refs_json),
+        compactedMessageIds: parseJsonStringArray(row.compacted_message_ids_json),
+        sourceTokenEstimate: row.source_token_estimate,
+        resultTokenEstimate: row.result_token_estimate,
+        createdAt: row.created_at,
+    });
+}
+function dbAgentMemoryStateToContract(row) {
+    return normalizeAgentMemoryState({
+        stateId: row.state_id,
+        ownerScope: {
+            ownerType: row.agent_type,
+            ownerId: row.agent_id,
+            sessionId: row.session_id,
+            ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+            ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+            ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+            ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+        },
+        ownerScopeKey: row.owner_scope_key,
+        ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+        ...(row.latest_capsule_id ? { latestCapsuleId: row.latest_capsule_id } : {}),
+        currentRawTokenEstimate: row.current_raw_token_estimate,
+        currentRawMessageCount: row.current_raw_message_count,
+        ...(row.last_compaction_at ? { lastCompactionAt: row.last_compaction_at } : {}),
+        ...(row.compaction_block_reason ? { compactionBlockReason: row.compaction_block_reason } : {}),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    });
+}
+export function insertMemoryCapsule(input, options = {}) {
+    const capsule = normalizeMemoryCapsule(input);
+    const validation = validateMemoryCapsule(capsule, {
+        requireSourceRefs: true,
+        ...(options.expectedOwnerScope ? { expectedOwnerScope: options.expectedOwnerScope } : {}),
+    });
+    if (!validation.ok) {
+        throw new Error(`invalid memory capsule: ${validation.reasonCodes.join(", ")}`);
+    }
+    getDb()
+        .prepare(`INSERT INTO memory_capsules
+       (capsule_id, capsule_version, parent_capsule_id, owner_type, owner_id, session_id, request_group_id,
+        lineage_id, channel_key, thread_key, nickname_snapshot, capsule_kind, summary,
+        active_objectives_json, confirmed_facts_json, decisions_json, constraints_json, pending_items_json,
+        artifact_refs_json, recovery_hints_json, source_refs_json, compacted_message_ids_json,
+        source_token_estimate, result_token_estimate, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(capsule.capsuleId, capsule.capsuleVersion, capsule.parentCapsuleId ?? null, capsule.ownerScope.ownerType, capsule.ownerScope.ownerId, capsule.ownerScope.sessionId ?? null, capsule.ownerScope.requestGroupId ?? null, capsule.ownerScope.lineageId ?? null, capsule.ownerScope.channelKey ?? null, capsule.ownerScope.threadKey ?? null, capsule.nicknameSnapshot ?? null, capsule.capsuleKind, capsule.summary, JSON.stringify(capsule.activeObjectives), JSON.stringify(capsule.confirmedFacts), JSON.stringify(capsule.decisions), JSON.stringify(capsule.constraints), JSON.stringify(capsule.pendingItems), JSON.stringify(capsule.artifactRefs), JSON.stringify(capsule.recoveryHints), JSON.stringify(capsule.sourceRefs), JSON.stringify(capsule.compactedMessageIds), capsule.sourceTokenEstimate, capsule.resultTokenEstimate, null, capsule.createdAt);
+    return capsule.capsuleId;
+}
+export function getMemoryCapsule(capsuleId) {
+    const row = getDb()
+        .prepare(`SELECT * FROM memory_capsules WHERE capsule_id = ? LIMIT 1`)
+        .get(capsuleId);
+    return row ? dbMemoryCapsuleToContract(row) : undefined;
+}
+export function listMemoryCapsulesForOwner(input) {
+    const clauses = ["owner_type = ?", "owner_id = ?"];
+    const values = [input.ownerType, input.ownerId];
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.requestGroupId) {
+        clauses.push("request_group_id = ?");
+        values.push(input.requestGroupId);
+    }
+    if (input.lineageId) {
+        clauses.push("lineage_id = ?");
+        values.push(input.lineageId);
+    }
+    if (input.channelKey) {
+        clauses.push("channel_key = ?");
+        values.push(input.channelKey);
+    }
+    if (input.threadKey) {
+        clauses.push("thread_key = ?");
+        values.push(input.threadKey);
+    }
+    const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50;
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM memory_capsules
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(dbMemoryCapsuleToContract);
+}
+export function upsertAgentMemoryState(input) {
+    const state = normalizeAgentMemoryState(input);
+    getDb()
+        .prepare(`INSERT INTO agent_memory_state
+       (state_id, owner_scope_key, agent_type, agent_id, session_id, request_group_id, lineage_id,
+        channel_key, thread_key, nickname_snapshot, latest_capsule_id, current_raw_token_estimate,
+        current_raw_message_count, last_compaction_at, compaction_block_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_scope_key) DO UPDATE SET
+         agent_type = excluded.agent_type,
+         agent_id = excluded.agent_id,
+         session_id = excluded.session_id,
+         request_group_id = excluded.request_group_id,
+         lineage_id = excluded.lineage_id,
+         channel_key = excluded.channel_key,
+         thread_key = excluded.thread_key,
+         nickname_snapshot = COALESCE(excluded.nickname_snapshot, agent_memory_state.nickname_snapshot),
+         latest_capsule_id = COALESCE(excluded.latest_capsule_id, agent_memory_state.latest_capsule_id),
+         current_raw_token_estimate = excluded.current_raw_token_estimate,
+         current_raw_message_count = excluded.current_raw_message_count,
+         last_compaction_at = COALESCE(excluded.last_compaction_at, agent_memory_state.last_compaction_at),
+         compaction_block_reason = excluded.compaction_block_reason,
+         updated_at = excluded.updated_at`)
+        .run(state.stateId, state.ownerScopeKey, state.ownerScope.ownerType, state.ownerScope.ownerId, state.ownerScope.sessionId, state.ownerScope.requestGroupId ?? null, state.ownerScope.lineageId ?? null, state.ownerScope.channelKey ?? null, state.ownerScope.threadKey ?? null, state.nicknameSnapshot ?? null, state.latestCapsuleId ?? null, state.currentRawTokenEstimate, state.currentRawMessageCount, state.lastCompactionAt ?? null, state.compactionBlockReason ?? null, state.createdAt, state.updatedAt);
+    return state.stateId;
+}
+export function getAgentMemoryStateByScopeKey(ownerScopeKey) {
+    const row = getDb()
+        .prepare(`SELECT * FROM agent_memory_state WHERE owner_scope_key = ? LIMIT 1`)
+        .get(ownerScopeKey);
+    return row ? dbAgentMemoryStateToContract(row) : undefined;
+}
+export function clearAgentMemoryStateLatestCapsule(input) {
+    const current = getAgentMemoryStateByScopeKey(input.ownerScopeKey);
+    if (!current)
+        return undefined;
+    getDb()
+        .prepare(`UPDATE agent_memory_state
+       SET latest_capsule_id = NULL,
+           compaction_block_reason = ?,
+           updated_at = ?
+       WHERE owner_scope_key = ?`)
+        .run(input.compactionBlockReason ?? current.compactionBlockReason ?? null, input.updatedAt ?? Date.now(), input.ownerScopeKey);
+    return getAgentMemoryStateByScopeKey(input.ownerScopeKey);
+}
+export function listAgentMemoryStatesForAgent(input) {
+    const clauses = ["agent_type = ?", "agent_id = ?"];
+    const values = [input.ownerType, input.ownerId];
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.channelKey) {
+        clauses.push("channel_key = ?");
+        values.push(input.channelKey);
+    }
+    if (input.threadKey) {
+        clauses.push("thread_key = ?");
+        values.push(input.threadKey);
+    }
+    const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50;
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM agent_memory_state
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY updated_at DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(dbAgentMemoryStateToContract);
+}
+export function listRecentAgentMemoryStates(input = {}) {
+    const clauses = [];
+    const values = [];
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.requestGroupId) {
+        clauses.push("request_group_id = ?");
+        values.push(input.requestGroupId);
+    }
+    if (input.lineageId) {
+        clauses.push("lineage_id = ?");
+        values.push(input.lineageId);
+    }
+    if (input.channelKey) {
+        clauses.push("channel_key = ?");
+        values.push(input.channelKey);
+    }
+    if (input.threadKey) {
+        clauses.push("thread_key = ?");
+        values.push(input.threadKey);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50;
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM agent_memory_state
+       ${where}
+       ORDER BY updated_at DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(dbAgentMemoryStateToContract);
+}
+export function insertMemoryCapsuleSource(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+        .prepare(`INSERT INTO memory_capsule_sources
+       (id, capsule_id, source_kind, source_id, owner_type, owner_id, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.capsuleId, input.sourceKind, input.sourceId, input.ownerType ?? null, input.ownerId ?? null, toJsonOrNull(input.metadata), input.createdAt ?? Date.now());
+    return id;
+}
+export function insertMemoryCompactionRun(input) {
+    const id = input.id ?? crypto.randomUUID();
+    const ownerScope = normalizeMemoryCapsule({
+        capsuleId: id,
+        capsuleVersion: 1,
+        ownerScope: input.ownerScope,
+        capsuleKind: "session_compaction",
+        summary: "compaction run placeholder",
+        activeObjectives: [],
+        confirmedFacts: [],
+        decisions: [],
+        constraints: [],
+        pendingItems: [],
+        artifactRefs: [],
+        recoveryHints: [],
+        sourceRefs: ["compaction_run_placeholder"],
+        compactedMessageIds: [],
+        sourceTokenEstimate: 0,
+        resultTokenEstimate: 0,
+        createdAt: input.createdAt ?? Date.now(),
+    }).ownerScope;
+    const createdAt = input.createdAt ?? Date.now();
+    const updatedAt = input.updatedAt ?? createdAt;
+    getDb()
+        .prepare(`INSERT INTO memory_compaction_runs
+       (id, capsule_id, owner_type, owner_id, session_id, request_group_id, lineage_id, channel_key,
+        thread_key, trigger_reason_codes_json, source_token_estimate, result_token_estimate, status,
+        model_provider, model_id, validation_summary, failure_reason, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.capsuleId ?? null, ownerScope.ownerType, ownerScope.ownerId, ownerScope.sessionId ?? null, ownerScope.requestGroupId ?? null, ownerScope.lineageId ?? null, ownerScope.channelKey ?? null, ownerScope.threadKey ?? null, JSON.stringify(input.triggerReasonCodes), Math.max(0, Math.floor(input.sourceTokenEstimate)), Math.max(0, Math.floor(input.resultTokenEstimate)), input.status, input.modelProvider ?? null, input.modelId ?? null, input.validationSummary ?? null, input.failureReason ?? null, toJsonOrNull(input.metadata), createdAt, updatedAt);
+    return id;
+}
+function mapMemoryCompactionRun(row) {
+    const metadata = parseJsonRecord(row.metadata_json);
+    return {
+        id: row.id,
+        ...(row.capsule_id ? { capsuleId: row.capsule_id } : {}),
+        ownerScope: {
+            ownerType: row.owner_type,
+            ownerId: row.owner_id,
+            ...(row.session_id ? { sessionId: row.session_id } : {}),
+            ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+            ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+            ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+            ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+        },
+        triggerReasonCodes: parseJsonStringArray(row.trigger_reason_codes_json),
+        sourceTokenEstimate: row.source_token_estimate,
+        resultTokenEstimate: row.result_token_estimate,
+        status: row.status,
+        ...(row.model_provider ? { modelProvider: row.model_provider } : {}),
+        ...(row.model_id ? { modelId: row.model_id } : {}),
+        ...(row.validation_summary ? { validationSummary: row.validation_summary } : {}),
+        ...(row.failure_reason ? { failureReason: row.failure_reason } : {}),
+        ...(metadata ? { metadata } : {}),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+export function listMemoryCompactionRuns(input = {}) {
+    const clauses = [];
+    const values = [];
+    if (input.ownerType) {
+        clauses.push("owner_type = ?");
+        values.push(input.ownerType);
+    }
+    if (input.ownerId) {
+        clauses.push("owner_id = ?");
+        values.push(input.ownerId);
+    }
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.requestGroupId) {
+        clauses.push("request_group_id = ?");
+        values.push(input.requestGroupId);
+    }
+    if (input.lineageId) {
+        clauses.push("lineage_id = ?");
+        values.push(input.lineageId);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 100)) : 100;
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM memory_compaction_runs
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(mapMemoryCompactionRun);
+}
+export function insertMemoryRecallEvent(input) {
+    const id = input.id ?? crypto.randomUUID();
+    const ownerScope = normalizeMemoryCapsule({
+        capsuleId: id,
+        capsuleVersion: 1,
+        ownerScope: input.ownerScope,
+        capsuleKind: "session_compaction",
+        summary: "recall event placeholder",
+        activeObjectives: [],
+        confirmedFacts: [],
+        decisions: [],
+        constraints: [],
+        pendingItems: [],
+        artifactRefs: [],
+        recoveryHints: [],
+        sourceRefs: ["recall_event_placeholder"],
+        compactedMessageIds: [],
+        sourceTokenEstimate: 0,
+        resultTokenEstimate: 0,
+        createdAt: input.createdAt ?? Date.now(),
+    }).ownerScope;
+    getDb()
+        .prepare(`INSERT INTO memory_recall_events
+       (id, run_id, session_id, request_group_id, owner_type, owner_id, session_scope_id, request_scope_id,
+        lineage_scope_id, channel_key, thread_key, source_type, capsule_id, chunk_id, reason_code,
+        can_use_for_final_answer, same_session, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.runId ?? null, input.sessionId ?? null, input.requestGroupId ?? null, ownerScope.ownerType, ownerScope.ownerId, ownerScope.sessionId ?? null, ownerScope.requestGroupId ?? null, ownerScope.lineageId ?? null, ownerScope.channelKey ?? null, ownerScope.threadKey ?? null, input.sourceType, input.capsuleId ?? null, input.chunkId ?? null, input.reasonCode, input.canUseForFinalAnswer ? 1 : 0, input.sameSession ? 1 : 0, toJsonOrNull(input.metadata), input.createdAt ?? Date.now());
+    return id;
+}
+function mapMemoryRecallEvent(row) {
+    const metadata = parseJsonRecord(row.metadata_json);
+    return {
+        id: row.id,
+        ...(row.run_id ? { runId: row.run_id } : {}),
+        ...(row.session_id ? { sessionId: row.session_id } : {}),
+        ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+        ownerScope: {
+            ownerType: row.owner_type,
+            ownerId: row.owner_id,
+            ...(row.session_scope_id ? { sessionId: row.session_scope_id } : {}),
+            ...(row.request_scope_id ? { requestGroupId: row.request_scope_id } : {}),
+            ...(row.lineage_scope_id ? { lineageId: row.lineage_scope_id } : {}),
+            ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+            ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+        },
+        sourceType: row.source_type,
+        ...(row.capsule_id ? { capsuleId: row.capsule_id } : {}),
+        ...(row.chunk_id ? { chunkId: row.chunk_id } : {}),
+        reasonCode: row.reason_code,
+        canUseForFinalAnswer: row.can_use_for_final_answer === 1,
+        sameSession: row.same_session === 1,
+        ...(metadata ? { metadata } : {}),
+        createdAt: row.created_at,
+    };
+}
+export function listMemoryRecallEvents(input = {}) {
+    const clauses = [];
+    const values = [];
+    if (input.runId) {
+        clauses.push("run_id = ?");
+        values.push(input.runId);
+    }
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.requestGroupId) {
+        clauses.push("request_group_id = ?");
+        values.push(input.requestGroupId);
+    }
+    if (input.ownerType) {
+        clauses.push("owner_type = ?");
+        values.push(input.ownerType);
+    }
+    if (input.ownerId) {
+        clauses.push("owner_id = ?");
+        values.push(input.ownerId);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)));
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM memory_recall_events
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(mapMemoryRecallEvent);
+}
+export function insertMemoryCapsuleRollup(input) {
+    const id = input.id ?? crypto.randomUUID();
+    const ownerScope = normalizeMemoryCapsule({
+        capsuleId: id,
+        capsuleVersion: 1,
+        ownerScope: input.ownerScope,
+        capsuleKind: "lineage_compaction",
+        summary: "rollup placeholder",
+        activeObjectives: [],
+        confirmedFacts: [],
+        decisions: [],
+        constraints: [],
+        pendingItems: [],
+        artifactRefs: [],
+        recoveryHints: [],
+        sourceRefs: ["rollup_placeholder"],
+        compactedMessageIds: [],
+        sourceTokenEstimate: 0,
+        resultTokenEstimate: 0,
+        createdAt: input.createdAt ?? Date.now(),
+    }).ownerScope;
+    getDb()
+        .prepare(`INSERT INTO memory_capsule_rollups
+       (id, owner_type, owner_id, session_id, request_group_id, lineage_id, channel_key, thread_key,
+        source_capsule_ids_json, source_capsule_count, source_token_estimate, result_rollup_capsule_id,
+        recent_capsule_ids_json, preserved_pending_items_json, reason_code, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, ownerScope.ownerType, ownerScope.ownerId, ownerScope.sessionId ?? null, ownerScope.requestGroupId ?? null, ownerScope.lineageId ?? null, ownerScope.channelKey ?? null, ownerScope.threadKey ?? null, JSON.stringify(input.sourceCapsuleIds), Math.max(0, Math.floor(input.sourceCapsuleCount)), Math.max(0, Math.floor(input.sourceTokenEstimate)), input.resultRollupCapsuleId, JSON.stringify(input.recentCapsuleIds), JSON.stringify(input.preservedPendingItems), input.reasonCode, toJsonOrNull(input.metadata), input.createdAt ?? Date.now());
+    return id;
+}
+function mapMemoryCapsuleRollup(row) {
+    const metadata = parseJsonRecord(row.metadata_json);
+    return {
+        id: row.id,
+        ownerScope: {
+            ownerType: row.owner_type,
+            ownerId: row.owner_id,
+            ...(row.session_id ? { sessionId: row.session_id } : {}),
+            ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+            ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+            ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+            ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+        },
+        sourceCapsuleIds: parseJsonStringArray(row.source_capsule_ids_json),
+        sourceCapsuleCount: row.source_capsule_count,
+        sourceTokenEstimate: row.source_token_estimate,
+        resultRollupCapsuleId: row.result_rollup_capsule_id,
+        recentCapsuleIds: parseJsonStringArray(row.recent_capsule_ids_json),
+        preservedPendingItems: parseJsonStringArray(row.preserved_pending_items_json),
+        reasonCode: row.reason_code,
+        ...(metadata ? { metadata } : {}),
+        createdAt: row.created_at,
+    };
+}
+export function listMemoryCapsuleRollups(input = {}) {
+    const clauses = [];
+    const values = [];
+    if (input.ownerType) {
+        clauses.push("owner_type = ?");
+        values.push(input.ownerType);
+    }
+    if (input.ownerId) {
+        clauses.push("owner_id = ?");
+        values.push(input.ownerId);
+    }
+    if (input.sessionId) {
+        clauses.push("session_id = ?");
+        values.push(input.sessionId);
+    }
+    if (input.requestGroupId) {
+        clauses.push("request_group_id = ?");
+        values.push(input.requestGroupId);
+    }
+    if (input.lineageId) {
+        clauses.push("lineage_id = ?");
+        values.push(input.lineageId);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 50)));
+    values.push(limit);
+    return getDb()
+        .prepare(`SELECT * FROM memory_capsule_rollups
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`)
+        .all(...values)
+        .map(mapMemoryCapsuleRollup);
+}
+export function projectMemoryCapsuleToCompatibilityStores(input) {
+    const capsule = normalizeMemoryCapsule(input);
+    const sessionSnapshot = buildSessionSnapshotProjectionFromMemoryCapsule(capsule);
+    const taskContinuity = buildTaskContinuityProjectionFromMemoryCapsule(capsule);
+    const sessionSnapshotId = sessionSnapshot
+        ? upsertSessionSnapshot({
+            sessionId: sessionSnapshot.sessionId,
+            summary: sessionSnapshot.summary,
+            preservedFacts: sessionSnapshot.preservedFacts,
+            activeTaskIds: sessionSnapshot.activeTaskIds,
+        })
+        : undefined;
+    if (taskContinuity) {
+        upsertTaskContinuity({
+            lineageRootRunId: taskContinuity.lineageRootRunId,
+            ...(taskContinuity.parentRunId ? { parentRunId: taskContinuity.parentRunId } : {}),
+            handoffSummary: taskContinuity.handoffSummary,
+            lastGoodState: taskContinuity.lastGoodState,
+            pendingApprovals: taskContinuity.pendingApprovals,
+            pendingDelivery: taskContinuity.pendingDelivery,
+            status: taskContinuity.status,
+        });
+    }
+    return {
+        ...(sessionSnapshotId ? { sessionSnapshotId } : {}),
+        taskContinuityUpdated: Boolean(taskContinuity),
+    };
 }
 function parseContinuityStringArray(value) {
     if (!value)
@@ -2181,6 +2745,15 @@ function mapTaskContinuity(row) {
         ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
         ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
         ...(row.last_good_state ? { lastGoodState: row.last_good_state } : {}),
+        ...(row.latest_instruction_summary
+            ? { latestInstructionSummary: row.latest_instruction_summary }
+            : {}),
+        ...(row.latest_successful_summary
+            ? { latestSuccessfulSummary: row.latest_successful_summary }
+            : {}),
+        ...(row.latest_target_context ? { latestTargetContext: row.latest_target_context } : {}),
+        failureRecoveryHints: parseContinuityStringArray(row.failure_recovery_hints),
+        continuityExchangeRefs: parseContinuityStringArray(row.continuity_exchange_refs),
         pendingApprovals: parseContinuityStringArray(row.pending_approvals),
         pendingDelivery: parseContinuityStringArray(row.pending_delivery),
         ...(row.last_tool_receipt ? { lastToolReceipt: row.last_tool_receipt } : {}),

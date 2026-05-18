@@ -35,6 +35,7 @@ export function buildStartFinalizationDependencies(params: {
   updateRunStatus: FinalizationDependencies["updateRunStatus"]
   rememberRunSuccess: FinalizationDependencies["rememberRunSuccess"]
   rememberRunFailure: FinalizationDependencies["rememberRunFailure"]
+  rememberRunAwaitingUser?: FinalizationDependencies["rememberRunAwaitingUser"]
   onDeliveryError?: FinalizationDependencies["onDeliveryError"]
 }): FinalizationDependencies {
   return {
@@ -43,6 +44,9 @@ export function buildStartFinalizationDependencies(params: {
     updateRunStatus: params.updateRunStatus,
     rememberRunSuccess: params.rememberRunSuccess,
     rememberRunFailure: params.rememberRunFailure,
+    ...(params.rememberRunAwaitingUser
+      ? { rememberRunAwaitingUser: params.rememberRunAwaitingUser }
+      : {}),
     ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
   }
 }

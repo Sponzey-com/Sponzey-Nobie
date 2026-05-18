@@ -53,6 +53,10 @@ import {
   type YeonjangMultiInstanceReleaseGateSummary,
   buildYeonjangMultiInstanceReleaseGateSummary,
 } from "./yeonjang-multi-instance-gate.js"
+import {
+  type MemoryCompactionReleaseGateSummary,
+  buildMemoryCompactionReleaseGateSummary,
+} from "./memory-compaction-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -117,6 +121,7 @@ export interface ReleaseManifest {
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
   yeonjangMultiInstanceEvidence: YeonjangMultiInstanceReleaseGateSummary
+  memoryCompactionEvidence: MemoryCompactionReleaseGateSummary
   performanceEvidence: ReleasePerformanceSummary
   benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
   subAgentReleaseGate: SubAgentReleaseReadinessSummary
@@ -267,6 +272,9 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
   const yeonjangMultiInstanceEvidence = buildYeonjangMultiInstanceReleaseGateSummary({
     now: options.now ?? new Date(),
   })
+  const memoryCompactionEvidence = buildMemoryCompactionReleaseGateSummary({
+    now: options.now ?? new Date(),
+  })
   const performanceEvidence = buildReleasePerformanceSummary(
     options.now ? { now: options.now } : {},
   )
@@ -309,6 +317,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     webRetrievalEvidence,
     uiModeEvidence,
     yeonjangMultiInstanceEvidence,
+    memoryCompactionEvidence,
   })
 
   return {
@@ -365,6 +374,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     webRetrievalEvidence,
     uiModeEvidence,
     yeonjangMultiInstanceEvidence,
+    memoryCompactionEvidence,
     performanceEvidence,
     benchmarkEvidence,
     subAgentReleaseGate,
@@ -680,6 +690,14 @@ export function buildReleasePipelinePlan(
       true,
       false,
       "Verify owner-scope memory isolation, DataExchange-only shared context, writeback owner policy, and memory access audit regressions.",
+    ),
+    step(
+      "memory-compaction-release-gate",
+      "Memory compaction release gate",
+      ["pnpm", "exec", "vitest", "run", "tests/task006-memory-release-gate.test.ts"],
+      true,
+      false,
+      "Verify memory inspector evidence, compaction model audit, heuristic fallback trace, append-only archive evidence, drift warnings, and release summary wiring.",
     ),
     step(
       "capability-isolation-release-gate",
@@ -1003,6 +1021,12 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
         "Owner-scoped memory, DataExchange-only context sharing, writeback owner policy, and memory access audit regressions pass.",
     },
     {
+      id: "memory-compaction-release-gate",
+      required: true,
+      description:
+        "Memory inspector cards, compaction model audit, heuristic fallback trace, append-only archive evidence, drift warnings, and release summary wiring are reviewed before publish.",
+    },
+    {
       id: "capability-isolation-release-gate",
       required: true,
       description:
@@ -1101,6 +1125,7 @@ function buildReleaseNoteSummary(input: {
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
   yeonjangMultiInstanceEvidence: YeonjangMultiInstanceReleaseGateSummary
+  memoryCompactionEvidence: MemoryCompactionReleaseGateSummary
 }): ReleaseNoteSummary {
   const orchestrationFlag = input.featureFlags.find(
     (flag) => flag.featureKey === "sub_agent_orchestration",
@@ -1135,6 +1160,7 @@ function buildReleaseNoteSummary(input: {
       `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
       `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
       `Yeonjang multi-instance release gate: ${input.yeonjangMultiInstanceEvidence.gateStatus}`,
+      `Memory compaction release gate: ${input.memoryCompactionEvidence.gateStatus}`,
       orchestrationFlag
         ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
         : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",

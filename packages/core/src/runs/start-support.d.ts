@@ -59,6 +59,15 @@ export declare function rememberRunFailure(params: {
     detail?: string;
     title?: string;
 }): void;
+export declare function rememberRunAwaitingUser(params: {
+    runId: string;
+    sessionId: string;
+    source: FinalizationSource;
+    summary: string;
+    reason?: string;
+    userMessage?: string;
+    remainingItems?: string[];
+}): void;
 export declare function runFilesystemVerificationSubtask(params: {
     parentRunId: string;
     requestGroupId: string;

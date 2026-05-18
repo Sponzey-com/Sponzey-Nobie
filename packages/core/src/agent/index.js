@@ -3,12 +3,10 @@ import { eventBus } from "../events/index.js";
 import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode } from "../ai/index.js";
 import { toolDispatcher } from "../tools/dispatcher.js";
 import { createLogger } from "../logger/index.js";
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, markMessagesCompressed, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates, upsertTaskContinuity } from "../db/index.js";
+import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates } from "../db/index.js";
 import { loadNobieMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/nobie-md.js";
-import { buildMemoryContext, storeMemorySync } from "../memory/store.js";
+import { buildMemoryContext } from "../memory/store.js";
 import { buildFlashFeedbackContext } from "../memory/flash-feedback.js";
-import { compressContext } from "../memory/compressor.js";
-import { needsSessionCompaction, persistSessionCompactionMaintenance } from "../memory/compaction.js";
 import { buildScheduleMemoryContext } from "../schedules/context.js";
 import { loadMergedInstructions } from "../instructions/merge.js";
 import { selectRequestGroupContextMessages } from "./request-group-context.js";
@@ -306,60 +304,7 @@ export async function* runAgent(params) {
         scheduleMemoryContext ? renderPromptContext({ id: "schedule-memory-context", tag: "user_input", title: "Schedule Memory Context", content: scheduleMemoryContext }) : "",
         memoryContext ? renderPromptContext({ id: "memory-context", tag: "tool_result", title: "Memory Context", content: memoryContext }) : "",
     ].join("");
-    // ── Context compression if needed ────────────────────────────────────
     let totalTokens = 0;
-    if (needsSessionCompaction(messages, totalTokens)) {
-        log.info(`컨텍스트 압축 중... (messages: ${messages.length})`);
-        try {
-            const compressed = await compressContext(messages, priorDbMessages, provider, model);
-            // Replace in-memory messages with compressed version
-            messages.length = 0;
-            for (const m of compressed.messages)
-                messages.push(m);
-            // Persist summary to memory_items
-            const summaryId = storeMemorySync({
-                content: compressed.summary,
-                scope: "session",
-                sessionId,
-                runId,
-                ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
-                type: "session_summary",
-                importance: "medium",
-            });
-            // Mark old DB messages as compressed
-            markMessagesCompressed(compressed.compressedIds, summaryId);
-            const maintenance = persistSessionCompactionMaintenance({
-                sessionId,
-                summary: compressed.summary,
-                ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
-                runId,
-                durableFacts: [compressed.summary],
-            });
-            if (params.requestGroupId) {
-                upsertTaskContinuity({
-                    lineageRootRunId: params.requestGroupId,
-                    lastGoodState: `session_snapshot:${maintenance.snapshotId}`,
-                    status: "recoverable",
-                });
-            }
-            appendAgentLatencyEvent(runId, "compaction_snapshot", 0);
-            log.info(`압축 완료 — ${compressed.compressedIds.length}개 메시지 → 요약 1개 + tail ${messages.length - 1}개`);
-        }
-        catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            log.warn(`컨텍스트 압축 실패: ${message}`);
-            appendRunEvent(runId, "context_compaction_failed");
-            insertDiagnosticEvent({
-                kind: "context_compaction_failed",
-                summary: "컨텍스트 압축에 실패했습니다. 마지막 usable snapshot 또는 pruning 경로를 사용해야 합니다.",
-                runId,
-                sessionId,
-                ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
-                recoveryKey: `context_compaction:${sessionId}`,
-                detail: { error: message, messageCount: messages.length },
-            });
-        }
-    }
     let textBuffer = "";
     let firstChunkRecorded = false;
     const ctx = {

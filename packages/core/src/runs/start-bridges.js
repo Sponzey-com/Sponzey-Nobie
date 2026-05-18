@@ -11,6 +11,9 @@ export function buildStartFinalizationDependencies(params) {
         updateRunStatus: params.updateRunStatus,
         rememberRunSuccess: params.rememberRunSuccess,
         rememberRunFailure: params.rememberRunFailure,
+        ...(params.rememberRunAwaitingUser
+            ? { rememberRunAwaitingUser: params.rememberRunAwaitingUser }
+            : {}),
         ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
     };
 }

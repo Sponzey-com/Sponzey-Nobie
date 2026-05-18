@@ -73,7 +73,7 @@ afterEach(() => {
 })
 
 describe("task006 context preflight", () => {
-  it("detects large old tool results and prunes only transient context", () => {
+  it("detects large old tool results and prunes only transient context", async () => {
     const oldToolResult = "old-tool-result\n".repeat(700)
     const imageBlock = { type: "image", url: "artifact://screen.png" } as unknown as MessageContent
     const messages: Message[] = [
@@ -87,7 +87,7 @@ describe("task006 context preflight", () => {
       ...Array.from({ length: 8 }, (_, index) => ({ role: "user" as const, content: `recent-${index}` })),
     ]
 
-    const prepared = prepareChatContext({
+    const prepared = await prepareChatContext({
       provider: new FakeProvider(20_000),
       model: "fake-model",
       messages,

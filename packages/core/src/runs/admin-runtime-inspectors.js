@@ -1,5 +1,6 @@
 import { getDb, } from "../db/index.js";
 import { parseScheduleContractJson } from "../schedules/candidates.js";
+import { buildMemoryInspectorSnapshot } from "../memory/inspector.js";
 const SENSITIVE_KEY_PATTERN = /api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|token|html|body|response/i;
 const SECRET_TEXT_PATTERNS = [
     [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
@@ -278,6 +279,11 @@ function buildMemoryInspector(input) {
         requestGroupId: event.request_group_id,
     }));
     const linkedFailures = [...memoryTimelineFailures, ...memoryLedgerFailures].sort((a, b) => b.at - a.at).slice(0, limit);
+    const compaction = buildMemoryInspectorSnapshot({
+        ...(input.filters?.sessionKey ? { sessionId: input.filters.sessionKey } : {}),
+        ...(input.filters?.requestGroupId ? { requestGroupId: input.filters.requestGroupId } : {}),
+        limit: Math.min(limit, 12),
+    });
     return {
         summary: {
             documents: documentViews.length,
@@ -292,6 +298,7 @@ function buildMemoryInspector(input) {
         writebackQueue: { items: writebackViews, degradedReasons: writeback.degradedReasons },
         retrievalTrace: { items: traceViews, degradedReasons: access.degradedReasons },
         linkedFailures,
+        compaction,
     };
 }
 function listSchedules(limit) {

@@ -144,6 +144,8 @@ export interface MqttExtensionSnapshot {
   extensionId: string
   clientId: string | null
   displayName: string | null
+  instanceId?: string | null
+  instanceAlias?: string | null
   state: string | null
   message: string | null
   version: string | null
@@ -157,10 +159,12 @@ export interface MqttExtensionSnapshot {
   transport?: string[]
   capabilityHash?: string | null
   methods: string[]
+  methodCount?: number
   permissions?: Record<string, unknown>
   toolHealth?: Record<string, unknown>
   capabilityMatrix?: Record<string, unknown>
   lastCapabilityRefreshAt?: number | null
+  sessionId?: string | null
   lastSeenAt: number
 }
 

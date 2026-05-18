@@ -1123,6 +1123,14 @@ function resolvePromptSourcePath(workDir: string, sourceId: string, locale: "ko"
   return join(promptsDir, definition.filenames[locale])
 }
 
+export function promptSourceFileExists(workDir: string, sourceId: string, locale: "ko" | "en"): boolean {
+  try {
+    return existsSync(resolvePromptSourcePath(workDir, sourceId, locale))
+  } catch {
+    return false
+  }
+}
+
 function requirePromptSourceFile(workDir: string, sourceId: string, locale: "ko" | "en"): string {
   const sourcePath = resolvePromptSourcePath(workDir, sourceId, locale)
   if (!existsSync(sourcePath)) throw new Error(`prompt source not found: ${sourceId}:${locale}`)

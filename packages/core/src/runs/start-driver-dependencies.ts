@@ -28,6 +28,7 @@ import {
 import {
   markAbortedRunCancelledIfActive,
   normalizeTaskProfile,
+  rememberRunAwaitingUser,
   rememberRunFailure,
   rememberRunSuccess,
   runFilesystemVerificationSubtask,
@@ -103,6 +104,7 @@ export function buildStartRootRunDriverDependencies(params: {
     updateRunStatus,
     rememberRunSuccess,
     rememberRunFailure,
+    rememberRunAwaitingUser,
     onDeliveryError: (deliveryMessage) => params.logWarn(deliveryMessage),
   })
 

@@ -1,4 +1,6 @@
 import { insertDiagnosticEvent } from "../db/index.js";
+import { buildRootSessionCompactionReasonCodes, executeRootSessionCompaction, extractRootSessionDeterministicState, hasBalancedToolUsePairs, needsSessionCompaction, rewriteRootSessionActiveWindow, rewriteRootSessionRetrievalOnlyWindow, } from "../memory/compaction.js";
+import { buildMaintenanceRestoreContext, buildPromptTimeRecallContext, recordMaintenanceRestoreTrace, recordPromptTimeRecallTrace, renderMaintenanceRestorePromptBlock, } from "../memory/retrieval-restore.js";
 import { appendRunEvent } from "./store.js";
 const TOKEN_CHAR_RATIO = 4;
 const DEFAULT_OUTPUT_RESERVE_TOKENS = 2_048;
@@ -102,7 +104,7 @@ export function pruneMessagesForContext(input) {
     });
     return { messages, decisions };
 }
-export function prepareChatContext(input) {
+export async function prepareChatContext(input) {
     const initial = runContextPreflight({
         provider: input.provider,
         model: input.model,
@@ -111,8 +113,9 @@ export function prepareChatContext(input) {
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
         ...(input.metadata ? { metadata: input.metadata } : {}),
     });
-    if (initial.status === "ok")
+    if (initial.status === "ok" && !needsSessionCompaction(input.messages, initial.breakdown.totalTokens)) {
         return { ...initial, initialStatus: initial.status, messages: input.messages };
+    }
     const pruned = pruneMessagesForContext({ messages: input.messages });
     const afterPruning = runContextPreflight({
         provider: input.provider,
@@ -123,6 +126,84 @@ export function prepareChatContext(input) {
         ...(input.metadata ? { metadata: input.metadata } : {}),
         pruningDecisions: pruned.decisions,
     });
+    const deterministicState = extractRootSessionDeterministicState({
+        messages: pruned.messages,
+        ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+    });
+    const compactionReasonCodes = buildRootSessionCompactionReasonCodes({
+        messages: pruned.messages,
+        totalTokens: afterPruning.breakdown.totalTokens,
+        pruningDecisionCount: pruned.decisions.length,
+        deterministicState,
+    });
+    const blockedReasonCodes = collectBlockedCompactionReasons(pruned.messages, deterministicState);
+    const shouldAttemptCompaction = Boolean(input.metadata?.sessionId)
+        && (afterPruning.status === "needs_compaction"
+            || afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
+            || needsSessionCompaction(pruned.messages, afterPruning.breakdown.totalTokens));
+    if (shouldAttemptCompaction && blockedReasonCodes.length === 0 && input.metadata?.sessionId) {
+        try {
+            const executed = await executeRootSessionCompaction({
+                provider: input.provider,
+                model: input.model,
+                sessionId: input.metadata.sessionId,
+                messages: pruned.messages,
+                sourceTokenEstimate: afterPruning.breakdown.totalTokens,
+                triggerReasonCodes: compactionReasonCodes.length > 0
+                    ? compactionReasonCodes
+                    : ["token_threshold_exceeded"],
+                ...(input.metadata.runId ? { runId: input.metadata.runId } : {}),
+                ...(input.metadata.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+            });
+            const compacted = await selectCompactedWindow({
+                provider: input.provider,
+                model: input.model,
+                ...(input.system !== undefined ? { system: input.system } : {}),
+                ...(input.tools !== undefined ? { tools: input.tools } : {}),
+                ...(input.metadata ? { metadata: input.metadata } : {}),
+                pruningDecisions: pruned.decisions,
+                rewrittenMessages: executed.rewrittenMessages,
+                sourceMessages: pruned.messages,
+                capsule: executed.capsule,
+            });
+            const finalStatus = compacted.preflight.breakdown.totalTokens > compacted.preflight.breakdown.hardBudgetTokens
+                ? "blocked_context_overflow"
+                : compacted.preflight.status === "blocked_context_overflow"
+                    ? "blocked_context_overflow"
+                    : "ok";
+            return {
+                ...compacted.preflight,
+                status: finalStatus,
+                initialStatus: initial.status,
+                messages: compacted.messages,
+                compaction: {
+                    attempted: true,
+                    performed: true,
+                    reasonCodes: compactionReasonCodes,
+                    blockedReasonCodes: [],
+                    restorePathCodes: compacted.restorePathCodes,
+                    capsuleId: executed.capsuleId,
+                    compactionRunId: executed.compactionRunId,
+                    sourceMessageCount: executed.sourceMessageCount,
+                    tailMessageCount: executed.tailMessageCount,
+                    ...(compacted.rollupCapsuleId ? { rollupCapsuleId: compacted.rollupCapsuleId } : {}),
+                    ...(compacted.degradeMode ? { degradeMode: compacted.degradeMode } : {}),
+                    ...(compacted.retrievalSnippetCount !== undefined
+                        ? { retrievalSnippetCount: compacted.retrievalSnippetCount }
+                        : {}),
+                    ...(compacted.degradedTailMessageCount !== undefined
+                        ? { degradedTailMessageCount: compacted.degradedTailMessageCount }
+                        : {}),
+                },
+                ...(finalStatus === "blocked_context_overflow"
+                    ? { userMessage: "문맥 compact 후에도 모델 한도를 초과해 호출을 중단했습니다. 더 짧은 최신 대화만 남기거나 새 세션으로 이어서 시도해 주세요." }
+                    : {}),
+            };
+        }
+        catch (error) {
+            blockedReasonCodes.push(error instanceof Error ? error.message : String(error));
+        }
+    }
     const finalStatus = afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
         ? "blocked_context_overflow"
         : afterPruning.status === "blocked_context_overflow"
@@ -133,13 +214,23 @@ export function prepareChatContext(input) {
         status: finalStatus,
         initialStatus: initial.status,
         messages: pruned.messages,
+        ...(shouldAttemptCompaction || blockedReasonCodes.length > 0
+            ? {
+                compaction: {
+                    attempted: shouldAttemptCompaction,
+                    performed: false,
+                    reasonCodes: compactionReasonCodes,
+                    blockedReasonCodes,
+                },
+            }
+            : {}),
         ...(finalStatus === "blocked_context_overflow"
             ? { userMessage: "문맥 정리 후에도 모델 한도를 초과해 호출을 중단했습니다. 오래된 도구 결과나 긴 파일 내용을 줄인 뒤 다시 시도해 주세요." }
             : {}),
     };
 }
 export async function* chatWithContextPreflight(input) {
-    const prepared = prepareChatContext(input);
+    const prepared = await prepareChatContext(input);
     if (prepared.status === "blocked_context_overflow") {
         recordContextPreflightResult(prepared, input.metadata);
         throw new ContextPreflightBlockedError(prepared);
@@ -293,6 +384,163 @@ function renderUnknownValue(value) {
         return String(value);
     }
 }
+function collectBlockedCompactionReasons(messages, deterministicState) {
+    const blockedReasonCodes = [];
+    if (!hasBalancedToolUsePairs(messages))
+        blockedReasonCodes.push("blocked_by_unmatched_tool_pair");
+    if (deterministicState.finalDeliveryBlockReasons.length > 0) {
+        blockedReasonCodes.push("blocked_by_pending_finalization");
+    }
+    if (deterministicState.recoveryStates.length > 0) {
+        blockedReasonCodes.push("blocked_by_cancellation_or_recovery");
+    }
+    return blockedReasonCodes;
+}
+async function selectCompactedWindow(input) {
+    const maintenanceRestore = buildMaintenanceRestoreContext({
+        ownerScope: input.capsule.ownerScope,
+        ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+    });
+    const maintenanceRestoreBlock = renderMaintenanceRestorePromptBlock(maintenanceRestore);
+    recordMaintenanceRestoreTrace({
+        context: maintenanceRestore,
+        ...(input.metadata?.runId ? { runId: input.metadata.runId } : {}),
+        ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
+        ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+    });
+    const promptRecall = await buildPromptTimeRecallContext({
+        messages: input.sourceMessages,
+        ...(input.metadata?.runId ? { runId: input.metadata.runId } : {}),
+        ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
+        ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+        ...(input.capsule.ownerScope.channelKey ? { channelKey: input.capsule.ownerScope.channelKey } : {}),
+        ...(input.capsule.ownerScope.threadKey ? { threadKey: input.capsule.ownerScope.threadKey } : {}),
+    });
+    recordPromptTimeRecallTrace({
+        context: promptRecall,
+        ownerScope: input.capsule.ownerScope,
+        ...(input.metadata?.runId ? { runId: input.metadata.runId } : {}),
+        ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
+        ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+    });
+    const restorePathCodes = ["maintenance_restore"];
+    if (promptRecall.results.length > 0)
+        restorePathCodes.push("prompt_time_recall");
+    let messages = rewriteRootSessionActiveWindow({
+        messages: input.sourceMessages,
+        capsule: input.capsule,
+        pinnedWorkingSet: {
+            activeObjectives: input.capsule.activeObjectives,
+            confirmedFacts: input.capsule.confirmedFacts,
+            constraints: input.capsule.constraints,
+            decisions: input.capsule.decisions,
+            pendingItems: input.capsule.pendingItems,
+            artifactRefs: input.capsule.artifactRefs,
+            blockedReasonCodes: [],
+        },
+        ...(maintenanceRestoreBlock ? { maintenanceRestoreBlock } : {}),
+        ...(promptRecall.promptBlock ? { promptTimeRecallBlock: promptRecall.promptBlock } : {}),
+    }).messages;
+    let preflight = runContextPreflight({
+        provider: input.provider,
+        model: input.model,
+        messages,
+        ...(input.system !== undefined ? { system: input.system } : {}),
+        ...(input.tools !== undefined ? { tools: input.tools } : {}),
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+        pruningDecisions: input.pruningDecisions,
+    });
+    let degradedTailMessageCount;
+    let degradeMode;
+    if (preflight.breakdown.totalTokens <= preflight.breakdown.hardBudgetTokens) {
+        return {
+            messages,
+            preflight,
+            restorePathCodes,
+            ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+        };
+    }
+    for (const tailSize of [6, 4, 2, 0]) {
+        const rewritten = rewriteRootSessionActiveWindow({
+            messages: input.sourceMessages,
+            capsule: input.capsule,
+            pinnedWorkingSet: {
+                activeObjectives: input.capsule.activeObjectives,
+                confirmedFacts: input.capsule.confirmedFacts,
+                constraints: input.capsule.constraints,
+                decisions: input.capsule.decisions,
+                pendingItems: input.capsule.pendingItems,
+                artifactRefs: input.capsule.artifactRefs,
+                blockedReasonCodes: [],
+            },
+            preferredTailSize: tailSize,
+            ...(maintenanceRestoreBlock ? { maintenanceRestoreBlock } : {}),
+            ...(promptRecall.promptBlock ? { promptTimeRecallBlock: promptRecall.promptBlock } : {}),
+        });
+        const candidate = runContextPreflight({
+            provider: input.provider,
+            model: input.model,
+            messages: rewritten.messages,
+            ...(input.system !== undefined ? { system: input.system } : {}),
+            ...(input.tools !== undefined ? { tools: input.tools } : {}),
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+            pruningDecisions: input.pruningDecisions,
+        });
+        messages = rewritten.messages;
+        preflight = candidate;
+        degradedTailMessageCount = rewritten.degradedTailMessageCount;
+        degradeMode = rewritten.degradedTailMessageCount !== undefined ? "smaller_raw_tail" : degradeMode;
+        if (candidate.breakdown.totalTokens <= candidate.breakdown.hardBudgetTokens)
+            break;
+    }
+    if (preflight.breakdown.totalTokens > preflight.breakdown.hardBudgetTokens) {
+        const retrievalOnly = rewriteRootSessionRetrievalOnlyWindow({
+            messages: input.sourceMessages,
+            capsule: input.capsule,
+            pinnedWorkingSet: {
+                activeObjectives: input.capsule.activeObjectives,
+                confirmedFacts: input.capsule.confirmedFacts,
+                constraints: input.capsule.constraints,
+                decisions: input.capsule.decisions,
+                pendingItems: input.capsule.pendingItems,
+                artifactRefs: input.capsule.artifactRefs,
+                blockedReasonCodes: [],
+            },
+            retrievalSnippets: promptRecall.results.map((result) => `[${result.chunk.scope}:${result.chunkId}] ${result.chunk.content.slice(0, 120).trim()}${result.chunk.content.length > 120 ? "…" : ""}`),
+        });
+        const retrievalCandidate = runContextPreflight({
+            provider: input.provider,
+            model: input.model,
+            messages: retrievalOnly.messages,
+            ...(input.system !== undefined ? { system: input.system } : {}),
+            ...(input.tools !== undefined ? { tools: input.tools } : {}),
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+            pruningDecisions: input.pruningDecisions,
+        });
+        if (retrievalCandidate.breakdown.totalTokens <= preflight.breakdown.totalTokens) {
+            messages = retrievalOnly.messages;
+            preflight = retrievalCandidate;
+            degradeMode = "retrieval_only";
+            return {
+                messages,
+                preflight,
+                restorePathCodes,
+                degradeMode,
+                retrievalSnippetCount: retrievalOnly.snippetCount,
+                ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
+                ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+            };
+        }
+    }
+    return {
+        messages,
+        preflight,
+        restorePathCodes,
+        ...(degradeMode ? { degradeMode } : {}),
+        ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
+        ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+    };
+}
 function recordContextPreflightResult(result, metadata) {
     const summary = `context_preflight ${result.status}: tokens=${result.breakdown.totalTokens}/${result.breakdown.providerContextTokens}`;
     if (metadata?.runId) {
@@ -322,6 +570,7 @@ function recordContextPreflightResult(result, metadata) {
                 breakdown: result.breakdown,
                 pruningDecisionCount: result.pruningDecisions.length,
                 pruningDecisions: result.pruningDecisions.slice(0, 20),
+                ...(result.compaction ? { compaction: result.compaction } : {}),
                 ...(result.userMessage ? { userMessage: result.userMessage } : {}),
             },
         });

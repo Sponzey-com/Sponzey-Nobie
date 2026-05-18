@@ -31,5 +31,8 @@
 - `nobie-md.ts`의 first-run fallback prompt seed는 `prompts/` source가 없을 때도 서브 에이전트 hierarchy, `CommandRequest`/`DataExchangePackage`/`ResultReport`/`FeedbackRequest`, nickname attribution, team expansion 기본 규칙을 포함해야 합니다.
 - 실행 종료 경로는 `memory_writeback_queue`, `session_snapshots`, `task_continuity`에 instruction/success/failure 후보를 조용히 기록합니다. writeback 실패는 사용자 채널에 노출하지 않고 실행 완료 판정도 직접 막지 않습니다.
 - session snapshot은 후속 run이 열린 task id와 마지막 성공 요약을 회수할 수 있게 유지합니다. task continuity는 같은 request group의 handoff summary와 실패 복구 근거를 남기는 경계입니다.
+- `agent_memory_state`는 Nobie/서브 에이전트별 active memory 경계와 최신 capsule pointer를 추적하는 read model입니다. `session_snapshots`는 root session 호환 요약, `task_continuity`는 lineage handoff/복구 경계이므로 서로 역할이 다릅니다.
+- memory compaction은 원본 `messages`/`run_events`/`result reports`를 지우는 기능이 아닙니다. append-only 이력은 유지하고, prompt에 들어가는 active read model만 `memory_capsules`와 compat projection으로 재구성합니다.
+- `MemoryCapsule`은 runtime capsule과 user-facing summary를 구분합니다. capsule 생성은 long-term durable fact 승격과 같은 작업이 아니며, 장기 기억 승격은 계속 writeback review 경로를 따릅니다.
 - 저널 기록은 단순 이력 표시가 아니라 재시도와 후속 판단에 활용되는 것이 목적입니다.
 - 실행 저널 FTS 검색은 예약 실행 프롬프트나 경로/시각 문자열이 들어와도 죽지 않도록, 구두점을 제거한 안전 토큰 기반 MATCH 쿼리만 사용하고 실패 시 빈 결과로 폴백합니다.

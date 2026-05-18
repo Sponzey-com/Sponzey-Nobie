@@ -57,6 +57,8 @@ This file covers only memory usage and write rules. Name and voice follow `ident
 - Artifact memory must preserve delivery receipts and rediscovery/download metadata; raw file cleanup follows a separate retention policy.
 - Keep diagnostic memory separate from normal memory and retain or compact it only for incident analysis and operational metrics.
 - Run compaction only after preserving pending approvals, pending delivery, and the latest usable snapshot.
+- Treat compaction as active context reconstruction, not destructive history rewrite. Preserve append-only execution history and rewrite only the active prompt window.
+- Do not auto-promote compacted capsule facts into long-term memory. Long-term fact promotion still requires the normal writeback/review path.
 
 ---
 

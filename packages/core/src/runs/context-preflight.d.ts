@@ -18,6 +18,21 @@ export interface ContextPruningDecision {
     prunedChars: number;
     strategy: "head_tail_soft_trim" | "placeholder_hard_clear";
 }
+export interface ContextCompactionDecision {
+    attempted: boolean;
+    performed: boolean;
+    reasonCodes: string[];
+    blockedReasonCodes: string[];
+    restorePathCodes?: Array<"maintenance_restore" | "prompt_time_recall">;
+    degradeMode?: "smaller_raw_tail" | "retrieval_only";
+    retrievalSnippetCount?: number;
+    capsuleId?: string;
+    compactionRunId?: string;
+    sourceMessageCount?: number;
+    tailMessageCount?: number;
+    degradedTailMessageCount?: number;
+    rollupCapsuleId?: string;
+}
 export interface ContextPreflightResult {
     status: ContextPreflightStatus;
     model: string;
@@ -27,6 +42,7 @@ export interface ContextPreflightResult {
     durationMs: number;
     pruningDecisions: ContextPruningDecision[];
     userMessage?: string;
+    compaction?: ContextCompactionDecision;
 }
 export interface ContextPreflightMetadata {
     runId?: string;
@@ -74,7 +90,7 @@ export declare function pruneMessagesForContext(input: {
 export declare function prepareChatContext(input: ChatParams & {
     provider: AIProvider;
     metadata?: ContextPreflightMetadata;
-}): ContextPreflightPreparedChat;
+}): Promise<ContextPreflightPreparedChat>;
 export declare function chatWithContextPreflight(input: ChatParams & {
     provider: AIProvider;
     metadata?: ContextPreflightMetadata;

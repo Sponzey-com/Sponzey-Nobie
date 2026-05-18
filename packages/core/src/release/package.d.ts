@@ -9,6 +9,7 @@ import { type SubAgentReleaseReadinessSummary } from "./sub-agent-release-gate.j
 import { type EnterpriseTopologyReleaseReadinessSummary } from "./enterprise-topology-release-gate.js";
 import { type UiModeReleaseGateSummary } from "./ui-mode-gate.js";
 import { type YeonjangMultiInstanceReleaseGateSummary } from "./yeonjang-multi-instance-gate.js";
+import { type MemoryCompactionReleaseGateSummary } from "./memory-compaction-gate.js";
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux";
 export type ReleaseArtifactKind = "gateway_node_bundle" | "webui_static" | "yeonjang_macos_app" | "yeonjang_windows_exe" | "yeonjang_linux_binary" | "yeonjang_script" | "yeonjang_protocol" | "db_migration" | "prompt_seed" | "release_runbook" | "admin_diagnostic_bundle";
 export type ReleaseArtifactStatus = "present" | "missing_required" | "missing_optional";
@@ -57,6 +58,7 @@ export interface ReleaseManifest {
     webRetrievalEvidence: WebRetrievalReleaseGateSummary;
     uiModeEvidence: UiModeReleaseGateSummary;
     yeonjangMultiInstanceEvidence: YeonjangMultiInstanceReleaseGateSummary;
+    memoryCompactionEvidence: MemoryCompactionReleaseGateSummary;
     performanceEvidence: ReleasePerformanceSummary;
     benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary;
     subAgentReleaseGate: SubAgentReleaseReadinessSummary;

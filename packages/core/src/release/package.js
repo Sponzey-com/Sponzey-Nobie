@@ -16,6 +16,7 @@ import { buildSubAgentReleaseReadinessSummary, } from "./sub-agent-release-gate.
 import { buildEnterpriseTopologyReleaseReadinessSummary, buildEnterpriseTopologyRollbackRunbook, } from "./enterprise-topology-release-gate.js";
 import { buildUiModeReleaseGateSummary } from "./ui-mode-gate.js";
 import { buildYeonjangMultiInstanceReleaseGateSummary, } from "./yeonjang-multi-instance-gate.js";
+import { buildMemoryCompactionReleaseGateSummary, } from "./memory-compaction-gate.js";
 const DEFAULT_TARGET_PLATFORMS = ["macos", "windows", "linux"];
 export function buildReleaseManifest(options = {}) {
     const rootDir = resolve(options.rootDir ?? getWorkspaceRootPath());
@@ -49,6 +50,9 @@ export function buildReleaseManifest(options = {}) {
     });
     const uiModeEvidence = buildUiModeReleaseGateSummary();
     const yeonjangMultiInstanceEvidence = buildYeonjangMultiInstanceReleaseGateSummary({
+        now: options.now ?? new Date(),
+    });
+    const memoryCompactionEvidence = buildMemoryCompactionReleaseGateSummary({
         now: options.now ?? new Date(),
     });
     const performanceEvidence = buildReleasePerformanceSummary(options.now ? { now: options.now } : {});
@@ -91,6 +95,7 @@ export function buildReleaseManifest(options = {}) {
         webRetrievalEvidence,
         uiModeEvidence,
         yeonjangMultiInstanceEvidence,
+        memoryCompactionEvidence,
     });
     return {
         kind: "nobie.release.package",
@@ -143,6 +148,7 @@ export function buildReleaseManifest(options = {}) {
         webRetrievalEvidence,
         uiModeEvidence,
         yeonjangMultiInstanceEvidence,
+        memoryCompactionEvidence,
         performanceEvidence,
         benchmarkEvidence,
         subAgentReleaseGate,
@@ -218,6 +224,7 @@ export function buildReleasePipelinePlan(input = {}) {
             "tests/task013-channel-delivery-observability.test.ts",
         ], true, false, "Verify feature flag off parity, no-agent fallback, orchestration contracts, planner, runtime, and channel delivery orchestration guards."),
         step("memory-isolation-release-gate", "Memory isolation release gate", ["pnpm", "test", "tests/task019-memory-isolation-writeback.test.ts"], true, false, "Verify owner-scope memory isolation, DataExchange-only shared context, writeback owner policy, and memory access audit regressions."),
+        step("memory-compaction-release-gate", "Memory compaction release gate", ["pnpm", "exec", "vitest", "run", "tests/task006-memory-release-gate.test.ts"], true, false, "Verify memory inspector evidence, compaction model audit, heuristic fallback trace, append-only archive evidence, drift warnings, and release summary wiring."),
         step("capability-isolation-release-gate", "Capability isolation release gate", [
             "pnpm",
             "test",
@@ -371,6 +378,11 @@ export function buildCleanMachineInstallChecklist() {
             description: "Owner-scoped memory, DataExchange-only context sharing, writeback owner policy, and memory access audit regressions pass.",
         },
         {
+            id: "memory-compaction-release-gate",
+            required: true,
+            description: "Memory inspector cards, compaction model audit, heuristic fallback trace, append-only archive evidence, drift warnings, and release summary wiring are reviewed before publish.",
+        },
+        {
             id: "capability-isolation-release-gate",
             required: true,
             description: "Agent-scoped tool, MCP, Skill, secret scope, approval propagation, and capability delegation audit regressions pass.",
@@ -471,6 +483,7 @@ function buildReleaseNoteSummary(input) {
             `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
             `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
             `Yeonjang multi-instance release gate: ${input.yeonjangMultiInstanceEvidence.gateStatus}`,
+            `Memory compaction release gate: ${input.memoryCompactionEvidence.gateStatus}`,
             orchestrationFlag
                 ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
                 : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",

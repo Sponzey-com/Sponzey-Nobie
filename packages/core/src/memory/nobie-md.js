@@ -956,6 +956,14 @@ function resolvePromptSourcePath(workDir, sourceId, locale) {
     const promptsDir = findPromptsDir(workDir) ?? resolvePromptsDirForSeed(workDir);
     return join(promptsDir, definition.filenames[locale]);
 }
+export function promptSourceFileExists(workDir, sourceId, locale) {
+    try {
+        return existsSync(resolvePromptSourcePath(workDir, sourceId, locale));
+    }
+    catch {
+        return false;
+    }
+}
 function requirePromptSourceFile(workDir, sourceId, locale) {
     const sourcePath = resolvePromptSourcePath(workDir, sourceId, locale);
     if (!existsSync(sourcePath))

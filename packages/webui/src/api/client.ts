@@ -1984,6 +1984,36 @@ export const api = {
 
   memoryQuality: () => request<{ snapshot: MemoryQualitySnapshot }>("/api/memory/quality"),
 
+  memoryInspector: (params: {
+    ownerType?: "main_agent" | "sub_agent"
+    ownerId?: string
+    sessionId?: string
+    requestGroupId?: string
+    limit?: number
+  } = {}) => {
+    const search = new URLSearchParams()
+    if (params.ownerType) search.set("ownerType", params.ownerType)
+    if (params.ownerId) search.set("ownerId", params.ownerId)
+    if (params.sessionId) search.set("sessionId", params.sessionId)
+    if (params.requestGroupId) search.set("requestGroupId", params.requestGroupId)
+    if (typeof params.limit === "number") search.set("limit", String(params.limit))
+    const query = search.toString()
+    return request<{ snapshot: MemoryInspectorSnapshot }>(`/api/memory/inspector${query ? `?${query}` : ""}`)
+  },
+
+  memoryInspectorControl: (body: {
+    action: MemoryInspectorControlAction
+    ownerType?: "main_agent" | "sub_agent"
+    ownerId?: string
+    sessionId?: string
+    requestGroupId?: string
+    limit?: number
+  }) =>
+    request<{ result: MemoryInspectorControlResult }>("/api/memory/inspector/control", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   memoryWritebackReview: (
     status: "pending" | "completed" | "discarded" | "failed" | "all" = "pending",
   ) =>
@@ -2585,6 +2615,143 @@ export interface MemoryQualitySnapshot {
     scheduleMemoryDefaultInjection: boolean
   }
   lastFailure: string | null
+}
+
+export type MemoryInspectorControlAction =
+  | "dry_run_compaction"
+  | "latest_capsule_inspect"
+  | "rollup_inspect"
+  | "safe_restore"
+  | "force_compaction"
+  | "capsule_invalidate"
+
+export interface MemoryInspectorOwnerCard {
+  ownerScopeKey: string
+  ownerType: "main_agent" | "sub_agent"
+  ownerId: string
+  sessionId: string
+  requestGroupId?: string
+  lineageId?: string
+  channelKey?: string
+  threadKey?: string
+  nicknameSnapshot?: string
+  latestCapsuleId?: string
+  currentRawTokenEstimate: number
+  currentRawMessageCount: number
+  latestCapsuleAgeMs: number | null
+  activeCapsuleChainDepth: number
+  latestRollupAgeMs: number | null
+  lastCompactionReason: string | null
+  pendingPreservationCount: number
+  recallHitCount: number
+  driftWarningState: "ok" | "warning"
+  driftWarningCodes: string[]
+  lastCompactionAt: number | null
+  compactionBlockReason: string | null
+}
+
+export interface MemoryInspectorCapsule {
+  capsuleId: string
+  capsuleKind: string
+  summary: string
+  activeObjectives: string[]
+  confirmedFacts: string[]
+  decisions: string[]
+  constraints: string[]
+  pendingItems: string[]
+  recoveryHints: string[]
+  sourceTokenEstimate: number
+  resultTokenEstimate: number
+  createdAt: number
+}
+
+export interface MemoryInspectorRollup {
+  id: string
+  sourceCapsuleIds: string[]
+  sourceCapsuleCount: number
+  sourceTokenEstimate: number
+  resultRollupCapsuleId: string
+  recentCapsuleIds: string[]
+  preservedPendingItems: string[]
+  reasonCode: string
+  createdAt: number
+}
+
+export interface MemoryInspectorSnapshot {
+  generatedAt: number
+  filters: {
+    ownerType: "main_agent" | "sub_agent" | null
+    ownerId: string | null
+    sessionId: string | null
+    requestGroupId: string | null
+    limit: number
+  }
+  configuredPolicy: {
+    explicitModelId: string | null
+    fallbackModelId: string | null
+    minContextTokens: number
+  }
+  summary: {
+    owners: number
+    warningOwners: number
+    recallEvents: number
+    compactionRuns: number
+    latestCapsuleAt: number | null
+    latestRollupAt: number | null
+    qualityStatus: "healthy" | "degraded"
+  }
+  ownerCards: MemoryInspectorOwnerCard[]
+  selectedOwnerScopeKey: string | null
+  latestCapsule: MemoryInspectorCapsule | null
+  latestRollup: MemoryInspectorRollup | null
+  recentCompactionRuns: Array<{
+    id: string
+    capsuleId?: string
+    triggerReasonCodes: string[]
+    sourceTokenEstimate: number
+    resultTokenEstimate: number
+    status: "started" | "completed" | "failed"
+    modelProvider?: string
+    modelId?: string
+    validationSummary?: string
+    failureReason?: string
+    metadata?: Record<string, unknown>
+    createdAt: number
+    updatedAt: number
+  }>
+  recallTrace: Array<{
+    id: string
+    sourceType: string
+    reasonCode: string
+    canUseForFinalAnswer: boolean
+    sameSession: boolean
+    metadata?: Record<string, unknown>
+    createdAt: number
+  }>
+  compactPreview: {
+    sourceMessageCount: number
+    tailMessageCount: number
+    degradedTailMessageCount: number | null
+    droppedRawCount: number
+    headRange: { start: number; end: number; count: number } | null
+    capsuleSummary: string | null
+    preservedPinnedItems: string[]
+    reasonCodes: string[]
+    validationSummary: string | null
+    modelAudit: Record<string, unknown> | null
+  } | null
+  maintenanceRestorePromptBlock: string | null
+  controls: Array<{ action: MemoryInspectorControlAction; enabled: boolean; reason: string }>
+}
+
+export interface MemoryInspectorControlResult {
+  action: MemoryInspectorControlAction
+  enabled: boolean
+  reason: string
+  compactPreview?: MemoryInspectorSnapshot["compactPreview"]
+  latestCapsule?: MemoryInspectorSnapshot["latestCapsule"]
+  latestRollup?: MemoryInspectorSnapshot["latestRollup"]
+  maintenanceRestorePromptBlock?: string | null
 }
 
 export interface MemoryAccessTraceItem {

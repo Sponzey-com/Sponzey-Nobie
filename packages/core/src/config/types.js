@@ -114,6 +114,9 @@ export const DEFAULT_CONFIG = {
         },
     },
     memory: {
+        compaction: {
+            minContextTokens: 3000,
+        },
         sessionRetentionDays: 30,
     },
     orchestration: {

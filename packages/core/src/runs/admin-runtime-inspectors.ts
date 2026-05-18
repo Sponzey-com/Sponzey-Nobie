@@ -7,6 +7,7 @@ import {
   type DbScheduleRun,
 } from "../db/index.js"
 import { parseScheduleContractJson } from "../schedules/candidates.js"
+import { buildMemoryInspectorSnapshot } from "../memory/inspector.js"
 
 export type AdminMemoryOwnerKind = "user" | "diagnostic"
 export type AdminSchedulerQueueState = "disabled" | "waiting" | "missed" | "running" | "retrying" | "idle"
@@ -77,6 +78,7 @@ export interface AdminMemoryInspector {
   writebackQueue: { items: AdminMemoryWritebackView[]; degradedReasons: string[] }
   retrievalTrace: { items: AdminMemoryRetrievalTraceView[]; degradedReasons: string[] }
   linkedFailures: Array<{ at: number; source: "timeline" | "ledger"; component: string; summary: string; runId: string | null; requestGroupId: string | null }>
+  compaction: ReturnType<typeof buildMemoryInspectorSnapshot>
 }
 
 export interface AdminSchedulerContractView {
@@ -674,6 +676,11 @@ function buildMemoryInspector(input: InspectorInput): AdminMemoryInspector {
       requestGroupId: event.request_group_id,
     }))
   const linkedFailures = [...memoryTimelineFailures, ...memoryLedgerFailures].sort((a, b) => b.at - a.at).slice(0, limit)
+  const compaction = buildMemoryInspectorSnapshot({
+    ...(input.filters?.sessionKey ? { sessionId: input.filters.sessionKey } : {}),
+    ...(input.filters?.requestGroupId ? { requestGroupId: input.filters.requestGroupId } : {}),
+    limit: Math.min(limit, 12),
+  })
 
   return {
     summary: {
@@ -689,6 +696,7 @@ function buildMemoryInspector(input: InspectorInput): AdminMemoryInspector {
     writebackQueue: { items: writebackViews, degradedReasons: writeback.degradedReasons },
     retrievalTrace: { items: traceViews, degradedReasons: access.degradedReasons },
     linkedFailures,
+    compaction,
   }
 }
 

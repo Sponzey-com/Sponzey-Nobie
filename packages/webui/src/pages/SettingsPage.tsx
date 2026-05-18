@@ -6,6 +6,8 @@ import {
   type ChannelConnectionDetail,
   type ChannelConnectionSummary,
   type ChannelMessageItem,
+  type MemoryInspectorControlResult,
+  type MemoryInspectorSnapshot,
   type MemoryQualitySnapshot,
   type MemoryWritebackReviewAction,
   type MemoryWritebackReviewItem,
@@ -19,6 +21,7 @@ import { CollapsibleText } from "../components/runs/CollapsibleText"
 import { AuthTokenPanel } from "../components/setup/AuthTokenPanel"
 import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
+import { MemoryInspectorPanel } from "../components/setup/MemoryInspectorPanel"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
 import { YeonjangFleetPanel } from "../components/setup/YeonjangFleetPanel"
@@ -181,6 +184,12 @@ export function SettingsPage() {
   const [memoryQuality, setMemoryQuality] = useState<MemoryQualitySnapshot | null>(null)
   const [memoryQualityLoading, setMemoryQualityLoading] = useState(false)
   const [memoryQualityError, setMemoryQualityError] = useState("")
+  const [memoryInspector, setMemoryInspector] = useState<MemoryInspectorSnapshot | null>(null)
+  const [memoryInspectorLoading, setMemoryInspectorLoading] = useState(false)
+  const [memoryInspectorError, setMemoryInspectorError] = useState("")
+  const [memoryInspectorActionLoading, setMemoryInspectorActionLoading] = useState(false)
+  const [memoryInspectorActionError, setMemoryInspectorActionError] = useState("")
+  const [memoryInspectorActionResult, setMemoryInspectorActionResult] = useState<MemoryInspectorControlResult | null>(null)
   const [channelRows, setChannelRows] = useState<ChannelConnectionSummary[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState("telegram:primary")
   const [channelDetail, setChannelDetail] = useState<ChannelConnectionDetail | null>(null)
@@ -408,6 +417,43 @@ export function SettingsPage() {
     }
   }, [])
 
+  const loadMemoryInspector = useCallback(async () => {
+    setMemoryInspectorLoading(true)
+    try {
+      const result = await api.memoryInspector({ limit: 12 })
+      setMemoryInspector(result.snapshot)
+      setMemoryInspectorError("")
+      setMemoryInspectorActionError("")
+    } catch (error) {
+      setMemoryInspectorError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMemoryInspectorLoading(false)
+    }
+  }, [])
+
+  const handleMemoryInspectorControl = useCallback(async (
+    action: "dry_run_compaction" | "latest_capsule_inspect" | "rollup_inspect" | "safe_restore" | "force_compaction" | "capsule_invalidate",
+  ) => {
+    setMemoryInspectorActionLoading(true)
+    setMemoryInspectorActionError("")
+    try {
+      const selected = memoryInspector?.ownerCards[0]
+      const result = await api.memoryInspectorControl({
+        action,
+        ...(selected ? { ownerType: selected.ownerType, ownerId: selected.ownerId, sessionId: selected.sessionId } : {}),
+        ...(selected?.requestGroupId ? { requestGroupId: selected.requestGroupId } : {}),
+        limit: 12,
+      })
+      setMemoryInspectorActionResult(result.result)
+      setMemoryInspectorActionError("")
+      await loadMemoryInspector()
+    } catch (error) {
+      setMemoryInspectorActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMemoryInspectorActionLoading(false)
+    }
+  }, [loadMemoryInspector, memoryInspector])
+
   const loadChannelOverview = useCallback(async () => {
     setChannelLoading(true)
     try {
@@ -462,10 +508,11 @@ export function SettingsPage() {
     if (tab === "memory" || tab === "schedules") void loadOperationsDiagnostics()
     if (tab === "memory") {
       void loadMemoryQuality()
+      void loadMemoryInspector()
       void loadMemoryWritebackReview()
     }
     if (tab === "release") void loadConfigOperations()
-  }, [tab, editorVersion, loadConfigOperations, loadMemoryQuality, loadMemoryWritebackReview, loadOperationsDiagnostics])
+  }, [tab, editorVersion, loadConfigOperations, loadMemoryInspector, loadMemoryQuality, loadMemoryWritebackReview, loadOperationsDiagnostics])
 
   useEffect(() => {
     if (tab !== "orchestration") return
@@ -954,6 +1001,17 @@ export function SettingsPage() {
                 loading={memoryQualityLoading}
                 error={memoryQualityError}
                 onRefresh={() => void loadMemoryQuality()}
+              />
+              <MemoryInspectorPanel
+                mode={uiMode}
+                snapshot={memoryInspector}
+                loading={memoryInspectorLoading}
+                error={memoryInspectorError}
+                actionLoading={memoryInspectorActionLoading}
+                actionError={memoryInspectorActionError}
+                actionResult={memoryInspectorActionResult}
+                onRefresh={() => void loadMemoryInspector()}
+                onControl={(action) => void handleMemoryInspectorControl(action)}
               />
               <MemoryWritebackReviewPanel
                 candidates={memoryReviewItems}

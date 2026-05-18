@@ -14,6 +14,7 @@ function createDeps() {
     updateRunStatus: vi.fn(),
     rememberRunSuccess: vi.fn(),
     rememberRunFailure: vi.fn(),
+    rememberRunAwaitingUser: vi.fn(),
     onDeliveryError: vi.fn(),
     deliveryDependencies: {
       now: () => 0,
@@ -72,6 +73,13 @@ describe("run finalization helpers", () => {
     expect(onChunk).toHaveBeenCalled()
     expect(deps.setRunStepStatus).toHaveBeenCalledWith(runId, "awaiting_user", "running", "추가 입력 필요")
     expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "awaiting_user", "추가 입력 필요", true)
+    expect(deps.rememberRunAwaitingUser).toHaveBeenCalledWith({
+      runId,
+      sessionId,
+      source: "telegram",
+      summary: "추가 입력 필요",
+      userMessage: "계속하려면 파일명을 알려 주세요.",
+    })
     expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "사용자 추가 입력 대기")
   })
 

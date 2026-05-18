@@ -114,6 +114,15 @@ export interface FinalizationDependencies {
         detail?: string;
         title?: string;
     }) => void;
+    rememberRunAwaitingUser?: (params: {
+        runId: string;
+        sessionId: string;
+        source: FinalizationSource;
+        summary: string;
+        reason?: string;
+        userMessage?: string;
+        remainingItems?: string[];
+    }) => void;
     onDeliveryError?: (message: string) => void;
     deliveryDependencies?: NonNullable<Parameters<typeof emitAssistantTextDelivery>[0]["dependencies"]>;
 }

@@ -13,6 +13,11 @@ import type {
   RuntimeIdentity,
   SubSessionContract,
 } from "../contracts/sub-agent-orchestration.js"
+import { buildChildOwnMemoryBootstrap } from "../memory/agent-state.js"
+import {
+  buildSubSessionFeedbackCapsulePayload,
+  buildSubSessionFeedbackPinnedItems,
+} from "../memory/flow-capsules.js"
 import { createDataExchangePackage, persistDataExchangePackage } from "../memory/isolation.js"
 import {
   type SubSessionFeedbackCycleDirective,
@@ -185,6 +190,15 @@ export function buildFeedbackLoopPackage(
     input.review.normalizedFailureKey ?? "sub_agent_result_review_feedback_required"
   const exchangeId = `exchange:feedback:${feedbackRequestId}`
   const additionalContextRefs = unique([...(input.additionalContextRefs ?? []), exchangeId])
+  const feedbackCapsule = buildSubSessionFeedbackCapsulePayload({
+    resultReports: input.resultReports,
+    requiredChanges,
+    additionalConstraints,
+    conflictItems,
+    sourceResultReportIds,
+    expectedOutputRevision: input.expectedOutputs.map((output) => output.outputId),
+    reasonCode,
+  })
 
   const synthesizedContext = createDataExchangePackage({
     sourceOwner,
@@ -221,6 +235,7 @@ export function buildFeedbackLoopPackage(
       requiredChanges,
       additionalConstraints,
       expectedRevisionOutputIds: input.expectedOutputs.map((output) => output.outputId),
+      feedbackCapsule,
       review: {
         verdict: input.review.verdict,
         parentIntegrationStatus: input.review.parentIntegrationStatus,
@@ -380,6 +395,45 @@ export function buildRedelegatedSubSessionInput(
     },
     parentSessionId: source.parentSessionId,
     promptBundle,
+    memoryBootstrap: buildChildOwnMemoryBootstrap({
+      agentId: input.targetAgentId,
+      ...(input.targetAgentNickname ? { nicknameSnapshot: input.targetAgentNickname } : {}),
+      sessionId: source.parentSessionId,
+      requestGroupId: commandRequestId,
+      lineageId: subSessionId,
+      taskScope,
+      additionalContextRefs: command.contextPackageIds,
+      sourceProvenanceRefs: command.contextPackageIds,
+      ...(source.memoryBootstrap?.latestCapsuleId
+        ? { latestCapsuleId: source.memoryBootstrap.latestCapsuleId }
+        : {}),
+      ...(input.feedbackRequest.synthesizedContextExchangeId
+        ? { feedbackExchangeId: input.feedbackRequest.synthesizedContextExchangeId }
+        : {}),
+      additionalPinnedItems: buildSubSessionFeedbackPinnedItems(
+        buildSubSessionFeedbackCapsulePayload({
+          resultReports: [],
+          requiredChanges: input.feedbackRequest.requiredChanges,
+          additionalConstraints: input.feedbackRequest.additionalConstraints,
+          conflictItems: input.feedbackRequest.conflictItems,
+          sourceResultReportIds: input.feedbackRequest.sourceResultReportIds,
+          expectedOutputRevision: input.feedbackRequest.expectedRevisionOutputs.map(
+            (output) => output.outputId,
+          ),
+          reasonCode: input.feedbackRequest.reasonCode,
+        }),
+      ),
+      ...(source.memoryBootstrap?.ownerScope.channelKey
+        ? { channelKey: source.memoryBootstrap.ownerScope.channelKey }
+        : {}),
+      ...(source.memoryBootstrap?.ownerScope.threadKey
+        ? { threadKey: source.memoryBootstrap.ownerScope.threadKey }
+        : {}),
+      ...(source.memoryBootstrap?.latestSafeContextSummary
+        ? { latestSafeContextSummary: source.memoryBootstrap.latestSafeContextSummary }
+        : {}),
+      now: input.feedbackRequest.createdAt ?? Date.now(),
+    }),
   }
 }
 

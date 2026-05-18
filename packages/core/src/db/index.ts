@@ -40,6 +40,20 @@ import type {
   PromptSourceSnapshot,
   PromptSourceState,
 } from "../memory/nobie-md.js"
+import {
+  normalizeAgentMemoryState,
+  type AgentMemoryState,
+} from "../memory/agent-state.js"
+import {
+  buildSessionSnapshotProjectionFromMemoryCapsule,
+  buildTaskContinuityProjectionFromMemoryCapsule,
+  normalizeMemoryCapsule,
+  validateMemoryCapsule,
+  type MemoryCapsule,
+  type MemoryCapsuleArtifactRef,
+  type MemoryCapsuleKind,
+  type MemoryCapsuleOwnerType,
+} from "../memory/capsule.js"
 import { assertMigrationWriteAllowed } from "./migration-safety.js"
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js"
 
@@ -923,6 +937,11 @@ export interface DbTaskContinuity {
   parent_run_id: string | null
   handoff_summary: string | null
   last_good_state: string | null
+  latest_instruction_summary: string | null
+  latest_successful_summary: string | null
+  latest_target_context: string | null
+  failure_recovery_hints: string | null
+  continuity_exchange_refs: string | null
   pending_approvals: string | null
   pending_delivery: string | null
   last_tool_receipt: string | null
@@ -939,6 +958,11 @@ export interface TaskContinuitySnapshot {
   parentRunId?: string
   handoffSummary?: string
   lastGoodState?: string
+  latestInstructionSummary?: string
+  latestSuccessfulSummary?: string
+  latestTargetContext?: string
+  failureRecoveryHints: string[]
+  continuityExchangeRefs: string[]
   pendingApprovals: string[]
   pendingDelivery: string[]
   lastToolReceipt?: string
@@ -2157,6 +2181,178 @@ export interface DbMemoryWritebackCandidate {
   updated_at: number
 }
 
+export interface DbMemoryCapsule {
+  capsule_id: string
+  capsule_version: number
+  parent_capsule_id: string | null
+  owner_type: MemoryCapsuleOwnerType
+  owner_id: string
+  session_id: string | null
+  request_group_id: string | null
+  lineage_id: string | null
+  channel_key: string | null
+  thread_key: string | null
+  nickname_snapshot: string | null
+  capsule_kind: MemoryCapsuleKind
+  summary: string
+  active_objectives_json: string
+  confirmed_facts_json: string
+  decisions_json: string
+  constraints_json: string
+  pending_items_json: string
+  artifact_refs_json: string
+  recovery_hints_json: string
+  source_refs_json: string
+  compacted_message_ids_json: string
+  source_token_estimate: number
+  result_token_estimate: number
+  metadata_json: string | null
+  created_at: number
+}
+
+export interface DbMemoryCapsuleSource {
+  id: string
+  capsule_id: string
+  source_kind: string
+  source_id: string
+  owner_type: string | null
+  owner_id: string | null
+  metadata_json: string | null
+  created_at: number
+}
+
+export interface DbMemoryCompactionRun {
+  id: string
+  capsule_id: string | null
+  owner_type: MemoryCapsuleOwnerType
+  owner_id: string
+  session_id: string | null
+  request_group_id: string | null
+  lineage_id: string | null
+  channel_key: string | null
+  thread_key: string | null
+  trigger_reason_codes_json: string
+  source_token_estimate: number
+  result_token_estimate: number
+  status: "started" | "completed" | "failed"
+  model_provider: string | null
+  model_id: string | null
+  validation_summary: string | null
+  failure_reason: string | null
+  metadata_json: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface MemoryCompactionRunSnapshot {
+  id: string
+  capsuleId?: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  triggerReasonCodes: string[]
+  sourceTokenEstimate: number
+  resultTokenEstimate: number
+  status: DbMemoryCompactionRun["status"]
+  modelProvider?: string
+  modelId?: string
+  validationSummary?: string
+  failureReason?: string
+  metadata?: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+}
+
+export interface DbMemoryRecallEvent {
+  id: string
+  run_id: string | null
+  session_id: string | null
+  request_group_id: string | null
+  owner_type: MemoryCapsuleOwnerType
+  owner_id: string
+  session_scope_id: string | null
+  request_scope_id: string | null
+  lineage_scope_id: string | null
+  channel_key: string | null
+  thread_key: string | null
+  source_type: "maintenance_restore" | "prompt_time_recall" | "recent_capsule" | "rollup_capsule"
+  capsule_id: string | null
+  chunk_id: string | null
+  reason_code: string
+  can_use_for_final_answer: 0 | 1
+  same_session: 0 | 1
+  metadata_json: string | null
+  created_at: number
+}
+
+export interface MemoryRecallEventSnapshot {
+  id: string
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  sourceType: DbMemoryRecallEvent["source_type"]
+  capsuleId?: string
+  chunkId?: string
+  reasonCode: string
+  canUseForFinalAnswer: boolean
+  sameSession: boolean
+  metadata?: Record<string, unknown>
+  createdAt: number
+}
+
+export interface DbMemoryCapsuleRollup {
+  id: string
+  owner_type: MemoryCapsuleOwnerType
+  owner_id: string
+  session_id: string | null
+  request_group_id: string | null
+  lineage_id: string | null
+  channel_key: string | null
+  thread_key: string | null
+  source_capsule_ids_json: string
+  source_capsule_count: number
+  source_token_estimate: number
+  result_rollup_capsule_id: string
+  recent_capsule_ids_json: string
+  preserved_pending_items_json: string
+  reason_code: string
+  metadata_json: string | null
+  created_at: number
+}
+
+export interface MemoryCapsuleRollupSnapshot {
+  id: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  sourceCapsuleIds: string[]
+  sourceCapsuleCount: number
+  sourceTokenEstimate: number
+  resultRollupCapsuleId: string
+  recentCapsuleIds: string[]
+  preservedPendingItems: string[]
+  reasonCode: string
+  metadata?: Record<string, unknown>
+  createdAt: number
+}
+
+export interface DbAgentMemoryState {
+  state_id: string
+  owner_scope_key: string
+  agent_type: "main_agent" | "sub_agent"
+  agent_id: string
+  session_id: string
+  request_group_id: string | null
+  lineage_id: string | null
+  channel_key: string | null
+  thread_key: string | null
+  nickname_snapshot: string | null
+  latest_capsule_id: string | null
+  current_raw_token_estimate: number
+  current_raw_message_count: number
+  last_compaction_at: number | null
+  compaction_block_reason: string | null
+  created_at: number
+  updated_at: number
+}
+
 export interface DbMemoryChunkSearchRow extends DbMemoryChunk {
   document_title: string | null
   document_source_type: string
@@ -2261,6 +2457,33 @@ function parseJsonStringArray(value: string | null | undefined): string[] {
   } catch {
     return []
   }
+}
+
+function parseJsonRecordArray(value: string | null | undefined): Record<string, unknown>[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is Record<string, unknown> => isRecord(item))
+  } catch {
+    return []
+  }
+}
+
+function parseMemoryCapsuleArtifactRefs(value: string | null | undefined): MemoryCapsuleArtifactRef[] {
+  return parseJsonRecordArray(value)
+    .map((item) => {
+      const note = asString(item["note"]) ?? ""
+      const parsed: MemoryCapsuleArtifactRef = { note }
+      const artifactId = asString(item["artifactId"])
+      const path = asString(item["path"])
+      const receiptId = asString(item["receiptId"])
+      if (artifactId) parsed.artifactId = artifactId
+      if (path) parsed.path = path
+      if (receiptId) parsed.receiptId = receiptId
+      return parsed
+    })
+    .filter((item) => item.note.trim().length > 0)
 }
 
 function jsonStringOrNull(value: unknown): string | null {
@@ -4586,6 +4809,11 @@ export function upsertTaskContinuity(input: {
   parentRunId?: string
   handoffSummary?: string
   lastGoodState?: string
+  latestInstructionSummary?: string
+  latestSuccessfulSummary?: string
+  latestTargetContext?: string
+  failureRecoveryHints?: string[]
+  continuityExchangeRefs?: string[]
   pendingApprovals?: string[]
   pendingDelivery?: string[]
   lastToolReceipt?: string
@@ -4600,13 +4828,19 @@ export function upsertTaskContinuity(input: {
   getDb()
     .prepare(
       `INSERT INTO task_continuity
-       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state, pending_approvals, pending_delivery,
-        last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (lineage_root_run_id, parent_run_id, handoff_summary, last_good_state,
+        latest_instruction_summary, latest_successful_summary, latest_target_context, failure_recovery_hints, continuity_exchange_refs,
+        pending_approvals, pending_delivery, last_tool_receipt, last_delivery_receipt, failed_recovery_key, failure_kind, recovery_budget, continuity_status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(lineage_root_run_id) DO UPDATE SET
          parent_run_id = COALESCE(excluded.parent_run_id, task_continuity.parent_run_id),
          handoff_summary = COALESCE(excluded.handoff_summary, task_continuity.handoff_summary),
          last_good_state = COALESCE(excluded.last_good_state, task_continuity.last_good_state),
+         latest_instruction_summary = COALESCE(excluded.latest_instruction_summary, task_continuity.latest_instruction_summary),
+         latest_successful_summary = COALESCE(excluded.latest_successful_summary, task_continuity.latest_successful_summary),
+         latest_target_context = COALESCE(excluded.latest_target_context, task_continuity.latest_target_context),
+         failure_recovery_hints = COALESCE(excluded.failure_recovery_hints, task_continuity.failure_recovery_hints),
+         continuity_exchange_refs = COALESCE(excluded.continuity_exchange_refs, task_continuity.continuity_exchange_refs),
          pending_approvals = COALESCE(excluded.pending_approvals, task_continuity.pending_approvals),
          pending_delivery = COALESCE(excluded.pending_delivery, task_continuity.pending_delivery),
          last_tool_receipt = COALESCE(excluded.last_tool_receipt, task_continuity.last_tool_receipt),
@@ -4622,6 +4856,11 @@ export function upsertTaskContinuity(input: {
       input.parentRunId ?? null,
       input.handoffSummary ?? null,
       input.lastGoodState ?? null,
+      input.latestInstructionSummary ?? null,
+      input.latestSuccessfulSummary ?? null,
+      input.latestTargetContext ?? null,
+      hasField("failureRecoveryHints") ? JSON.stringify(input.failureRecoveryHints ?? []) : null,
+      hasField("continuityExchangeRefs") ? JSON.stringify(input.continuityExchangeRefs ?? []) : null,
       hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null,
       hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null,
       input.lastToolReceipt ?? null,
@@ -4632,6 +4871,809 @@ export function upsertTaskContinuity(input: {
       input.status ?? null,
       Date.now(),
     )
+}
+
+function dbMemoryCapsuleToContract(row: DbMemoryCapsule): MemoryCapsule {
+  return normalizeMemoryCapsule({
+    capsuleId: row.capsule_id,
+    capsuleVersion: row.capsule_version,
+    ...(row.parent_capsule_id ? { parentCapsuleId: row.parent_capsule_id } : {}),
+    ownerScope: {
+      ownerType: row.owner_type,
+      ownerId: row.owner_id,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+      ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+      ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+      ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+    },
+    ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+    capsuleKind: row.capsule_kind,
+    summary: row.summary,
+    activeObjectives: parseJsonStringArray(row.active_objectives_json),
+    confirmedFacts: parseJsonStringArray(row.confirmed_facts_json),
+    decisions: parseJsonStringArray(row.decisions_json),
+    constraints: parseJsonStringArray(row.constraints_json),
+    pendingItems: parseJsonStringArray(row.pending_items_json),
+    artifactRefs: parseMemoryCapsuleArtifactRefs(row.artifact_refs_json),
+    recoveryHints: parseJsonStringArray(row.recovery_hints_json),
+    sourceRefs: parseJsonStringArray(row.source_refs_json),
+    compactedMessageIds: parseJsonStringArray(row.compacted_message_ids_json),
+    sourceTokenEstimate: row.source_token_estimate,
+    resultTokenEstimate: row.result_token_estimate,
+    createdAt: row.created_at,
+  })
+}
+
+function dbAgentMemoryStateToContract(row: DbAgentMemoryState): AgentMemoryState {
+  return normalizeAgentMemoryState({
+    stateId: row.state_id,
+    ownerScope: {
+      ownerType: row.agent_type,
+      ownerId: row.agent_id,
+      sessionId: row.session_id,
+      ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+      ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+      ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+      ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+    },
+    ownerScopeKey: row.owner_scope_key,
+    ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+    ...(row.latest_capsule_id ? { latestCapsuleId: row.latest_capsule_id } : {}),
+    currentRawTokenEstimate: row.current_raw_token_estimate,
+    currentRawMessageCount: row.current_raw_message_count,
+    ...(row.last_compaction_at ? { lastCompactionAt: row.last_compaction_at } : {}),
+    ...(row.compaction_block_reason ? { compactionBlockReason: row.compaction_block_reason } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  })
+}
+
+export function insertMemoryCapsule(
+  input: MemoryCapsule,
+  options: { expectedOwnerScope?: Partial<MemoryCapsule["ownerScope"]> } = {},
+): string {
+  const capsule = normalizeMemoryCapsule(input)
+  const validation = validateMemoryCapsule(capsule, {
+    requireSourceRefs: true,
+    ...(options.expectedOwnerScope ? { expectedOwnerScope: options.expectedOwnerScope } : {}),
+  })
+  if (!validation.ok) {
+    throw new Error(`invalid memory capsule: ${validation.reasonCodes.join(", ")}`)
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO memory_capsules
+       (capsule_id, capsule_version, parent_capsule_id, owner_type, owner_id, session_id, request_group_id,
+        lineage_id, channel_key, thread_key, nickname_snapshot, capsule_kind, summary,
+        active_objectives_json, confirmed_facts_json, decisions_json, constraints_json, pending_items_json,
+        artifact_refs_json, recovery_hints_json, source_refs_json, compacted_message_ids_json,
+        source_token_estimate, result_token_estimate, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      capsule.capsuleId,
+      capsule.capsuleVersion,
+      capsule.parentCapsuleId ?? null,
+      capsule.ownerScope.ownerType,
+      capsule.ownerScope.ownerId,
+      capsule.ownerScope.sessionId ?? null,
+      capsule.ownerScope.requestGroupId ?? null,
+      capsule.ownerScope.lineageId ?? null,
+      capsule.ownerScope.channelKey ?? null,
+      capsule.ownerScope.threadKey ?? null,
+      capsule.nicknameSnapshot ?? null,
+      capsule.capsuleKind,
+      capsule.summary,
+      JSON.stringify(capsule.activeObjectives),
+      JSON.stringify(capsule.confirmedFacts),
+      JSON.stringify(capsule.decisions),
+      JSON.stringify(capsule.constraints),
+      JSON.stringify(capsule.pendingItems),
+      JSON.stringify(capsule.artifactRefs),
+      JSON.stringify(capsule.recoveryHints),
+      JSON.stringify(capsule.sourceRefs),
+      JSON.stringify(capsule.compactedMessageIds),
+      capsule.sourceTokenEstimate,
+      capsule.resultTokenEstimate,
+      null,
+      capsule.createdAt,
+    )
+  return capsule.capsuleId
+}
+
+export function getMemoryCapsule(capsuleId: string): MemoryCapsule | undefined {
+  const row = getDb()
+    .prepare<[string], DbMemoryCapsule>(
+      `SELECT * FROM memory_capsules WHERE capsule_id = ? LIMIT 1`,
+    )
+    .get(capsuleId)
+  return row ? dbMemoryCapsuleToContract(row) : undefined
+}
+
+export function listMemoryCapsulesForOwner(input: {
+  ownerType: MemoryCapsuleOwnerType
+  ownerId: string
+  sessionId?: string
+  requestGroupId?: string
+  lineageId?: string
+  channelKey?: string
+  threadKey?: string
+  limit?: number
+}): MemoryCapsule[] {
+  const clauses = ["owner_type = ?", "owner_id = ?"]
+  const values: unknown[] = [input.ownerType, input.ownerId]
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.requestGroupId) {
+    clauses.push("request_group_id = ?")
+    values.push(input.requestGroupId)
+  }
+  if (input.lineageId) {
+    clauses.push("lineage_id = ?")
+    values.push(input.lineageId)
+  }
+  if (input.channelKey) {
+    clauses.push("channel_key = ?")
+    values.push(input.channelKey)
+  }
+  if (input.threadKey) {
+    clauses.push("thread_key = ?")
+    values.push(input.threadKey)
+  }
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbMemoryCapsule>(
+      `SELECT * FROM memory_capsules
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(dbMemoryCapsuleToContract)
+}
+
+export function upsertAgentMemoryState(input: AgentMemoryState): string {
+  const state = normalizeAgentMemoryState(input)
+  getDb()
+    .prepare(
+      `INSERT INTO agent_memory_state
+       (state_id, owner_scope_key, agent_type, agent_id, session_id, request_group_id, lineage_id,
+        channel_key, thread_key, nickname_snapshot, latest_capsule_id, current_raw_token_estimate,
+        current_raw_message_count, last_compaction_at, compaction_block_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_scope_key) DO UPDATE SET
+         agent_type = excluded.agent_type,
+         agent_id = excluded.agent_id,
+         session_id = excluded.session_id,
+         request_group_id = excluded.request_group_id,
+         lineage_id = excluded.lineage_id,
+         channel_key = excluded.channel_key,
+         thread_key = excluded.thread_key,
+         nickname_snapshot = COALESCE(excluded.nickname_snapshot, agent_memory_state.nickname_snapshot),
+         latest_capsule_id = COALESCE(excluded.latest_capsule_id, agent_memory_state.latest_capsule_id),
+         current_raw_token_estimate = excluded.current_raw_token_estimate,
+         current_raw_message_count = excluded.current_raw_message_count,
+         last_compaction_at = COALESCE(excluded.last_compaction_at, agent_memory_state.last_compaction_at),
+         compaction_block_reason = excluded.compaction_block_reason,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      state.stateId,
+      state.ownerScopeKey,
+      state.ownerScope.ownerType,
+      state.ownerScope.ownerId,
+      state.ownerScope.sessionId,
+      state.ownerScope.requestGroupId ?? null,
+      state.ownerScope.lineageId ?? null,
+      state.ownerScope.channelKey ?? null,
+      state.ownerScope.threadKey ?? null,
+      state.nicknameSnapshot ?? null,
+      state.latestCapsuleId ?? null,
+      state.currentRawTokenEstimate,
+      state.currentRawMessageCount,
+      state.lastCompactionAt ?? null,
+      state.compactionBlockReason ?? null,
+      state.createdAt,
+      state.updatedAt,
+    )
+  return state.stateId
+}
+
+export function getAgentMemoryStateByScopeKey(ownerScopeKey: string): AgentMemoryState | undefined {
+  const row = getDb()
+    .prepare<[string], DbAgentMemoryState>(
+      `SELECT * FROM agent_memory_state WHERE owner_scope_key = ? LIMIT 1`,
+    )
+    .get(ownerScopeKey)
+  return row ? dbAgentMemoryStateToContract(row) : undefined
+}
+
+export function clearAgentMemoryStateLatestCapsule(input: {
+  ownerScopeKey: string
+  compactionBlockReason?: string
+  updatedAt?: number
+}): AgentMemoryState | undefined {
+  const current = getAgentMemoryStateByScopeKey(input.ownerScopeKey)
+  if (!current) return undefined
+  getDb()
+    .prepare(
+      `UPDATE agent_memory_state
+       SET latest_capsule_id = NULL,
+           compaction_block_reason = ?,
+           updated_at = ?
+       WHERE owner_scope_key = ?`,
+    )
+    .run(
+      input.compactionBlockReason ?? current.compactionBlockReason ?? null,
+      input.updatedAt ?? Date.now(),
+      input.ownerScopeKey,
+    )
+  return getAgentMemoryStateByScopeKey(input.ownerScopeKey)
+}
+
+export function listAgentMemoryStatesForAgent(input: {
+  ownerType: AgentMemoryState["ownerScope"]["ownerType"]
+  ownerId: string
+  sessionId?: string
+  channelKey?: string
+  threadKey?: string
+  limit?: number
+}): AgentMemoryState[] {
+  const clauses = ["agent_type = ?", "agent_id = ?"]
+  const values: unknown[] = [input.ownerType, input.ownerId]
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.channelKey) {
+    clauses.push("channel_key = ?")
+    values.push(input.channelKey)
+  }
+  if (input.threadKey) {
+    clauses.push("thread_key = ?")
+    values.push(input.threadKey)
+  }
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbAgentMemoryState>(
+      `SELECT * FROM agent_memory_state
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(dbAgentMemoryStateToContract)
+}
+
+export function listRecentAgentMemoryStates(input: {
+  sessionId?: string
+  requestGroupId?: string
+  lineageId?: string
+  channelKey?: string
+  threadKey?: string
+  limit?: number
+} = {}): AgentMemoryState[] {
+  const clauses: string[] = []
+  const values: unknown[] = []
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.requestGroupId) {
+    clauses.push("request_group_id = ?")
+    values.push(input.requestGroupId)
+  }
+  if (input.lineageId) {
+    clauses.push("lineage_id = ?")
+    values.push(input.lineageId)
+  }
+  if (input.channelKey) {
+    clauses.push("channel_key = ?")
+    values.push(input.channelKey)
+  }
+  if (input.threadKey) {
+    clauses.push("thread_key = ?")
+    values.push(input.threadKey)
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 50)) : 50
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbAgentMemoryState>(
+      `SELECT * FROM agent_memory_state
+       ${where}
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(dbAgentMemoryStateToContract)
+}
+
+export function insertMemoryCapsuleSource(input: {
+  id?: string
+  capsuleId: string
+  sourceKind:
+    | "message"
+    | "run_event"
+    | "result_report"
+    | "exchange_package"
+    | "session_snapshot"
+    | "task_continuity"
+    | "manual"
+  sourceId: string
+  ownerType?: string
+  ownerId?: string
+  metadata?: Record<string, unknown>
+  createdAt?: number
+}): string {
+  const id = input.id ?? crypto.randomUUID()
+  getDb()
+    .prepare(
+      `INSERT INTO memory_capsule_sources
+       (id, capsule_id, source_kind, source_id, owner_type, owner_id, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.capsuleId,
+      input.sourceKind,
+      input.sourceId,
+      input.ownerType ?? null,
+      input.ownerId ?? null,
+      toJsonOrNull(input.metadata),
+      input.createdAt ?? Date.now(),
+    )
+  return id
+}
+
+export function insertMemoryCompactionRun(input: {
+  id?: string
+  capsuleId?: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  triggerReasonCodes: string[]
+  sourceTokenEstimate: number
+  resultTokenEstimate: number
+  status: "started" | "completed" | "failed"
+  modelProvider?: string
+  modelId?: string
+  validationSummary?: string
+  failureReason?: string
+  metadata?: Record<string, unknown>
+  createdAt?: number
+  updatedAt?: number
+}): string {
+  const id = input.id ?? crypto.randomUUID()
+  const ownerScope = normalizeMemoryCapsule({
+    capsuleId: id,
+    capsuleVersion: 1,
+    ownerScope: input.ownerScope,
+    capsuleKind: "session_compaction",
+    summary: "compaction run placeholder",
+    activeObjectives: [],
+    confirmedFacts: [],
+    decisions: [],
+    constraints: [],
+    pendingItems: [],
+    artifactRefs: [],
+    recoveryHints: [],
+    sourceRefs: ["compaction_run_placeholder"],
+    compactedMessageIds: [],
+    sourceTokenEstimate: 0,
+    resultTokenEstimate: 0,
+    createdAt: input.createdAt ?? Date.now(),
+  }).ownerScope
+  const createdAt = input.createdAt ?? Date.now()
+  const updatedAt = input.updatedAt ?? createdAt
+  getDb()
+    .prepare(
+      `INSERT INTO memory_compaction_runs
+       (id, capsule_id, owner_type, owner_id, session_id, request_group_id, lineage_id, channel_key,
+        thread_key, trigger_reason_codes_json, source_token_estimate, result_token_estimate, status,
+        model_provider, model_id, validation_summary, failure_reason, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.capsuleId ?? null,
+      ownerScope.ownerType,
+      ownerScope.ownerId,
+      ownerScope.sessionId ?? null,
+      ownerScope.requestGroupId ?? null,
+      ownerScope.lineageId ?? null,
+      ownerScope.channelKey ?? null,
+      ownerScope.threadKey ?? null,
+      JSON.stringify(input.triggerReasonCodes),
+      Math.max(0, Math.floor(input.sourceTokenEstimate)),
+      Math.max(0, Math.floor(input.resultTokenEstimate)),
+      input.status,
+      input.modelProvider ?? null,
+      input.modelId ?? null,
+      input.validationSummary ?? null,
+      input.failureReason ?? null,
+      toJsonOrNull(input.metadata),
+      createdAt,
+      updatedAt,
+    )
+  return id
+}
+
+function mapMemoryCompactionRun(row: DbMemoryCompactionRun): MemoryCompactionRunSnapshot {
+  const metadata = parseJsonRecord(row.metadata_json)
+  return {
+    id: row.id,
+    ...(row.capsule_id ? { capsuleId: row.capsule_id } : {}),
+    ownerScope: {
+      ownerType: row.owner_type,
+      ownerId: row.owner_id,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+      ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+      ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+      ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+    },
+    triggerReasonCodes: parseJsonStringArray(row.trigger_reason_codes_json),
+    sourceTokenEstimate: row.source_token_estimate,
+    resultTokenEstimate: row.result_token_estimate,
+    status: row.status,
+    ...(row.model_provider ? { modelProvider: row.model_provider } : {}),
+    ...(row.model_id ? { modelId: row.model_id } : {}),
+    ...(row.validation_summary ? { validationSummary: row.validation_summary } : {}),
+    ...(row.failure_reason ? { failureReason: row.failure_reason } : {}),
+    ...(metadata ? { metadata } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function listMemoryCompactionRuns(input: {
+  ownerType?: MemoryCapsuleOwnerType
+  ownerId?: string
+  sessionId?: string
+  requestGroupId?: string
+  lineageId?: string
+  limit?: number
+} = {}): MemoryCompactionRunSnapshot[] {
+  const clauses: string[] = []
+  const values: unknown[] = []
+  if (input.ownerType) {
+    clauses.push("owner_type = ?")
+    values.push(input.ownerType)
+  }
+  if (input.ownerId) {
+    clauses.push("owner_id = ?")
+    values.push(input.ownerId)
+  }
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.requestGroupId) {
+    clauses.push("request_group_id = ?")
+    values.push(input.requestGroupId)
+  }
+  if (input.lineageId) {
+    clauses.push("lineage_id = ?")
+    values.push(input.lineageId)
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit ?? 100)) : 100
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbMemoryCompactionRun>(
+      `SELECT * FROM memory_compaction_runs
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(mapMemoryCompactionRun)
+}
+
+export function insertMemoryRecallEvent(input: {
+  id?: string
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  sourceType: DbMemoryRecallEvent["source_type"]
+  capsuleId?: string
+  chunkId?: string
+  reasonCode: string
+  canUseForFinalAnswer: boolean
+  sameSession: boolean
+  metadata?: Record<string, unknown>
+  createdAt?: number
+}): string {
+  const id = input.id ?? crypto.randomUUID()
+  const ownerScope = normalizeMemoryCapsule({
+    capsuleId: id,
+    capsuleVersion: 1,
+    ownerScope: input.ownerScope,
+    capsuleKind: "session_compaction",
+    summary: "recall event placeholder",
+    activeObjectives: [],
+    confirmedFacts: [],
+    decisions: [],
+    constraints: [],
+    pendingItems: [],
+    artifactRefs: [],
+    recoveryHints: [],
+    sourceRefs: ["recall_event_placeholder"],
+    compactedMessageIds: [],
+    sourceTokenEstimate: 0,
+    resultTokenEstimate: 0,
+    createdAt: input.createdAt ?? Date.now(),
+  }).ownerScope
+  getDb()
+    .prepare(
+      `INSERT INTO memory_recall_events
+       (id, run_id, session_id, request_group_id, owner_type, owner_id, session_scope_id, request_scope_id,
+        lineage_scope_id, channel_key, thread_key, source_type, capsule_id, chunk_id, reason_code,
+        can_use_for_final_answer, same_session, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.runId ?? null,
+      input.sessionId ?? null,
+      input.requestGroupId ?? null,
+      ownerScope.ownerType,
+      ownerScope.ownerId,
+      ownerScope.sessionId ?? null,
+      ownerScope.requestGroupId ?? null,
+      ownerScope.lineageId ?? null,
+      ownerScope.channelKey ?? null,
+      ownerScope.threadKey ?? null,
+      input.sourceType,
+      input.capsuleId ?? null,
+      input.chunkId ?? null,
+      input.reasonCode,
+      input.canUseForFinalAnswer ? 1 : 0,
+      input.sameSession ? 1 : 0,
+      toJsonOrNull(input.metadata),
+      input.createdAt ?? Date.now(),
+    )
+  return id
+}
+
+function mapMemoryRecallEvent(row: DbMemoryRecallEvent): MemoryRecallEventSnapshot {
+  const metadata = parseJsonRecord(row.metadata_json)
+  return {
+    id: row.id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+    ownerScope: {
+      ownerType: row.owner_type,
+      ownerId: row.owner_id,
+      ...(row.session_scope_id ? { sessionId: row.session_scope_id } : {}),
+      ...(row.request_scope_id ? { requestGroupId: row.request_scope_id } : {}),
+      ...(row.lineage_scope_id ? { lineageId: row.lineage_scope_id } : {}),
+      ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+      ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+    },
+    sourceType: row.source_type,
+    ...(row.capsule_id ? { capsuleId: row.capsule_id } : {}),
+    ...(row.chunk_id ? { chunkId: row.chunk_id } : {}),
+    reasonCode: row.reason_code,
+    canUseForFinalAnswer: row.can_use_for_final_answer === 1,
+    sameSession: row.same_session === 1,
+    ...(metadata ? { metadata } : {}),
+    createdAt: row.created_at,
+  }
+}
+
+export function listMemoryRecallEvents(input: {
+  runId?: string
+  sessionId?: string
+  requestGroupId?: string
+  ownerType?: MemoryCapsuleOwnerType
+  ownerId?: string
+  limit?: number
+} = {}): MemoryRecallEventSnapshot[] {
+  const clauses: string[] = []
+  const values: unknown[] = []
+  if (input.runId) {
+    clauses.push("run_id = ?")
+    values.push(input.runId)
+  }
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.requestGroupId) {
+    clauses.push("request_group_id = ?")
+    values.push(input.requestGroupId)
+  }
+  if (input.ownerType) {
+    clauses.push("owner_type = ?")
+    values.push(input.ownerType)
+  }
+  if (input.ownerId) {
+    clauses.push("owner_id = ?")
+    values.push(input.ownerId)
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""
+  const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)))
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbMemoryRecallEvent>(
+      `SELECT * FROM memory_recall_events
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(mapMemoryRecallEvent)
+}
+
+export function insertMemoryCapsuleRollup(input: {
+  id?: string
+  ownerScope: MemoryCapsule["ownerScope"]
+  sourceCapsuleIds: string[]
+  sourceCapsuleCount: number
+  sourceTokenEstimate: number
+  resultRollupCapsuleId: string
+  recentCapsuleIds: string[]
+  preservedPendingItems: string[]
+  reasonCode: string
+  metadata?: Record<string, unknown>
+  createdAt?: number
+}): string {
+  const id = input.id ?? crypto.randomUUID()
+  const ownerScope = normalizeMemoryCapsule({
+    capsuleId: id,
+    capsuleVersion: 1,
+    ownerScope: input.ownerScope,
+    capsuleKind: "lineage_compaction",
+    summary: "rollup placeholder",
+    activeObjectives: [],
+    confirmedFacts: [],
+    decisions: [],
+    constraints: [],
+    pendingItems: [],
+    artifactRefs: [],
+    recoveryHints: [],
+    sourceRefs: ["rollup_placeholder"],
+    compactedMessageIds: [],
+    sourceTokenEstimate: 0,
+    resultTokenEstimate: 0,
+    createdAt: input.createdAt ?? Date.now(),
+  }).ownerScope
+  getDb()
+    .prepare(
+      `INSERT INTO memory_capsule_rollups
+       (id, owner_type, owner_id, session_id, request_group_id, lineage_id, channel_key, thread_key,
+        source_capsule_ids_json, source_capsule_count, source_token_estimate, result_rollup_capsule_id,
+        recent_capsule_ids_json, preserved_pending_items_json, reason_code, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      ownerScope.ownerType,
+      ownerScope.ownerId,
+      ownerScope.sessionId ?? null,
+      ownerScope.requestGroupId ?? null,
+      ownerScope.lineageId ?? null,
+      ownerScope.channelKey ?? null,
+      ownerScope.threadKey ?? null,
+      JSON.stringify(input.sourceCapsuleIds),
+      Math.max(0, Math.floor(input.sourceCapsuleCount)),
+      Math.max(0, Math.floor(input.sourceTokenEstimate)),
+      input.resultRollupCapsuleId,
+      JSON.stringify(input.recentCapsuleIds),
+      JSON.stringify(input.preservedPendingItems),
+      input.reasonCode,
+      toJsonOrNull(input.metadata),
+      input.createdAt ?? Date.now(),
+    )
+  return id
+}
+
+function mapMemoryCapsuleRollup(row: DbMemoryCapsuleRollup): MemoryCapsuleRollupSnapshot {
+  const metadata = parseJsonRecord(row.metadata_json)
+  return {
+    id: row.id,
+    ownerScope: {
+      ownerType: row.owner_type,
+      ownerId: row.owner_id,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+      ...(row.lineage_id ? { lineageId: row.lineage_id } : {}),
+      ...(row.channel_key ? { channelKey: row.channel_key } : {}),
+      ...(row.thread_key ? { threadKey: row.thread_key } : {}),
+    },
+    sourceCapsuleIds: parseJsonStringArray(row.source_capsule_ids_json),
+    sourceCapsuleCount: row.source_capsule_count,
+    sourceTokenEstimate: row.source_token_estimate,
+    resultRollupCapsuleId: row.result_rollup_capsule_id,
+    recentCapsuleIds: parseJsonStringArray(row.recent_capsule_ids_json),
+    preservedPendingItems: parseJsonStringArray(row.preserved_pending_items_json),
+    reasonCode: row.reason_code,
+    ...(metadata ? { metadata } : {}),
+    createdAt: row.created_at,
+  }
+}
+
+export function listMemoryCapsuleRollups(input: {
+  ownerType?: MemoryCapsuleOwnerType
+  ownerId?: string
+  sessionId?: string
+  requestGroupId?: string
+  lineageId?: string
+  limit?: number
+} = {}): MemoryCapsuleRollupSnapshot[] {
+  const clauses: string[] = []
+  const values: unknown[] = []
+  if (input.ownerType) {
+    clauses.push("owner_type = ?")
+    values.push(input.ownerType)
+  }
+  if (input.ownerId) {
+    clauses.push("owner_id = ?")
+    values.push(input.ownerId)
+  }
+  if (input.sessionId) {
+    clauses.push("session_id = ?")
+    values.push(input.sessionId)
+  }
+  if (input.requestGroupId) {
+    clauses.push("request_group_id = ?")
+    values.push(input.requestGroupId)
+  }
+  if (input.lineageId) {
+    clauses.push("lineage_id = ?")
+    values.push(input.lineageId)
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""
+  const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 50)))
+  values.push(limit)
+  return getDb()
+    .prepare<unknown[], DbMemoryCapsuleRollup>(
+      `SELECT * FROM memory_capsule_rollups
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(...values)
+    .map(mapMemoryCapsuleRollup)
+}
+
+export function projectMemoryCapsuleToCompatibilityStores(input: MemoryCapsule): {
+  sessionSnapshotId?: string
+  taskContinuityUpdated: boolean
+} {
+  const capsule = normalizeMemoryCapsule(input)
+  const sessionSnapshot = buildSessionSnapshotProjectionFromMemoryCapsule(capsule)
+  const taskContinuity = buildTaskContinuityProjectionFromMemoryCapsule(capsule)
+  const sessionSnapshotId = sessionSnapshot
+    ? upsertSessionSnapshot({
+        sessionId: sessionSnapshot.sessionId,
+        summary: sessionSnapshot.summary,
+        preservedFacts: sessionSnapshot.preservedFacts,
+        activeTaskIds: sessionSnapshot.activeTaskIds,
+      })
+    : undefined
+  if (taskContinuity) {
+    upsertTaskContinuity({
+      lineageRootRunId: taskContinuity.lineageRootRunId,
+      ...(taskContinuity.parentRunId ? { parentRunId: taskContinuity.parentRunId } : {}),
+      handoffSummary: taskContinuity.handoffSummary,
+      lastGoodState: taskContinuity.lastGoodState,
+      pendingApprovals: taskContinuity.pendingApprovals,
+      pendingDelivery: taskContinuity.pendingDelivery,
+      status: taskContinuity.status,
+    })
+  }
+  return {
+    ...(sessionSnapshotId ? { sessionSnapshotId } : {}),
+    taskContinuityUpdated: Boolean(taskContinuity),
+  }
 }
 
 function parseContinuityStringArray(value: string | null): string[] {
@@ -4652,6 +5694,15 @@ function mapTaskContinuity(row: DbTaskContinuity): TaskContinuitySnapshot {
     ...(row.parent_run_id ? { parentRunId: row.parent_run_id } : {}),
     ...(row.handoff_summary ? { handoffSummary: row.handoff_summary } : {}),
     ...(row.last_good_state ? { lastGoodState: row.last_good_state } : {}),
+    ...(row.latest_instruction_summary
+      ? { latestInstructionSummary: row.latest_instruction_summary }
+      : {}),
+    ...(row.latest_successful_summary
+      ? { latestSuccessfulSummary: row.latest_successful_summary }
+      : {}),
+    ...(row.latest_target_context ? { latestTargetContext: row.latest_target_context } : {}),
+    failureRecoveryHints: parseContinuityStringArray(row.failure_recovery_hints),
+    continuityExchangeRefs: parseContinuityStringArray(row.continuity_exchange_refs),
     pendingApprovals: parseContinuityStringArray(row.pending_approvals),
     pendingDelivery: parseContinuityStringArray(row.pending_delivery),
     ...(row.last_tool_receipt ? { lastToolReceipt: row.last_tool_receipt } : {}),

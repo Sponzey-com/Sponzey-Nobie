@@ -1,5 +1,5 @@
 import { type ParentAggregationTrace, type SubAgentResultReview, type SubAgentResultReviewIssue } from "../agent/sub-agent-result-review.js";
-import { type AgentPromptBundle, type CommandRequest, type ErrorReport, type FeedbackRequest, type ModelExecutionSnapshot, type OrchestrationPlan, type ParallelSubSessionGroup, type ProgressEvent, type ResourceLockContract, type ResultReport, type ResultReportImpossibleReason, type SubSessionContract, type SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
+import { type AgentPromptBundle, type CommandRequest, type ErrorReport, type FeedbackRequest, type ModelExecutionSnapshot, type OrchestrationPlan, type ParallelSubSessionGroup, type ProgressEvent, type ResourceLockContract, type ResultReport, type ResultReportImpossibleReason, type SubSessionContract, type SubSessionMemoryBootstrap, type SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
 import { type MessageLedgerEventInput } from "../runs/message-ledger.js";
 import { type ModelAvailabilityDoctorSnapshot, type ModelExecutionAuditSummary, type ProviderModelCapability } from "./model-execution-policy.js";
 import { type SubSessionProgressAggregator } from "./sub-session-progress-aggregation.js";
@@ -19,6 +19,9 @@ export interface RunSubSessionInput {
     parentAgent?: SubSessionParentAgentSnapshot;
     parentSessionId: string;
     promptBundle: AgentPromptBundle;
+    memoryBootstrap?: SubSessionMemoryBootstrap;
+    channelKey?: string;
+    threadKey?: string;
     /** @deprecated Legacy metadata only. This value must not terminate sub-session execution. */
     timeoutMs?: number;
     parentAbortSignal?: AbortSignal;

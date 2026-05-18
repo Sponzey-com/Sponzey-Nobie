@@ -4,7 +4,7 @@ import { getConfig } from "../config/index.js";
 import { grantRunApprovalScope, grantRunSingleApproval } from "../tools/dispatcher.js";
 import { logAssistantReply } from "./delivery.js";
 import { appendRunEvent, cancelRootRun, clearActiveRunController, getRootRun, incrementDelegationTurnCount, mergeRunPromptSourceSnapshot, setRunStepStatus, updateRunStatus, updateRunSummary, } from "./store.js";
-import { markAbortedRunCancelledIfActive, normalizeTaskProfile, rememberRunFailure, rememberRunSuccess, runFilesystemVerificationSubtask, tryHandleActiveQueueCancellation, } from "./start-support.js";
+import { markAbortedRunCancelledIfActive, normalizeTaskProfile, rememberRunAwaitingUser, rememberRunFailure, rememberRunSuccess, runFilesystemVerificationSubtask, tryHandleActiveQueueCancellation, } from "./start-support.js";
 import { buildStartFinalizationDependencies, executeStartLoopDirective, runStartIntakeBridge, } from "./start-bridges.js";
 import { enqueueSessionIntake } from "./intake-queue.js";
 import { scheduleDelayedRootRun } from "./run-queueing.js";
@@ -15,6 +15,7 @@ export function buildStartRootRunDriverDependencies(params) {
         updateRunStatus,
         rememberRunSuccess,
         rememberRunFailure,
+        rememberRunAwaitingUser,
         onDeliveryError: (deliveryMessage) => params.logWarn(deliveryMessage),
     });
     const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns;
