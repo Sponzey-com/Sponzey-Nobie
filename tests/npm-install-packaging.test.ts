@@ -126,6 +126,28 @@ describe("npm install packaging", () => {
       true,
     )
     expect(existsSync(join(outputDir, "yeonjang-darwin-arm64", "index.js"))).toBe(true)
+
+    execFileSync(
+      "node",
+      [
+        "scripts/package-yeonjang-platform.mjs",
+        "--target",
+        "linux-x64",
+        "--binary",
+        binaryPath,
+        "--output-dir",
+        outputDir,
+      ],
+      { cwd: process.cwd(), stdio: "pipe" },
+    )
+
+    const linux = readJson(join(outputDir, "yeonjang-linux-x64", "package.json"))
+    expect(linux).toMatchObject({
+      name: "@sponzey/yeonjang-linux-x64",
+      os: ["linux"],
+      cpu: ["x64"],
+      libc: ["glibc"],
+    })
   })
 
   it("documents the GitHub Actions release path for npm package publishing", () => {
@@ -134,7 +156,8 @@ describe("npm install packaging", () => {
     expect(workflow).toContain("scripts/package-npm.mjs")
     expect(workflow).toContain("scripts/package-yeonjang-platform.mjs")
     expect(workflow).toContain("macos-latest")
-    expect(workflow).toContain("ubuntu-latest")
+    expect(workflow).toContain("ubuntu-20.04")
+    expect(workflow).toMatch(/os: ubuntu-20\.04\s+target: linux-x64/u)
     expect(workflow).toContain("windows-latest")
     expect(workflow).toContain("NODE_AUTH_TOKEN")
   })

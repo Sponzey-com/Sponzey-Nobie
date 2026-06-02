@@ -42,7 +42,7 @@ jobs:
             target: darwin-arm64
             build: bash scripts/build-yeonjang-macos.sh
             binary: Yeonjang/target/release/nobie-yeonjang
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             target: linux-x64
             build: bash scripts/build-yeonjang-linux.sh
             binary: Yeonjang/target/release/nobie-yeonjang

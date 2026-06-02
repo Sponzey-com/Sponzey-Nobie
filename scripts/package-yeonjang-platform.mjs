@@ -9,7 +9,7 @@ const rootDir = resolve(__dirname, "..")
 const TARGETS = {
   "darwin-arm64": { os: "darwin", cpu: "arm64", binaryName: "nobie-yeonjang" },
   "darwin-x64": { os: "darwin", cpu: "x64", binaryName: "nobie-yeonjang" },
-  "linux-x64": { os: "linux", cpu: "x64", binaryName: "nobie-yeonjang" },
+  "linux-x64": { os: "linux", cpu: "x64", libc: "glibc", binaryName: "nobie-yeonjang" },
   "win32-x64": { os: "win32", cpu: "x64", binaryName: "nobie-yeonjang.exe" },
 }
 
@@ -85,6 +85,7 @@ function main() {
     type: "module",
     os: [target.os],
     cpu: [target.cpu],
+    ...(target.libc ? { libc: [target.libc] } : {}),
     files: ["bin", "index.js", "manifests", "protocol"],
     exports: {
       ".": "./index.js",
