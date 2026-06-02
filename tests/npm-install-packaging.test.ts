@@ -202,6 +202,7 @@ describe("npm install packaging", () => {
     expect(workflow).toContain("windows-latest")
     expect(workflow).toContain("github-release:")
     expect(workflow).toMatch(/github-release:[\s\S]*contents: write/u)
+    expect(workflow).toContain("GH_REPO: ${{ github.repository }}")
     expect(workflow).toContain("gh release create")
     expect(workflow).toContain("gh release upload")
     expect(workflow).toContain("NODE_AUTH_TOKEN")

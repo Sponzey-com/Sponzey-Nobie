@@ -134,6 +134,7 @@ jobs:
               --notes "Compiled npm install packages for $GITHUB_REF_NAME."
           fi
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
 
   publish:
