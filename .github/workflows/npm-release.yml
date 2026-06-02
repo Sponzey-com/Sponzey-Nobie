@@ -1,0 +1,100 @@
+name: npm release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-js-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm exec vitest run --cache=false tests/npm-install-packaging.test.ts
+      - run: mkdir -p release/npm/tarballs
+      - run: node scripts/package-npm.mjs --output-dir release/npm
+      - run: npm pack ./release/npm/core --pack-destination release/npm/tarballs
+      - run: npm pack ./release/npm/webui --pack-destination release/npm/tarballs
+      - run: npm pack ./release/npm/cli --pack-destination release/npm/tarballs
+      - run: npm pack ./release/npm/nobie --pack-destination release/npm/tarballs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-js-tarballs
+          path: release/npm/tarballs/*.tgz
+
+  build-yeonjang-packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            build: bash scripts/build-yeonjang-macos.sh
+            binary: Yeonjang/target/release/nobie-yeonjang
+          - os: ubuntu-latest
+            target: linux-x64
+            build: bash scripts/build-yeonjang-linux.sh
+            binary: Yeonjang/target/release/nobie-yeonjang
+          - os: windows-latest
+            target: win32-x64
+            build: scripts\build-yeonjang-windows.bat
+            binary: Yeonjang\target\release\nobie-yeonjang.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: ${{ matrix.build }}
+      - run: node scripts/package-yeonjang-platform.mjs --target ${{ matrix.target }} --binary "${{ matrix.binary }}" --output-dir release/npm
+      - run: mkdir -p release/npm/tarballs
+        shell: bash
+      - run: npm pack ./release/npm/yeonjang-${{ matrix.target }} --pack-destination release/npm/tarballs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-yeonjang-${{ matrix.target }}-tarballs
+          path: release/npm/tarballs/*.tgz
+
+  publish:
+    needs:
+      - build-js-packages
+      - build-yeonjang-packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: release/npm/publish
+      - run: |
+          set -euo pipefail
+          for pattern in \
+            'sponzey-core-*.tgz' \
+            'sponzey-webui-*.tgz' \
+            'sponzey-cli-*.tgz' \
+            'sponzey-yeonjang-*.tgz' \
+            'sponzey-nobie-*.tgz'
+          do
+            while IFS= read -r package_file
+            do
+              npm publish "$package_file" --access public
+            done < <(find release/npm/publish -name "$pattern" | sort)
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

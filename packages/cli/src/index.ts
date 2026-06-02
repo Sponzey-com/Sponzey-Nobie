@@ -21,6 +21,14 @@ import {
 
 const VERSION = getCurrentDisplayVersion()
 
+function startServeCommand(options: { adminUi?: boolean }): void {
+  if (options.adminUi) process.env["NOBIE_ADMIN_UI"] = "1"
+  serveCommand().catch((err: unknown) => {
+    console.error("Fatal:", err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  })
+}
+
 program
   .name("nobie")
   .description("스폰지 노비 · Sponzey Nobie — your local AI assistant")
@@ -75,13 +83,13 @@ program
   .command("serve")
   .description("Start 스폰지 노비 · Sponzey Nobie as a background daemon (WebUI + scheduler + Telegram)")
   .option("--admin-ui", "Enable Admin UI for this serve process")
-  .action((options: { adminUi?: boolean }) => {
-    if (options.adminUi) process.env["NOBIE_ADMIN_UI"] = "1"
-    serveCommand().catch((err: unknown) => {
-      console.error("Fatal:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
-    })
-  })
+  .action(startServeCommand)
+
+program
+  .command("start")
+  .description("Install-time friendly alias for `nobie serve`")
+  .option("--admin-ui", "Enable Admin UI for this start process")
+  .action(startServeCommand)
 
 const schedule = program.command("schedule").description("저장된 스케줄 관리")
 
