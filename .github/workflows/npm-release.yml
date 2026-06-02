@@ -105,6 +105,37 @@ jobs:
           name: npm-yeonjang-linux-x64-tarballs
           path: release/npm/tarballs/*.tgz
 
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build-js-packages
+      - build-yeonjang-packages
+      - build-yeonjang-linux-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release/npm/github-release
+      - run: |
+          set -euo pipefail
+          mapfile -t package_files < <(find release/npm/github-release -name '*.tgz' | sort)
+          if [ "${#package_files[@]}" -eq 0 ]; then
+            echo "No npm package tarballs were found for GitHub Release upload."
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${package_files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${package_files[@]}" \
+              --title "Sponzey Nobie $GITHUB_REF_NAME" \
+              --notes "Compiled npm install packages for $GITHUB_REF_NAME."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   publish:
     needs:
       - build-js-packages
