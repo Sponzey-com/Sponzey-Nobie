@@ -170,7 +170,7 @@ Operational smoke procedure:
 
 1. Run `./scripts/status-local.sh`.
 2. If `buildRequired=true`, run `pnpm --filter @nobie/core build` and `pnpm --filter @nobie/cli build`.
-3. If `restartRequired=true`, restart local services with `bash scripts/start-local.sh --restart`.
+3. If `restartRequired=true`, restart local services with `bash scripts/nobie-start.sh --restart`.
 4. Run `./scripts/status-local.sh` again and confirm `buildRequired=false` and `restartRequired=false`.
 5. Run WebUI dry channel smoke:
 

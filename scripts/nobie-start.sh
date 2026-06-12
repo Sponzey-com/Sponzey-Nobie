@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "알 수 없는 옵션: $1"
-      echo "사용법: bash scripts/start-local.sh [--admin-ui] [--restart]"
+      echo "사용법: bash scripts/nobie-start.sh [--admin-ui] [--restart]"
       exit 1
       ;;
   esac
@@ -427,5 +427,5 @@ echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"
 echo "  State   : $STATE_DIR"
 echo "  Logs    : $GATEWAY_LOG_FILE / $WEBUI_LOG_FILE"
 echo "  Status  : bash scripts/status-local.sh"
-echo "  Restart : bash scripts/start-local.sh --restart"
+echo "  Restart : bash scripts/nobie-start.sh --restart"
 echo "  Stop    : bash scripts/stop-local.sh"

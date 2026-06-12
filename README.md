@@ -114,41 +114,87 @@ Sub-agent support is being built around explicit contracts rather than hidden ex
 
 - macOS is the currently supported primary environment
 - Node.js `22+`
-- `pnpm`
+- `corepack` enabled
+- `pnpm@8.10.2`
 - Rust / Cargo if running Yeonjang from source
 
-### Install
+### Step 1. Prepare Node.js 22
+
+```bash
+nvm install 22
+nvm use 22
+node -v
+```
+
+You should see a `v22.x.x` version.
+
+If you are on Windows and do not use `nvm`, install Node.js 22 first, open a new terminal, and verify with:
+
+```bash
+node -v
+```
+
+### Step 2. Enable pnpm with Corepack
+
+```bash
+corepack enable
+corepack prepare pnpm@8.10.2 --activate
+pnpm -v
+```
+
+If `corepack` is missing, your Node installation is too old or incomplete. Reinstall Node.js 22 first.
+
+This repository uses a `pnpm` workspace. Use `pnpm install`, not `npm install`.
+
+### Step 3. Download the repository
 
 ```bash
 git clone <repository-url>
-cd Sponzey\ Nobie
+cd "Sponzey Nobie"
+```
+
+### Step 4. Install dependencies
+
+```bash
 pnpm install
 ```
 
-### First Build
+### Step 5. Build Nobie
 
 ```bash
 pnpm build
 ```
 
-### Start Local Services
+### Step 6. Start Nobie locally
 
 Start the local Gateway and WebUI on macOS, Linux, or a bash-compatible environment:
 
 ```bash
-bash scripts/start-local.sh
+bash scripts/nobie-start.sh
 ```
+
+This is the easiest way to run Nobie after installation. It starts:
+
+- the local Gateway
+- the WebUI
+- the Nobie runtime entrypoint used by the local stack
+
+### Step 7. Open Nobie in your browser
+
+After `nobie-start.sh` finishes, open:
+
+- WebUI: `http://127.0.0.1:4220`
+- Gateway: `http://127.0.0.1:18888`
+
+For most users, the WebUI address is the one to open first.
+
+### Step 8. Useful local control commands
 
 If services are already running and you want a clean restart:
 
 ```bash
-bash scripts/start-local.sh --restart
+bash scripts/nobie-start.sh --restart
 ```
-
-Default local addresses:
-
-- Gateway: `http://127.0.0.1:18888`
-- WebUI: `http://127.0.0.1:4220`
 
 Check current status:
 
@@ -164,10 +210,27 @@ bash scripts/stop-local.sh
 
 Notes:
 
-- `start-local.sh` builds the Gateway runtime packages it needs before launch.
-- If Gateway or WebUI is already running, `start-local.sh` can stop and start them again.
+- `nobie-start.sh` builds the Gateway runtime packages it needs before launch.
+- If Gateway or WebUI is already running, `nobie-start.sh` can stop and start them again.
 - Use `--restart` when you want the restart step to be explicit in logs and workflow.
-- Windows-native batch entry points are currently provided for Yeonjang. The local Gateway/WebUI control flow uses shell scripts.
+- Windows-native batch entry points are currently provided for Yeonjang. The local Gateway/WebUI flow uses shell scripts, so use a bash-compatible shell on Windows.
+
+### Optional: run the Nobie CLI directly
+
+If you want to inspect the CLI entrypoint after building:
+
+```bash
+node packages/nobie/bin/nobie.js --help
+node packages/nobie/bin/nobie.js status
+```
+
+If you want to start the backend entrypoint directly without the helper script:
+
+```bash
+node packages/nobie/bin/nobie.js serve
+```
+
+For normal local development and setup, prefer `bash scripts/nobie-start.sh` because it manages the local WebUI and service lifecycle together.
 
 ### Run Yeonjang
 

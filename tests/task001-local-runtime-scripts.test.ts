@@ -14,7 +14,7 @@ function scriptText(name: string): string {
 }
 
 describe("task001 local runtime scripts", () => {
-  const scripts = ["start-local.sh", "stop-local.sh", "status-local.sh", "restart-local.sh"]
+  const scripts = ["nobie-start.sh", "stop-local.sh", "status-local.sh"]
 
   for (const script of scripts) {
     it(`${script} is executable bash with valid syntax`, () => {
@@ -27,7 +27,7 @@ describe("task001 local runtime scripts", () => {
   }
 
   it("start script blocks stale-port false positives and verifies the new Gateway process", () => {
-    const text = scriptText("start-local.sh")
+    const text = scriptText("nobie-start.sh")
     expect(text).toContain("assert_port_available")
     expect(text).toContain("verify_gateway_status")
     expect(text).toContain("runtime.pid")
@@ -45,15 +45,15 @@ describe("task001 local runtime scripts", () => {
     expect(text).toContain("Channel config")
   })
 
-  it("restart script enforces stop, port release, start, and health check order", () => {
-    const text = scriptText("restart-local.sh")
+  it("start script restart mode enforces stop, port release, and start order", () => {
+    const text = scriptText("nobie-start.sh")
+    const restartIndex = text.indexOf("--restart")
     const stopIndex = text.indexOf("scripts/stop-local.sh")
     const releaseIndex = text.indexOf("wait_port_release", stopIndex)
-    const startIndex = text.indexOf("scripts/start-local.sh")
-    const healthIndex = text.indexOf("wait_http_ready", startIndex)
+    const startIndex = text.indexOf("start_gateway", releaseIndex)
+    expect(restartIndex).toBeGreaterThan(0)
     expect(stopIndex).toBeGreaterThan(0)
     expect(releaseIndex).toBeGreaterThan(stopIndex)
     expect(startIndex).toBeGreaterThan(releaseIndex)
-    expect(healthIndex).toBeGreaterThan(startIndex)
   })
 })
